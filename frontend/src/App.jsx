@@ -1,144 +1,121 @@
 // src/App.jsx
 import React, { useState, useEffect } from 'react';
-import { LoginPage, RegisterPage } from './pages/AuthPages.jsx';
-import DocumentsTab from './components/DocumentsTab.jsx';
-import ChatTab      from './components/ChatTab.jsx';
-import { getMe }    from './services/api.js';
-
-const STATUS_FLOW = ['uploading','chunking','chunked','embedding','embedded'];
+import { LoginPage, RegisterPage }  from './pages/AuthPages.jsx';
+import DocumentsTab    from './components/DocumentsTab.jsx';
+import ChatTab         from './components/ChatTab.jsx';
+import AdminDashboard  from './components/AdminDashboard.jsx';
+import { ToastContainer } from './components/Toast.jsx';
+import { getMe }       from './services/api.js';
 
 export default function App() {
-  const [authPage,      setAuthPage]      = useState('login');   // 'login' | 'register'
-  const [user,          setUser]          = useState(null);       // null = logged out
-  const [checking,      setChecking]      = useState(true);       // initial session check
-  const [tab,           setTab]           = useState('documents'); // 'documents' | 'chat'
-  const [embeddedDocs,  setEmbeddedDocs]  = useState([]);
+  const [authPage,     setAuthPage]     = useState('login');
+  const [user,         setUser]         = useState(null);
+  const [checking,     setChecking]     = useState(true);
+  const [tab,          setTab]          = useState('documents');
+  const [embeddedDocs, setEmbeddedDocs] = useState([]);
 
-  // Restore session on page load
   useEffect(() => {
     const t = localStorage.getItem('token');
     if (!t) { setChecking(false); return; }
     getMe()
-      .then(u => setUser(u))
-      .catch(() => { localStorage.clear(); })
+      .then(u => { setUser(u); if (u.role==='admin') setTab('admin'); })
+      .catch(() => localStorage.clear())
       .finally(() => setChecking(false));
   }, []);
 
   const handleLogin = data => {
-    setUser({ id: data.user_id, email: data.email, full_name: data.full_name });
+    localStorage.setItem('token',     data.access_token);
+    localStorage.setItem('user_role', data.role);
+    setUser({ id:data.user_id, email:data.email, full_name:data.full_name, role:data.role });
+    setTab(data.role==='admin'?'admin':'documents');
   };
 
-  const handleLogout = () => {
-    localStorage.clear();
-    setUser(null);
-    setEmbeddedDocs([]);
-    setTab('documents');
-  };
+  const handleLogout = () => { localStorage.clear(); setUser(null); setEmbeddedDocs([]); setTab('documents'); };
 
   if (checking) {
     return (
-      <div style={{ height:'100vh', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--muted)', fontSize:14 }}>
-        Loading…
+      <div style={{ height:'100vh', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:10, background:'#0a1a0a' }}>
+        <span style={{ fontSize:36 }}>🌿</span>
+        <span style={{ color:'#4ade80', fontSize:13, opacity:.6 }}>Loading আদর DocIntel…</span>
       </div>
     );
   }
 
   if (!user) {
-    return authPage === 'login'
-      ? <LoginPage onLogin={handleLogin} onSwitch={() => setAuthPage('register')} />
-      : <RegisterPage onRegistered={() => setAuthPage('login')} onSwitch={() => setAuthPage('login')} />;
+    return authPage==='login'
+      ? <LoginPage  onLogin={handleLogin}            onSwitch={()=>setAuthPage('register')} />
+      : <RegisterPage onRegistered={()=>setAuthPage('login')} onSwitch={()=>setAuthPage('login')} />;
   }
 
+  const isAdmin = user.role==='admin';
+  const TABS = [
+    { key:'documents', label:'📂 Documents', show:true },
+    { key:'chat',      label:'💬 Chat',      show:true, disabled:!embeddedDocs.length,
+      title:!embeddedDocs.length?'Embed at least one document first':undefined },
+    { key:'admin',     label:'⚙ Admin',      show:isAdmin },
+  ].filter(t=>t.show);
+
   return (
-    <div style={s.shell}>
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <header style={s.header}>
-        <div style={s.logo}>
-          <span style={{ fontSize:20 }}>🧠</span>
-          <span style={s.logoTxt}>DocIntel</span>
-        </div>
-
-        {/* Tab navigation */}
-        <nav style={s.tabs}>
-          <TabBtn active={tab==='documents'} onClick={() => setTab('documents')}>
-            📂 Documents
-            {embeddedDocs.length > 0 && (
-              <span style={s.tabBadge}>{embeddedDocs.length}</span>
-            )}
-          </TabBtn>
-          <TabBtn
-            active={tab==='chat'}
-            onClick={() => setTab('chat')}
-            disabled={!embeddedDocs.length}
-            title={!embeddedDocs.length ? 'Embed at least one document first' : 'Chat with your documents'}
-          >
-            💬 Chat
-            {embeddedDocs.length > 0 && (
-              <span style={{ ...s.tabBadge, background:'rgba(31,186,138,.2)', color:'var(--teal)' }}>
-                {embeddedDocs.length} ready
-              </span>
-            )}
-          </TabBtn>
-        </nav>
-
-        {/* User info + logout */}
-        <div style={s.userArea}>
-          <div style={{ textAlign:'right' }}>
-            <p style={{ fontSize:13, fontWeight:500 }}>{user.full_name || user.email}</p>
-            <p style={{ fontSize:11, color:'var(--muted2)' }}>{user.email}</p>
+    <>
+      <ToastContainer />
+      <div style={s.shell}>
+        <header style={s.header}>
+          <div style={s.brand}>
+            <span style={{ fontSize:20 }}>🌿</span>
+            <div>
+              <div style={{ display:'flex', alignItems:'baseline', gap:5 }}>
+                <span style={s.brandB}>আদর</span>
+                <span style={s.brandE}>DocIntel</span>
+              </div>
+              <span style={s.brandTag}>Document Intelligence</span>
+            </div>
+            {isAdmin && <span style={s.adminPill}>admin</span>}
           </div>
-          <button style={s.logoutBtn} onClick={handleLogout}>Sign out</button>
-        </div>
-      </header>
 
-      {/* ── Content ────────────────────────────────────────────────────────── */}
-      <div style={s.content}>
-        {tab === 'documents' && (
-          <div style={{ height:'100%', overflowY:'auto' }}>
-            <DocumentsTab onEmbedChange={setEmbeddedDocs} />
+          <nav style={s.tabs}>
+            {TABS.map(({ key, label, disabled, title }) => (
+              <button key={key} onClick={()=>!disabled&&setTab(key)} disabled={disabled} title={title}
+                style={{ ...s.tabBtn, ...(tab===key?s.tabActive:{}), ...(disabled?{opacity:.35,cursor:'not-allowed'}:{}), ...(key==='admin'?{color:tab==='admin'?'#4ade80':'#fbbf24'}:{}) }}>
+                {label}
+                {key==='chat' && embeddedDocs.length>0 && <span style={s.badge}>{embeddedDocs.length}</span>}
+              </button>
+            ))}
+          </nav>
+
+          <div style={s.userArea}>
+            <div style={{ textAlign:'right' }}>
+              <p style={{ fontSize:13, fontWeight:600, color:'var(--tx)' }}>{user.full_name||user.email}</p>
+              <p style={{ fontSize:11, color:'var(--muted2)' }}>{user.email}</p>
+            </div>
+            <button style={s.signOutBtn} onClick={handleLogout}>Sign out</button>
           </div>
-        )}
-        {tab === 'chat' && (
-          <ChatTab embeddedDocs={embeddedDocs} />
-        )}
+        </header>
+
+        <div style={s.content}>
+          {tab==='documents' && <div style={{ height:'100%', overflowY:'auto' }}><DocumentsTab onEmbedChange={setEmbeddedDocs} /></div>}
+          {tab==='chat'      && <ChatTab embeddedDocs={embeddedDocs} />}
+          {tab==='admin' && isAdmin && <div style={{ height:'100%', overflowY:'auto' }}><AdminDashboard /></div>}
+        </div>
       </div>
-    </div>
-  );
-}
-
-function TabBtn({ children, active, onClick, disabled, title }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      style={{
-        display:     'flex',
-        alignItems:  'center',
-        gap:         6,
-        padding:     '7px 14px',
-        borderRadius:'var(--r)',
-        border:      'none',
-        background:  active ? 'var(--s3)' : 'transparent',
-        color:       active ? 'var(--tx)' : disabled ? 'var(--muted2)' : 'var(--muted)',
-        cursor:      disabled ? 'not-allowed' : 'pointer',
-        fontWeight:  active ? 600 : 400,
-        fontSize:    13,
-        transition:  'all .15s',
-        borderBottom: active ? '2px solid var(--teal)' : '2px solid transparent',
-      }}
-    >{children}</button>
+    </>
   );
 }
 
 const s = {
   shell:     { display:'flex', flexDirection:'column', height:'100vh' },
-  header:    { display:'flex', alignItems:'center', gap:16, padding:'8px 20px', background:'var(--s1)', borderBottom:'1px solid var(--b1)', flexShrink:0 },
-  logo:      { display:'flex', alignItems:'center', gap:8, flexShrink:0 },
-  logoTxt:   { fontWeight:700, fontSize:15, letterSpacing:'-.3px' },
-  tabs:      { flex:1, display:'flex', alignItems:'center', gap:4, justifyContent:'center' },
-  tabBadge:  { fontSize:10, fontWeight:600, padding:'1px 6px', borderRadius:20, background:'rgba(88,166,255,.15)', color:'var(--blue)' },
+  header:    { display:'flex', alignItems:'center', gap:16, padding:'10px 24px',
+               background:'#0f1f0f', borderBottom:'1px solid rgba(74,222,128,.1)',
+               boxShadow:'0 1px 8px rgba(0,0,0,.4)', flexShrink:0 },
+  brand:     { display:'flex', alignItems:'center', gap:10, flexShrink:0 },
+  brandB:    { fontFamily:"'Noto Sans Bengali','Kalpurush',sans-serif", fontSize:18, fontWeight:800, color:'#4ade80', letterSpacing:'-.5px' },
+  brandE:    { fontSize:12, fontWeight:500, color:'#6b7280', letterSpacing:'1.5px' },
+  brandTag:  { fontSize:9.5, color:'rgba(74,222,128,.5)', letterSpacing:'.4px', textTransform:'uppercase' },
+  adminPill: { fontSize:10, padding:'2px 8px', borderRadius:20, background:'rgba(251,191,36,.12)', color:'#fbbf24', fontWeight:600, border:'1px solid rgba(251,191,36,.25)' },
+  tabs:      { flex:1, display:'flex', alignItems:'center', gap:2, justifyContent:'center' },
+  tabBtn:    { display:'flex', alignItems:'center', gap:6, padding:'7px 16px', border:'none', background:'transparent', color:'#6b7280', cursor:'pointer', fontWeight:500, fontSize:13, borderRadius:'var(--r)', transition:'all .15s' },
+  tabActive: { background:'rgba(74,222,128,.12)', color:'#4ade80', fontWeight:700 },
+  badge:     { fontSize:10, padding:'2px 7px', borderRadius:20, background:'#15803d', color:'#fff', fontWeight:700 },
   userArea:  { display:'flex', alignItems:'center', gap:12, flexShrink:0 },
-  logoutBtn: { padding:'6px 12px', fontSize:12, background:'transparent', border:'1px solid var(--b2)', color:'var(--muted)', borderRadius:'var(--r)', cursor:'pointer' },
+  signOutBtn:{ padding:'6px 14px', fontSize:12, fontWeight:500, background:'transparent', border:'1px solid var(--b2)', color:'var(--muted2)', borderRadius:'var(--r)', cursor:'pointer', transition:'all .15s' },
   content:   { flex:1, overflow:'hidden' },
 };

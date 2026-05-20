@@ -24,41 +24,29 @@ class TokenResponse(BaseModel):
     user_id:      str
     email:        str
     full_name:    str
+    role:         str          # 'user' | 'admin'
 
 
-# ── POST /api/auth/register ───────────────────────────────────────────────────
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterRequest, db=Depends(get_db)):
     existing = await db.fetchrow("SELECT id FROM users WHERE email = $1", body.email)
     if existing:
         raise HTTPException(400, "Email already registered")
-
     if len(body.password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
 
     row = await db.fetchrow(
-        """
-        INSERT INTO users (email, hashed_password, full_name)
-        VALUES ($1, $2, $3)
-        RETURNING id, email, full_name
-        """,
-        body.email,
-        hash_password(body.password),
-        body.full_name,
+        "INSERT INTO users (email, hashed_password, full_name) VALUES ($1,$2,$3) RETURNING id, email, full_name",
+        body.email, hash_password(body.password), body.full_name,
     )
     return {"message": "Account created", "user_id": str(row["id"]), "email": row["email"]}
 
 
-# ── POST /api/auth/login ──────────────────────────────────────────────────────
-# Accepts application/x-www-form-urlencoded (standard OAuth2 form)
 @router.post("/login", response_model=TokenResponse)
-async def login(
-    form: Annotated[OAuth2PasswordRequestForm, Depends()],
-    db=Depends(get_db),
-):
+async def login(form: Annotated[OAuth2PasswordRequestForm, Depends()], db=Depends(get_db)):
     row = await db.fetchrow(
-        "SELECT id, email, hashed_password, full_name FROM users WHERE email = $1",
-        form.username,   # OAuth2 spec uses "username" field
+        "SELECT id, email, hashed_password, full_name, role FROM users WHERE email = $1",
+        form.username,
     )
     if not row or not verify_password(form.password, row["hashed_password"]):
         raise HTTPException(401, "Incorrect email or password")
@@ -69,10 +57,10 @@ async def login(
         user_id=str(row["id"]),
         email=row["email"],
         full_name=row["full_name"],
+        role=row["role"],
     )
 
 
-# ── GET /api/auth/me ──────────────────────────────────────────────────────────
 @router.get("/me")
 async def me(current_user: CurrentUser):
     return current_user

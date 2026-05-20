@@ -9,12 +9,13 @@ from jose import JWTError
 from auth.service import decode_token
 from database.connection import get_db
 
-oauth2_scheme   = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
-_UNAUTHORIZED   = HTTPException(
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+_UNAUTHORIZED = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,
     detail="Invalid or expired token",
     headers={"WWW-Authenticate": "Bearer"},
 )
+_FORBIDDEN = HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
 
 async def get_current_user(
@@ -30,7 +31,7 @@ async def get_current_user(
         raise _UNAUTHORIZED
 
     row = await db.fetchrow(
-        "SELECT id, email, full_name, created_at FROM users WHERE id = $1",
+        "SELECT id, email, full_name, role, created_at FROM users WHERE id = $1",
         user_id,
     )
     if not row:
@@ -38,5 +39,11 @@ async def get_current_user(
     return dict(row)
 
 
-# Shorthand type alias used in route signatures
+async def get_admin_user(current_user: Annotated[dict, Depends(get_current_user)]) -> dict:
+    if current_user.get("role") != "admin":
+        raise _FORBIDDEN
+    return current_user
+
+
 CurrentUser = Annotated[dict, Depends(get_current_user)]
+AdminUser   = Annotated[dict, Depends(get_admin_user)]

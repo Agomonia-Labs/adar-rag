@@ -1,244 +1,210 @@
 // src/components/DocumentsTab.jsx
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { uploadDocuments, listDocuments, getViewUrl, triggerEmbed, deleteDocument } from '../services/api.js';
+import { toast } from './Toast.jsx';
 import ChunksViewer from './ChunksViewer.jsx';
+import SummaryPanel from './SummaryPanel.jsx';
 
-const MAX_FILES = 10;
+const MAX_FILES = parseInt(import.meta.env.VITE_MAX_UPLOAD_FILES || '500');
 
-const STATUS_CFG = {
-  uploading:  { color:'var(--blue)',  bg:'rgba(88,166,255,.1)',   label:'Uploading'    },
-  chunking:   { color:'var(--amber)', bg:'rgba(227,179,65,.1)',   label:'Chunking…'    },
-  chunked:    { color:'var(--teal)',  bg:'rgba(31,186,138,.1)',   label:'Ready to embed'},
-  embedding:  { color:'var(--amber)', bg:'rgba(227,179,65,.1)',   label:'Embedding…'   },
-  embedded:   { color:'var(--teal)',  bg:'rgba(31,186,138,.15)',  label:'Embedded ✓'   },
-  error:      { color:'var(--red)',   bg:'rgba(248,81,73,.1)',    label:'Error'        },
+const STATUS = {
+  uploading: { strip:'#94a3b8', bg:'rgba(148,163,184,.1)', color:'#94a3b8', label:'Uploading…'     },
+  chunking:  { strip:'#fbbf24', bg:'rgba(251,191,36,.1)',  color:'#fbbf24', label:'Chunking…'      },
+  chunked:   { strip:'#60a5fa', bg:'rgba(96,165,250,.1)',  color:'#60a5fa', label:'Ready to embed' },
+  embedding: { strip:'#fbbf24', bg:'rgba(251,191,36,.1)',  color:'#fbbf24', label:'Embedding…'     },
+  embedded:  { strip:'#4ade80', bg:'rgba(74,222,128,.1)',  color:'#4ade80', label:'Embedded ✓'     },
+  error:     { strip:'#f87171', bg:'rgba(248,113,113,.1)', color:'#f87171', label:'Error'           },
 };
 
-const FILE_ICONS = { pdf:'📄', docx:'📝', csv:'📊', image:'🖼', text:'📃', '?':'📁' };
-function fmtSize(b) { return b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB'; }
+const ICONS = { pdf:'📄', docx:'📝', csv:'📊', image:'🖼', text:'📃', '?':'📁' };
+const fmtSz = b => b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
 
 export default function DocumentsTab({ onEmbedChange }) {
   const [docs,    setDocs]    = useState([]);
   const [loading, setLoading] = useState(true);
   const [drag,    setDrag]    = useState(false);
   const [busy,    setBusy]    = useState(false);
-  const [viewer,  setViewer]  = useState(null);  // docId whose chunks are open
-  const [error,   setError]   = useState('');
-  const fileRef  = useRef(null);
-  const pollRef  = useRef(null);
+  const [viewer,  setViewer]  = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [selected,setSelected]= useState([]);
+  const fileRef = useRef(null);
+  const pollRef = useRef(null);
 
   const loadDocs = useCallback(async () => {
-    try {
-      const data = await listDocuments();
-      setDocs(data);
-      onEmbedChange?.(data.filter(d => d.status === 'embedded'));
-    } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
+    try { const d=await listDocuments(); setDocs(d); onEmbedChange?.(d.filter(x=>x.status==='embedded')); }
+    catch(e){ toast(e.message,'error'); }
+    finally{ setLoading(false); }
   }, [onEmbedChange]);
 
-  // Poll every 3s while any doc is in a transient state
   useEffect(() => {
     loadDocs();
     pollRef.current = setInterval(() => {
-      setDocs(prev => {
-        const needsPoll = prev.some(d => ['uploading','chunking','embedding'].includes(d.status));
-        if (needsPoll) loadDocs();
-        return prev;
-      });
+      setDocs(p => { if(p.some(d=>['uploading','chunking','embedding'].includes(d.status))) loadDocs(); return p; });
     }, 3000);
     return () => clearInterval(pollRef.current);
   }, [loadDocs]);
 
-  const handleFiles = useCallback(async fileList => {
-    const files = Array.from(fileList);
-    if (!files.length) return;
-    const existing = docs.filter(d => d.status !== 'error').length;
-    if (existing + files.length > MAX_FILES) {
-      setError(`Max ${MAX_FILES} documents. You have ${existing}; can add ${MAX_FILES - existing} more.`);
-      return;
-    }
-    setError(''); setBusy(true);
-    try {
-      await uploadDocuments(files);
-      await loadDocs();
-    } catch (e) { setError(e.message); }
-    finally { setBusy(false); }
+  const handleFiles = useCallback(async files => {
+    files = Array.from(files);
+    const ex = docs.filter(d=>!['error','deleted'].includes(d.status)).length;
+    if (ex+files.length>MAX_FILES){ toast(`Max ${MAX_FILES} docs. Have ${ex}; can add ${MAX_FILES-ex} more.`,'error'); return; }
+    setBusy(true);
+    try{ await uploadDocuments(files); await loadDocs(); toast(`${files.length} file${files.length>1?'s':''} uploaded`,'success'); }
+    catch(e){ toast(e.message,'error'); }
+    finally{ setBusy(false); }
   }, [docs, loadDocs]);
 
-  const handleEmbed = useCallback(async docId => {
-    try {
-      setError('');
-      await triggerEmbed(docId);
-      await loadDocs();
-    } catch (e) { setError(e.message); }
-  }, [loadDocs]);
+  const handleEmbed  = async id => { try{ await triggerEmbed(id); await loadDocs(); toast('Embedding started','info'); }catch(e){ toast(e.message,'error'); } };
+  const handleView   = async id => { try{ const{url}=await getViewUrl(id); window.open(url,'_blank'); }catch(e){ toast(e.message,'error'); } };
+  const handleDelete = async id => { try{ await deleteDocument(id); await loadDocs(); toast('Deleted','success'); }catch(e){ toast(e.message,'error'); } };
+  const toggleSel    = id => setSelected(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
 
-  const handleView = useCallback(async docId => {
-    try {
-      const { url } = await getViewUrl(docId);
-      window.open(url, '_blank');
-    } catch (e) { setError(e.message); }
-  }, []);
-
-  const handleDelete = useCallback(async docId => {
-    if (!confirm('Delete this document and all its chunks/embeddings?')) return;
-    try {
-      await deleteDocument(docId);
-      await loadDocs();
-    } catch (e) { setError(e.message); }
-  }, [loadDocs]);
-
-  const readyCount = docs.filter(d => d.status !== 'error' && d.status !== 'deleted').length;
-  const canUpload  = readyCount < MAX_FILES && !busy;
+  const total    = docs.filter(d=>!['error','deleted'].includes(d.status)).length;
+  const embedded = docs.filter(d=>d.status==='embedded').length;
+  const chunked  = docs.filter(d=>d.status==='chunked').length;
+  const selDocs  = docs.filter(d=>selected.includes(d.id));
 
   return (
     <div style={s.wrap}>
-      {/* Upload zone */}
-      {canUpload && (
-        <div
-          style={{ ...s.dz, ...(drag ? s.dzDrag : {}) }}
-          onDragOver={e => { e.preventDefault(); setDrag(true); }}
-          onDragLeave={() => setDrag(false)}
-          onDrop={e => { e.preventDefault(); setDrag(false); handleFiles(e.dataTransfer.files); }}
-          onClick={() => fileRef.current?.click()}
-          role="button" tabIndex={0}
-          onKeyDown={e => e.key === 'Enter' && fileRef.current?.click()}
-        >
-          <span style={{ fontSize:32 }}>⬆</span>
-          <p style={{ fontWeight:500, fontSize:14 }}>Drop files or click to upload</p>
-          <p style={{ fontSize:12, color:'var(--muted2)', marginTop:3 }}>
-            PDF · DOCX · CSV · Images · TXT &nbsp;·&nbsp; max {MAX_FILES - readyCount} more file{MAX_FILES - readyCount !== 1 ? 's' : ''}
-          </p>
-        </div>
-      )}
-      {readyCount >= MAX_FILES && (
-        <div style={s.maxBanner}>
-          <span>📦</span> You have reached the {MAX_FILES}-document limit. Delete a document to upload more.
-        </div>
-      )}
-
-      <input ref={fileRef} type="file" multiple
-        accept=".pdf,.docx,.csv,.txt,.png,.jpg,.jpeg,.gif,.webp,.tiff"
-        style={{ display:'none' }}
-        onChange={e => { handleFiles(e.target.files); e.target.value=''; }}
-      />
-
-      {error && <div style={s.errBanner}>{error} <button style={s.closeErr} onClick={() => setError('')}>×</button></div>}
-
-      {/* Hint row */}
-      <div style={s.hint}>
-        <span>🔄 Chunking starts automatically after upload.</span>
-        <span>Click <strong>Embed</strong> to generate vectors when a document is ready.</span>
+      {/* Stats bar */}
+      <div style={s.bar}>
+        <Stat v={total}    l="Total"    c="var(--tx)"   />
+        <Stat v={chunked}  l="Chunked"  c="var(--blue)" />
+        <Stat v={embedded} l="Embedded" c="var(--teal)" />
+        <div style={{flex:1}}/>
+        {selected.length>=2 && (
+          <button style={s.multiBtn} onClick={()=>setSummary({documentIds:selected,docNames:selDocs.map(d=>d.original_name)})}>
+            📝 Summarize {selected.length} docs
+          </button>
+        )}
+        {total<MAX_FILES && (
+          <button style={s.uploadBtn} onClick={()=>fileRef.current?.click()} disabled={busy}>
+            ⬆ {busy?'Uploading…':'Upload'}
+          </button>
+        )}
       </div>
 
-      {/* Document list */}
-      {loading
-        ? <div style={s.centre}>Loading documents…</div>
-        : docs.length === 0
-          ? <div style={s.centre}><div style={{ fontSize:'3rem', opacity:.2 }}>📂</div><p style={{ marginTop:8 }}>No documents yet — upload some above</p></div>
-          : (
-            <div style={s.list}>
-              {docs.map(doc => (
-                <DocCard
-                  key={doc.id}
-                  doc={doc}
-                  onEmbed={() => handleEmbed(doc.id)}
-                  onViewSource={() => handleView(doc.id)}
-                  onViewChunks={() => setViewer(doc.id)}
-                  onDelete={() => handleDelete(doc.id)}
-                />
-              ))}
-            </div>
-          )
-      }
-
-      {/* Chunks viewer slide-over */}
-      {viewer && (
-        <ChunksViewer docId={viewer} onClose={() => setViewer(null)} />
+      {/* Drop zone */}
+      {total<MAX_FILES && (
+        <div style={{...s.dz,...(drag?s.dzOn:{})}}
+          onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)}
+          onDrop={e=>{e.preventDefault();setDrag(false);handleFiles(e.dataTransfer.files);}}
+          onClick={()=>fileRef.current?.click()} role="button" tabIndex={0}>
+          <div style={{fontSize:30,marginBottom:6}}>⬆</div>
+          <p style={{fontWeight:600,fontSize:13,color:'#4ade80'}}>{drag?'Drop to upload':'Drop files or click to upload'}</p>
+          <p style={{fontSize:11,color:'var(--muted2)',marginTop:3}}>PDF · DOCX · CSV · Images · TXT &nbsp;·&nbsp; {MAX_FILES-total} slots remaining</p>
+        </div>
       )}
+
+      <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.csv,.txt,.png,.jpg,.jpeg,.gif,.webp,.tiff"
+        style={{display:'none'}} onChange={e=>{handleFiles(e.target.files);e.target.value='';}} />
+
+      <div style={s.hint}>
+        <span>🔄 Chunking starts automatically.</span>
+        <span>Click <strong style={{color:'#4ade80'}}>⚡ Embed</strong> to generate vectors.</span>
+        <span>Click <strong style={{color:'#4ade80'}}>📝 Summary</strong> anytime after chunking.</span>
+      </div>
+
+      {loading ? <div style={s.ctr}>Loading…</div>
+       : docs.length===0 ? (
+        <div style={s.empty}><div style={{fontSize:'3rem',opacity:.15}}>📂</div><p style={{fontWeight:600,marginTop:'.75rem'}}>No documents yet</p><p style={{fontSize:13,color:'var(--muted2)',marginTop:4}}>Upload files above to get started</p></div>
+       ) : (
+        <div style={s.list}>
+          {docs.map(doc=>(
+            <DocCard key={doc.id} doc={doc} selected={selected.includes(doc.id)}
+              onSelect={()=>toggleSel(doc.id)} onEmbed={()=>handleEmbed(doc.id)}
+              onViewSource={()=>handleView(doc.id)} onViewChunks={()=>setViewer(doc.id)}
+              onSummarize={()=>setSummary({docId:doc.id,docName:doc.original_name})}
+              onDelete={handleDelete} />
+          ))}
+        </div>
+       )}
+
+      {viewer && <ChunksViewer docId={viewer} onClose={()=>setViewer(null)} />}
+      {summary && <SummaryPanel docId={summary.docId} docName={summary.docName} documentIds={summary.documentIds} docNames={summary.docNames} onClose={()=>setSummary(null)} />}
     </div>
   );
 }
 
-// ── Document card ─────────────────────────────────────────────────────────────
-function DocCard({ doc, onEmbed, onViewSource, onViewChunks, onDelete }) {
-  const cfg   = STATUS_CFG[doc.status] || { color:'var(--muted)', bg:'var(--s3)', label:doc.status };
-  const ftype = doc.file_type || '?';
-  const spin  = ['chunking','embedding','uploading'].includes(doc.status);
+function Stat({v,l,c}){ return <div style={{textAlign:'center',minWidth:50}}><div style={{fontSize:20,fontWeight:700,color:c}}>{v}</div><div style={{fontSize:9,color:'var(--muted2)',textTransform:'uppercase',letterSpacing:'.5px',marginTop:1}}>{l}</div></div>; }
 
+function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSummarize,onDelete}){
+  const [conf,setConf]=useState(false);
+  const cfg=STATUS[doc.status]||{strip:'#6b7280',bg:'rgba(107,114,128,.1)',color:'#6b7280',label:doc.status};
+  const spin=['chunking','embedding','uploading'].includes(doc.status);
+  const canSum=['chunked','embedding','embedded'].includes(doc.status);
   return (
-    <div style={s.card}>
-      <div style={s.cardRow}>
-        {/* Icon + info */}
-        <span style={{ fontSize:22, flexShrink:0 }}>{FILE_ICONS[ftype] || '📁'}</span>
-        <div style={s.cardInfo}>
-          <p style={s.cardName} title={doc.original_name}>{doc.original_name}</p>
-          <div style={s.cardMeta}>
-            <span style={{ ...s.badge, background:cfg.bg, color:cfg.color }}>
-              {spin && <span style={{ display:'inline-block', animation:'spin .8s linear infinite', marginRight:3 }}>⟳</span>}
+    <div style={{...s.card,...(selected?s.cardSel:{})}}>
+      <div style={s.cardInner}>
+        <div style={{...s.strip,background:cfg.strip}}/>
+        {canSum && <input type="checkbox" checked={selected} onChange={onSelect} style={{width:'auto',margin:'2px 0 0',accentColor:'#4ade80',cursor:'pointer',flexShrink:0}}/>}
+        <span style={{fontSize:22,flexShrink:0}}>{ICONS[doc.file_type||'?']||'📁'}</span>
+        <div style={s.info}>
+          <p style={s.name} title={doc.original_name}>{doc.original_name}</p>
+          <div style={s.meta}>
+            <span style={{...s.badge2,background:cfg.bg,color:cfg.color,border:`1px solid ${cfg.strip}30`}}>
+              {spin && <span style={{display:'inline-block',animation:'spin .8s linear infinite',marginRight:3}}>⟳</span>}
               {cfg.label}
             </span>
-            <span style={s.metaTxt}>{ftype.toUpperCase()}</span>
-            <span style={s.metaTxt}>{fmtSize(doc.file_size)}</span>
-            {doc.chunk_count > 0 && <span style={s.metaTxt}>{doc.chunk_count} chunks</span>}
+            <span style={s.mt}>{(doc.file_type||'?').toUpperCase()}</span>
+            <span style={s.mt}>{fmtSz(doc.file_size)}</span>
+            {doc.chunk_count>0 && <span style={s.mt}>{doc.chunk_count} chunks</span>}
           </div>
-          {doc.error_message && <p style={{ fontSize:11, color:'var(--red)', marginTop:4 }}>{doc.error_message}</p>}
+          {doc.error_message && <p style={{fontSize:11,color:'var(--red)',marginTop:4}}>{doc.error_message}</p>}
+          {conf && (
+            <div style={s.conf}>
+              <span style={{fontSize:12,color:'var(--red)',fontWeight:500}}>Delete this document?</span>
+              <button style={s.confY} onClick={()=>{setConf(false);onDelete(doc.id);}}>Yes, delete</button>
+              <button style={s.confN} onClick={()=>setConf(false)}>Cancel</button>
+            </div>
+          )}
         </div>
-
-        {/* Actions */}
-        <div style={s.actions}>
-          <Btn onClick={onViewSource} title="View source in GCS" disabled={['uploading','chunking'].includes(doc.status)}>🔗 Source</Btn>
-          {['chunked','embedding','embedded'].includes(doc.status) && (
-            <Btn onClick={onViewChunks} title="Browse chunks">📋 Chunks</Btn>
-          )}
-          {doc.status === 'chunked' && (
-            <Btn onClick={onEmbed} primary title="Generate embeddings and store in pgvector">⚡ Embed</Btn>
-          )}
-          {doc.status === 'embedded' && (
-            <Btn onClick={onEmbed} title="Re-embed this document">↩ Re-embed</Btn>
-          )}
-          <Btn onClick={onDelete} danger title="Delete document, chunks and vectors">🗑</Btn>
-        </div>
+      </div>
+      <div style={s.footer}>
+        <Btn onClick={onViewSource} disabled={['uploading','chunking'].includes(doc.status)}>🔗 Source</Btn>
+        {canSum && <Btn onClick={onViewChunks}>📋 Chunks</Btn>}
+        {canSum && <Btn onClick={onSummarize} accent>📝 Summary</Btn>}
+        {doc.status==='chunked'  && <Btn onClick={onEmbed} primary>⚡ Embed</Btn>}
+        {doc.status==='embedded' && <Btn onClick={onEmbed}>↩ Re-embed</Btn>}
+        <div style={{flex:1}}/>
+        {!conf && <Btn onClick={()=>setConf(true)} danger>🗑 Delete</Btn>}
       </div>
     </div>
   );
 }
 
-function Btn({ children, onClick, primary, danger, disabled, title }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      style={{
-        padding:'5px 10px', fontSize:11.5, fontWeight:500, borderRadius:'var(--r)',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        border: primary ? 'none' : '1px solid var(--b2)',
-        background: primary ? 'var(--teal)' : danger ? 'rgba(248,81,73,.08)' : 'transparent',
-        color:   primary ? '#fff' : danger ? 'var(--red)' : 'var(--muted)',
-        opacity: disabled ? .5 : 1,
-        transition:'all .15s',
-      }}
-    >{children}</button>
-  );
+function Btn({children,onClick,primary,danger,accent,disabled}){
+  return <button onClick={onClick} disabled={disabled} style={{
+    display:'flex',alignItems:'center',gap:4,padding:'4px 10px',fontSize:11,fontWeight:500,borderRadius:6,cursor:disabled?'not-allowed':'pointer',
+    border:primary?'none':accent?'1px solid rgba(74,222,128,.3)':danger?'1px solid rgba(248,113,113,.3)':'1px solid var(--b2)',
+    background:primary?'#15803d':accent?'rgba(74,222,128,.1)':danger?'rgba(248,113,113,.08)':'transparent',
+    color:primary?'#fff':accent?'#4ade80':danger?'var(--red)':'var(--muted2)',
+    opacity:disabled?.4:1,transition:'all .15s',
+  }}>{children}</button>;
 }
 
-const s = {
-  wrap:      { padding:'1.5rem', maxWidth:900, margin:'0 auto' },
-  dz:        { border:'1.5px dashed var(--b2)', borderRadius:'var(--rl)', padding:'2rem', textAlign:'center', cursor:'pointer', background:'var(--s2)', marginBottom:'1rem', transition:'all .15s', display:'flex', flexDirection:'column', alignItems:'center', gap:6 },
-  dzDrag:    { borderColor:'var(--teal)', background:'rgba(31,186,138,.05)' },
-  maxBanner: { background:'rgba(227,179,65,.1)', color:'var(--amber)', border:'1px solid rgba(227,179,65,.2)', borderRadius:'var(--r)', padding:'10px 14px', fontSize:13, marginBottom:'1rem', display:'flex', gap:8, alignItems:'center' },
-  errBanner: { background:'rgba(248,81,73,.08)', color:'var(--red)', border:'1px solid rgba(248,81,73,.2)', borderRadius:'var(--r)', padding:'10px 14px', fontSize:13, marginBottom:'1rem', display:'flex', justifyContent:'space-between', alignItems:'center' },
-  closeErr:  { background:'none', border:'none', color:'var(--red)', cursor:'pointer', fontSize:16, lineHeight:1 },
-  hint:      { display:'flex', gap:'1.5rem', marginBottom:'1rem', fontSize:12, color:'var(--muted2)', flexWrap:'wrap' },
-  list:      { display:'flex', flexDirection:'column', gap:8 },
-  centre:    { textAlign:'center', padding:'3rem', color:'var(--muted)', fontSize:13 },
-  card:      { background:'var(--s2)', border:'1px solid var(--b1)', borderRadius:'var(--rl)', padding:'12px 14px', animation:'fadeUp .2s ease' },
-  cardRow:   { display:'flex', alignItems:'flex-start', gap:12 },
-  cardInfo:  { flex:1, minWidth:0 },
-  cardName:  { fontSize:13.5, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', marginBottom:5 },
-  cardMeta:  { display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' },
-  badge:     { display:'inline-flex', alignItems:'center', padding:'2px 8px', borderRadius:20, fontSize:11, fontWeight:500 },
-  metaTxt:   { fontSize:11, color:'var(--muted2)' },
-  actions:   { display:'flex', gap:5, flexShrink:0, flexWrap:'wrap', justifyContent:'flex-end' },
+const s={
+  wrap:    {padding:'1.25rem 1.5rem',maxWidth:960,margin:'0 auto'},
+  bar:     {display:'flex',alignItems:'center',gap:20,background:'var(--s2)',border:'1px solid var(--b1)',borderRadius:'var(--rl)',padding:'10px 18px',marginBottom:12,boxShadow:'0 2px 8px rgba(0,0,0,.3)'},
+  uploadBtn:{background:'#15803d',color:'#fff',border:'none',borderRadius:20,padding:'6px 16px',fontSize:12,fontWeight:700,cursor:'pointer',letterSpacing:'.2px',boxShadow:'0 2px 8px rgba(21,128,61,.4)'},
+  multiBtn:{background:'rgba(74,222,128,.1)',color:'#4ade80',border:'1px solid rgba(74,222,128,.25)',borderRadius:20,padding:'6px 14px',fontSize:12,fontWeight:600,cursor:'pointer'},
+  dz:      {border:'1.5px dashed rgba(74,222,128,.3)',borderRadius:'var(--rl)',padding:'1.75rem',textAlign:'center',cursor:'pointer',background:'rgba(74,222,128,.04)',marginBottom:10,transition:'all .15s',display:'flex',flexDirection:'column',alignItems:'center'},
+  dzOn:    {borderColor:'#4ade80',background:'rgba(74,222,128,.08)'},
+  hint:    {display:'flex',gap:12,marginBottom:10,fontSize:11.5,color:'var(--muted2)',flexWrap:'wrap'},
+  list:    {display:'flex',flexDirection:'column',gap:8},
+  ctr:     {textAlign:'center',padding:'3rem',color:'var(--muted2)'},
+  empty:   {textAlign:'center',padding:'4rem 2rem',color:'var(--tx)'},
+  card:    {background:'var(--s2)',border:'1px solid var(--b1)',borderRadius:'var(--rl)',overflow:'hidden',transition:'border-color .15s',animation:'fadeUp .2s ease'},
+  cardSel: {border:'1px solid rgba(74,222,128,.3)',background:'rgba(74,222,128,.04)'},
+  cardInner:{display:'flex',alignItems:'flex-start',gap:10,padding:'11px 14px'},
+  strip:   {width:4,alignSelf:'stretch',borderRadius:2,flexShrink:0,margin:'-11px 0 -11px -14px',marginRight:4},
+  info:    {flex:1,minWidth:0},
+  name:    {fontSize:13.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:5,color:'var(--tx)'},
+  meta:    {display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'},
+  badge2:  {display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:20,fontSize:11,fontWeight:600},
+  mt:      {fontSize:11,color:'var(--muted2)'},
+  footer:  {display:'flex',gap:5,padding:'7px 14px',borderTop:'1px solid var(--b1)',background:'rgba(0,0,0,.15)',flexWrap:'wrap'},
+  conf:    {display:'flex',alignItems:'center',gap:8,marginTop:6,padding:'5px 8px',background:'rgba(248,113,113,.08)',borderRadius:6,border:'1px solid rgba(248,113,113,.2)',flexWrap:'wrap'},
+  confY:   {padding:'2px 10px',fontSize:11.5,fontWeight:700,background:'#dc2626',color:'#fff',border:'none',borderRadius:5,cursor:'pointer'},
+  confN:   {padding:'2px 10px',fontSize:11.5,background:'transparent',border:'1px solid var(--b2)',color:'var(--muted2)',borderRadius:5,cursor:'pointer'},
 };

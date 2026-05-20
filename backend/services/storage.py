@@ -1,9 +1,6 @@
 # services/storage.py
-# Google Cloud Storage operations.
-# Bucket structure:
-#   users/{user_id}/documents/{doc_id}/source/{filename}
-#   users/{user_id}/documents/{doc_id}/chunks/chunk_{n:04d}.txt
-#   users/{user_id}/documents/{doc_id}/chunks/_metadata.json
+# Google Cloud Storage — works with both service account key (local/Docker)
+# and Application Default Credentials (Cloud Run / GKE).
 from __future__ import annotations
 import os, json, asyncio
 from datetime import timedelta
@@ -12,10 +9,11 @@ from typing import Any
 from google.cloud import storage
 from google.oauth2 import service_account
 
-GCS_BUCKET   = os.getenv("GCS_BUCKET_NAME", "docintel-documents")
-KEY_PATH     = os.getenv("GCS_SERVICE_ACCOUNT_KEY_PATH")
-KEY_JSON_STR = os.getenv("GCS_SERVICE_ACCOUNT_KEY_JSON")
+GCS_BUCKET    = os.getenv("GCS_BUCKET_NAME", "docintel-documents")
+KEY_PATH      = os.getenv("GCS_SERVICE_ACCOUNT_KEY_PATH", "")
+KEY_JSON_STR  = os.getenv("GCS_SERVICE_ACCOUNT_KEY_JSON", "")
 SIGNED_EXPIRY = int(os.getenv("GCS_SIGNED_URL_EXPIRY_SECONDS", "3600"))
+_IS_CLOUD_RUN = os.getenv("K_SERVICE") is not None   # Cloud Run sets K_SERVICE
 
 
 # ── Client factory ────────────────────────────────────────────────────────────
@@ -28,7 +26,8 @@ def _make_client() -> storage.Client:
     if KEY_PATH and os.path.exists(KEY_PATH):
         creds = service_account.Credentials.from_service_account_file(KEY_PATH)
         return storage.Client(credentials=creds)
-    return storage.Client()   # Application default credentials (Cloud Run / GKE)
+    # Cloud Run / GKE — use attached service account (ADC)
+    return storage.Client()
 
 
 # ── GCS path helpers ──────────────────────────────────────────────────────────
@@ -53,40 +52,52 @@ async def upload_bytes(blob_path: str, data: bytes, content_type: str = "applica
         blob.upload_from_string(data, content_type=content_type)
     await asyncio.to_thread(_do)
 
-
 async def upload_text(blob_path: str, text: str) -> None:
-    await upload_bytes(blob_path, text.encode("utf-8"), content_type="text/plain; charset=utf-8")
-
+    await upload_bytes(blob_path, text.encode("utf-8"), "text/plain; charset=utf-8")
 
 async def upload_json(blob_path: str, obj: Any) -> None:
-    await upload_bytes(blob_path, json.dumps(obj, indent=2).encode(), content_type="application/json")
+    await upload_bytes(blob_path, json.dumps(obj, indent=2).encode(), "application/json")
 
 
 # ── Download ──────────────────────────────────────────────────────────────────
 async def download_text(blob_path: str) -> str:
     def _do():
-        client = _make_client()
-        blob   = client.bucket(GCS_BUCKET).blob(blob_path)
-        return blob.download_as_text(encoding="utf-8")
+        return _make_client().bucket(GCS_BUCKET).blob(blob_path).download_as_text(encoding="utf-8")
     return await asyncio.to_thread(_do)
 
-
 async def download_json(blob_path: str) -> Any:
-    text = await download_text(blob_path)
-    return json.loads(text)
-
+    return json.loads(await download_text(blob_path))
 
 async def download_bytes(blob_path: str) -> bytes:
     def _do():
-        client = _make_client()
-        blob   = client.bucket(GCS_BUCKET).blob(blob_path)
-        return blob.download_as_bytes()
+        return _make_client().bucket(GCS_BUCKET).blob(blob_path).download_as_bytes()
     return await asyncio.to_thread(_do)
 
 
-# ── Signed URL (time-limited public link for viewing) ─────────────────────────
+# ── Signed URL ────────────────────────────────────────────────────────────────
 async def get_signed_url(blob_path: str, expiry_seconds: int = SIGNED_EXPIRY) -> str:
     def _do():
+        if _IS_CLOUD_RUN:
+            # On Cloud Run: use IAM credentials API for signing (no key file needed)
+            # Requires roles/iam.serviceAccountTokenCreator on the service account
+            import google.auth
+            from google.auth.transport import requests as google_requests
+
+            credentials, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+            credentials.refresh(google_requests.Request())
+            client = storage.Client(credentials=credentials)
+            blob   = client.bucket(GCS_BUCKET).blob(blob_path)
+            return blob.generate_signed_url(
+                expiration=timedelta(seconds=expiry_seconds),
+                method="GET",
+                version="v4",
+                service_account_email=credentials.service_account_email,
+                access_token=credentials.token,
+            )
+
+        # Local / Docker: use service account key
         if KEY_JSON_STR:
             creds = service_account.Credentials.from_service_account_info(
                 json.loads(KEY_JSON_STR)
@@ -95,7 +106,7 @@ async def get_signed_url(blob_path: str, expiry_seconds: int = SIGNED_EXPIRY) ->
             creds = service_account.Credentials.from_service_account_file(KEY_PATH)
         else:
             raise RuntimeError(
-                "Signed URLs require a service account key. "
+                "Signed URLs require a service account key locally. "
                 "Set GCS_SERVICE_ACCOUNT_KEY_PATH or GCS_SERVICE_ACCOUNT_KEY_JSON."
             )
         client = storage.Client(credentials=creds)
@@ -105,30 +116,25 @@ async def get_signed_url(blob_path: str, expiry_seconds: int = SIGNED_EXPIRY) ->
             method="GET",
             version="v4",
         )
+
     return await asyncio.to_thread(_do)
 
 
 # ── Delete ────────────────────────────────────────────────────────────────────
 async def delete_prefix(prefix: str) -> int:
-    """Delete all blobs under a GCS prefix. Returns count deleted."""
     def _do():
         client  = _make_client()
         bucket  = client.bucket(GCS_BUCKET)
         blobs   = list(bucket.list_blobs(prefix=prefix))
-        bucket.delete_blobs(blobs)
+        if blobs:
+            bucket.delete_blobs(blobs)
         return len(blobs)
     return await asyncio.to_thread(_do)
 
-
-# ── List chunks ───────────────────────────────────────────────────────────────
 async def list_chunk_blobs(user_id: str, doc_id: str) -> list[str]:
-    """Return sorted list of chunk blob paths (excludes _metadata.json)."""
     prefix = chunks_dir(user_id, doc_id)
     def _do():
         client = _make_client()
         blobs  = client.bucket(GCS_BUCKET).list_blobs(prefix=prefix)
-        return sorted(
-            b.name for b in blobs
-            if b.name.endswith(".txt") and not b.name.endswith("_metadata.json")
-        )
+        return sorted(b.name for b in blobs if b.name.endswith(".txt"))
     return await asyncio.to_thread(_do)

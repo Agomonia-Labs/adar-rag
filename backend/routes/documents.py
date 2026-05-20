@@ -173,18 +173,27 @@ async def trigger_embedding(
 # ══════════════════════════════════════════════════════════════════════════════
 @router.delete("/{doc_id}")
 async def delete_document(doc_id: str, current_user: CurrentUser, db=Depends(get_db)):
-    row     = await _get_owned(doc_id, current_user["id"], db)
+    row     = await _get_owned(doc_id, str(current_user["id"]), db)
     user_id = str(current_user["id"])
+    warnings = []
 
-    # Delete GCS files
-    await gcs.delete_prefix(f"users/{user_id}/documents/{doc_id}/")
+    # Delete GCS files — non-fatal
+    try:
+        await gcs.delete_prefix(f"users/{user_id}/documents/{doc_id}/")
+    except Exception as e:
+        warnings.append(f"GCS cleanup skipped: {e}")
+        print(f"[delete] GCS warning for doc {doc_id}: {e}")
 
-    # Delete pgvector rows
-    await delete_document_vectors(doc_id)
+    # Delete pgvector rows — non-fatal
+    try:
+        await delete_document_vectors(doc_id)
+    except Exception as e:
+        warnings.append(f"Vector cleanup skipped: {e}")
+        print(f"[delete] Vector warning for doc {doc_id}: {e}")
 
-    # Soft-mark deleted
-    await db.execute("UPDATE documents SET status='deleted', updated_at=NOW() WHERE id=$1", doc_id)
-    return {"deleted": doc_id}
+    # Hard-delete from DB — always runs
+    await db.execute("DELETE FROM documents WHERE id = $1", doc_id)
+    return {"deleted": doc_id, "warnings": warnings}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

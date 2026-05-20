@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 
 from auth.dependencies import CurrentUser, get_current_user
 from database.connection import get_db
-from services.llm import embed_query, chat_stream
+from services.llm import embed_query, chat_stream, rag_system
 from services.vectordb import find_similar
 
 router = APIRouter()
@@ -72,7 +72,7 @@ async def chat_stream_endpoint(req: ChatRequest, current_user: CurrentUser, db=D
                     for m in req.history[-12:] if m.get("role") and m.get("content")
                 ] + [{"role": "user", "content": req.question}]
 
-                await chat_stream(messages, context, on_token)
+                await chat_stream(messages, rag_system(context), on_token)
 
                 sources = _sanitise(chunks)
                 await queue.put(("done", sources))
