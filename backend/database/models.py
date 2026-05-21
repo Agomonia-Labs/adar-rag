@@ -96,6 +96,20 @@ CREATE INDEX IF NOT EXISTS idx_chunks_fts
 
 
 
+-- Message feedback (thumbs up/down on AI responses)
+CREATE TABLE IF NOT EXISTS message_feedback (
+    id         UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_id UUID        REFERENCES chat_sessions(id) ON DELETE SET NULL,
+    message_id TEXT        NOT NULL,
+    rating     SMALLINT    NOT NULL CHECK (rating IN (-1, 1)),
+    question   TEXT,
+    answer     TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_user ON message_feedback(user_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_session ON message_feedback(session_id);
+
 -- Password reset tokens
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),

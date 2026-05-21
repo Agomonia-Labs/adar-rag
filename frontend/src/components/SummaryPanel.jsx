@@ -50,7 +50,28 @@ export default function SummaryPanel({ docId, docName, documentIds, docNames, ch
             <p style={s.hdrT}>{title}</p>
             {isMulti && docNames && <p style={s.hdrS}>{docNames.join(', ').slice(0,80)}{docNames.join(', ').length>80?'…':''}</p>}
           </div>
+          <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+          {output && (
+            <button
+              title="Export summary as Markdown"
+              onClick={() => {
+                const blob = new Blob([output], { type:'text/markdown' });
+                const url  = URL.createObjectURL(blob);
+                const a    = Object.assign(document.createElement('a'), {
+                  href: url,
+                  download: `summary_${(docName||docNames?.join('_')||'export').replace(/[^a-z0-9]/gi,'_').slice(0,40)}.md`
+                });
+                document.body.appendChild(a); a.click();
+                document.body.removeChild(a); URL.revokeObjectURL(url);
+              }}
+              style={{ fontSize:11.5, padding:'4px 10px', background:'rgba(74,222,128,.1)',
+                       color:'#4ade80', border:'1px solid rgba(74,222,128,.3)', borderRadius:6,
+                       cursor:'pointer', fontWeight:600, flexShrink:0 }}>
+              ↓ Export .md
+            </button>
+          )}
           <button style={s.closeBtn} onClick={onClose}>✕</button>
+        </div>
         </div>
 
         {/* Type pills */}

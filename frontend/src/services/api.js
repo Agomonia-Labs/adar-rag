@@ -253,3 +253,22 @@ export async function compareDocuments(doc_id_1, doc_id_2, callbacks) {
     }
   }
 }
+
+// ── Message feedback ────────────────────────────────────────────────────────
+export async function submitFeedback({ sessionId, messageId, rating, question, answer }) {
+  return handleRes(await fetch(`${BASE}/feedback/`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body:    JSON.stringify({
+      session_id: sessionId,
+      message_id: messageId,
+      rating,
+      question: question?.slice(0, 1000),
+      answer:   answer?.slice(0, 2000),
+    }),
+  }));
+}
+
+export async function getSessionFeedback(sessionId) {
+  return handleRes(await fetch(`${BASE}/feedback/session/${sessionId}`, { headers: authHdr() }));
+}

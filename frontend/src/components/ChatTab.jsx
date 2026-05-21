@@ -1,7 +1,8 @@
 // src/components/ChatTab.jsx
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { streamChat, listSessions, createSession, getSession,
-         saveSessionMessages, deleteSession } from '../services/api.js';
+         saveSessionMessages, deleteSession, submitFeedback,
+         getSessionFeedback } from '../services/api.js';
 import MarkdownRenderer from './MarkdownRenderer.jsx';
 
 const nanoid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -14,6 +15,39 @@ const normalizeMsg = (m, i) => ({
   content: typeof m.content === 'string' ? m.content : '',
   sources: Array.isArray(m.sources) ? m.sources : null,
 });
+
+
+// ── Export helpers ────────────────────────────────────────────────────────────
+function exportChatAsMarkdown(session, messages) {
+  const title = session?.title || 'Chat Export';
+  const date  = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+  let md = `# ${title}\n\n*Exported from আদর DocIntel · ${date}*\n\n---\n\n`;
+  for (const m of messages) {
+    if (!m.content) continue;
+    if (m.role === 'user') {
+      md += `**You:** ${m.content}\n\n`;
+    } else {
+      md += `**আদর DocIntel:** ${m.content}\n\n`;
+      if (Array.isArray(m.sources) && m.sources.length) {
+        md += `> **Sources:** `;
+        md += m.sources.map(s =>
+          `${s.doc_name} (chunk ${(s.chunk_index||0)+1}/${s.chunk_total||'?'}, ${Math.round((s.similarity||0)*100)}%)`
+        ).join(' · ');
+        md += '\n\n';
+      }
+      md += '---\n\n';
+    }
+  }
+  _downloadText(md, `${title.replace(/[^a-z0-9]/gi,'_')}.md`, 'text/markdown');
+}
+
+function _downloadText(text, filename, mime) {
+  const blob = new Blob([text], { type: mime });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), { href:url, download:filename });
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
 
 export default function ChatTab({ embeddedDocs }) {
   const userId = localStorage.getItem('user_id') || 'default';
@@ -28,7 +62,8 @@ export default function ChatTab({ embeddedDocs }) {
   const [messages, setMessages] = useState([]);
   const [input,    setInput]    = useState('');
   const [thinking, setThinking] = useState(false);
-  const [saving,   setSaving]   = useState(false);
+  const [saving,        setSaving]        = useState(false);
+  const [sessionFeedback, setSessionFeedback] = useState({});  // {messageId: 1|-1}
 
   const endRef    = useRef(null);
   const saveTimer = useRef(null);
@@ -48,10 +83,15 @@ export default function ChatTab({ embeddedDocs }) {
     if (activeSession?.id === session.id) return;
     setLoadingSession(true);
     setMessages([]);
+    setSessionFeedback({});
     try {
-      const full = await getSession(session.id);
+      const [full, feedback] = await Promise.all([
+        getSession(session.id),
+        getSessionFeedback(session.id).catch(() => ({})),  // fail silently
+      ]);
       setActiveSession(full);
       setMessages((full.messages || []).map(normalizeMsg));
+      setSessionFeedback(feedback || {});
       setSelected(
         Array.isArray(full.document_ids) && full.document_ids.length > 0
           ? full.document_ids
@@ -203,10 +243,20 @@ export default function ChatTab({ embeddedDocs }) {
             {saving && <span style={{ fontSize: 10, color: 'var(--muted2)', opacity: .6 }}>saving…</span>}
             <span style={{ fontSize: 11, color: 'var(--muted2)' }}>{selected.length}/{embeddedDocs.length}</span>
             {activeSession && (
-              <span style={{ fontSize: 10.5, color: 'var(--muted2)', maxWidth: 140,
+              <span style={{ fontSize: 10.5, color: 'var(--muted2)', maxWidth: 120,
                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {activeSession.title}
               </span>
+            )}
+            {messages.length > 0 && activeSession && (
+              <button
+                style={{ fontSize:11, padding:'3px 9px', background:'transparent',
+                         border:'1px solid var(--b2)', color:'var(--muted2)', borderRadius:6,
+                         cursor:'pointer', flexShrink:0 }}
+                title="Export chat as Markdown"
+                onClick={() => exportChatAsMarkdown(activeSession, messages)}>
+                ↓ Export
+              </button>
             )}
           </div>
         </div>
@@ -231,7 +281,20 @@ export default function ChatTab({ embeddedDocs }) {
               </div>
             </div>
           ) : (
-            messages.map(m => <Msg key={m.id} m={m} />)
+            messages.map((m, i) => (
+              <Msg
+                key={m.id}
+                m={m}
+                sessionId={activeSession?.id}
+                prevUserMsg={m.role === 'assistant'
+                  ? messages.slice(0, i).reverse().find(x => x.role === 'user')
+                  : null}
+                initialFeedback={sessionFeedback[m.id] ?? null}
+                onFeedback={(msgId, rating) =>
+                  setSessionFeedback(fb => ({ ...fb, [msgId]: rating }))
+                }
+              />
+            ))
           )}
           {thinking && <Thinking />}
           <div ref={endRef} />
@@ -256,9 +319,37 @@ export default function ChatTab({ embeddedDocs }) {
 }
 
 // ── Message bubble ────────────────────────────────────────────────────────────
-function Msg({ m }) {
+function Msg({ m, sessionId, prevUserMsg, initialFeedback, onFeedback }) {
   const isUser = m.role === 'user';
-  const [open, setOpen] = useState(false);
+  const [open,     setOpen]     = useState(false);
+  const [feedback, setFeedback] = useState(initialFeedback ?? null);  // null | 1 | -1
+
+  // Sync if initialFeedback loads after component mounts (e.g. session feedback arrives async)
+  React.useEffect(() => {
+    if (initialFeedback !== null && initialFeedback !== undefined) {
+      setFeedback(initialFeedback);
+    }
+  }, [initialFeedback]);
+
+  const sendFeedback = async (rating) => {
+    if (feedback === rating) return;   // already rated
+    const prev = feedback;
+    setFeedback(rating);
+    try {
+      await submitFeedback({
+        sessionId,
+        messageId: m.id,
+        rating,
+        question: prevUserMsg?.content,
+        answer:   m.content,
+      });
+      onFeedback?.(m.id, rating);      // bubble up to parent
+    } catch(e) {
+      console.error('Feedback error:', e);
+      setFeedback(prev);               // revert on error
+    }
+  };
+
   return (
     <div style={{ ...s.row, ...(isUser ? s.rowUser : {}) }}>
       {!isUser && <div style={s.av}>🌿</div>}
@@ -268,18 +359,57 @@ function Msg({ m }) {
             ? (m.content || <span style={{ opacity: .4 }}>…</span>)
             : <MarkdownRenderer text={m.content || ''} style={{ fontSize: 13.5 }} />}
         </div>
-        {!isUser && Array.isArray(m.sources) && m.sources.length > 0 && (
-          <div style={{ marginTop: 5 }}>
-            <button style={s.srcToggle} onClick={() => setOpen(o => !o)}>
-              <span style={{ background:'rgba(74,222,128,.12)', color:'#4ade80', padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:600 }}>🐘 pgvector</span>
-              <span style={{ fontSize:11, color:'var(--muted2)' }}>{m.sources.length} source{m.sources.length !== 1 ? 's' : ''}</span>
-              <span style={{ fontSize:11, color:'var(--muted2)' }}>{open ? '▴' : '▾'}</span>
-            </button>
-            {open && (
-              <div style={{ marginTop:6, display:'flex', flexDirection:'column', gap:5 }}>
-                {m.sources.map((src, i) => <Src key={i} src={src} i={i} />)}
-              </div>
+
+        {/* Feedback + sources row */}
+        {!isUser && m.content && (
+          <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:5, flexWrap:'wrap' }}>
+            {/* Thumbs up/down — explicit colours, no CSS variable dependency */}
+            <div style={{ display:'flex', gap:3 }}>
+              <button
+                title={feedback === 1 ? 'Marked helpful' : 'Mark as helpful'}
+                onClick={() => sendFeedback(1)}
+                style={{
+                  background:   feedback === 1 ? 'rgba(74,222,128,.15)' : 'transparent',
+                  border:       `1px solid ${feedback === 1 ? '#4ade80' : 'rgba(255,255,255,.12)'}`,
+                  color:        feedback === 1 ? '#4ade80' : 'rgba(255,255,255,.3)',
+                  borderRadius: 6, cursor:'pointer', fontSize:13,
+                  padding:'2px 6px', outline:'none', lineHeight:1,
+                  opacity:      feedback === -1 ? 0.35 : 1,
+                  transition:   'all .15s',
+                }}>
+                👍
+              </button>
+              <button
+                title={feedback === -1 ? 'Marked not helpful' : 'Mark as not helpful'}
+                onClick={() => sendFeedback(-1)}
+                style={{
+                  background:   feedback === -1 ? 'rgba(248,113,113,.15)' : 'transparent',
+                  border:       `1px solid ${feedback === -1 ? '#f87171' : 'rgba(255,255,255,.12)'}`,
+                  color:        feedback === -1 ? '#f87171' : 'rgba(255,255,255,.3)',
+                  borderRadius: 6, cursor:'pointer', fontSize:13,
+                  padding:'2px 6px', outline:'none', lineHeight:1,
+                  opacity:      feedback === 1 ? 0.35 : 1,
+                  transition:   'all .15s',
+                }}>
+                👎
+              </button>
+            </div>
+
+            {/* Sources toggle */}
+            {Array.isArray(m.sources) && m.sources.length > 0 && (
+              <button style={s.srcToggle} onClick={() => setOpen(o => !o)}>
+                <span style={{ background:'rgba(74,222,128,.12)', color:'#4ade80', padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:600 }}>🐘 pgvector</span>
+                <span style={{ fontSize:11, color:'var(--muted2)' }}>{m.sources.length} source{m.sources.length !== 1 ? 's' : ''}</span>
+                <span style={{ fontSize:11, color:'var(--muted2)' }}>{open ? '▴' : '▾'}</span>
+              </button>
             )}
+          </div>
+        )}
+
+        {/* Sources list */}
+        {!isUser && open && Array.isArray(m.sources) && m.sources.length > 0 && (
+          <div style={{ marginTop:6, display:'flex', flexDirection:'column', gap:5 }}>
+            {m.sources.map((src, i) => <Src key={i} src={src} i={i} />)}
           </div>
         )}
       </div>
@@ -376,6 +506,7 @@ const s = {
   sendOn:        { background:'#15803d', color:'#fff' },
   sendOff:       { background:'var(--s3)', color:'var(--muted2)', cursor:'not-allowed' },
   srcToggle:     { background:'none', border:'none', cursor:'pointer', padding:'3px 0', display:'flex', alignItems:'center', gap:6 },
+  // feedback styles are inline (avoids CSS var conflicts)
   srcCard:       { background:'var(--s2)', border:'1px solid var(--b1)', borderRadius:'var(--r)', padding:'8px 11px' },
   srcBadge:      { fontSize:10, fontWeight:700, padding:'2px 8px', borderRadius:20, background:'rgba(74,222,128,.12)', color:'#4ade80', border:'1px solid rgba(74,222,128,.25)', flexShrink:0 },
 };

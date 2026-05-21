@@ -193,7 +193,7 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
       <div class="slide-dots" id="dots"></div>
     </div>
     <div class="tb-right nav-arrows">
-      <span class="slide-counter" id="counter">1 / 17</span>
+      <span class="slide-counter" id="counter">1 / 19</span>
       <button class="btn-icon" id="autoBtn" onclick="toggleAuto()">▶ Auto</button>
       <button class="nav-btn" id="prevBtn" onclick="goSlide(-1)">←</button>
       <button class="nav-btn" id="nextBtn" onclick="goSlide(1)">→</button>
@@ -958,8 +958,139 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
       </div>
     </div>
 
-    <!-- 17. Summary -->
+
+    <!-- 17. Feedback on AI Responses -->
     <div class="slide" data-idx="16">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Quality Loop</div>
+          <div class="slide-title">Feedback on AI Responses</div>
+          <div class="slide-sub">Every AI response includes a thumbs-up and thumbs-down button. Your ratings create a quality signal that identifies bad retrievals and poor answers — building a continuous improvement loop.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">👍</span><span>Thumbs up or down on every AI message — click once to rate, click again to change</span></div>
+            <div class="feature-item"><span class="feature-icon">💾</span><span>Ratings saved to PostgreSQL with the triggering question and answer for context</span></div>
+            <div class="feature-item"><span class="feature-icon">🔄</span><span>Persistent across sessions — your ratings are restored when you reload or switch sessions</span></div>
+            <div class="feature-item"><span class="feature-icon">🎯</span><span>Selecting one rating dims the other — clear visual state: green for helpful, red for not helpful</span></div>
+            <div class="feature-item"><span class="feature-icon">📊</span><span>Admins can review all feedback via the API — thumbs counts, recent ratings, and user emails</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(16)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">💬 Chat — Feedback</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:10px">
+
+            <!-- AI message with feedback -->
+            <div style="display:flex;gap:7px;align-items:flex-start">
+              <div style="width:24px;height:24px;border-radius:50%;background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.25);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;margin-top:2px">🌿</div>
+              <div style="flex:1">
+                <div style="background:rgba(255,255,255,.06);border:0.5px solid rgba(255,255,255,.1);padding:9px 11px;border-radius:2px 10px 10px 10px;font-size:11px;color:#d1fae5;line-height:1.6;margin-bottom:6px">
+                  Q3 revenue was <strong style="color:#fbbf24">$2.8 million</strong>, a <strong style="color:#fbbf24">17% increase</strong> year-over-year, driven primarily by enterprise contract growth in the APAC region.
+                </div>
+                <!-- Feedback row -->
+                <div style="display:flex;gap:6px;align-items:center">
+                  <button style="background:rgba(74,222,128,.15);border:1px solid #4ade80;border-radius:6px;padding:2px 8px;font-size:12px;cursor:pointer;color:#4ade80">👍</button>
+                  <button style="background:transparent;border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:2px 8px;font-size:12px;cursor:pointer;color:rgba(255,255,255,.3);opacity:0.35">👎</button>
+                  <div style="background:rgba(255,255,255,.04);border:0.5px solid rgba(255,255,255,.06);border-radius:20px;padding:2px 8px;font-size:9.5px;color:#4ade80">✓ Marked helpful</div>
+                  <span style="font-size:9.5px;color:#6b7280;margin-left:auto">🐘 pgvector  2 sources  ▾</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Not helpful example -->
+            <div style="display:flex;gap:7px;align-items:flex-start">
+              <div style="width:24px;height:24px;border-radius:50%;background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.25);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;margin-top:2px">🌿</div>
+              <div style="flex:1">
+                <div style="background:rgba(255,255,255,.06);border:0.5px solid rgba(255,255,255,.1);padding:9px 11px;border-radius:2px 10px 10px 10px;font-size:11px;color:#d1fae5;line-height:1.6;margin-bottom:6px">
+                  I couldn't find specific information about the Q3 cost breakdown in the provided documents.
+                </div>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <button style="background:transparent;border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:2px 8px;font-size:12px;cursor:pointer;color:rgba(255,255,255,.3);opacity:0.35">👍</button>
+                  <button style="background:rgba(248,113,113,.15);border:1px solid #f87171;border-radius:6px;padding:2px 8px;font-size:12px;cursor:pointer;color:#f87171">👎</button>
+                  <div style="background:rgba(248,113,113,.08);border:0.5px solid rgba(248,113,113,.2);border-radius:20px;padding:2px 8px;font-size:9.5px;color:#f87171">✗ Marked not helpful</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- DB storage info -->
+            <div style="background:rgba(255,255,255,.03);border-radius:8px;border:0.5px solid rgba(255,255,255,.07);padding:9px 12px;margin-top:2px">
+              <div style="font-size:9.5px;color:#6b7280;font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">Saved to PostgreSQL</div>
+              <div style="font-size:10px;color:#9ca3af;font-family:monospace;line-height:1.8">
+                message_id: "abc123xyz"<br>
+                rating: <span style="color:#4ade80">+1</span> (helpful)<br>
+                question: "What was Q3 revenue?"<br>
+                restored: ✓ on next session load
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 18. Export -->
+    <div class="slide" data-idx="17">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Export</div>
+          <div class="slide-title">Export Chat & Summaries</div>
+          <div class="slide-sub">Every conversation and summary can be exported as a Markdown file. Take your AI-generated insights into Notion, Confluence, Word, or any editor — with sources included.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">↓</span><span>Export any chat session as Markdown — click the Export button in the chat top bar</span></div>
+            <div class="feature-item"><span class="feature-icon">📄</span><span>Includes all questions, answers, and source citations (document name, chunk, relevance %)</span></div>
+            <div class="feature-item"><span class="feature-icon">📝</span><span>Export any summary as Markdown — button appears in the summary panel after generation</span></div>
+            <div class="feature-item"><span class="feature-icon">⚡</span><span>Instant client-side generation — no server round-trip, no waiting</span></div>
+            <div class="feature-item"><span class="feature-icon">🌐</span><span>Open .md files in Notion, Obsidian, VS Code, Typora, or paste into any editor</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(17)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">Chat Export — Q3_Revenue_Analysis.md</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:10px">
+
+            <!-- Export button in top bar -->
+            <div style="background:rgba(255,255,255,.04);border-radius:8px;border:0.5px solid rgba(255,255,255,.08);padding:8px 10px">
+              <div style="font-size:9.5px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Chat top bar</div>
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <span style="font-size:9.5px;background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.3);padding:2px 8px;border-radius:20px">✓ Q3_Financial.pdf</span>
+                <span style="font-size:9px;color:#6b7280;margin-left:auto">3/3</span>
+                <div style="background:transparent;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:3px 9px;font-size:10px;color:rgba(255,255,255,.6);cursor:pointer">↓ Export</div>
+              </div>
+            </div>
+
+            <!-- Markdown preview -->
+            <div style="background:rgba(0,0,0,.3);border-radius:8px;border:0.5px solid rgba(255,255,255,.08);padding:10px 12px;font-family:monospace;font-size:9.5px;line-height:1.8;color:#d1fae5;flex:1">
+              <span style="color:#4ade80"># Q3 Revenue Analysis</span><br>
+              <span style="color:#6b7280">*Exported from আদর DocIntel · May 20, 2026*</span><br>
+              <br>
+              <span style="color:#60a5fa">---</span><br>
+              <br>
+              <span style="color:#fbbf24">**You:**</span> What was Q3 revenue?<br>
+              <br>
+              <span style="color:#fbbf24">**আদর DocIntel:**</span> Q3 revenue was<br>
+              <span style="color:#d1fae5">$2.8M, up 17% YoY...</span><br>
+              <br>
+              <span style="color:#6b7280">&gt; **Sources:** Q3_Report.pdf</span><br>
+              <span style="color:#6b7280">&gt; (chunk 3/12, 94%)</span><br>
+              <br>
+              <span style="color:#60a5fa">---</span>
+            </div>
+
+            <!-- Summary export button -->
+            <div style="background:rgba(255,255,255,.04);border-radius:8px;border:0.5px solid rgba(255,255,255,.08);padding:8px 10px">
+              <div style="font-size:9.5px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Summary panel header</div>
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-size:10px;color:#d1fae5;flex:1">Executive Summary — Q3_Financial.pdf</span>
+                <div style="background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.3);border-radius:6px;padding:3px 9px;font-size:10px;color:#4ade80;font-weight:600;cursor:pointer">↓ Export .md</div>
+                <div style="font-size:14px;color:#6b7280;cursor:pointer">✕</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 19. Summary -->
+    <div class="slide" data-idx="18">
       <div class="slide-inner full">
         <div style="font-size:52px;margin-bottom:16px">🌿</div>
         <div class="slide-num">আদর DocIntel</div>
@@ -978,6 +1109,8 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">🔀</div><div class="sum-card-title" style="color:#c084fc">Hybrid Search</div><ul class="sum-card-list"><li>pgvector cosine similarity</li><li>PostgreSQL BM25 full-text</li><li>Reciprocal Rank Fusion</li><li>⚡ hybrid / 🔤 keyword / 🔍 vector badges</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">✦</div><div class="sum-card-title" style="color:#fbbf24">Gemini Re-ranking</div><ul class="sum-card-list"><li>20 candidates → Gemini scores</li><li>Cross-encoder (query + chunk)</li><li>Top 6 sent to LLM</li><li>Fallback to retrieval order</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">⇄</div><div class="sum-card-title" style="color:#60a5fa">Doc Comparison</div><ul class="sum-card-list"><li>Select any 2 documents</li><li>Gemini clause-by-clause diff</li><li>Colour-coded: same/modified/added/removed</li><li>Similarity score + filter tabs</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">👍</div><div class="sum-card-title" style="color:#4ade80">Feedback Loop</div><ul class="sum-card-list"><li>Thumbs up/down on AI responses</li><li>Persists across sessions</li><li>Saved to PostgreSQL with context</li><li>Admin feedback analytics API</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">↓</div><div class="sum-card-title" style="color:#fbbf24">Export</div><ul class="sum-card-list"><li>Chat → Markdown with sources</li><li>Summary → Markdown .md</li><li>Client-side, instant download</li><li>Notion / Obsidian / VS Code ready</li></ul></div>
         </div>
 
         <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:20px">
@@ -995,7 +1128,7 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
           <span>🐘 pgvector</span><span>☁ Google Cloud</span><span>🤖 Gemini AI</span><span>⚡ FastAPI</span><span>⚛ React</span><span>🔥 Firebase</span>
         </div>
 
-        <button class="btn-speak" style="margin:20px auto 0" onclick="speakSlide(16)">🔊 Play narration</button>
+        <button class="btn-speak" style="margin:20px auto 0" onclick="speakSlide(18)">🔊 Play narration</button>
       </div>
     </div>
 
@@ -1020,6 +1153,8 @@ const SLIDES = [
   { text: "আদর DocIntel uses hybrid search combining two retrieval signals. First, pgvector finds semantically similar chunks using cosine similarity — great for concepts and meaning. Second, PostgreSQL full-text search finds exact keyword matches using a GIN index — essential for product codes, invoice numbers, names, and dates. The two ranked lists are fused using Reciprocal Rank Fusion: score equals one over sixty plus vector rank, plus one over sixty plus full-text rank. Chunks found by both methods score highest and receive a hybrid badge. The system automatically falls back to vector-only search if full-text search returns no results." },
   { text: "Retrieval gets you candidates — re-ranking gets you the right answer. After hybrid search returns twenty candidates, Gemini acts as a cross-encoder re-ranker. Unlike bi-encoders that score the query and each chunk independently, Gemini reads the query and chunk together as a pair — giving it full context to judge true relevance. Each chunk receives a score from zero to one. The top six are passed to the language model for answer generation. Re-ranked source cards show a star badge alongside the match type and the Gemini relevance score. If re-ranking fails, the system falls back gracefully to retrieval order." },
   { text: "Document comparison mode lets you select any two documents and compare them side by side. Click the Compare button that appears when exactly two documents are selected in the Documents tab. Gemini analyses every clause, term, date, amount, and obligation in both documents, then returns a structured breakdown. You see a similarity score from zero to one hundred percent, unique points from each document, and a section-by-section table colour-coded by difference type: modified sections in amber, added sections in blue, removed sections in red, and identical sections in green. Filter the table by type and click any row to expand and read the specific difference explanation. This feature is especially valuable for legal, finance, and compliance users comparing contracts, leases, policies, or regulations." },
+  { text: "আদর DocIntel captures quality feedback on every AI response. After each answer, thumbs-up and thumbs-down buttons appear below the message. Clicking one turns it green or red while dimming the other — making your selection unmistakable. Your rating is saved to PostgreSQL along with the triggering question and the AI answer for context. Feedback persists across sessions — when you reload or switch to a different session and come back, your previously rated messages restore their green or red state automatically. Administrators can retrieve all feedback via the API, seeing thumbs-up and thumbs-down counts alongside the most recent rated responses and user emails — creating a continuous loop for prompt and retrieval improvement." },
+  { text: "Any chat conversation in আদর DocIntel can be exported as a Markdown file with a single click. The Export button appears in the chat top bar once the session has messages. The downloaded file includes every question formatted in bold, every AI answer with full text, and a source citation block showing document name, chunk number, and relevance percentage for each retrieved chunk. Summaries can also be exported — click the Export .md button in the summary panel header after a summary generates. Both exports happen entirely in the browser with no server round-trip, producing a .md file you can open in Notion, Obsidian, VS Code, Confluence, or paste into any editor." },
   { text: "That's আদর DocIntel — a complete self-service Document Intelligence Platform. Upload and store up to 500 documents per workspace on Google Cloud. Automatically chunk and index them with rich metadata. Generate vector embeddings using Gemini and store them in pgvector for semantic search. Chat with your documents in natural language and get source-cited answers. Summarize in five different ways — from a three-sentence executive overview to a full section-by-section breakdown. And manage everything with a full admin dashboard. Built by Agomonia Labs on the ADAR platform. Try it free at docintel dot adar dot agomoniai dot com. We'd love to hear what you build with it." }
 ];
 
