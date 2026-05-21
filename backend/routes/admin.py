@@ -34,7 +34,7 @@ async def system_stats(admin: AdminUser, db=Depends(get_db)):
 async def list_all_users(admin: AdminUser, db=Depends(get_db)):
     rows = await db.fetch("""
         SELECT
-            u.id, u.email, u.full_name, u.role, u.created_at,
+            u.id, u.email, u.full_name, u.role, u.tier, u.created_at,
             COUNT(d.id) FILTER (WHERE d.status != 'deleted') AS doc_count,
             COUNT(d.id) FILTER (WHERE d.status = 'embedded') AS embedded_count
         FROM users u

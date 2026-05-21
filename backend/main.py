@@ -94,6 +94,7 @@ _ROUTERS = [
     ("routes.chat_sessions",  "sessions_router",       "/api/chat/sessions", ["chat-sessions"]),
     ("routes.compare",        "compare_router",        "/api/compare",       ["compare"]),
     ("routes.feedback",       "feedback_router",       "/api/feedback",      ["feedback"]),
+    ("routes.usage",          "usage_router",          "/api/usage",         ["usage"]),
 ]
 
 for _module, _attr, _prefix, _tags in _ROUTERS:

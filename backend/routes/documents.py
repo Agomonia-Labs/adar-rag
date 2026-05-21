@@ -4,15 +4,18 @@ import os, asyncio, json, tempfile
 from uuid import uuid4
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, UploadFile, File, HTTPException, Depends
+from fastapi import Request, APIRouter, BackgroundTasks, UploadFile, File, HTTPException, Depends
 
 from auth.dependencies import CurrentUser, get_current_user
 from database.connection import get_db
+from services.usage import check_document_limit, check_daily_limit, log_event
 from services.extractor import extract_text, detect_type
 from services.chunker   import chunk_text
 from services.llm       import embed
 from services.vectordb  import store_chunk, delete_document_vectors
 import services.storage as gcs
+
+from fastapi import Request
 
 router = APIRouter()
 
@@ -30,13 +33,8 @@ async def upload_documents(
     files: list[UploadFile] = File(...),
     db=Depends(get_db),
 ):
-    # Count how many docs the user already has
-    existing_count = await db.fetchval(
-        "SELECT COUNT(*) FROM documents WHERE user_id = $1 AND status != 'deleted'",
-        current_user["id"],
-    )
-    if len(files) + existing_count > MAX_FILES:
-        raise HTTPException(400, f"Upload limit: max {MAX_FILES} documents per user (you have {existing_count})")
+    # Enforce per-user tier document limit (replaces global MAX_FILES env var)
+    await check_document_limit(db, str(current_user["id"]))
     if len(files) > MAX_FILES:
         raise HTTPException(400, f"You can upload at most {MAX_FILES} files at once")
 
@@ -79,6 +77,12 @@ async def upload_documents(
             _chunk_document, doc_id, user_id, tmp.name, filename, upload.content_type or "", ftype
         )
         created.append({"doc_id": doc_id, "filename": filename})
+        await log_event(db, user_id, "upload", metadata={
+            "doc_id":    doc_id,
+            "filename":  filename,
+            "file_size": len(content),
+            "file_type": ftype,
+        })
 
     return {"uploaded": created}
 
@@ -316,6 +320,11 @@ async def _embed_document(doc_id: str, user_id: str):
             await asyncio.sleep(0.08)   # rate limit buffer
 
         await _set_status("embedded")
+        # Log embedding event using a fresh pool connection
+        async with pool.acquire() as _c:
+            await log_event(_c, user_id, "embedding",
+                            quantity=len(chunks),
+                            metadata={"doc_id": doc_id, "chunk_count": len(chunks)})
     except Exception as exc:
         await _set_status("error", error=str(exc)[:500])
 

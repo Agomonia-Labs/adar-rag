@@ -1,6 +1,7 @@
 // src/App.jsx
 import React, { useState, useEffect } from 'react';
-import { AuthFlow } from './pages/AuthPages.jsx';
+import { AuthFlow }   from './pages/AuthPages.jsx';
+import UsagePanel    from './components/UsagePanel.jsx';
 import DocumentsTab    from './components/DocumentsTab.jsx';
 import ChatTab         from './components/ChatTab.jsx';
 import AdminDashboard  from './components/AdminDashboard.jsx';
@@ -12,6 +13,7 @@ export default function App() {
   const [user,         setUser]         = useState(null);
   const [checking,     setChecking]     = useState(true);
   const [tab,          setTab]          = useState('documents');
+  const [showUsage,    setShowUsage]    = useState(false);
   const [embeddedDocs, setEmbeddedDocs] = useState([]);
 
   useEffect(() => {
@@ -56,6 +58,7 @@ export default function App() {
   return (
     <>
       <ToastContainer />
+      {showUsage && <UsagePanel onClose={() => setShowUsage(false)} />}
       <div style={s.shell}>
         <header style={s.header}>
           <div style={s.brand}>
@@ -85,6 +88,14 @@ export default function App() {
               <p style={{ fontSize:13, fontWeight:600, color:'var(--tx)' }}>{user.full_name||user.email}</p>
               <p style={{ fontSize:11, color:'var(--muted2)' }}>{user.email}</p>
             </div>
+            <button
+              style={{ fontSize:12, padding:'5px 12px', background:'var(--s2)',
+                       color:'var(--muted2)', border:'1px solid var(--b2)',
+                       borderRadius:'var(--r)', cursor:'pointer' }}
+              onClick={() => setShowUsage(true)}
+              title="Your usage and plan limits">
+              📊 Usage
+            </button>
             <button style={s.signOutBtn} onClick={handleLogout}>Sign out</button>
           </div>
         </header>

@@ -6,9 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from auth.dependencies import CurrentUser
-from database.connection import get_db
+from database.connection import get_db, get_pool
+from services.usage import check_daily_limit, log_event
 import services.storage as gcs
 from services.llm import chat_stream, summarize_system, mini_summarize_system
+
+from fastapi import Request
 
 router = APIRouter()
 
@@ -39,6 +42,7 @@ class MultiSummarizeRequest(BaseModel):
 # ── Single document ───────────────────────────────────────────────────────────
 @router.post("/document/{doc_id}/stream")
 async def summarize_document(
+    request: Request,
     doc_id: str,
     body:   SummarizeRequest,
     current_user: CurrentUser,
@@ -46,6 +50,8 @@ async def summarize_document(
 ):
     row     = await _get_owned_chunked(doc_id, str(current_user["id"]), db)
     user_id = str(current_user["id"])
+    await check_daily_limit(db, user_id, "summarize", "max_summaries_day")
+    await log_event(db, user_id, "summarize", metadata={"doc_id": doc_id, "summary_type": body.summary_type})
 
     async def generate():
         try:
@@ -84,6 +90,8 @@ async def summarize_multiple_documents(
            WHERE id = ANY($1::uuid[]) AND user_id = $2 AND status != 'deleted'""",
         body.document_ids, user_id,
     )
+    await check_daily_limit(db, user_id, "summarize", "max_summaries_day")
+    await log_event(db, user_id, "summarize", quantity=len(body.document_ids), metadata={"doc_ids": body.document_ids})
     found       = {str(r["id"]): r for r in rows}
     missing     = set(body.document_ids) - set(found)
     not_chunked = [str(r["id"]) for r in rows if r["status"] not in ("chunked","embedding","embedded")]

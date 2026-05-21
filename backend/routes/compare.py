@@ -8,6 +8,7 @@ import json, httpx
 
 from auth.dependencies import CurrentUser
 from database.connection import get_db, get_pool
+from services.usage import log_event
 
 router = APIRouter()
 log = logging.getLogger("docintel.compare")
@@ -67,6 +68,14 @@ async def compare_documents(
             result, err = await _gemini_compare(doc1["original_name"], text1, doc2["original_name"], text2)
 
             if result:
+                # Log compare event using a fresh pool connection
+                async with pool.acquire() as _c:
+                    await log_event(_c, user_id, "compare", metadata={
+                        "doc_id_1": doc_id_1,
+                        "doc_id_2": doc_id_2,
+                        "sections": len(result.get("sections", [])),
+                        "similarity": result.get("similarity_score"),
+                    })
                 yield _sse({"type": "result", "data": result})
             else:
                 yield _sse({"type": "error", "error": err or "Comparison failed"})

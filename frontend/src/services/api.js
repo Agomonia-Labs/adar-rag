@@ -272,3 +272,20 @@ export async function submitFeedback({ sessionId, messageId, rating, question, a
 export async function getSessionFeedback(sessionId) {
   return handleRes(await fetch(`${BASE}/feedback/session/${sessionId}`, { headers: authHdr() }));
 }
+
+// ── Usage & Tiers ─────────────────────────────────────────────────────────────
+export async function getMyUsage() {
+  return handleRes(await fetch(`${BASE}/usage/me`, { headers: authHdr() }));
+}
+
+export async function getAllUsage() {
+  return handleRes(await fetch(`${BASE}/usage/admin/all`, { headers: authHdr() }));
+}
+
+export async function setUserTier(userId, tier, customLimits = null) {
+  return handleRes(await fetch(`${BASE}/usage/admin/set-tier`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body:    JSON.stringify({ user_id: userId, tier, custom_limits: customLimits }),
+  }));
+}

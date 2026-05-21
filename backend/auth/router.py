@@ -45,11 +45,15 @@ async def register(
     if len(body.password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
 
+    # First user ever → automatically becomes admin
+    user_count = await db.fetchval("SELECT COUNT(*) FROM users")
+    role = "admin" if user_count == 0 else "user"
+
     row = await db.fetchrow(
-        "INSERT INTO users (email, hashed_password, full_name) VALUES ($1,$2,$3) RETURNING id, email, full_name",
-        body.email, hash_password(body.password), body.full_name,
+        "INSERT INTO users (email, hashed_password, full_name, role) VALUES ($1,$2,$3,$4) RETURNING id, email, full_name, role",
+        body.email, hash_password(body.password), body.full_name, role,
     )
-    return {"message": "Account created", "user_id": str(row["id"]), "email": row["email"]}
+    return {"message": "Account created", "user_id": str(row["id"]), "email": row["email"], "role": row["role"]}
 
 
 # ── Login ──────────────────────────────────────────────────────────────────────

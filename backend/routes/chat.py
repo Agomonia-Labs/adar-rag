@@ -6,9 +6,10 @@ from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 
 from auth.dependencies import CurrentUser
-from database.connection import get_db
+from database.connection import get_db, get_pool
 from services.llm import embed_query, chat_stream, rag_system
 from services.vectordb import find_similar, TOP_K, RERANK_FETCH_K
+from services.usage import check_daily_limit, log_event
 from services.reranker import rerank, RERANK_ENABLED
 
 router = APIRouter()
@@ -57,6 +58,10 @@ async def chat_stream_endpoint(
 
         async def run():
             try:
+                # ── Check daily query limit (fresh pool conn — db released by now) ──
+                async with get_pool().acquire() as _conn:
+                    await check_daily_limit(_conn, user_id, "query", "max_queries_day")
+
                 # ── Stage 1: Embed query ──────────────────────────────────
                 query_vec = await embed_query(req.question)
 
@@ -90,8 +95,12 @@ async def chat_stream_endpoint(
                 ] + [{"role": "user", "content": req.question}]
 
                 await chat_stream(messages, rag_system(context), on_token)
+                async with get_pool().acquire() as _conn:
+                    await log_event(_conn, user_id, "query", metadata={"doc_count": len(req.document_ids), "chunks_used": len(chunks)})
                 await queue.put(("done", _sanitise(chunks)))
 
+            except HTTPException as exc:
+                await queue.put(("error", exc.detail))
             except Exception as exc:
                 await queue.put(("error", str(exc)))
 

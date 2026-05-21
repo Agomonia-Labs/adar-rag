@@ -1,6 +1,6 @@
 // src/components/AdminDashboard.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { fetchAdminStats, fetchAdminUsers, fetchAdminDocuments, updateUserRole, adminDeleteUser, adminDeleteDocument } from '../services/api.js';
+import { setUserTier, fetchAdminStats, fetchAdminUsers, fetchAdminDocuments, updateUserRole, adminDeleteUser, adminDeleteDocument } from '../services/api.js';
 
 const fmtBytes = b => { if(!b)return'0 B';if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';if(b<1073741824)return(b/1048576).toFixed(1)+' MB';return(b/1073741824).toFixed(2)+' GB'; };
 const fmtDate  = s => { if(!s)return'—';return new Date(s).toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}); };
@@ -72,13 +72,34 @@ export default function AdminDashboard() {
           <h3 style={s.secTitle}>All users ({users.length})</h3>
           <div style={s.tableWrap}>
             <table style={s.table}>
-              <thead><tr>{['Name','Email','Role','Docs','Embedded','Joined','Actions'].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+              <thead><tr>{['Name','Email','Role','Tier','Docs','Embedded','Joined','Actions'].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
               <tbody>
                 {users.map(u=>(
                   <tr key={u.id} style={s.tr}>
                     <td style={s.td}>{u.full_name||'—'}</td>
                     <td style={s.td}><span style={{color:'#60a5fa',fontSize:12}}>{u.email}</span></td>
                     <td style={s.td}><span style={{padding:'2px 8px',borderRadius:20,fontSize:11,fontWeight:600,background:u.role==='admin'?'rgba(96,165,250,.12)':'rgba(255,255,255,.05)',color:u.role==='admin'?'#60a5fa':'var(--muted2)',border:`1px solid ${u.role==='admin'?'rgba(96,165,250,.25)':'var(--b2)'}`}}>{u.role}</span></td>
+                    <td style={s.td}>
+                      <select
+                        value={u.tier || 'free'}
+                        onChange={e => {
+                          const newTier = e.target.value;
+                          // Optimistic update first so dropdown stays responsive
+                          setUsers(prev => prev.map(x => x.id===u.id ? {...x, tier: newTier} : x));
+                          setUserTier(u.id, newTier)
+                            .then(() => console.log('Tier updated to', newTier))
+                            .catch(err => {
+                              // Revert on error
+                              setUsers(prev => prev.map(x => x.id===u.id ? {...x, tier: u.tier||'free'} : x));
+                              alert('Failed to update tier: ' + err.message);
+                            });
+                        }}
+                        style={{fontSize:11,background:'var(--s3)',color:'var(--tx)',border:'1px solid var(--b2)',borderRadius:4,padding:'2px 6px',cursor:'pointer'}}>
+                        <option value="free">Free</option>
+                        <option value="pro">Pro</option>
+                        <option value="enterprise">Enterprise</option>
+                      </select>
+                    </td>
                     <td style={{...s.td,textAlign:'center'}}>{fmtN(u.doc_count)}</td>
                     <td style={{...s.td,textAlign:'center'}}>{fmtN(u.embedded_count)}</td>
                     <td style={s.td}>{fmtDate(u.created_at)}</td>

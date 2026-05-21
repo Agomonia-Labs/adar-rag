@@ -193,7 +193,7 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
       <div class="slide-dots" id="dots"></div>
     </div>
     <div class="tb-right nav-arrows">
-      <span class="slide-counter" id="counter">1 / 19</span>
+      <span class="slide-counter" id="counter">1 / 21</span>
       <button class="btn-icon" id="autoBtn" onclick="toggleAuto()">▶ Auto</button>
       <button class="nav-btn" id="prevBtn" onclick="goSlide(-1)">←</button>
       <button class="nav-btn" id="nextBtn" onclick="goSlide(1)">→</button>
@@ -1089,8 +1089,173 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
       </div>
     </div>
 
-    <!-- 19. Summary -->
+
+    <!-- 19. Usage Metering -->
     <div class="slide" data-idx="18">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Metering</div>
+          <div class="slide-title">Usage Metering & Analytics</div>
+          <div class="slide-sub">Every billable action is tracked in real time. Users click 📊 Usage in the header to see a live dashboard of their consumption — documents, queries, embeddings, storage, and summaries.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">📊</span><span>Usage panel in the header — always one click away, loads live stats from PostgreSQL</span></div>
+            <div class="feature-item"><span class="feature-icon">📤</span><span>Tracks uploads, embeddings, chat queries, summaries, and comparisons — all with metadata</span></div>
+            <div class="feature-item"><span class="feature-icon">📈</span><span>Today's counts vs all-time totals — see exactly how much you've used this session</span></div>
+            <div class="feature-item"><span class="feature-icon">🌡</span><span>Progress meters turn amber at 80% of your plan limit — visual warning before hitting the wall</span></div>
+            <div class="feature-item"><span class="feature-icon">🗄</span><span>Storage bytes tracked per upload — shows total GB/MB used across all documents</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(18)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">📊 Usage & Limits</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:9px">
+
+            <!-- Tier badge -->
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:11px;font-weight:700;color:#e5e7eb">Your plan:</span>
+              <span style="background:rgba(192,132,252,.12);color:#c084fc;border:1px solid rgba(192,132,252,.3);border-radius:20px;padding:2px 10px;font-size:11px;font-weight:700">Pro Plan</span>
+            </div>
+
+            <!-- Stat cards -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+              <div style="background:rgba(255,255,255,.04);border:0.5px solid rgba(255,255,255,.08);border-radius:8px;padding:8px;text-align:center">
+                <div style="font-size:18px;margin-bottom:2px">📂</div>
+                <div style="font-size:16px;font-weight:800;color:#f0fdf4">12</div>
+                <div style="font-size:9.5px;color:#6b7280;margin-top:1px">Documents</div>
+                <div style="font-size:9px;color:#6b7280;opacity:.7">of 500</div>
+              </div>
+              <div style="background:rgba(255,255,255,.04);border:0.5px solid rgba(255,255,255,.08);border-radius:8px;padding:8px;text-align:center">
+                <div style="font-size:18px;margin-bottom:2px">💬</div>
+                <div style="font-size:16px;font-weight:800;color:#f0fdf4">23</div>
+                <div style="font-size:9.5px;color:#6b7280;margin-top:1px">Queries today</div>
+                <div style="font-size:9px;color:#6b7280;opacity:.7">of 500</div>
+              </div>
+            </div>
+
+            <!-- Limit meters -->
+            <div style="background:rgba(255,255,255,.03);border-radius:8px;border:0.5px solid rgba(255,255,255,.07);padding:9px 10px">
+              <div style="font-size:9px;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Plan limits</div>
+
+              <div style="margin-bottom:7px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                  <span style="font-size:10.5px;color:#d1fae5">Documents</span>
+                  <span style="font-size:10px;color:#6b7280;font-weight:600">12 / 500</span>
+                </div>
+                <div style="height:4px;background:rgba(255,255,255,.08);border-radius:2px"><div style="height:100%;width:2.4%;background:#4ade80;border-radius:2px"></div></div>
+              </div>
+
+              <div style="margin-bottom:7px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                  <span style="font-size:10.5px;color:#d1fae5">Queries today</span>
+                  <span style="font-size:10px;color:#6b7280;font-weight:600">23 / 500</span>
+                </div>
+                <div style="height:4px;background:rgba(255,255,255,.08);border-radius:2px"><div style="height:100%;width:4.6%;background:#60a5fa;border-radius:2px"></div></div>
+              </div>
+
+              <div style="margin-bottom:7px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                  <span style="font-size:10.5px;color:#d1fae5">Embeddings today</span>
+                  <span style="font-size:10px;color:#fbbf24;font-weight:600">84 / 100</span>
+                </div>
+                <div style="height:4px;background:rgba(255,255,255,.08);border-radius:2px"><div style="height:100%;width:84%;background:#fbbf24;border-radius:2px"></div></div>
+              </div>
+
+            </div>
+
+            <!-- Activity breakdown -->
+            <div style="background:rgba(255,255,255,.03);border-radius:8px;border:0.5px solid rgba(255,255,255,.07);padding:9px 10px">
+              <div style="font-size:9px;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">All-time activity</div>
+              <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:0.5px solid rgba(255,255,255,.05)"><span style="font-size:10.5px;color:#9ca3af">📤 Uploads</span><span style="font-size:10.5px;font-weight:700;color:#f0fdf4">47</span></div>
+              <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:0.5px solid rgba(255,255,255,.05)"><span style="font-size:10.5px;color:#9ca3af">⚡ Embeddings</span><span style="font-size:10.5px;font-weight:700;color:#f0fdf4">1,284</span></div>
+              <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:0.5px solid rgba(255,255,255,.05)"><span style="font-size:10.5px;color:#9ca3af">💬 Queries</span><span style="font-size:10.5px;font-weight:700;color:#f0fdf4">312</span></div>
+              <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:10.5px;color:#9ca3af">⇄ Comparisons</span><span style="font-size:10.5px;font-weight:700;color:#f0fdf4">8</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 20. Tiered Limits & Admin -->
+    <div class="slide" data-idx="19">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Billing</div>
+          <div class="slide-title">Tiered Limits & Plan Management</div>
+          <div class="slide-sub">Three plans — Free, Pro, and Enterprise — with limits enforced per user in the database. Admins upgrade any account instantly from the dashboard. No env vars, no redeploys.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">🆓</span><span>Free: 20 documents, 10 MB files, 50 queries/day, 10 embeddings/day — great for evaluation</span></div>
+            <div class="feature-item"><span class="feature-icon">⚡</span><span>Pro: 500 documents, 50 MB files, 500 queries/day, 100 embeddings/day</span></div>
+            <div class="feature-item"><span class="feature-icon">🏢</span><span>Enterprise: unlimited documents and queries, 200 MB files — no daily caps</span></div>
+            <div class="feature-item"><span class="feature-icon">⚙</span><span>Admins change any user's tier with a dropdown in the Users table — takes effect immediately</span></div>
+            <div class="feature-item"><span class="feature-icon">🔧</span><span>Custom per-user overrides via JSONB — set any individual limit independently of tier</span></div>
+            <div class="feature-item"><span class="feature-icon">🛑</span><span>Exceeding limits returns HTTP 403 (doc limit) or 429 (daily limit) with clear upgrade message</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(19)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">⚙ Admin → Users</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:10px">
+
+            <!-- Tier comparison -->
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px">
+              <div style="background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.2);border-radius:8px;padding:8px;text-align:center">
+                <div style="font-size:10.5px;font-weight:700;color:#60a5fa;margin-bottom:4px">FREE</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.7">20 docs<br>10 MB<br>50 q/day<br>10 emb/day</div>
+              </div>
+              <div style="background:rgba(192,132,252,.08);border:1px solid rgba(192,132,252,.2);border-radius:8px;padding:8px;text-align:center;position:relative">
+                <div style="font-size:9px;background:#c084fc;color:#fff;border-radius:10px;padding:1px 5px;position:absolute;top:-7px;left:50%;transform:translateX(-50%);white-space:nowrap;font-weight:700">POPULAR</div>
+                <div style="font-size:10.5px;font-weight:700;color:#c084fc;margin-bottom:4px">PRO</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.7">500 docs<br>50 MB<br>500 q/day<br>100 emb/day</div>
+              </div>
+              <div style="background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.2);border-radius:8px;padding:8px;text-align:center">
+                <div style="font-size:10.5px;font-weight:700;color:#fbbf24;margin-bottom:4px">ENTERPRISE</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.7">∞ docs<br>200 MB<br>∞ q/day<br>∞ emb/day</div>
+              </div>
+            </div>
+
+            <!-- Admin users table -->
+            <div style="background:rgba(255,255,255,.02);border-radius:8px;border:0.5px solid rgba(255,255,255,.08);overflow:hidden">
+              <div style="display:grid;grid-template-columns:1fr 80px 90px 60px;gap:4px;padding:6px 8px;background:rgba(255,255,255,.04);font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase">
+                <div>Email</div><div>Role</div><div>Tier</div><div>Docs</div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 80px 90px 60px;gap:4px;padding:7px 8px;border-top:0.5px solid rgba(255,255,255,.05)">
+                <div style="font-size:10.5px;color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">admin@agomoniai.com</div>
+                <div><span style="font-size:9px;padding:1px 6px;border-radius:20px;background:rgba(96,165,250,.12);color:#60a5fa;font-weight:600">admin</span></div>
+                <div>
+                  <select style="font-size:9.5px;background:rgba(192,132,252,.12);color:#c084fc;border:1px solid rgba(192,132,252,.3);border-radius:4px;padding:1px 4px;cursor:pointer">
+                    <option>Pro</option><option>Free</option><option>Enterprise</option>
+                  </select>
+                </div>
+                <div style="font-size:10.5px;color:#d1fae5;text-align:center">12</div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 80px 90px 60px;gap:4px;padding:7px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(255,255,255,.02)">
+                <div style="font-size:10.5px;color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">user@company.com</div>
+                <div><span style="font-size:9px;padding:1px 6px;border-radius:20px;background:rgba(255,255,255,.05);color:#6b7280;font-weight:600">user</span></div>
+                <div>
+                  <select style="font-size:9.5px;background:rgba(255,255,255,.04);color:#9ca3af;border:1px solid rgba(255,255,255,.12);border-radius:4px;padding:1px 4px;cursor:pointer">
+                    <option>Free</option><option>Pro</option><option>Enterprise</option>
+                  </select>
+                </div>
+                <div style="font-size:10.5px;color:#d1fae5;text-align:center">3</div>
+              </div>
+            </div>
+
+            <!-- Limit exceeded examples -->
+            <div style="display:flex;flex-direction:column;gap:5px">
+              <div style="background:rgba(248,113,113,.06);border:0.5px solid rgba(248,113,113,.2);border-radius:6px;padding:7px 10px;font-size:9.5px;color:#f87171">
+                <strong>HTTP 403</strong> — Document limit reached (20 docs on Free tier). Upgrade to upload more.
+              </div>
+              <div style="background:rgba(251,191,36,.06);border:0.5px solid rgba(251,191,36,.2);border-radius:6px;padding:7px 10px;font-size:9.5px;color:#fbbf24">
+                <strong>HTTP 429</strong> — Daily query limit reached (50 on Free tier). Try again tomorrow.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 21. Summary -->
+    <div class="slide" data-idx="20">
       <div class="slide-inner full">
         <div style="font-size:52px;margin-bottom:16px">🌿</div>
         <div class="slide-num">আদর DocIntel</div>
@@ -1111,6 +1276,8 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">⇄</div><div class="sum-card-title" style="color:#60a5fa">Doc Comparison</div><ul class="sum-card-list"><li>Select any 2 documents</li><li>Gemini clause-by-clause diff</li><li>Colour-coded: same/modified/added/removed</li><li>Similarity score + filter tabs</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">👍</div><div class="sum-card-title" style="color:#4ade80">Feedback Loop</div><ul class="sum-card-list"><li>Thumbs up/down on AI responses</li><li>Persists across sessions</li><li>Saved to PostgreSQL with context</li><li>Admin feedback analytics API</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">↓</div><div class="sum-card-title" style="color:#fbbf24">Export</div><ul class="sum-card-list"><li>Chat → Markdown with sources</li><li>Summary → Markdown .md</li><li>Client-side, instant download</li><li>Notion / Obsidian / VS Code ready</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">📊</div><div class="sum-card-title" style="color:#60a5fa">Usage Metering</div><ul class="sum-card-list"><li>Tracks uploads, queries, embeds</li><li>Today vs all-time breakdown</li><li>Storage bytes per user</li><li>Live usage panel in header</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">🏷</div><div class="sum-card-title" style="color:#c084fc">Tiered Plans</div><ul class="sum-card-list"><li>Free / Pro / Enterprise tiers</li><li>Per-user DB enforcement</li><li>Admin tier change dropdown</li><li>HTTP 403/429 on limit breach</li></ul></div>
         </div>
 
         <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:20px">
@@ -1128,7 +1295,7 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
           <span>🐘 pgvector</span><span>☁ Google Cloud</span><span>🤖 Gemini AI</span><span>⚡ FastAPI</span><span>⚛ React</span><span>🔥 Firebase</span>
         </div>
 
-        <button class="btn-speak" style="margin:20px auto 0" onclick="speakSlide(18)">🔊 Play narration</button>
+        <button class="btn-speak" style="margin:20px auto 0" onclick="speakSlide(20)">🔊 Play narration</button>
       </div>
     </div>
 
@@ -1155,6 +1322,8 @@ const SLIDES = [
   { text: "Document comparison mode lets you select any two documents and compare them side by side. Click the Compare button that appears when exactly two documents are selected in the Documents tab. Gemini analyses every clause, term, date, amount, and obligation in both documents, then returns a structured breakdown. You see a similarity score from zero to one hundred percent, unique points from each document, and a section-by-section table colour-coded by difference type: modified sections in amber, added sections in blue, removed sections in red, and identical sections in green. Filter the table by type and click any row to expand and read the specific difference explanation. This feature is especially valuable for legal, finance, and compliance users comparing contracts, leases, policies, or regulations." },
   { text: "আদর DocIntel captures quality feedback on every AI response. After each answer, thumbs-up and thumbs-down buttons appear below the message. Clicking one turns it green or red while dimming the other — making your selection unmistakable. Your rating is saved to PostgreSQL along with the triggering question and the AI answer for context. Feedback persists across sessions — when you reload or switch to a different session and come back, your previously rated messages restore their green or red state automatically. Administrators can retrieve all feedback via the API, seeing thumbs-up and thumbs-down counts alongside the most recent rated responses and user emails — creating a continuous loop for prompt and retrieval improvement." },
   { text: "Any chat conversation in আদর DocIntel can be exported as a Markdown file with a single click. The Export button appears in the chat top bar once the session has messages. The downloaded file includes every question formatted in bold, every AI answer with full text, and a source citation block showing document name, chunk number, and relevance percentage for each retrieved chunk. Summaries can also be exported — click the Export .md button in the summary panel header after a summary generates. Both exports happen entirely in the browser with no server round-trip, producing a .md file you can open in Notion, Obsidian, VS Code, Confluence, or paste into any editor." },
+  { text: "আদর DocIntel tracks every billable action in real time using a usage events table in PostgreSQL. Click the Usage button in the header to open a live dashboard showing your plan tier, document count, storage used, and daily consumption for queries, embeddings, and summaries. Progress meters turn amber when you reach 80 percent of any limit. The all-time activity section shows cumulative totals across every event type — uploads, embeddings, queries, summaries, and comparisons. A refresh button updates all stats without closing the panel." },
+  { text: "আদর DocIntel enforces three tiers — Free, Pro, and Enterprise. Free accounts get 20 documents, 10 megabyte files, 50 queries per day, and 10 embeddings per day. Pro accounts get 500 documents, 50 megabyte files, 500 queries per day, and 100 embeddings per day. Enterprise accounts are fully unlimited on documents and queries with 200 megabyte file uploads. Administrators can upgrade any user's tier instantly from the Admin Users table using a dropdown — no environment variable changes, no redeployments needed. Exceeding the document limit returns HTTP 403 with a clear upgrade message. Exceeding daily limits returns HTTP 429 telling the user to try again tomorrow. Custom per-user overrides are also supported via a JSON column, so any individual limit can be set independently of their tier." },
   { text: "That's আদর DocIntel — a complete self-service Document Intelligence Platform. Upload and store up to 500 documents per workspace on Google Cloud. Automatically chunk and index them with rich metadata. Generate vector embeddings using Gemini and store them in pgvector for semantic search. Chat with your documents in natural language and get source-cited answers. Summarize in five different ways — from a three-sentence executive overview to a full section-by-section breakdown. And manage everything with a full admin dashboard. Built by Agomonia Labs on the ADAR platform. Try it free at docintel dot adar dot agomoniai dot com. We'd love to hear what you build with it." }
 ];
 

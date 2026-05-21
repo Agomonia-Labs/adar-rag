@@ -110,6 +110,24 @@ CREATE TABLE IF NOT EXISTS message_feedback (
 CREATE INDEX IF NOT EXISTS idx_feedback_user ON message_feedback(user_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_session ON message_feedback(session_id);
 
+-- User tier + custom limits (billing / tiered enforcement)
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS tier          TEXT    NOT NULL DEFAULT 'free',
+    ADD COLUMN IF NOT EXISTS custom_limits JSONB;
+
+-- Usage events (metering every billable action)
+CREATE TABLE IF NOT EXISTS usage_events (
+    id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    event_type  TEXT        NOT NULL,   -- upload | chunk | embedding | query | summarize | compare
+    quantity    INTEGER     NOT NULL DEFAULT 1,
+    metadata    JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_usage_user      ON usage_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_usage_type      ON usage_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_usage_created   ON usage_events(created_at DESC);
+
 -- Password reset tokens
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
