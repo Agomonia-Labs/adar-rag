@@ -66,7 +66,7 @@ elif LLM_PROVIDER == "gemini":
 
     _GOOGLE_KEY      = os.getenv("GOOGLE_AI_KEY", "")
     _EMBED_MODEL     = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-2")
-    _CHAT_MODEL      = os.getenv("GEMINI_CHAT_MODEL",  "gemini-1.5-flash")
+    _CHAT_MODEL      = os.getenv("GEMINI_CHAT_MODEL",  "gemini-2.5-flash")
     _EMBED_MODEL_ID  = _EMBED_MODEL.removeprefix("models/")
     _CHAT_MODEL_ID   = _CHAT_MODEL.removeprefix("models/")
     # v1 for embeddings (stable), v1beta for chat (supports systemInstruction)

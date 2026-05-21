@@ -81,3 +81,57 @@ async def create_tables() -> None:
     async with pool.acquire() as conn:
         await conn.execute(schema)
     print("✓ Database schema ready")
+
+
+# ── Additional tables appended to CREATE_SCHEMA ───────────────────────────────
+CREATE_SCHEMA_ADDITIONS = """
+
+-- Hybrid search: full-text search vector column
+ALTER TABLE document_chunks
+    ADD COLUMN IF NOT EXISTS search_vector tsvector;
+
+-- GIN index for fast full-text search
+CREATE INDEX IF NOT EXISTS idx_chunks_fts
+    ON document_chunks USING gin(search_vector);
+
+
+
+-- Password reset tokens
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash  TEXT        NOT NULL UNIQUE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    used        BOOLEAN     NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_prt_token_hash ON password_reset_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_prt_user_id    ON password_reset_tokens(user_id);
+
+-- Chat sessions (persistent across devices)
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    id           UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id      UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title        TEXT        NOT NULL DEFAULT 'New Chat',
+    document_ids JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    messages     JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id    ON chat_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON chat_sessions(updated_at DESC);
+
+"""
+
+
+async def create_additional_tables() -> None:
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(CREATE_SCHEMA_ADDITIONS)
+        # Backfill search_vector for existing chunks (inside same connection)
+        await conn.execute("""
+            UPDATE document_chunks
+            SET search_vector = to_tsvector('english', content)
+            WHERE search_vector IS NULL AND content IS NOT NULL AND content != ''
+        """)
+    print("✓ Additional schema ready (password_reset_tokens, chat_sessions, hybrid search FTS)")

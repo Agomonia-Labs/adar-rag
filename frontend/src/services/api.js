@@ -23,10 +23,10 @@ export async function register(email, password, full_name) {
 }
 
 export async function login(email, password) {
-  const form = new URLSearchParams({ username: email, password });
   return handleRes(await fetch(`${BASE}/auth/login`, {
-    method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body: form.toString(),
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ email, password }),
   }));
 }
 
@@ -165,6 +165,91 @@ export async function streamSummary(
       if (ev.type === 'meta')  onMeta?.(ev);
       if (ev.type === 'done')  onDone?.();
       if (ev.type === 'error') onError?.(ev.error);
+    }
+  }
+}
+
+// ── Password reset ─────────────────────────────────────────────────────────────
+export async function forgotPassword(email) {
+  return handleRes(await fetch(`${BASE}/auth/forgot-password`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ email }),
+  }));
+}
+
+export async function verifyResetToken(token) {
+  return handleRes(await fetch(`${BASE}/auth/verify-reset-token?token=${encodeURIComponent(token)}`));
+}
+
+export async function resetPassword(token, new_password) {
+  return handleRes(await fetch(`${BASE}/auth/reset-password`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ token, new_password }),
+  }));
+}
+
+// ── Chat sessions ──────────────────────────────────────────────────────────────
+export async function listSessions() {
+  return handleRes(await fetch(`${BASE}/chat/sessions/`, { headers: authHdr() }));
+}
+
+export async function createSession(title = 'New Chat', document_ids = []) {
+  return handleRes(await fetch(`${BASE}/chat/sessions/`, {
+    method:'POST', headers:{...authHdr(),'Content-Type':'application/json'},
+    body: JSON.stringify({ title, document_ids }),
+  }));
+}
+
+export async function getSession(id) {
+  return handleRes(await fetch(`${BASE}/chat/sessions/${id}`, { headers: authHdr() }));
+}
+
+export async function saveSessionMessages(id, messages) {
+  return handleRes(await fetch(`${BASE}/chat/sessions/${id}/messages`, {
+    method:'PATCH', headers:{...authHdr(),'Content-Type':'application/json'},
+    body: JSON.stringify({ messages }),
+  }));
+}
+
+export async function updateSession(id, data) {
+  return handleRes(await fetch(`${BASE}/chat/sessions/${id}`, {
+    method:'PATCH', headers:{...authHdr(),'Content-Type':'application/json'},
+    body: JSON.stringify(data),
+  }));
+}
+
+export async function deleteSession(id) {
+  return handleRes(await fetch(`${BASE}/chat/sessions/${id}`, {
+    method:'DELETE', headers: authHdr(),
+  }));
+}
+
+// ── Document comparison ────────────────────────────────────────────────────────
+export async function compareDocuments(doc_id_1, doc_id_2, callbacks) {
+  const { onStatus, onResult, onError } = callbacks;
+  const res = await fetch(`${BASE}/compare/stream`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body:    JSON.stringify({ document_id_1: doc_id_1, document_id_2: doc_id_2 }),
+  });
+  if (!res.ok) { onError?.(`HTTP ${res.status}`); return; }
+  const reader  = res.body.getReader();
+  const decoder = new TextDecoder();
+  let   buf     = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const msg = JSON.parse(line.slice(6));
+        if      (msg.type === 'status') onStatus?.(msg.message);
+        else if (msg.type === 'result') onResult?.(msg.data);
+        else if (msg.type === 'error')  onError?.(msg.error);
+      } catch {}
     }
   }
 }

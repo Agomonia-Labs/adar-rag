@@ -1,6 +1,6 @@
 // src/App.jsx
 import React, { useState, useEffect } from 'react';
-import { LoginPage, RegisterPage }  from './pages/AuthPages.jsx';
+import { AuthFlow } from './pages/AuthPages.jsx';
 import DocumentsTab    from './components/DocumentsTab.jsx';
 import ChatTab         from './components/ChatTab.jsx';
 import AdminDashboard  from './components/AdminDashboard.jsx';
@@ -42,9 +42,7 @@ export default function App() {
   }
 
   if (!user) {
-    return authPage==='login'
-      ? <LoginPage  onLogin={handleLogin}            onSwitch={()=>setAuthPage('register')} />
-      : <RegisterPage onRegistered={()=>setAuthPage('login')} onSwitch={()=>setAuthPage('login')} />;
+    return <AuthFlow onLogin={handleLogin} />;
   }
 
   const isAdmin = user.role==='admin';

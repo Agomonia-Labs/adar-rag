@@ -4,6 +4,7 @@ import { uploadDocuments, listDocuments, getViewUrl, triggerEmbed, deleteDocumen
 import { toast } from './Toast.jsx';
 import ChunksViewer from './ChunksViewer.jsx';
 import SummaryPanel from './SummaryPanel.jsx';
+import ComparePanel from './ComparePanel.jsx';
 
 const MAX_FILES = parseInt(import.meta.env.VITE_MAX_UPLOAD_FILES || '500');
 
@@ -26,6 +27,7 @@ export default function DocumentsTab({ onEmbedChange }) {
   const [busy,    setBusy]    = useState(false);
   const [viewer,  setViewer]  = useState(null);
   const [summary, setSummary] = useState(null);
+  const [compare, setCompare] = useState(null);
   const [selected,setSelected]= useState([]);
   const fileRef = useRef(null);
   const pollRef = useRef(null);
@@ -61,7 +63,7 @@ export default function DocumentsTab({ onEmbedChange }) {
 
   const total    = docs.filter(d=>!['error','deleted'].includes(d.status)).length;
   const embedded = docs.filter(d=>d.status==='embedded').length;
-  const chunked  = docs.filter(d=>d.status==='chunked').length;
+  const chunked  = docs.filter(d=>['chunked','embedding','embedded'].includes(d.status)).length;
   const selDocs  = docs.filter(d=>selected.includes(d.id));
 
   return (
@@ -69,9 +71,15 @@ export default function DocumentsTab({ onEmbedChange }) {
       {/* Stats bar */}
       <div style={s.bar}>
         <Stat v={total}    l="Total"    c="var(--tx)"   />
-        <Stat v={chunked}  l="Chunked"  c="var(--blue)" />
+        <Stat v={chunked}  l="Processed" c="var(--blue)" />
         <Stat v={embedded} l="Embedded" c="var(--teal)" />
         <div style={{flex:1}}/>
+        {selected.length===2 && (
+          <button style={{...s.multiBtn,background:'rgba(96,165,250,.1)',color:'#60a5fa',borderColor:'rgba(96,165,250,.3)'}}
+            onClick={()=>setCompare({doc1:selDocs[0],doc2:selDocs[1]})}>
+            ⇄ Compare 2 docs
+          </button>
+        )}
         {selected.length>=2 && (
           <button style={s.multiBtn} onClick={()=>setSummary({documentIds:selected,docNames:selDocs.map(d=>d.original_name)})}>
             📝 Summarize {selected.length} docs
@@ -121,6 +129,8 @@ export default function DocumentsTab({ onEmbedChange }) {
        )}
 
       {viewer && <ChunksViewer docId={viewer} onClose={()=>setViewer(null)} />}
+      {compare && <ComparePanel doc1={compare.doc1} doc2={compare.doc2} onClose={()=>setCompare(null)} />
+      }
       {summary && <SummaryPanel docId={summary.docId} docName={summary.docName} documentIds={summary.documentIds} docNames={summary.docNames} onClose={()=>setSummary(null)} />}
     </div>
   );

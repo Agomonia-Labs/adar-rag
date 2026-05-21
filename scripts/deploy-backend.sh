@@ -63,6 +63,15 @@ else
   SECRETS+=("GOOGLE_AI_KEY=docintel-gemini-key:latest")
 fi
 
+# Gmail SMTP — add only if the secrets exist in Secret Manager
+if gcloud secrets describe docintel-gmail-user --project="$PROJECT_ID" &>/dev/null; then
+  SECRETS+=("GMAIL_USER=docintel-gmail-user:latest")
+  SECRETS+=("GMAIL_APP_PASSWORD=docintel-gmail-app-password:latest")
+  echo "  Gmail SMTP   : enabled (docintel-gmail-user)"
+else
+  echo "  Gmail SMTP   : ⚠ not configured (reset emails will be logged only)"
+fi
+
 # Format as --set-secrets flags
 SECRETS_FLAGS=""
 for s in "${SECRETS[@]}"; do
@@ -101,6 +110,9 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="JWT_ALGORITHM=HS256" \
   --set-env-vars="JWT_ACCESS_TOKEN_EXPIRE_MINUTES=480" \
   --set-env-vars="GCS_SIGNED_URL_EXPIRY_SECONDS=3600" \
+  --set-env-vars="APP_URL=https://docintel.adar.agomoniai.com" \
+  --set-env-vars="EMAIL_FROM_NAME=আদর DocIntel" \
+  --set-env-vars="RESET_TOKEN_EXPIRE_HOURS=1" \
   $SECRETS_FLAGS \
   --quiet
 
