@@ -4,18 +4,20 @@ import os, asyncio, json, tempfile
 from uuid import uuid4
 from datetime import datetime, timezone
 
+from typing import Optional
 from fastapi import Request, APIRouter, BackgroundTasks, UploadFile, File, HTTPException, Depends
 
 from auth.dependencies import CurrentUser, get_current_user
 from database.connection import get_db
-from services.usage import check_document_limit, check_daily_limit, log_event
+from services.usage         import check_document_limit, check_daily_limit, log_event
+from services.audit         import audit, ip_from, ua_from
+from services.notifications import send_embed_complete
 from services.extractor import extract_text, detect_type
 from services.chunker   import chunk_text
 from services.llm       import embed
 from services.vectordb  import store_chunk, delete_document_vectors
 import services.storage as gcs
 
-from fastapi import Request
 
 router = APIRouter()
 
@@ -29,12 +31,19 @@ MAX_FILE_MB  = int(os.getenv("MAX_FILE_SIZE_MB", "50"))
 @router.post("/upload")
 async def upload_documents(
     background_tasks: BackgroundTasks,
+    request:          Request,
     current_user:     CurrentUser,
-    files: list[UploadFile] = File(...),
+    files:        list[UploadFile] = File(...),
+    workspace_id: Optional[str]   = None,   # if set, doc belongs to a workspace
     db=Depends(get_db),
 ):
     # Enforce per-user tier document limit (replaces global MAX_FILES env var)
     await check_document_limit(db, str(current_user["id"]))
+
+    # If workspace upload — verify editor/owner membership
+    if workspace_id:
+        from routes.workspaces import _require_role
+        await _require_role(db, workspace_id, str(current_user["id"]), "editor")
     if len(files) > MAX_FILES:
         raise HTTPException(400, f"You can upload at most {MAX_FILES} files at once")
 
@@ -55,11 +64,11 @@ async def upload_documents(
         await db.execute(
             """
             INSERT INTO documents
-              (id, user_id, filename, original_name, file_type, file_size,
+              (id, user_id, workspace_id, filename, original_name, file_type, file_size,
                gcs_source_path, gcs_chunks_dir, status)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'uploading')
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'uploading')
             """,
-            doc_id, user_id, filename, filename,
+            doc_id, user_id, workspace_id, filename, filename,
             ftype, len(content), src_path, chk_dir,
         )
 
@@ -74,7 +83,7 @@ async def upload_documents(
         # Update status to chunking, then kick off chunking in background
         await db.execute("UPDATE documents SET status='chunking' WHERE id=$1", doc_id)
         background_tasks.add_task(
-            _chunk_document, doc_id, user_id, tmp.name, filename, upload.content_type or "", ftype
+            _chunk_document, doc_id, user_id, tmp.name, filename, upload.content_type or "", ftype, workspace_id
         )
         created.append({"doc_id": doc_id, "filename": filename})
         await log_event(db, user_id, "upload", metadata={
@@ -83,6 +92,10 @@ async def upload_documents(
             "file_size": len(content),
             "file_type": ftype,
         })
+        await audit(db, user_id=user_id, action="upload_document",
+                    resource_type="document", resource_id=doc_id,
+                    metadata={"filename": filename, "workspace_id": workspace_id},
+                    ip_address=ip_from(request), user_agent=ua_from(request))
 
     return {"uploaded": created}
 
@@ -94,11 +107,23 @@ async def upload_documents(
 async def list_documents(current_user: CurrentUser, db=Depends(get_db)):
     rows = await db.fetch(
         """
-        SELECT id, original_name, file_type, file_size, status,
-               chunk_count, error_message, doc_metadata, created_at, updated_at
-        FROM documents
-        WHERE user_id = $1 AND status != 'deleted'
-        ORDER BY created_at DESC
+        SELECT d.id, d.original_name, d.file_type, d.file_size, d.status,
+               d.chunk_count, d.error_message, d.doc_metadata, d.workspace_id,
+               d.created_at, d.updated_at,
+               COALESCE(
+                 json_agg(json_build_object(
+                   'id', t.id::text, 'name', t.name, 'color', t.color
+                 )) FILTER (WHERE t.id IS NOT NULL),
+                 '[]'::json
+               ) AS tags
+        FROM documents d
+        LEFT JOIN document_tag_map m ON m.document_id = d.id
+        LEFT JOIN document_tags    t ON t.id = m.tag_id
+        WHERE d.user_id = $1
+          AND d.status != 'deleted'
+          AND d.workspace_id IS NULL
+        GROUP BY d.id
+        ORDER BY d.created_at DESC
         """,
         current_user["id"],
     )
@@ -166,9 +191,10 @@ async def trigger_embedding(
     if row["status"] != "chunked":
         raise HTTPException(400, f"Document must be in 'chunked' state (current: {row['status']})")
 
-    user_id = str(current_user["id"])
+    user_id      = str(current_user["id"])
+    workspace_id = row.get("workspace_id")   # propagate workspace scope to chunks
     await db.execute("UPDATE documents SET status='embedding', updated_at=NOW() WHERE id=$1", doc_id)
-    background_tasks.add_task(_embed_document, doc_id, user_id)
+    background_tasks.add_task(_embed_document, doc_id, user_id, workspace_id)
     return {"message": "Embedding started", "doc_id": doc_id}
 
 
@@ -203,7 +229,7 @@ async def delete_document(doc_id: str, current_user: CurrentUser, db=Depends(get
 # ══════════════════════════════════════════════════════════════════════════════
 #  Background: chunking pipeline
 # ══════════════════════════════════════════════════════════════════════════════
-async def _chunk_document(doc_id, user_id, file_path, filename, content_type, ftype):
+async def _chunk_document(doc_id, user_id, file_path, filename, content_type, ftype, workspace_id=None):
     from database.connection import get_pool
     pool = get_pool()
 
@@ -283,7 +309,7 @@ async def _chunk_document(doc_id, user_id, file_path, filename, content_type, ft
 # ══════════════════════════════════════════════════════════════════════════════
 #  Background: embedding pipeline
 # ══════════════════════════════════════════════════════════════════════════════
-async def _embed_document(doc_id: str, user_id: str):
+async def _embed_document(doc_id: str, user_id: str, workspace_id: str | None = None):
     from database.connection import get_pool
     pool = get_pool()
 
@@ -311,6 +337,7 @@ async def _embed_document(doc_id: str, user_id: str):
             await store_chunk(
                 document_id    = doc_id,
                 user_id        = user_id,
+                workspace_id   = workspace_id,
                 chunk_index    = chunk_info["index"],
                 chunk_total    = len(chunks),
                 content        = content,
@@ -320,11 +347,24 @@ async def _embed_document(doc_id: str, user_id: str):
             await asyncio.sleep(0.08)   # rate limit buffer
 
         await _set_status("embedded")
-        # Log embedding event using a fresh pool connection
+        # Log embedding event + notify user
         async with pool.acquire() as _c:
             await log_event(_c, user_id, "embedding",
                             quantity=len(chunks),
                             metadata={"doc_id": doc_id, "chunk_count": len(chunks)})
+            # Fetch user email + notification preference
+            user_row = await _c.fetchrow(
+                "SELECT email, notify_on_embed FROM users WHERE id=$1", user_id
+            )
+            if user_row and user_row["notify_on_embed"]:
+                doc_row = await _c.fetchrow(
+                    "SELECT original_name FROM documents WHERE id=$1", doc_id
+                )
+                await send_embed_complete(
+                    user_email  = user_row["email"],
+                    doc_name    = doc_row["original_name"] if doc_row else doc_id,
+                    chunk_count = len(chunks),
+                )
     except Exception as exc:
         await _set_status("error", error=str(exc)[:500])
 
@@ -333,8 +373,19 @@ async def _embed_document(doc_id: str, user_id: str):
 #  Helpers
 # ══════════════════════════════════════════════════════════════════════════════
 async def _get_owned(doc_id: str, user_id: str, db) -> dict:
+    """Return doc if owned by user OR if user is a member of the doc's workspace."""
     row = await db.fetchrow(
-        "SELECT * FROM documents WHERE id = $1 AND user_id = $2 AND status != 'deleted'",
+        """SELECT d.* FROM documents d
+           WHERE d.id = $1
+             AND d.status != 'deleted'
+             AND (
+               d.user_id = $2
+               OR EXISTS (
+                 SELECT 1 FROM workspace_members wm
+                 WHERE wm.workspace_id = d.workspace_id
+                   AND wm.user_id = $2
+               )
+             )""",
         doc_id, user_id,
     )
     if not row:
@@ -344,8 +395,15 @@ async def _get_owned(doc_id: str, user_id: str, db) -> dict:
 
 def _doc_row(row: dict) -> dict:
     r = dict(row)
-    r["id"]         = str(r["id"])
-    r["user_id"]    = str(r.get("user_id", ""))
-    r["created_at"] = r["created_at"].isoformat() if r.get("created_at") else None
-    r["updated_at"] = r["updated_at"].isoformat() if r.get("updated_at") else None
+    r["id"]           = str(r["id"])
+    r["user_id"]      = str(r.get("user_id", ""))
+    r["workspace_id"] = str(r["workspace_id"]) if r.get("workspace_id") else None
+    # Tags: may arrive as JSON string or list
+    raw_tags = r.get("tags", [])
+    if isinstance(raw_tags, str):
+        import json as _json
+        raw_tags = _json.loads(raw_tags)
+    r["tags"] = [t for t in (raw_tags or []) if t.get("id")]
+    r["created_at"]   = r["created_at"].isoformat() if r.get("created_at") else None
+    r["updated_at"]   = r["updated_at"].isoformat() if r.get("updated_at") else None
     return r

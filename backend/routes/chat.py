@@ -22,6 +22,7 @@ class ChatRequest(BaseModel):
     question:     str
     document_ids: list[str]
     history:      list[dict] = []
+    workspace_id: str | None = None
 
 
 @router.post("/stream")
@@ -37,8 +38,17 @@ async def chat_stream_endpoint(
 
     user_id = str(current_user["id"])
     rows = await db.fetch(
-        """SELECT id, status FROM documents
-           WHERE id = ANY($1::uuid[]) AND user_id = $2 AND status != 'deleted'""",
+        """SELECT d.id, d.status FROM documents d
+           WHERE d.id = ANY($1::uuid[])
+             AND d.status != 'deleted'
+             AND (
+               d.user_id = $2
+               OR EXISTS (
+                 SELECT 1 FROM workspace_members wm
+                 WHERE wm.workspace_id = d.workspace_id
+                   AND wm.user_id = $2
+               )
+             )""",
         req.document_ids, user_id,
     )
     found_ids    = {str(r["id"]) for r in rows}
@@ -46,7 +56,7 @@ async def chat_stream_endpoint(
     not_embedded = {str(r["id"]) for r in rows if r["status"] != "embedded"}
 
     if not_found:
-        raise HTTPException(403, f"Documents not found or not yours: {not_found}")
+        raise HTTPException(403, f"Documents not found or not accessible: {not_found}")
     if not_embedded:
         raise HTTPException(400, f"Documents not yet embedded: {not_embedded}")
 

@@ -110,6 +110,78 @@ CREATE TABLE IF NOT EXISTS message_feedback (
 CREATE INDEX IF NOT EXISTS idx_feedback_user ON message_feedback(user_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_session ON message_feedback(session_id);
 
+-- Document tags (folders/collections)
+CREATE TABLE IF NOT EXISTS document_tags (
+    id         UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       TEXT        NOT NULL,
+    color      TEXT        NOT NULL DEFAULT '#4ade80',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (user_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_dtags_user ON document_tags(user_id);
+
+CREATE TABLE IF NOT EXISTS document_tag_map (
+    document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    tag_id      UUID NOT NULL REFERENCES document_tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (document_id, tag_id)
+);
+CREATE INDEX IF NOT EXISTS idx_dtmap_doc ON document_tag_map(document_id);
+CREATE INDEX IF NOT EXISTS idx_dtmap_tag ON document_tag_map(tag_id);
+
+-- Email verification
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS is_verified              BOOLEAN     NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS verification_token_hash  TEXT,
+    ADD COLUMN IF NOT EXISTS verification_token_exp   TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS notify_on_embed          BOOLEAN     NOT NULL DEFAULT TRUE;
+
+-- Audit log
+CREATE TABLE IF NOT EXISTS audit_log (
+    id            UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id       UUID        REFERENCES users(id) ON DELETE SET NULL,
+    action        TEXT        NOT NULL,
+    resource_type TEXT,
+    resource_id   TEXT,
+    metadata      JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    ip_address    TEXT,
+    user_agent    TEXT,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_user    ON audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_action  ON audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
+
+-- Workspaces (team collaboration)
+CREATE TABLE IF NOT EXISTS workspaces (
+    id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name        TEXT        NOT NULL,
+    owner_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_id);
+
+-- Workspace members with roles
+CREATE TABLE IF NOT EXISTS workspace_members (
+    id           UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID        NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id      UUID        NOT NULL REFERENCES users(id)      ON DELETE CASCADE,
+    role         TEXT        NOT NULL DEFAULT 'viewer'
+                             CHECK (role IN ('owner','editor','viewer')),
+    invited_by   UUID        REFERENCES users(id) ON DELETE SET NULL,
+    joined_at    TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (workspace_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_wm_workspace ON workspace_members(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_wm_user      ON workspace_members(user_id);
+
+-- Attach documents + chunks to a workspace (NULL = personal)
+ALTER TABLE documents      ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL;
+ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_docs_workspace   ON documents(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_workspace ON document_chunks(workspace_id);
+
 -- User tier + custom limits (billing / tiered enforcement)
 ALTER TABLE users
     ADD COLUMN IF NOT EXISTS tier          TEXT    NOT NULL DEFAULT 'free',
@@ -144,14 +216,17 @@ CREATE INDEX IF NOT EXISTS idx_prt_user_id    ON password_reset_tokens(user_id);
 CREATE TABLE IF NOT EXISTS chat_sessions (
     id           UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id      UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID        REFERENCES workspaces(id) ON DELETE CASCADE,
     title        TEXT        NOT NULL DEFAULT 'New Chat',
     document_ids JSONB       NOT NULL DEFAULT '[]'::jsonb,
     messages     JSONB       NOT NULL DEFAULT '[]'::jsonb,
     created_at   TIMESTAMPTZ DEFAULT NOW(),
     updated_at   TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_sessions_user_id    ON chat_sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON chat_sessions(updated_at DESC);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id      ON chat_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_updated_at   ON chat_sessions(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_workspace_id ON chat_sessions(workspace_id);
 
 """
 

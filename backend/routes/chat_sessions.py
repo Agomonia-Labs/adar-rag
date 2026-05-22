@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json
 from typing import Optional, Any
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from auth.dependencies import CurrentUser
@@ -29,8 +29,9 @@ def _parse_jsonb(value: Any, fallback=None):
 
 
 class CreateSession(BaseModel):
-    title:        str       = "New Chat"
-    document_ids: list[str] = []
+    title:        str            = "New Chat"
+    document_ids: list[str]      = []
+    workspace_id: Optional[str]  = None
 
 
 class AppendMessage(BaseModel):
@@ -40,17 +41,30 @@ class AppendMessage(BaseModel):
 
 # ── List sessions ──────────────────────────────────────────────────────────────
 @router.get("/")
-async def list_sessions(current_user: CurrentUser, db=Depends(get_db)):
-    rows = await db.fetch(
-        """SELECT id, title, document_ids,
-                  jsonb_array_length(messages) AS message_count,
-                  created_at, updated_at
-           FROM chat_sessions
-           WHERE user_id = $1
-           ORDER BY updated_at DESC
-           LIMIT 50""",
-        str(current_user["id"]),
-    )
+async def list_sessions(request: Request, current_user: CurrentUser, db=Depends(get_db)):
+    workspace_id = request.query_params.get("workspace_id")
+    if workspace_id:
+        rows = await db.fetch(
+            """SELECT id, title, document_ids,
+                      jsonb_array_length(messages) AS message_count,
+                      created_at, updated_at
+               FROM chat_sessions
+               WHERE user_id=$1 AND workspace_id=$2
+               ORDER BY updated_at DESC
+               LIMIT 50""",
+            str(current_user["id"]), workspace_id,
+        )
+    else:
+        rows = await db.fetch(
+            """SELECT id, title, document_ids,
+                      jsonb_array_length(messages) AS message_count,
+                      created_at, updated_at
+               FROM chat_sessions
+               WHERE user_id=$1 AND workspace_id IS NULL
+               ORDER BY updated_at DESC
+               LIMIT 50""",
+            str(current_user["id"]),
+        )
     return [
         {
             "id":            str(r["id"]),
@@ -72,10 +86,11 @@ async def create_session(
     db=Depends(get_db),
 ):
     row = await db.fetchrow(
-        """INSERT INTO chat_sessions (user_id, title, document_ids, messages)
-           VALUES ($1, $2, $3::jsonb, '[]'::jsonb)
+        """INSERT INTO chat_sessions (user_id, workspace_id, title, document_ids, messages)
+           VALUES ($1, $2, $3, $4::jsonb, '[]'::jsonb)
            RETURNING id, title, document_ids, created_at, updated_at""",
         str(current_user["id"]),
+        body.workspace_id or None,
         body.title,
         json.dumps(body.document_ids),
     )

@@ -35,10 +35,13 @@ export async function getMe() {
 }
 
 // ── Documents ─────────────────────────────────────────────────────────────────
-export async function uploadDocuments(files) {
+export async function uploadDocuments(files, workspaceId = null) {
   const form = new FormData();
   for (const f of files) form.append('files', f);
-  return handleRes(await fetch(`${BASE}/documents/upload`, { method:'POST', headers:authHdr(), body:form }));
+  const url = workspaceId
+    ? `${BASE}/documents/upload?workspace_id=${workspaceId}`
+    : `${BASE}/documents/upload`;
+  return handleRes(await fetch(url, { method:'POST', headers:authHdr(), body:form }));
 }
 
 export async function listDocuments() {
@@ -66,11 +69,12 @@ export async function deleteDocument(docId) {
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
-export async function streamChat({ question, document_ids, history }, { onToken, onDone, onError }) {
+export async function streamChat({ question, documentIds, document_ids, history, workspaceId = null }, { onToken, onDone, onError }) {
+  const docIds = documentIds || document_ids;  // accept both forms
   const res = await fetch(`${STREAM_BASE}/chat/stream`, {
     method:'POST',
     headers:{'Content-Type':'application/json', ...authHdr()},
-    body: JSON.stringify({ question, document_ids, history }),
+    body: JSON.stringify({ question, document_ids: docIds, history, workspace_id: workspaceId }),
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
@@ -189,14 +193,17 @@ export async function resetPassword(token, new_password) {
 }
 
 // ── Chat sessions ──────────────────────────────────────────────────────────────
-export async function listSessions() {
-  return handleRes(await fetch(`${BASE}/chat/sessions/`, { headers: authHdr() }));
+export async function listSessions(workspaceId = null) {
+  const url = workspaceId
+    ? `${BASE}/chat/sessions/?workspace_id=${workspaceId}`
+    : `${BASE}/chat/sessions/`;
+  return handleRes(await fetch(url, { headers: authHdr() }));
 }
 
-export async function createSession(title = 'New Chat', document_ids = []) {
+export async function createSession(title = 'New Chat', document_ids = [], workspaceId = null) {
   return handleRes(await fetch(`${BASE}/chat/sessions/`, {
     method:'POST', headers:{...authHdr(),'Content-Type':'application/json'},
-    body: JSON.stringify({ title, document_ids }),
+    body: JSON.stringify({ title, document_ids, workspace_id: workspaceId }),
   }));
 }
 
@@ -288,4 +295,112 @@ export async function setUserTier(userId, tier, customLimits = null) {
     headers: { 'Content-Type': 'application/json', ...authHdr() },
     body:    JSON.stringify({ user_id: userId, tier, custom_limits: customLimits }),
   }));
+}
+
+// ── Workspaces ────────────────────────────────────────────────────────────────
+export async function listWorkspaces() {
+  return handleRes(await fetch(`${BASE}/workspaces/`, { headers: authHdr() }));
+}
+
+export async function createWorkspace(name) {
+  return handleRes(await fetch(`${BASE}/workspaces/`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({ name }),
+  }));
+}
+
+export async function getWorkspace(id) {
+  return handleRes(await fetch(`${BASE}/workspaces/${id}`, { headers: authHdr() }));
+}
+
+export async function updateWorkspace(id, name) {
+  return handleRes(await fetch(`${BASE}/workspaces/${id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({ name }),
+  }));
+}
+
+export async function deleteWorkspace(id) {
+  return handleRes(await fetch(`${BASE}/workspaces/${id}`, {
+    method: 'DELETE', headers: authHdr(),
+  }));
+}
+
+export async function inviteMember(workspaceId, email, role = 'viewer') {
+  return handleRes(await fetch(`${BASE}/workspaces/${workspaceId}/members`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({ email, role }),
+  }));
+}
+
+export async function updateMemberRole(workspaceId, userId, role) {
+  return handleRes(await fetch(`${BASE}/workspaces/${workspaceId}/members/${userId}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({ role }),
+  }));
+}
+
+export async function removeMember(workspaceId, userId) {
+  return handleRes(await fetch(`${BASE}/workspaces/${workspaceId}/members/${userId}`, {
+    method: 'DELETE', headers: authHdr(),
+  }));
+}
+
+export async function listWorkspaceDocuments(workspaceId) {
+  return handleRes(await fetch(`${BASE}/workspaces/${workspaceId}/documents`, { headers: authHdr() }));
+}
+
+// ── Email verification ────────────────────────────────────────────────────────
+export async function verifyEmail(token) {
+  return handleRes(await fetch(`${BASE}/auth/verify-email?token=${token}`, { method:'GET' }));
+}
+export async function resendVerification(email) {
+  return handleRes(await fetch(`${BASE}/auth/resend-verification`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ email }),
+  }));
+}
+
+// ── Audit log ─────────────────────────────────────────────────────────────────
+export async function getAuditLog(limit = 100, action = '') {
+  const q = new URLSearchParams({ limit, ...(action ? { action } : {}) });
+  return handleRes(await fetch(`${BASE}/admin/audit-log?${q}`, { headers: authHdr() }));
+}
+
+export async function retryDocument(docId) {
+  return handleRes(await fetch(`${BASE}/documents/${docId}/retry`, {
+    method: 'POST', headers: authHdr(),
+  }));
+}
+
+// ── Document Tags ─────────────────────────────────────────────────────────────
+export async function listTags() {
+  return handleRes(await fetch(`${BASE}/tags/`, { headers: authHdr() }));
+}
+export async function createTag(name, color) {
+  return handleRes(await fetch(`${BASE}/tags/`, {
+    method:'POST', headers:{'Content-Type':'application/json',...authHdr()},
+    body: JSON.stringify({ name, color }),
+  }));
+}
+export async function updateTag(tagId, name, color) {
+  return handleRes(await fetch(`${BASE}/tags/${tagId}`, {
+    method:'PATCH', headers:{'Content-Type':'application/json',...authHdr()},
+    body: JSON.stringify({ name, color }),
+  }));
+}
+export async function deleteTag(tagId) {
+  return handleRes(await fetch(`${BASE}/tags/${tagId}`, { method:'DELETE', headers:authHdr() }));
+}
+export async function assignTag(documentId, tagId) {
+  return handleRes(await fetch(`${BASE}/tags/assign`, {
+    method:'POST', headers:{'Content-Type':'application/json',...authHdr()},
+    body: JSON.stringify({ document_id: documentId, tag_id: tagId }),
+  }));
+}
+export async function removeTagAssignment(documentId, tagId) {
+  return handleRes(await fetch(
+    `${BASE}/tags/assign?document_id=${documentId}&tag_id=${tagId}`,
+    { method:'DELETE', headers: authHdr() }
+  ));
 }

@@ -49,7 +49,7 @@ function _downloadText(text, filename, mime) {
   document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
-export default function ChatTab({ embeddedDocs }) {
+export default function ChatTab({ embeddedDocs, activeWorkspace }) {
   const userId = localStorage.getItem('user_id') || 'default';
 
   const [sessions,        setSessions]        = useState([]);
@@ -68,13 +68,18 @@ export default function ChatTab({ embeddedDocs }) {
   const endRef    = useRef(null);
   const saveTimer = useRef(null);
 
-  useEffect(() => { loadSessions(); }, []);
+  useEffect(() => {
+    setActiveSession(null);
+    setMessages([]);
+    setSessions([]);
+    loadSessions();
+  }, [activeWorkspace?.id]);
   useEffect(() => { if (!activeSession) setSelected(embeddedDocs.map(d => d.id)); }, [embeddedDocs.length]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, thinking]);
 
   const loadSessions = async () => {
     setLoadingSessions(true);
-    try { setSessions(await listSessions()); }
+    try { setSessions(await listSessions(activeWorkspace?.id || null)); }
     catch(e) { console.error('Failed to load sessions:', e); }
     finally { setLoadingSessions(false); }
   };
@@ -104,7 +109,7 @@ export default function ChatTab({ embeddedDocs }) {
   const newSession = async () => {
     const docIds = embeddedDocs.map(d => d.id);
     try {
-      const sess = await createSession('New Chat', docIds);
+      const sess = await createSession('New Chat', docIds, activeWorkspace?.id || null);
       setSessions(p => [sess, ...p]);
       setActiveSession(sess);
       setMessages([]);
@@ -145,7 +150,7 @@ export default function ChatTab({ embeddedDocs }) {
     let sess = activeSession;
     if (!sess) {
       try {
-        sess = await createSession('New Chat', selected);
+        sess = await createSession('New Chat', selected, activeWorkspace?.id || null);
         setSessions(p => [sess, ...p]);
         setActiveSession(sess);
       } catch(e) { console.error('Failed to create session:', e); return; }
@@ -162,7 +167,7 @@ export default function ChatTab({ embeddedDocs }) {
                             .map(({ role, content }) => ({ role, content }));
 
     await streamChat(
-      { question: q, document_ids: selected, history },
+      { question: q, documentIds: selected, history, workspaceId: activeWorkspace?.id || null },
       {
         onToken: t   => setMessages(p => p.map(m => m.id === aid ? { ...m, content: m.content + t } : m)),
         onDone:  src => {

@@ -23,6 +23,7 @@ async def store_chunk(
     *,
     document_id:    str,
     user_id:        str,
+    workspace_id:   str | None = None,
     chunk_index:    int,
     chunk_total:    int,
     content:        str,
@@ -34,12 +35,12 @@ async def store_chunk(
         await conn.execute(
             """
             INSERT INTO document_chunks
-              (document_id, user_id, chunk_index, chunk_total,
+              (document_id, user_id, workspace_id, chunk_index, chunk_total,
                content, embedding, chunk_metadata, search_vector)
-            VALUES ($1,$2,$3,$4,$5,$6::vector,$7::jsonb,
-                    to_tsvector('english', $5))
+            VALUES ($1,$2,$3,$4,$5,$6,$7::vector,$8::jsonb,
+                    to_tsvector('english', $6))
             """,
-            document_id, user_id, chunk_index, chunk_total,
+            document_id, user_id, workspace_id, chunk_index, chunk_total,
             content, _vec(embedding), json.dumps(chunk_metadata),
         )
 
@@ -73,7 +74,7 @@ async def find_similar(
     - FTS returns 0 results (stopwords-only query)
     """
     if not HYBRID_SEARCH or not query_text.strip():
-        return await _vector_only(query_embedding, user_id, document_ids, limit)
+        return await _vector_only(query_embedding, document_ids, limit)
 
     return await _hybrid_rrf(query_embedding, query_text, user_id, document_ids, limit)
 
@@ -82,7 +83,6 @@ async def find_similar(
 
 async def _vector_only(
     query_embedding: list[float],
-    user_id:         str,
     document_ids:    list[str],
     limit:           int,
 ) -> list[dict]:
@@ -100,13 +100,12 @@ async def _vector_only(
                 'vector'                                 AS match_type
             FROM  document_chunks dc
             JOIN  documents d ON d.id = dc.document_id
-            WHERE dc.user_id     = $2
-              AND dc.document_id = ANY($3::uuid[])
+            WHERE dc.document_id = ANY($2::uuid[])
               AND dc.embedding   IS NOT NULL
             ORDER BY dc.embedding <=> $1::vector
-            LIMIT $4
+            LIMIT $3
             """,
-            _vec(query_embedding), user_id, document_ids, limit,
+            _vec(query_embedding), document_ids, limit,
         )
         return [dict(r) for r in rows]
 
@@ -150,10 +149,9 @@ async def _hybrid_rrf(
                         ORDER BY dc.embedding <=> $1::vector
                     )                                        AS vrank
                 FROM document_chunks dc
-                WHERE dc.user_id     = $2
-                  AND dc.document_id = ANY($3::uuid[])
+                WHERE dc.document_id = ANY($2::uuid[])
                   AND dc.embedding   IS NOT NULL
-                LIMIT $5
+                LIMIT $4
             ),
 
             fts_ranked AS (
@@ -165,17 +163,16 @@ async def _hybrid_rrf(
                     dc.content,
                     dc.chunk_metadata,
                     ts_rank_cd(dc.search_vector,
-                               to_tsquery('english', $4))    AS fts_score,
+                               to_tsquery('english', $3))    AS fts_score,
                     ROW_NUMBER() OVER (
                         ORDER BY ts_rank_cd(dc.search_vector,
-                                            to_tsquery('english', $4)) DESC
+                                            to_tsquery('english', $3)) DESC
                     )                                        AS frank
                 FROM document_chunks dc
-                WHERE dc.user_id       = $2
-                  AND dc.document_id   = ANY($3::uuid[])
+                WHERE dc.document_id   = ANY($2::uuid[])
                   AND dc.search_vector IS NOT NULL
-                  AND dc.search_vector @@ to_tsquery('english', $4)
-                LIMIT $5
+                  AND dc.search_vector @@ to_tsquery('english', $3)
+                LIMIT $4
             ),
 
             rrf AS (
@@ -186,8 +183,8 @@ async def _hybrid_rrf(
                     COALESCE(v.chunk_total, f.chunk_total)     AS chunk_total,
                     COALESCE(v.content,     f.content)         AS content,
                     COALESCE(v.chunk_metadata, f.chunk_metadata) AS chunk_metadata,
-                    COALESCE(1.0 / ($6 + v.vrank), 0.0) +
-                    COALESCE(1.0 / ($6 + f.frank), 0.0)        AS rrf_score,
+                    COALESCE(1.0 / ($5 + v.vrank), 0.0) +
+                    COALESCE(1.0 / ($5 + f.frank), 0.0)        AS rrf_score,
                     CASE
                         WHEN v.chunk_id IS NOT NULL AND f.chunk_id IS NOT NULL THEN 'hybrid'
                         WHEN v.chunk_id IS NOT NULL THEN 'vector'
@@ -204,27 +201,26 @@ async def _hybrid_rrf(
                 r.chunk_total,
                 r.content,
                 r.chunk_metadata,
-                LEAST(r.rrf_score / (2.0 / ($6 + 1)), 1.0)  AS similarity,
+                LEAST(r.rrf_score / (2.0 / ($5 + 1)), 1.0)  AS similarity,
                 r.match_type
             FROM  rrf r
             JOIN  documents d ON d.id = r.document_id
             ORDER BY r.rrf_score DESC
-            LIMIT $7
+            LIMIT $6
             """,
             _vec(query_embedding),  # $1
-            user_id,                # $2
-            document_ids,           # $3
-            fts_query,              # $4
-            HYBRID_K,               # $5 candidates per source
-            float(RRF_K),           # $6
-            limit,                  # $7 final limit
+            document_ids,           # $2
+            fts_query,              # $3
+            HYBRID_K,               # $4 candidates per source
+            float(RRF_K),           # $5
+            limit,                  # $6 final limit
         )
 
     results = [dict(r) for r in rows]
 
     if not results:
         log.info("FTS returned 0 results — falling back to vector-only")
-        return await _vector_only(query_embedding, user_id, document_ids, limit)
+        return await _vector_only(query_embedding, document_ids, limit)
 
     types = {}
     for r in results:

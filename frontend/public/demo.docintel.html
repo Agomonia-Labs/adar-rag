@@ -193,7 +193,7 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
       <div class="slide-dots" id="dots"></div>
     </div>
     <div class="tb-right nav-arrows">
-      <span class="slide-counter" id="counter">1 / 21</span>
+      <span class="slide-counter" id="counter">1 / 24</span>
       <button class="btn-icon" id="autoBtn" onclick="toggleAuto()">▶ Auto</button>
       <button class="nav-btn" id="prevBtn" onclick="goSlide(-1)">←</button>
       <button class="nav-btn" id="nextBtn" onclick="goSlide(1)">→</button>
@@ -1255,7 +1255,270 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
     </div>
 
     <!-- 21. Summary -->
+
+    <!-- 21. Team Workspaces -->
     <div class="slide" data-idx="20">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Collaboration</div>
+          <div class="slide-title">Team Workspaces</div>
+          <div class="slide-sub">Create shared workspaces where your team collaborates on the same document set. Each workspace has role-based access — owners manage membership, editors upload and embed, viewers can only read and chat.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">🏢</span><span>Create a workspace, invite teammates by email — they must have an existing account</span></div>
+            <div class="feature-item"><span class="feature-icon">👑</span><span>Owner — full control: rename, delete, manage members, upload, embed, and chat</span></div>
+            <div class="feature-item"><span class="feature-icon">✏</span><span>Editor — can upload documents and run embeddings, but cannot manage members</span></div>
+            <div class="feature-item"><span class="feature-icon">👁</span><span>Viewer — read-only: upload button hidden, can chat and search shared documents</span></div>
+            <div class="feature-item"><span class="feature-icon">🔀</span><span>Switch context with one click — workspace badge appears in the header, chat history and documents scope to that workspace automatically</span></div>
+            <div class="feature-item"><span class="feature-icon">🗑</span><span>Delete protection — must type the workspace name exactly to confirm; warns about other members losing access</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(20)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">🏢 Workspaces — Q3 Finance Team</div></div>
+          <div class="mockup-body" style="display:flex;gap:10px;height:100%">
+
+            <!-- Sidebar -->
+            <div style="width:130px;flex-shrink:0;display:flex;flex-direction:column;gap:3px;border-right:0.5px solid rgba(255,255,255,.07);padding-right:8px">
+              <div style="font-size:9px;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Workspaces</div>
+              <div style="display:flex;align-items:center;gap:5px;padding:5px 6px;border-radius:5px;background:rgba(255,255,255,.03)">
+                <span style="font-size:12px">🏠</span>
+                <span style="font-size:10.5px;color:#9ca3af">Personal</span>
+              </div>
+              <div style="height:0.5px;background:rgba(255,255,255,.06);margin:2px 0"></div>
+              <div style="display:flex;align-items:center;gap:5px;padding:5px 6px;border-radius:5px;background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.15)">
+                <span style="font-size:12px">🏢</span>
+                <div>
+                  <div style="font-size:10.5px;color:#f0fdf4;font-weight:600">Q3 Finance</div>
+                  <div style="font-size:9px;color:#6b7280">3 members · 8 docs</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:5px;padding:5px 6px;border-radius:5px">
+                <span style="font-size:12px">🏢</span>
+                <div>
+                  <div style="font-size:10.5px;color:#9ca3af">Legal Review</div>
+                  <div style="font-size:9px;color:#6b7280">2 members · 3 docs</div>
+                </div>
+              </div>
+              <!-- Create new -->
+              <div style="margin-top:auto;padding-top:6px;border-top:0.5px solid rgba(255,255,255,.06)">
+                <div style="font-size:9px;color:#6b7280;margin-bottom:4px;font-weight:600">New workspace</div>
+                <div style="display:flex;gap:3px">
+                  <div style="flex:1;background:rgba(255,255,255,.06);border:0.5px solid rgba(255,255,255,.1);border-radius:4px;padding:3px 5px;font-size:9.5px;color:#6b7280">Team name…</div>
+                  <div style="padding:3px 6px;background:#15803d;color:#fff;border-radius:4px;font-size:10px;font-weight:700">＋</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Main panel -->
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px">
+
+              <!-- Header -->
+              <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:6px;border-bottom:0.5px solid rgba(255,255,255,.07)">
+                <div>
+                  <div style="font-size:13px;font-weight:700;color:#f0fdf4">Q3 Finance Team</div>
+                  <div style="font-size:9.5px;color:#6b7280">3 members · 8 documents · your role: <span style="color:#fbbf24">owner</span></div>
+                </div>
+                <div style="display:flex;gap:4px">
+                  <div style="padding:3px 7px;background:rgba(255,255,255,.06);border:0.5px solid rgba(255,255,255,.12);border-radius:5px;font-size:9.5px;color:#9ca3af">✏ Rename</div>
+                  <div style="padding:3px 7px;background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.25);border-radius:5px;font-size:9.5px;color:#4ade80;font-weight:600">✓ Active</div>
+                  <div style="padding:3px 7px;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.3);border-radius:5px;font-size:9.5px;color:#f87171">🗑 Delete</div>
+                </div>
+              </div>
+
+              <!-- Members table -->
+              <div style="background:rgba(255,255,255,.02);border-radius:6px;border:0.5px solid rgba(255,255,255,.07);overflow:hidden">
+                <div style="display:grid;grid-template-columns:1fr 60px 80px 30px;gap:4px;padding:5px 8px;background:rgba(255,255,255,.04);font-size:8.5px;font-weight:700;color:#6b7280;text-transform:uppercase">
+                  <div>Member</div><div>Role</div><div>Change</div><div></div>
+                </div>
+                <!-- Owner -->
+                <div style="display:grid;grid-template-columns:1fr 60px 80px 30px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);align-items:center">
+                  <div style="font-size:10px;color:#4ade80">admin@agomoniai.com</div>
+                  <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(251,191,36,.12);color:#fbbf24;font-weight:600">owner</span></div>
+                  <div style="font-size:9px;color:#374151">—</div>
+                  <div></div>
+                </div>
+                <!-- Editor -->
+                <div style="display:grid;grid-template-columns:1fr 60px 80px 30px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);align-items:center;background:rgba(255,255,255,.01)">
+                  <div style="font-size:10px;color:#9ca3af">analyst@firm.com</div>
+                  <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;font-weight:600">editor</span></div>
+                  <div style="background:rgba(255,255,255,.05);border:0.5px solid rgba(255,255,255,.1);border-radius:3px;padding:2px 4px;font-size:8.5px;color:#9ca3af">editor ▾</div>
+                  <div style="font-size:11px;color:#6b7280;cursor:pointer">✕</div>
+                </div>
+                <!-- Viewer -->
+                <div style="display:grid;grid-template-columns:1fr 60px 80px 30px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);align-items:center">
+                  <div style="font-size:10px;color:#9ca3af">partner@client.co</div>
+                  <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(96,165,250,.1);color:#60a5fa;font-weight:600">viewer</span></div>
+                  <div style="background:rgba(255,255,255,.05);border:0.5px solid rgba(255,255,255,.1);border-radius:3px;padding:2px 4px;font-size:8.5px;color:#9ca3af">viewer ▾</div>
+                  <div style="font-size:11px;color:#6b7280;cursor:pointer">✕</div>
+                </div>
+              </div>
+
+              <!-- Invite form -->
+              <div>
+                <div style="font-size:9px;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">Invite member</div>
+                <div style="display:flex;gap:5px">
+                  <div style="flex:1;background:rgba(255,255,255,.04);border:0.5px solid rgba(255,255,255,.1);border-radius:5px;padding:5px 8px;font-size:9.5px;color:#6b7280">colleague@company.com</div>
+                  <div style="background:rgba(255,255,255,.04);border:0.5px solid rgba(255,255,255,.1);border-radius:5px;padding:5px 7px;font-size:9.5px;color:#9ca3af">viewer ▾</div>
+                  <div style="padding:5px 10px;background:#15803d;color:#fff;border-radius:5px;font-size:9.5px;font-weight:700">+ Invite</div>
+                </div>
+              </div>
+
+              <!-- Role legend -->
+              <div style="display:flex;gap:6px;margin-top:auto">
+                <div style="flex:1;background:rgba(251,191,36,.06);border:0.5px solid rgba(251,191,36,.15);border-radius:5px;padding:5px 7px;font-size:9px;color:#fbbf24">👑 <strong>Owner</strong><br/><span style="color:#6b7280">Full control</span></div>
+                <div style="flex:1;background:rgba(74,222,128,.06);border:0.5px solid rgba(74,222,128,.15);border-radius:5px;padding:5px 7px;font-size:9px;color:#4ade80">✏ <strong>Editor</strong><br/><span style="color:#6b7280">Upload + embed</span></div>
+                <div style="flex:1;background:rgba(96,165,250,.06);border:0.5px solid rgba(96,165,250,.15);border-radius:5px;padding:5px 7px;font-size:9px;color:#60a5fa">👁 <strong>Viewer</strong><br/><span style="color:#6b7280">Read + chat</span></div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- 22. Email Verification -->
+    <div class="slide" data-idx="21">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Trust</div>
+          <div class="slide-title">Email Verification</div>
+          <div class="slide-sub">Every new account must verify their email address before logging in. A 24-hour link is sent automatically on registration. Admins are auto-verified. Existing accounts are grandfathered in.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">📧</span><span>Verification email sent immediately on registration — powered by Gmail SMTP</span></div>
+            <div class="feature-item"><span class="feature-icon">🔒</span><span>Unverified accounts receive HTTP 403 on login with a clear message to check inbox</span></div>
+            <div class="feature-item"><span class="feature-icon">🔄</span><span>Resend button available — new 24-hour link sent without revealing if email exists</span></div>
+            <div class="feature-item"><span class="feature-icon">👑</span><span>First user (admin) is auto-verified — no chicken-and-egg on fresh deployments</span></div>
+            <div class="feature-item"><span class="feature-icon">🛡</span><span>Tokens stored as SHA-256 hashes — raw token never persisted to the database</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(21)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">📧 Check your inbox</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:12px">
+
+            <!-- Verify pending screen -->
+            <div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(255,255,255,.08);border-radius:10px;padding:20px 16px;text-align:center">
+              <div style="font-size:36px;margin-bottom:10px">📧</div>
+              <div style="font-size:13px;font-weight:700;color:#f0fdf4;margin-bottom:6px">Verify your email</div>
+              <div style="font-size:11px;color:#6b7280;line-height:1.7;margin-bottom:14px">
+                We sent a link to<br/>
+                <span style="color:#4ade80;font-weight:600">analyst@firm.com</span>
+              </div>
+              <div style="font-size:11px;color:#6b7280;margin-bottom:14px">Click the link to activate your account.<br/>It expires in 24 hours.</div>
+              <button style="width:100%;padding:8px;background:rgba(255,255,255,.06);border:0.5px solid rgba(255,255,255,.1);border-radius:6px;font-size:11px;color:#9ca3af;cursor:pointer;margin-bottom:8px">
+                Resend verification email
+              </button>
+              <div style="font-size:11px;color:#4ade80;cursor:pointer">Back to login</div>
+            </div>
+
+            <!-- Email preview -->
+            <div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(255,255,255,.08);border-radius:10px;overflow:hidden">
+              <div style="background:rgba(255,255,255,.06);padding:8px 12px;border-bottom:0.5px solid rgba(255,255,255,.07)">
+                <div style="font-size:9.5px;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Email received</div>
+                <div style="font-size:11px;font-weight:700;color:#f0fdf4">Verify your আদর DocIntel email address</div>
+                <div style="font-size:10px;color:#6b7280;margin-top:2px">From: আদর DocIntel &lt;admin@agomoniai.com&gt;</div>
+              </div>
+              <div style="padding:12px 14px;font-size:11px;color:#9ca3af;line-height:1.8">
+                Welcome to আদর DocIntel!<br/><br/>
+                Please verify your email address by clicking the link below:<br/><br/>
+                <div style="background:rgba(74,222,128,.08);border:0.5px solid rgba(74,222,128,.2);border-radius:6px;padding:8px 10px;font-size:10px;font-family:monospace;color:#4ade80;word-break:break-all">
+                  https://docintel.adar.agomoniai.com/verify-email?token=abc123...
+                </div>
+                <br/>This link expires in 24 hours.
+              </div>
+            </div>
+
+            <!-- Login blocked -->
+            <div style="background:rgba(248,113,113,.06);border:0.5px solid rgba(248,113,113,.2);border-radius:8px;padding:10px 12px;font-size:10.5px;color:#f87171">
+              <strong>HTTP 403</strong> — Please verify your email address before logging in. Check your inbox or use the resend link.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 23. Notifications + Audit Log -->
+    <div class="slide" data-idx="22">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Ops & Compliance</div>
+          <div class="slide-title">Notifications & Audit Log</div>
+          <div class="slide-sub">Users are notified when long-running embeddings finish. Admins get a full audit trail of every significant action — uploads, logins, workspace changes — for compliance and debugging.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">🔔</span><span>In-app toast when embedding completes: "Q3_Report.pdf is ready for chat (47 chunks)"</span></div>
+            <div class="feature-item"><span class="feature-icon">📧</span><span>Email notification sent to uploader via Gmail SMTP when status changes to embedded</span></div>
+            <div class="feature-item"><span class="feature-icon">📬</span><span>Workspace invite email sent when a member is added to a team workspace</span></div>
+            <div class="feature-item"><span class="feature-icon">🔍</span><span>Audit log table in Admin dashboard — action, user, resource, IP address, timestamp</span></div>
+            <div class="feature-item"><span class="feature-icon">🔎</span><span>Filter by action type: login, register, upload, create_workspace, invite_member</span></div>
+            <div class="feature-item"><span class="feature-icon">🗄</span><span>Stored in PostgreSQL audit_log table — query directly for compliance exports</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(22)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">⚙ Admin → Audit Log</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:10px">
+
+            <!-- In-app toast -->
+            <div style="position:relative">
+              <div style="background:rgba(74,222,128,.12);border:1px solid rgba(74,222,128,.3);border-radius:8px;padding:9px 12px;display:flex;align-items:center;gap:8px">
+                <span style="font-size:16px">✅</span>
+                <div>
+                  <div style="font-size:11px;font-weight:700;color:#4ade80">Embedding complete</div>
+                  <div style="font-size:10.5px;color:#9ca3af">"Q3_Financial.pdf" is ready for chat (47 chunks embedded)</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Audit log table -->
+            <div style="background:rgba(255,255,255,.02);border-radius:8px;border:0.5px solid rgba(255,255,255,.08);overflow:hidden;flex:1">
+              <div style="background:rgba(255,255,255,.04);padding:7px 10px;border-bottom:0.5px solid rgba(255,255,255,.07);display:flex;gap:6px;align-items:center">
+                <div style="font-size:9.5px;font-weight:700;color:#f0fdf4">Audit Log</div>
+                <div style="background:rgba(255,255,255,.06);border:0.5px solid rgba(255,255,255,.1);border-radius:4px;padding:2px 6px;font-size:9px;color:#9ca3af">All actions ▾</div>
+                <div style="padding:2px 7px;background:rgba(255,255,255,.06);border:0.5px solid rgba(255,255,255,.1);border-radius:4px;font-size:9px;color:#9ca3af;margin-left:auto">↻ Refresh</div>
+              </div>
+              <!-- Headers -->
+              <div style="display:grid;grid-template-columns:100px 1fr 110px 80px;gap:4px;padding:5px 8px;background:rgba(255,255,255,.03);font-size:8.5px;font-weight:700;color:#6b7280;text-transform:uppercase">
+                <div>Time</div><div>User</div><div>Action</div><div>IP</div>
+              </div>
+              <!-- Rows -->
+              <div style="display:grid;grid-template-columns:100px 1fr 110px 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);align-items:center">
+                <div style="font-size:9px;color:#6b7280">10:14:22 PM</div>
+                <div style="font-size:10px;color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">admin@agomoniai.com</div>
+                <div><span style="font-size:8.5px;padding:1px 6px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;font-weight:600">upload_document</span></div>
+                <div style="font-size:9px;color:#6b7280;font-family:monospace">192.168.1.1</div>
+              </div>
+              <div style="display:grid;grid-template-columns:100px 1fr 110px 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);align-items:center;background:rgba(255,255,255,.01)">
+                <div style="font-size:9px;color:#6b7280">10:08:11 PM</div>
+                <div style="font-size:10px;color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">analyst@firm.com</div>
+                <div><span style="font-size:8.5px;padding:1px 6px;border-radius:20px;background:rgba(96,165,250,.1);color:#60a5fa;font-weight:600">login</span></div>
+                <div style="font-size:9px;color:#6b7280;font-family:monospace">10.0.0.5</div>
+              </div>
+              <div style="display:grid;grid-template-columns:100px 1fr 110px 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);align-items:center">
+                <div style="font-size:9px;color:#6b7280">9:55:03 PM</div>
+                <div style="font-size:10px;color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">admin@agomoniai.com</div>
+                <div><span style="font-size:8.5px;padding:1px 6px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;font-weight:600">invite_member</span></div>
+                <div style="font-size:9px;color:#6b7280;font-family:monospace">192.168.1.1</div>
+              </div>
+              <div style="display:grid;grid-template-columns:100px 1fr 110px 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);align-items:center;background:rgba(255,255,255,.01)">
+                <div style="font-size:9px;color:#6b7280">9:47:30 PM</div>
+                <div style="font-size:10px;color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">analyst@firm.com</div>
+                <div><span style="font-size:8.5px;padding:1px 6px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;font-weight:600">register</span></div>
+                <div style="font-size:9px;color:#6b7280;font-family:monospace">10.0.0.5</div>
+              </div>
+              <div style="display:grid;grid-template-columns:100px 1fr 110px 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);align-items:center">
+                <div style="font-size:9px;color:#6b7280">9:31:18 PM</div>
+                <div style="font-size:10px;color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">admin@agomoniai.com</div>
+                <div><span style="font-size:8.5px;padding:1px 6px;border-radius:20px;background:rgba(248,113,113,.1);color:#f87171;font-weight:600">delete_document</span></div>
+                <div style="font-size:9px;color:#6b7280;font-family:monospace">192.168.1.1</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+<div class="slide" data-idx="23">
       <div class="slide-inner full">
         <div style="font-size:52px;margin-bottom:16px">🌿</div>
         <div class="slide-num">আদর DocIntel</div>
@@ -1278,6 +1541,9 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">↓</div><div class="sum-card-title" style="color:#fbbf24">Export</div><ul class="sum-card-list"><li>Chat → Markdown with sources</li><li>Summary → Markdown .md</li><li>Client-side, instant download</li><li>Notion / Obsidian / VS Code ready</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">📊</div><div class="sum-card-title" style="color:#60a5fa">Usage Metering</div><ul class="sum-card-list"><li>Tracks uploads, queries, embeds</li><li>Today vs all-time breakdown</li><li>Storage bytes per user</li><li>Live usage panel in header</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">🏷</div><div class="sum-card-title" style="color:#c084fc">Tiered Plans</div><ul class="sum-card-list"><li>Free / Pro / Enterprise tiers</li><li>Per-user DB enforcement</li><li>Admin tier change dropdown</li><li>HTTP 403/429 on limit breach</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">🏢</div><div class="sum-card-title" style="color:#4ade80">Team Workspaces</div><ul class="sum-card-list"><li>Owner / Editor / Viewer roles</li><li>Invite teammates by email</li><li>Workspace-scoped docs + chat</li><li>Switch context in one click</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">📧</div><div class="sum-card-title" style="color:#60a5fa">Email Verification</div><ul class="sum-card-list"><li>Verify before first login</li><li>24-hour token via Gmail SMTP</li><li>Resend button available</li><li>Admin auto-verified</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">🔍</div><div class="sum-card-title" style="color:#fbbf24">Audit Log</div><ul class="sum-card-list"><li>Every action logged to PostgreSQL</li><li>user · action · IP · timestamp</li><li>Filter by action type</li><li>Embed + invite email notifications</li></ul></div>
         </div>
 
         <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:20px">
@@ -1295,7 +1561,7 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
           <span>🐘 pgvector</span><span>☁ Google Cloud</span><span>🤖 Gemini AI</span><span>⚡ FastAPI</span><span>⚛ React</span><span>🔥 Firebase</span>
         </div>
 
-        <button class="btn-speak" style="margin:20px auto 0" onclick="speakSlide(20)">🔊 Play narration</button>
+        <button class="btn-speak" style="margin:20px auto 0" onclick="speakSlide(23)">🔊 Play narration</button>
       </div>
     </div>
 
@@ -1324,6 +1590,9 @@ const SLIDES = [
   { text: "Any chat conversation in আদর DocIntel can be exported as a Markdown file with a single click. The Export button appears in the chat top bar once the session has messages. The downloaded file includes every question formatted in bold, every AI answer with full text, and a source citation block showing document name, chunk number, and relevance percentage for each retrieved chunk. Summaries can also be exported — click the Export .md button in the summary panel header after a summary generates. Both exports happen entirely in the browser with no server round-trip, producing a .md file you can open in Notion, Obsidian, VS Code, Confluence, or paste into any editor." },
   { text: "আদর DocIntel tracks every billable action in real time using a usage events table in PostgreSQL. Click the Usage button in the header to open a live dashboard showing your plan tier, document count, storage used, and daily consumption for queries, embeddings, and summaries. Progress meters turn amber when you reach 80 percent of any limit. The all-time activity section shows cumulative totals across every event type — uploads, embeddings, queries, summaries, and comparisons. A refresh button updates all stats without closing the panel." },
   { text: "আদর DocIntel enforces three tiers — Free, Pro, and Enterprise. Free accounts get 20 documents, 10 megabyte files, 50 queries per day, and 10 embeddings per day. Pro accounts get 500 documents, 50 megabyte files, 500 queries per day, and 100 embeddings per day. Enterprise accounts are fully unlimited on documents and queries with 200 megabyte file uploads. Administrators can upgrade any user's tier instantly from the Admin Users table using a dropdown — no environment variable changes, no redeployments needed. Exceeding the document limit returns HTTP 403 with a clear upgrade message. Exceeding daily limits returns HTTP 429 telling the user to try again tomorrow. Custom per-user overrides are also supported via a JSON column, so any individual limit can be set independently of their tier." },
+  { text: "আদর DocIntel supports team workspaces — shared environments where multiple users collaborate on the same document set. Create a workspace, name it, and invite teammates by email. Three roles control access: owners have full control including member management; editors can upload and embed documents but cannot manage members; and viewers can only chat with and search shared documents — their upload button is hidden entirely. When you switch to a workspace, a green badge appears in the header, the documents tab loads only workspace files, and chat history is scoped to that workspace. Switching back to personal clears everything and loads your private documents and sessions. Workspaces are protected against accidental deletion — you must type the exact workspace name to confirm, and the system warns you if other members would lose access." },
+  { text: "আদর DocIntel requires every new user to verify their email address before logging in. On registration, a 24-hour verification link is sent via Gmail SMTP. Clicking login without verifying returns HTTP 403 with a clear message. A resend button is available — the response is intentionally vague to avoid revealing whether an email address is registered. The first user on any deployment is automatically verified to avoid the chicken-and-egg problem of needing to log in to send email. Tokens are stored as SHA-256 hashes so the raw token never touches the database." },
+  { text: "আদর DocIntel keeps users informed and maintains a full audit trail. When a document finishes embedding — which can take minutes for large files — an in-app toast notification appears immediately: the document name and chunk count, confirming it is ready for chat. The same event also triggers an email notification to the uploader. Workspace invite emails are sent when members are added. Administrators can view a complete audit log in the Admin dashboard — every login, registration, document upload, workspace creation, and member invite is recorded with the action type, user email, resource ID, IP address, and timestamp. The log is filterable by action type and queryable directly in PostgreSQL for compliance exports." },
   { text: "That's আদর DocIntel — a complete self-service Document Intelligence Platform. Upload and store up to 500 documents per workspace on Google Cloud. Automatically chunk and index them with rich metadata. Generate vector embeddings using Gemini and store them in pgvector for semantic search. Chat with your documents in natural language and get source-cited answers. Summarize in five different ways — from a three-sentence executive overview to a full section-by-section breakdown. And manage everything with a full admin dashboard. Built by Agomonia Labs on the ADAR platform. Try it free at docintel dot adar dot agomoniai dot com. We'd love to hear what you build with it." }
 ];
 

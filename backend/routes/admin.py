@@ -1,11 +1,13 @@
 # routes/admin.py
 # All endpoints require role = 'admin'
 from __future__ import annotations
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from auth.dependencies import AdminUser
+import json
 from database.connection import get_db
+from services.audit import audit, ip_from, ua_from
 import services.storage as gcs
 from services.vectordb import delete_document_vectors
 
@@ -85,12 +87,15 @@ async def list_all_documents(admin: AdminUser, db=Depends(get_db)):
         SELECT
             d.id, d.original_name, d.file_type, d.file_size,
             d.status, d.chunk_count, d.error_message,
+            d.workspace_id,
             d.created_at, d.updated_at,
             u.id   AS user_id,
             u.email AS user_email,
-            u.full_name AS user_name
+            u.full_name AS user_name,
+            w.name  AS workspace_name
         FROM documents d
         JOIN users u ON u.id = d.user_id
+        LEFT JOIN workspaces w ON w.id = d.workspace_id
         WHERE d.status != 'deleted'
         ORDER BY d.created_at DESC
     """)
@@ -123,8 +128,50 @@ def _fmt_user(r: dict) -> dict:
 
 def _fmt_doc(r: dict) -> dict:
     d = dict(r)
-    d["id"]         = str(d["id"])
-    d["user_id"]    = str(d["user_id"])
-    d["created_at"] = d["created_at"].isoformat() if d.get("created_at") else None
-    d["updated_at"] = d["updated_at"].isoformat() if d.get("updated_at") else None
+    d["id"]             = str(d["id"])
+    d["user_id"]        = str(d["user_id"])
+    d["workspace_id"]   = str(d["workspace_id"]) if d.get("workspace_id") else None
+    d["workspace_name"] = d.get("workspace_name")
+    d["created_at"]     = d["created_at"].isoformat() if d.get("created_at") else None
+    d["updated_at"]     = d["updated_at"].isoformat() if d.get("updated_at") else None
     return d
+
+
+# ── GET /api/admin/audit-log ──────────────────────────────────────────────────
+@router.get("/audit-log")
+async def get_audit_log(
+    admin: AdminUser,
+    db=Depends(get_db),
+    limit: int = 100,
+    action: str = "",
+):
+    where = "WHERE 1=1"
+    params = []
+    if action:
+        where += f" AND a.action = ${len(params)+1}"
+        params.append(action)
+
+    rows = await db.fetch(
+        f"""SELECT a.id, a.action, a.resource_type, a.resource_id,
+                   a.metadata, a.ip_address, a.created_at,
+                   u.email AS user_email
+            FROM audit_log a
+            LEFT JOIN users u ON u.id = a.user_id
+            {where}
+            ORDER BY a.created_at DESC
+            LIMIT {min(limit, 500)}""",
+        *params,
+    )
+    return [
+        {
+            "id":            str(r["id"]),
+            "action":        r["action"],
+            "resource_type": r["resource_type"],
+            "resource_id":   r["resource_id"],
+            "metadata":      (r["metadata"] if isinstance(r["metadata"], dict) else json.loads(r["metadata"] or "{}")) if r["metadata"] else {},
+            "ip_address":    r["ip_address"],
+            "user_email":    r["user_email"],
+            "created_at":    r["created_at"].isoformat(),
+        }
+        for r in rows
+    ]

@@ -95,6 +95,8 @@ _ROUTERS = [
     ("routes.compare",        "compare_router",        "/api/compare",       ["compare"]),
     ("routes.feedback",       "feedback_router",       "/api/feedback",      ["feedback"]),
     ("routes.usage",          "usage_router",          "/api/usage",         ["usage"]),
+    ("routes.workspaces",     "workspaces_router",     "/api/workspaces",    ["workspaces"]),
+    ("routes.tags",           "tags_router",           "/api/tags",          ["tags"]),
 ]
 
 for _module, _attr, _prefix, _tags in _ROUTERS:

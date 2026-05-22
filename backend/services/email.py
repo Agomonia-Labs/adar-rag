@@ -79,6 +79,16 @@ def _smtp_send(to_email: str, subject: str, html: str) -> None:
         server.sendmail(GMAIL_USER, to_email, msg.as_string())
 
 
+async def send_email(to: str, subject: str, body: str) -> None:
+    """Generic plain-text email sender used by notifications and verification."""
+    if not GMAIL_USER or not GMAIL_APP_PASS:
+        log.warning(f"Email not configured — would have sent '{subject}' to {to}")
+        return
+    import asyncio
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _smtp_send, to, subject, f"<pre style='font-family:sans-serif;font-size:14px'>{body}</pre>")
+
+
 async def send_reset_email(to_email: str, to_name: str, reset_link: str) -> bool:
     """Send password reset email. Returns True on success."""
 

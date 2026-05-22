@@ -1,7 +1,8 @@
 // src/App.jsx
 import React, { useState, useEffect } from 'react';
 import { AuthFlow }   from './pages/AuthPages.jsx';
-import UsagePanel    from './components/UsagePanel.jsx';
+import UsagePanel       from './components/UsagePanel.jsx';
+import WorkspacesTab    from './components/WorkspacesTab.jsx';
 import DocumentsTab    from './components/DocumentsTab.jsx';
 import ChatTab         from './components/ChatTab.jsx';
 import AdminDashboard  from './components/AdminDashboard.jsx';
@@ -13,7 +14,8 @@ export default function App() {
   const [user,         setUser]         = useState(null);
   const [checking,     setChecking]     = useState(true);
   const [tab,          setTab]          = useState('documents');
-  const [showUsage,    setShowUsage]    = useState(false);
+  const [showUsage,        setShowUsage]        = useState(false);
+  const [activeWorkspace,  setActiveWorkspace]  = useState(null); // {id,name,my_role} or null=personal
   const [embeddedDocs, setEmbeddedDocs] = useState([]);
 
   useEffect(() => {
@@ -52,6 +54,7 @@ export default function App() {
     { key:'documents', label:'📂 Documents', show:true },
     { key:'chat',      label:'💬 Chat',      show:true, disabled:!embeddedDocs.length,
       title:!embeddedDocs.length?'Embed at least one document first':undefined },
+    { key:'workspaces', label:'🏢 Workspaces', show:true },
     { key:'admin',     label:'⚙ Admin',      show:isAdmin },
   ].filter(t=>t.show);
 
@@ -88,6 +91,15 @@ export default function App() {
               <p style={{ fontSize:13, fontWeight:600, color:'var(--tx)' }}>{user.full_name||user.email}</p>
               <p style={{ fontSize:11, color:'var(--muted2)' }}>{user.email}</p>
             </div>
+            {activeWorkspace && (
+              <span style={{ fontSize:11.5, padding:'3px 10px', borderRadius:20,
+                             background:'rgba(74,222,128,.1)', color:'#4ade80',
+                             border:'1px solid rgba(74,222,128,.25)', fontWeight:600 }}>
+                🏢 {activeWorkspace.name}
+                <button onClick={() => setActiveWorkspace(null)}
+                  style={{ background:'none', border:'none', color:'#4ade80', cursor:'pointer', marginLeft:4, fontSize:12 }}>✕</button>
+              </span>
+            )}
             <button
               style={{ fontSize:12, padding:'5px 12px', background:'var(--s2)',
                        color:'var(--muted2)', border:'1px solid var(--b2)',
@@ -101,8 +113,15 @@ export default function App() {
         </header>
 
         <div style={s.content}>
-          {tab==='documents' && <div style={{ height:'100%', overflowY:'auto' }}><DocumentsTab onEmbedChange={setEmbeddedDocs} /></div>}
-          {tab==='chat'      && <ChatTab embeddedDocs={embeddedDocs} />}
+          {tab==='workspaces' && (
+            <WorkspacesTab
+              currentUserId={user?.id}
+              activeWorkspaceId={activeWorkspace?.id || null}
+              onSwitchWorkspace={ws => { setActiveWorkspace(ws); setTab('documents'); }}
+            />
+          )}
+          {tab==='documents' && <div style={{ height:'100%', overflowY:'auto' }}><DocumentsTab onEmbedChange={setEmbeddedDocs} activeWorkspace={activeWorkspace} /></div>}
+          {tab==='chat'      && <ChatTab embeddedDocs={embeddedDocs} activeWorkspace={activeWorkspace} />}
           {tab==='admin' && isAdmin && <div style={{ height:'100%', overflowY:'auto' }}><AdminDashboard /></div>}
         </div>
       </div>

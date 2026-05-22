@@ -1,6 +1,6 @@
 // src/components/AdminDashboard.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { setUserTier, fetchAdminStats, fetchAdminUsers, fetchAdminDocuments, updateUserRole, adminDeleteUser, adminDeleteDocument } from '../services/api.js';
+import { setUserTier, getAuditLog, fetchAdminStats, fetchAdminUsers, fetchAdminDocuments, updateUserRole, adminDeleteUser, adminDeleteDocument } from '../services/api.js';
 
 const fmtBytes = b => { if(!b)return'0 B';if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';if(b<1073741824)return(b/1048576).toFixed(1)+' MB';return(b/1073741824).toFixed(2)+' GB'; };
 const fmtDate  = s => { if(!s)return'—';return new Date(s).toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}); };
@@ -12,6 +12,8 @@ export default function AdminDashboard() {
   const [stats,  setStats]  = useState(null);
   const [users,  setUsers]  = useState([]);
   const [docs,   setDocs]   = useState([]);
+  const [audit,  setAudit]  = useState([]);
+  const [auditFilter, setAuditFilter] = useState('');
   const [tab,    setTab]    = useState('overview');
   const [loading,setLoading]= useState(true);
   const [error,  setError]  = useState('');
@@ -39,8 +41,12 @@ export default function AdminDashboard() {
       {error && <div style={s.errBanner}>{error}</div>}
 
       <div style={s.tabRow}>
-        {[['overview','📊 Overview'],['users','👥 Users'],['documents','📂 Documents']].map(([k,lbl])=>(
-          <button key={k} style={{...s.subTab,...(tab===k?s.subTabOn:{})}} onClick={()=>setTab(k)}>
+        {[['overview','📊 Overview'],['users','👥 Users'],['documents','📂 Documents'],['audit','🔍 Audit Log']].map(([k,lbl])=>(
+          <button key={k} style={{...s.subTab,...(tab===k?s.subTabOn:{})}} onClick={()=>{
+              setTab(k);
+              if (k==='audit') getAuditLog(200,'').then(setAudit).catch(()=>{});
+              if (k==='documents' && !docs.length) fetchAdminDocuments().then(setDocs).catch(()=>{});
+            }}>
             {lbl}
             {k==='users'     && <span style={s.tabCount}>{users.length}</span>}
             {k==='documents' && <span style={s.tabCount}>{docs.length}</span>}
@@ -122,6 +128,52 @@ export default function AdminDashboard() {
           <DocsTable docs={docs} showUser onDelete={deleteDoc}/>
         </div>
       )}
+      {tab === 'audit' && (
+        <div style={s.section}>
+          <h3 style={s.secTitle}>Audit Log</h3>
+          <div style={{padding:'12px 16px',display:'flex',gap:8,alignItems:'center',borderBottom:'1px solid var(--b1)',flexWrap:'wrap'}}>
+            <select value={auditFilter} onChange={e=>{setAuditFilter(e.target.value);getAuditLog(200,e.target.value).then(setAudit).catch(()=>{});}}
+              style={{fontSize:12,padding:'5px 8px',background:'var(--s3)',color:'var(--tx)',border:'1px solid var(--b2)',borderRadius:'var(--r)',cursor:'pointer'}}>
+              <option value="">All actions</option>
+              <option value="login">login</option>
+              <option value="register">register</option>
+              <option value="upload_document">upload_document</option>
+              <option value="create_workspace">create_workspace</option>
+              <option value="invite_member">invite_member</option>
+            </select>
+            <button onClick={()=>getAuditLog(200,auditFilter).then(setAudit).catch(()=>{})}
+              style={{fontSize:12,padding:'5px 10px',background:'var(--s3)',color:'var(--muted2)',border:'1px solid var(--b2)',borderRadius:'var(--r)',cursor:'pointer'}}>↻ Refresh</button>
+            <span style={{fontSize:12,color:'var(--muted2)',marginLeft:'auto'}}>{audit.length} events</span>
+          </div>
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+              <thead><tr>
+                {['Time','User','Action','Resource','IP'].map(h=><th key={h} style={s.th}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {audit.map(row=>(
+                  <tr key={row.id} style={s.tr}>
+                    <td style={{...s.td,whiteSpace:'nowrap',color:'var(--muted2)',fontSize:11}}>{new Date(row.created_at).toLocaleString()}</td>
+                    <td style={{...s.td,color:'#60a5fa',maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{row.user_email||'—'}</td>
+                    <td style={s.td}>
+                      <span style={{padding:'2px 8px',borderRadius:20,fontSize:10,fontWeight:700,
+                        background:row.action.includes('delete')?'rgba(248,113,113,.1)':row.action==='login'?'rgba(96,165,250,.1)':'rgba(74,222,128,.1)',
+                        color:     row.action.includes('delete')?'#f87171':row.action==='login'?'#60a5fa':'#4ade80'}}>
+                        {row.action}
+                      </span>
+                    </td>
+                    <td style={{...s.td,fontSize:11,color:'var(--muted2)'}}>
+                      {row.resource_type && <span>{row.resource_type}</span>}
+                      {row.resource_id && <span style={{marginLeft:4,color:'var(--muted2)',fontFamily:'monospace'}}>{row.resource_id.slice(0,8)}…</span>}
+                    </td>
+                    <td style={{...s.td,fontSize:11,color:'var(--muted2)',fontFamily:'monospace'}}>{row.ip_address||'—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -131,12 +183,18 @@ function DocsTable({ docs, showUser, onDelete }) {
     <div style={s.tableWrap}>
       <table style={s.table}>
         <thead>
-          <tr>{['File',showUser&&'User','Type','Status','Size','Chunks','Created','Actions'].filter(Boolean).map(h=><th key={h} style={s.th}>{h}</th>)}</tr>
+          <tr>{['File','Scope',showUser&&'User','Type','Status','Size','Chunks','Created','Actions'].filter(Boolean).map(h=><th key={h} style={s.th}>{h}</th>)}</tr>
         </thead>
         <tbody>
           {docs.map(d=>(
             <tr key={d.id} style={s.tr}>
               <td style={{...s.td,maxWidth:180}}><span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',display:'block'}} title={d.original_name}>{d.original_name}</span></td>
+              <td style={s.td}>
+                {d.workspace_name
+                  ? <span style={{fontSize:10,padding:'2px 7px',borderRadius:20,background:'rgba(74,222,128,.1)',color:'#4ade80',border:'1px solid rgba(74,222,128,.2)',fontWeight:600,whiteSpace:'nowrap'}}>🏢 {d.workspace_name}</span>
+                  : <span style={{fontSize:10,padding:'2px 7px',borderRadius:20,background:'rgba(148,163,184,.08)',color:'#94a3b8',border:'1px solid rgba(148,163,184,.15)',fontWeight:500}}>🏠 Personal</span>
+                }
+              </td>
               {showUser && <td style={s.td}><span style={{color:'#60a5fa',fontSize:11}}>{d.user_email}</span></td>}
               <td style={s.td}><span style={{padding:'2px 6px',borderRadius:4,fontSize:10,background:'rgba(255,255,255,.06)',color:'var(--muted2)',fontWeight:500}}>{(d.file_type||'?').toUpperCase()}</span></td>
               <td style={s.td}><span style={{color:STATUS_COLOR[d.status]||'var(--muted2)',fontSize:12,fontWeight:600}}>{d.status}</span></td>
@@ -170,6 +228,7 @@ function ABtn({ children, onClick, danger }) {
     </button>
   );
 }
+
 
 const s = {
   wrap:       { padding:'1.5rem', maxWidth:1100, margin:'0 auto' },

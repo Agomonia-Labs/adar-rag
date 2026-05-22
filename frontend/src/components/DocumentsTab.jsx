@@ -1,6 +1,7 @@
 // src/components/DocumentsTab.jsx
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { uploadDocuments, listDocuments, getViewUrl, triggerEmbed, deleteDocument } from '../services/api.js';
+import { uploadDocuments, listDocuments, listWorkspaceDocuments, getViewUrl, triggerEmbed, deleteDocument, retryDocument,
+         listTags, createTag, deleteTag, assignTag, removeTagAssignment } from '../services/api.js';
 import { toast } from './Toast.jsx';
 import ChunksViewer from './ChunksViewer.jsx';
 import SummaryPanel from './SummaryPanel.jsx';
@@ -20,7 +21,7 @@ const STATUS = {
 const ICONS = { pdf:'📄', docx:'📝', csv:'📊', image:'🖼', text:'📃', '?':'📁' };
 const fmtSz = b => b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
 
-export default function DocumentsTab({ onEmbedChange }) {
+export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
   const [docs,    setDocs]    = useState([]);
   const [loading, setLoading] = useState(true);
   const [drag,    setDrag]    = useState(false);
@@ -32,32 +33,65 @@ export default function DocumentsTab({ onEmbedChange }) {
   const fileRef = useRef(null);
   const pollRef = useRef(null);
 
+  const [tags,        setTags]        = useState([]);
+  const [filterTag,   setFilterTag]   = useState('');   // tag id to filter by
+  const [filterName,  setFilterName]  = useState('');   // text search
+  const [sortBy,      setSortBy]      = useState('date');// date|name|size|status
+  const [newTagName,  setNewTagName]  = useState('');
+  const [showTagMgr,  setShowTagMgr]  = useState(false);
+
+  // Workspace role enforcement
+  const wsRole    = activeWorkspace?.my_role || null;
+  const canUpload = !wsRole || wsRole === 'editor' || wsRole === 'owner';
+  const canDelete = !wsRole || wsRole === 'editor' || wsRole === 'owner';
+
+  const prevDocsRef = useRef({});
+  const loadTags = useCallback(async () => {
+    try { setTags(await listTags()); } catch {}
+  }, []);
+
+  useEffect(() => { loadTags(); }, [activeWorkspace?.id]);
+
   const loadDocs = useCallback(async () => {
-    try { const d=await listDocuments(); setDocs(d); onEmbedChange?.(d.filter(x=>x.status==='embedded')); }
-    catch(e){ toast(e.message,'error'); }
-    finally{ setLoading(false); }
-  }, [onEmbedChange]);
+    try {
+      const d = activeWorkspace
+        ? await listWorkspaceDocuments(activeWorkspace.id)
+        : await listDocuments();
+      // In-app notification: detect embedding → embedded transition
+      d.forEach(doc => {
+        const prev = prevDocsRef.current[doc.id];
+        if (prev && prev.status === 'embedding' && doc.status === 'embedded') {
+          toast(`✅ "${doc.original_name}" is ready for chat (${doc.chunk_count} chunks embedded)`, 'success');
+        }
+      });
+      prevDocsRef.current = Object.fromEntries(d.map(doc => [doc.id, doc]));
+      setDocs(d);
+      onEmbedChange?.(d.filter(x => x.status === 'embedded'));
+    } catch(e) { toast(e.message, 'error'); }
+    finally { setLoading(false); }
+  }, [onEmbedChange, activeWorkspace?.id]);
 
   useEffect(() => {
-    loadDocs();
+    setDocs([]); setLoading(true); loadDocs();
     pollRef.current = setInterval(() => {
       setDocs(p => { if(p.some(d=>['uploading','chunking','embedding'].includes(d.status))) loadDocs(); return p; });
     }, 3000);
     return () => clearInterval(pollRef.current);
-  }, [loadDocs]);
+  }, [loadDocs, activeWorkspace?.id]);
 
   const handleFiles = useCallback(async files => {
     files = Array.from(files);
     const ex = docs.filter(d=>!['error','deleted'].includes(d.status)).length;
     if (ex+files.length>MAX_FILES){ toast(`Max ${MAX_FILES} docs. Have ${ex}; can add ${MAX_FILES-ex} more.`,'error'); return; }
     setBusy(true);
-    try{ await uploadDocuments(files); await loadDocs(); toast(`${files.length} file${files.length>1?'s':''} uploaded`,'success'); }
+    try{ await uploadDocuments(files, activeWorkspace?.id || null); await loadDocs(); toast(`${files.length} file${files.length>1?'s':''} uploaded`,'success'); }
     catch(e){ toast(e.message,'error'); }
     finally{ setBusy(false); }
   }, [docs, loadDocs]);
 
   const handleEmbed  = async id => { try{ await triggerEmbed(id); await loadDocs(); toast('Embedding started','info'); }catch(e){ toast(e.message,'error'); } };
   const handleView   = async id => { try{ const{url}=await getViewUrl(id); window.open(url,'_blank'); }catch(e){ toast(e.message,'error'); } };
+  const handleRetry  = async id => { try{ await retryDocument(id); toast('Reprocessing started…','info'); await loadDocs(); }catch(e){ toast(e.message,'error'); } };
   const handleDelete = async id => { try{ await deleteDocument(id); await loadDocs(); toast('Deleted','success'); }catch(e){ toast(e.message,'error'); } };
   const toggleSel    = id => setSelected(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
 
@@ -85,15 +119,21 @@ export default function DocumentsTab({ onEmbedChange }) {
             📝 Summarize {selected.length} docs
           </button>
         )}
-        {total<MAX_FILES && (
+        {/* Upload button — hidden for workspace viewers */}
+        {canUpload && total<MAX_FILES && (
           <button style={s.uploadBtn} onClick={()=>fileRef.current?.click()} disabled={busy}>
             ⬆ {busy?'Uploading…':'Upload'}
           </button>
         )}
+        {!canUpload && (
+          <span style={{fontSize:11.5,padding:'3px 10px',borderRadius:20,background:'rgba(248,113,113,.08)',color:'#f87171',border:'1px solid rgba(248,113,113,.2)',fontWeight:600}}>
+            👁 Viewer — read only
+          </span>
+        )}
       </div>
 
-      {/* Drop zone */}
-      {total<MAX_FILES && (
+      {/* Drop zone — hidden for workspace viewers */}
+      {canUpload && total<MAX_FILES && (
         <div style={{...s.dz,...(drag?s.dzOn:{})}}
           onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)}
           onDrop={e=>{e.preventDefault();setDrag(false);handleFiles(e.dataTransfer.files);}}
@@ -113,20 +153,93 @@ export default function DocumentsTab({ onEmbedChange }) {
         <span>Click <strong style={{color:'#4ade80'}}>📝 Summary</strong> anytime after chunking.</span>
       </div>
 
-      {loading ? <div style={s.ctr}>Loading…</div>
-       : docs.length===0 ? (
-        <div style={s.empty}><div style={{fontSize:'3rem',opacity:.15}}>📂</div><p style={{fontWeight:600,marginTop:'.75rem'}}>No documents yet</p><p style={{fontSize:13,color:'var(--muted2)',marginTop:4}}>Upload files above to get started</p></div>
-       ) : (
+      {/* ── Filter / Sort / Tag bar — single line ─────────────────────── */}
+      <div style={{ display:'flex', gap:5, padding:'6px 10px', borderBottom:'1px solid var(--b1)', background:'var(--s2)', alignItems:'center', flexShrink:0, flexWrap:'nowrap', minWidth:0 }}>
+        <input value={filterName} onChange={e=>setFilterName(e.target.value)}
+          placeholder="🔍 Search…"
+          style={{ fontSize:11.5, padding:'3px 8px', background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:'var(--r)', color:'var(--tx)', outline:'none', minWidth:80, flex:'1 1 80px' }} />
+        {tags.length > 0 && (
+          <select value={filterTag} onChange={e=>setFilterTag(e.target.value)}
+            style={{ fontSize:11.5, padding:'3px 5px', background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:'var(--r)', cursor:'pointer', flexShrink:0, maxWidth:110 }}>
+            <option value="">All tags</option>
+            {tags.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        )}
+        <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
+          style={{ fontSize:11.5, padding:'3px 5px', background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:'var(--r)', cursor:'pointer', flexShrink:0 }}>
+          <option value="date">↓ Date</option>
+          <option value="name">A–Z</option>
+          <option value="size">Size</option>
+          <option value="status">Status</option>
+        </select>
+        <button onClick={()=>setShowTagMgr(v=>!v)} title="Manage tags"
+          style={{ fontSize:11.5, padding:'3px 8px', background:showTagMgr?'rgba(74,222,128,.1)':'var(--s3)', color:showTagMgr?'#4ade80':'var(--muted2)', border:'1px solid var(--b2)', borderRadius:'var(--r)', cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' }}>
+          🏷{tags.length > 0 ? ` (${tags.length})` : ''}
+        </button>
+        {filterTag && (
+          <button onClick={()=>setFilterTag('')} title="Clear tag filter"
+            style={{ fontSize:11, padding:'3px 6px', background:'rgba(248,113,113,.08)', color:'#f87171', border:'1px solid rgba(248,113,113,.2)', borderRadius:'var(--r)', cursor:'pointer', flexShrink:0 }}>✕</button>
+        )}
+      </div>
+
+      {/* ── Tag manager ──────────────────────────────────────────────────── */}
+      {showTagMgr && (
+        <div style={{ padding:'8px 10px', borderBottom:'1px solid var(--b1)', background:'var(--s2)', flexShrink:0 }}>
+          <div style={{ display:'flex', gap:4, flexWrap:'wrap', alignItems:'center', marginBottom:6 }}>
+            {tags.map(t=>(
+              <span key={t.id} style={{ display:'inline-flex', alignItems:'center', gap:3, padding:'2px 8px', borderRadius:20, fontSize:11, fontWeight:600, background:`${t.color}20`, color:t.color, border:`1px solid ${t.color}40` }}>
+                {t.name}
+                {t.doc_count>0 && <span style={{fontSize:9.5,opacity:.7}}>({t.doc_count})</span>}
+                <button onClick={async()=>{ if(!confirm(`Delete tag "${t.name}"?`)) return; await deleteTag(t.id); loadTags(); if(filterTag===t.id) setFilterTag(''); }}
+                  style={{background:'none',border:'none',cursor:'pointer',color:'inherit',fontSize:10,padding:'0 1px',opacity:.6}}>✕</button>
+              </span>
+            ))}
+            {tags.length===0 && <span style={{fontSize:12,color:'var(--muted2)'}}>No tags yet</span>}
+          </div>
+          <div style={{display:'flex',gap:5}}>
+            <input value={newTagName} onChange={e=>setNewTagName(e.target.value)}
+              onKeyDown={async e=>{ if(e.key==='Enter'&&newTagName.trim()){await createTag(newTagName.trim());setNewTagName('');loadTags();}}}
+              placeholder="New tag name…"
+              style={{flex:1,fontSize:12,padding:'4px 8px',background:'var(--s3)',border:'1px solid var(--b2)',borderRadius:'var(--r)',color:'var(--tx)',outline:'none'}} />
+            <button disabled={!newTagName.trim()} onClick={async()=>{await createTag(newTagName.trim());setNewTagName('');loadTags();}}
+              style={{fontSize:12,padding:'4px 12px',background:'#15803d',color:'#fff',border:'none',borderRadius:'var(--r)',cursor:'pointer'}}>＋ Add</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Docs list ──────────────────────────────────────────────────────── */}
+      {(() => {
+        const filtered = docs
+          .filter(d => {
+            if (filterName && !d.original_name.toLowerCase().includes(filterName.toLowerCase())) return false;
+            if (filterTag  && !d.tags?.some(t => t.id === filterTag)) return false;
+            return true;
+          })
+          .sort((a,b) => {
+            if (sortBy==='name')   return a.original_name.localeCompare(b.original_name);
+            if (sortBy==='size')   return (b.file_size||0)-(a.file_size||0);
+            if (sortBy==='status') return a.status.localeCompare(b.status);
+            return new Date(b.created_at||0)-new Date(a.created_at||0);
+          });
+        if (loading) return <div style={s.ctr}>Loading…</div>;
+        if (filtered.length===0 && docs.length>0) return <div style={s.empty}><div style={{fontSize:'3rem',opacity:.15}}>🔍</div><p style={{fontWeight:600,marginTop:'.75rem'}}>No matches</p><p style={{fontSize:13,color:'var(--muted2)',marginTop:4}}>Try a different search or tag filter</p></div>;
+        if (docs.length===0) return <div style={s.empty}><div style={{fontSize:'3rem',opacity:.15}}>📂</div><p style={{fontWeight:600,marginTop:'.75rem'}}>No documents yet</p><p style={{fontSize:13,color:'var(--muted2)',marginTop:4}}>Upload files above to get started</p></div>;
+        return (
         <div style={s.list}>
-          {docs.map(doc=>(
+          {filtered.map(doc=>(
             <DocCard key={doc.id} doc={doc} selected={selected.includes(doc.id)}
               onSelect={()=>toggleSel(doc.id)} onEmbed={()=>handleEmbed(doc.id)}
               onViewSource={()=>handleView(doc.id)} onViewChunks={()=>setViewer(doc.id)}
               onSummarize={()=>setSummary({docId:doc.id,docName:doc.original_name})}
-              onDelete={handleDelete} />
+              onRetry={()=>handleRetry(doc.id)}
+              onDelete={handleDelete}
+              allTags={tags}
+              onTagAssign={async(tagId)=>{ await assignTag(doc.id,tagId); loadDocs(); }}
+              onTagRemove={async(tagId)=>{ await removeTagAssignment(doc.id,tagId); loadDocs(); }} />
           ))}
         </div>
-       )}
+        );
+      })()}
 
       {viewer && <ChunksViewer docId={viewer} onClose={()=>setViewer(null)} />}
       {compare && <ComparePanel doc1={compare.doc1} doc2={compare.doc2} onClose={()=>setCompare(null)} />
@@ -138,7 +251,7 @@ export default function DocumentsTab({ onEmbedChange }) {
 
 function Stat({v,l,c}){ return <div style={{textAlign:'center',minWidth:50}}><div style={{fontSize:20,fontWeight:700,color:c}}>{v}</div><div style={{fontSize:9,color:'var(--muted2)',textTransform:'uppercase',letterSpacing:'.5px',marginTop:1}}>{l}</div></div>; }
 
-function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSummarize,onDelete}){
+function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSummarize,onRetry,onDelete,allTags=[],onTagAssign,onTagRemove}){
   const [conf,setConf]=useState(false);
   const cfg=STATUS[doc.status]||{strip:'#6b7280',bg:'rgba(107,114,128,.1)',color:'#6b7280',label:doc.status};
   const spin=['chunking','embedding','uploading'].includes(doc.status);
@@ -156,6 +269,10 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
               {spin && <span style={{display:'inline-block',animation:'spin .8s linear infinite',marginRight:3}}>⟳</span>}
               {cfg.label}
             </span>
+            {doc.workspace_id
+              ? <span style={{fontSize:9.5,padding:'1px 6px',borderRadius:20,background:'rgba(74,222,128,.1)',color:'#4ade80',border:'1px solid rgba(74,222,128,.2)',fontWeight:600}}>🏢 Workspace</span>
+              : <span style={{fontSize:9.5,padding:'1px 6px',borderRadius:20,background:'rgba(148,163,184,.06)',color:'#94a3b8',border:'1px solid rgba(148,163,184,.12)'}}>🏠 Personal</span>
+            }
             <span style={s.mt}>{(doc.file_type||'?').toUpperCase()}</span>
             <span style={s.mt}>{fmtSz(doc.file_size)}</span>
             {doc.chunk_count>0 && <span style={s.mt}>{doc.chunk_count} chunks</span>}
@@ -170,10 +287,32 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
           )}
         </div>
       </div>
+      {/* Tag chips */}
+      {allTags.length > 0 && (
+        <div style={{ display:'flex', flexWrap:'wrap', gap:4, padding:'0 14px 7px', alignItems:'center' }}>
+          {(doc.tags||[]).map(t => (
+            <span key={t.id} style={{ display:'inline-flex', alignItems:'center', gap:2, padding:'1px 7px', borderRadius:20, fontSize:10.5, fontWeight:600, background:`${t.color}20`, color:t.color, border:`1px solid ${t.color}40` }}>
+              {t.name}
+              <button onClick={e=>{e.stopPropagation();onTagRemove?.(t.id);}}
+                style={{ background:'none', border:'none', cursor:'pointer', color:'inherit', fontSize:10, padding:'0 1px', opacity:.6, lineHeight:1 }}>✕</button>
+            </span>
+          ))}
+          {allTags.filter(t=>!(doc.tags||[]).find(dt=>dt.id===t.id)).length > 0 && (
+            <select defaultValue="" onChange={e=>{if(e.target.value){onTagAssign?.(e.target.value);e.target.value='';}}}
+              style={{ fontSize:10.5, padding:'1px 5px', background:'var(--s3)', color:'var(--muted2)', border:'1px dashed var(--b2)', borderRadius:20, cursor:'pointer', maxWidth:80 }}>
+              <option value="">＋ tag</option>
+              {allTags.filter(t=>!(doc.tags||[]).find(dt=>dt.id===t.id)).map(t=>(
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          )}
+        </div>
+      )}
       <div style={s.footer}>
         <Btn onClick={onViewSource} disabled={['uploading','chunking'].includes(doc.status)}>🔗 Source</Btn>
         {canSum && <Btn onClick={onViewChunks}>📋 Chunks</Btn>}
         {canSum && <Btn onClick={onSummarize} accent>📝 Summary</Btn>}
+        {doc.status==='error'    && <Btn onClick={onRetry} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>↻ Retry</Btn>}
         {doc.status==='chunked'  && <Btn onClick={onEmbed} primary>⚡ Embed</Btn>}
         {doc.status==='embedded' && <Btn onClick={onEmbed}>↩ Re-embed</Btn>}
         <div style={{flex:1}}/>

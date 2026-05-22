@@ -1,7 +1,7 @@
 // src/pages/AuthPages.jsx
 // Auth flow managed internally: login → forgot → reset / register
 import React, { useState, useEffect } from 'react';
-import { login, register, forgotPassword, verifyResetToken, resetPassword } from '../services/api.js';
+import { login, register, forgotPassword, verifyResetToken, resetPassword, resendVerification } from '../services/api.js';
 
 const Brand = () => (
   <div style={{ textAlign:'center', marginBottom:'1.75rem' }}>
@@ -16,6 +16,8 @@ const Brand = () => (
 
 // ── Single entry point — handles all auth screens internally ──────────────────
 export function AuthFlow({ onLogin }) {
+  const [pendingEmail, setPendingEmail] = useState('');
+  const [resendMsg,    setResendMsg]    = useState('');
   const [screen, setScreen] = useState(() => {
     const p = new URLSearchParams(window.location.search);
     if (p.get('token')) return 'reset';
@@ -30,8 +32,29 @@ export function AuthFlow({ onLogin }) {
     return <ResetPasswordScreen token={resetToken} onDone={() => { window.history.replaceState({}, '', '/'); setScreen('login'); }} />;
   if (screen === 'forgot')
     return <ForgotPasswordScreen onBack={() => setScreen('login')} />;
+  if (screen === 'verify-pending')
+    return (
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',minHeight:'100vh',background:'var(--bg)',padding:'2rem'}}>
+        <div style={{background:'var(--s1)',border:'1px solid var(--b2)',borderRadius:12,padding:'2rem 2.5rem',maxWidth:400,width:'100%',textAlign:'center'}}>
+          <div style={{fontSize:48,marginBottom:12}}>📧</div>
+          <h2 style={{fontSize:20,fontWeight:700,color:'var(--tx)',marginBottom:8}}>Verify your email</h2>
+          <p style={{fontSize:13.5,color:'var(--muted2)',lineHeight:1.7,marginBottom:16}}>
+            We sent a link to<br/><strong style={{color:'var(--tx)'}}>{pendingEmail}</strong>
+          </p>
+          <p style={{fontSize:12,color:'var(--muted2)',marginBottom:20}}>Click the link to activate your account. It expires in 24 hours.</p>
+          {resendMsg && <p style={{fontSize:12,color:'#4ade80',marginBottom:12}}>{resendMsg}</p>}
+          <button style={{width:'100%',padding:'10px',background:'var(--s3)',color:'var(--muted2)',border:'1px solid var(--b2)',borderRadius:8,fontSize:13,cursor:'pointer',marginBottom:8}}
+            onClick={async()=>{try{await resendVerification(pendingEmail);setResendMsg('New link sent!');}catch(e){setResendMsg(e.message);}}}>
+            Resend verification email
+          </button>
+          <button style={{background:'none',border:'none',color:'#4ade80',cursor:'pointer',fontSize:13}}
+            onClick={()=>setScreen('login')}>Back to login</button>
+        </div>
+      </div>
+    );
   if (screen === 'register')
-    return <RegisterScreen onRegistered={() => setScreen('login')} onSwitch={() => setScreen('login')} />;
+    return <RegisterScreen onRegistered={() => setScreen('login')} onSwitch={() => setScreen('login')}
+             onNeedsVerify={email => { setPendingEmail(email); setScreen('verify-pending'); }} />;
   return <LoginScreen onLogin={onLogin} onSwitch={() => setScreen('register')} onForgot={() => setScreen('forgot')} />;
 }
 
@@ -91,7 +114,7 @@ function LoginScreen({ onLogin, onSwitch, onForgot }) {
 }
 
 // ── Register ──────────────────────────────────────────────────────────────────
-function RegisterScreen({ onRegistered, onSwitch }) {
+function RegisterScreen({ onRegistered, onSwitch, onNeedsVerify }) {
   const [name,  setName]  = useState('');
   const [email, setEmail] = useState('');
   const [pass,  setPass]  = useState('');
