@@ -109,3 +109,63 @@ async def _vision(file_path: str, media_type: str) -> str:
     # Import here to avoid module-level circular dependency
     from services.llm import vision_extract
     return await vision_extract(file_path, media_type)
+
+
+# ── Table extraction via pdfplumber ───────────────────────────────────────────
+
+def extract_tables_from_pdf(file_path: str) -> list[dict]:
+    """Extract tables from PDF as Markdown strings with page + position metadata.
+    Returns list of {markdown, page, table_index, row_count, col_count}."""
+    tables = []
+    try:
+        import pdfplumber
+        with pdfplumber.open(file_path) as pdf:
+            for page_num, page in enumerate(pdf.pages, 1):
+                page_tables = page.extract_tables()
+                for t_idx, raw in enumerate(page_tables):
+                    if not raw or not any(any(c for c in row) for row in raw):
+                        continue  # skip empty tables
+
+                    # Clean cells
+                    cleaned = []
+                    for row in raw:
+                        cleaned.append([str(cell or "").strip().replace("\n", " ") for cell in row])
+
+                    if len(cleaned) < 2:
+                        continue  # need at least header + 1 data row
+
+                    # Build Markdown table
+                    header = cleaned[0]
+                    rows   = cleaned[1:]
+                    md     = "| " + " | ".join(header) + " |\n"
+                    md    += "| " + " | ".join("---" for _ in header) + " |\n"
+                    for row in rows:
+                        # Pad row if fewer columns than header
+                        while len(row) < len(header):
+                            row.append("")
+                        md += "| " + " | ".join(row[:len(header)]) + " |\n"
+
+                    tables.append({
+                        "markdown":    md,
+                        "page":        page_num,
+                        "table_index": t_idx,
+                        "row_count":   len(rows),
+                        "col_count":   len(header),
+                    })
+
+    except ImportError:
+        log.warning("pdfplumber not installed — table extraction skipped")
+    except Exception as e:
+        log.warning(f"Table extraction failed: {e}")
+
+    return tables
+
+
+def tables_to_text(tables: list[dict]) -> str:
+    """Join all extracted tables into a text block to append to main content."""
+    if not tables:
+        return ""
+    parts = []
+    for t in tables:
+        parts.append(f"\n\n[TABLE — Page {t['page']}, {t['row_count']} rows × {t['col_count']} cols]\n{t['markdown']}")
+    return "".join(parts)

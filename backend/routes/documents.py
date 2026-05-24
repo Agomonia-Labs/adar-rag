@@ -1,5 +1,6 @@
 # routes/documents.py
 from __future__ import annotations
+import logging
 import os, asyncio, json, tempfile
 from uuid import uuid4
 from datetime import datetime, timezone
@@ -7,12 +8,15 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import Request, APIRouter, BackgroundTasks, UploadFile, File, HTTPException, Depends
 
+log = logging.getLogger('docintel.documents')
+
 from auth.dependencies import CurrentUser, get_current_user
 from database.connection import get_db
 from services.usage         import check_document_limit, check_daily_limit, log_event
 from services.audit         import audit, ip_from, ua_from
 from services.notifications import send_embed_complete
-from services.extractor import extract_text, detect_type
+from services.extractor import extract_text, detect_type, extract_tables_from_pdf, tables_to_text
+from services.classifier import classify_document
 from services.chunker   import chunk_text
 from services.llm       import embed
 from services.vectordb  import store_chunk, delete_document_vectors
@@ -126,6 +130,7 @@ async def list_documents(current_user: CurrentUser, db=Depends(get_db)):
         """
         SELECT d.id, d.original_name, d.file_type, d.file_size, d.status,
                d.chunk_count, d.error_message, d.doc_metadata, d.workspace_id,
+               d.doc_type, d.doc_domain, d.doc_language,
                d.created_at, d.updated_at,
                COALESCE(
                  json_agg(json_build_object(
@@ -268,6 +273,29 @@ async def _chunk_document(doc_id, user_id, file_path, filename, content_type, ft
     try:
         # Extract text
         text = await extract_text(file_path, filename, content_type)
+
+        # ── Table extraction (PDF only) ────────────────────────────────────
+        if ftype == "pdf":
+            tables = extract_tables_from_pdf(file_path)
+            if tables:
+                text = text + tables_to_text(tables)
+                log.info(f"[{doc_id}] Extracted {len(tables)} tables from {filename}")
+
+        # ── Document classification ────────────────────────────────────────
+        classification = await classify_document(
+            text_sample=text[:2000],
+            filename=filename,
+            file_type=ftype,
+        )
+        async with get_pool().acquire() as _cls_conn:
+            await _cls_conn.execute(
+                "UPDATE documents SET doc_type=$1, doc_domain=$2, doc_language=$3, classified_at=NOW() WHERE id=$4",
+                classification["doc_type"],
+                classification["doc_domain"],
+                classification["doc_language"],
+                doc_id,
+            )
+        log.info(f"[{doc_id}] Classified as {classification['doc_type']}/{classification['doc_domain']}")
 
         # Build document-level metadata attached to every chunk
         doc_meta = {
@@ -415,6 +443,9 @@ def _doc_row(row: dict) -> dict:
     r["id"]           = str(r["id"])
     r["user_id"]      = str(r.get("user_id", ""))
     r["workspace_id"] = str(r["workspace_id"]) if r.get("workspace_id") else None
+    r["doc_type"]     = r.get("doc_type") or "general"
+    r["doc_domain"]   = r.get("doc_domain") or "general"
+    r["doc_language"] = r.get("doc_language") or "en"
     # Tags: may arrive as JSON string or list
     raw_tags = r.get("tags", [])
     if isinstance(raw_tags, str):
@@ -424,3 +455,44 @@ def _doc_row(row: dict) -> dict:
     r["created_at"]   = r["created_at"].isoformat() if r.get("created_at") else None
     r["updated_at"]   = r["updated_at"].isoformat() if r.get("updated_at") else None
     return r
+
+@router.post("/{doc_id}/classify")
+async def reclassify_document(doc_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    """Re-run classification on an existing document — useful if it was previously stored as general."""
+    row = await db.fetchrow(
+        "SELECT id, original_name, file_type, gcs_path FROM documents WHERE id=$1 AND user_id=$2",
+        doc_id, str(current_user["id"])
+    )
+    if not row:
+        raise HTTPException(404, "Document not found")
+
+    # Download text from GCS and re-classify
+    import tempfile, os
+    from services.storage import StorageService
+    from services.extractor import extract_text as _extract
+
+    gcs  = StorageService()
+    ftype = row["file_type"] or "pdf"
+
+    try:
+        file_bytes = await gcs.download_bytes(row["gcs_path"])
+        with tempfile.NamedTemporaryFile(suffix=f".{ftype}", delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+
+        text = await _extract(tmp_path, row["original_name"], f"application/{ftype}")
+        os.unlink(tmp_path)
+    except Exception as e:
+        raise HTTPException(500, f"Could not download document for re-classification: {e}")
+
+    result = await classify_document(
+        text_sample=text[:2000],
+        filename=row["original_name"],
+        file_type=ftype,
+    )
+    await db.execute(
+        "UPDATE documents SET doc_type=$1, doc_domain=$2, doc_language=$3, classified_at=NOW() WHERE id=$4",
+        result["doc_type"], result["doc_domain"], result["doc_language"], doc_id
+    )
+    log.info(f"Re-classified {doc_id}: {result['doc_type']}/{result['doc_domain']}")
+    return {**result, "doc_id": doc_id}

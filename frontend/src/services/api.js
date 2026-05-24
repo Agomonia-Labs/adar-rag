@@ -469,3 +469,8 @@ export async function quickScore(question, answer, context="", chunks=[], evalTy
     body: JSON.stringify({ question, answer, eval_types: evalTypes }),
   }));
 }
+export async function reclassifyDocument(docId) {
+  return handleRes(await fetch(`${BASE}/documents/${docId}/classify`, {
+    method: 'POST', headers: authHdr(),
+  }));
+}

@@ -86,6 +86,13 @@ async def create_tables() -> None:
 # ── Additional tables appended to CREATE_SCHEMA ───────────────────────────────
 CREATE_SCHEMA_ADDITIONS = """
 
+ALTER TABLE documents
+    ADD COLUMN IF NOT EXISTS doc_type      TEXT,
+    ADD COLUMN IF NOT EXISTS doc_domain    TEXT,
+    ADD COLUMN IF NOT EXISTS doc_language  TEXT DEFAULT 'en',
+    ADD COLUMN IF NOT EXISTS classified_at TIMESTAMPTZ;
+
+
 -- Hybrid search: full-text search vector column
 ALTER TABLE document_chunks
     ADD COLUMN IF NOT EXISTS search_vector tsvector;
@@ -128,6 +135,16 @@ CREATE TABLE IF NOT EXISTS document_tag_map (
 );
 CREATE INDEX IF NOT EXISTS idx_dtmap_doc ON document_tag_map(document_id);
 CREATE INDEX IF NOT EXISTS idx_dtmap_tag ON document_tag_map(tag_id);
+
+-- Document classification
+ALTER TABLE documents
+    ADD COLUMN IF NOT EXISTS doc_type      TEXT,
+    ADD COLUMN IF NOT EXISTS doc_domain    TEXT,
+    ADD COLUMN IF NOT EXISTS doc_language  TEXT DEFAULT 'en',
+    ADD COLUMN IF NOT EXISTS classified_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_docs_type   ON documents(doc_type);
+CREATE INDEX IF NOT EXISTS idx_docs_domain ON documents(doc_domain);
 
 -- Stripe billing
 ALTER TABLE users

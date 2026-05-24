@@ -19,6 +19,32 @@ const STATUS = {
 };
 
 const ICONS = { pdf:'📄', docx:'📝', csv:'📊', image:'🖼', text:'📃', '?':'📁' };
+
+const DOC_TYPE_LABELS = {
+  contract:'Contract', agreement:'Agreement', nda:'NDA', lease:'Lease',
+  employment_contract:'Employment', terms_of_service:'Terms',
+  invoice:'Invoice', receipt:'Receipt', purchase_order:'PO',
+  financial_statement:'Financial', audit_report:'Audit', tax_return:'Tax',
+  report:'Report', proposal:'Proposal', presentation:'Slides', memo:'Memo',
+  resume:'Resume', cv:'CV', job_description:'JD', offer_letter:'Offer',
+  medical_record:'Medical', prescription:'Rx', lab_report:'Lab', clinical_notes:'Clinical',
+  research_paper:'Research', thesis:'Thesis', article:'Article',
+  policy:'Policy', procedure:'Procedure', sop:'SOP', manual:'Manual',
+  email:'Email', letter:'Letter', notice:'Notice', general:'Doc',
+};
+const DOMAIN_COLORS = {
+  legal:      '#60a5fa',   // 🔵 Blue
+  finance:    '#4ade80',   // 🟢 Green
+  hr:         '#c084fc',   // 🟣 Purple
+  medical:    '#f87171',   // 🔴 Red
+  research:   '#fbbf24',   // 🟡 Yellow
+  operations: '#34d399',   // 🟢 Teal
+  general:    '#94a3b8',   // ⚪ Grey
+};
+
+const DOMAIN_ICONS = {
+  legal:'🔵', finance:'🟢', hr:'🟣', medical:'🔴', research:'🟡', operations:'🟢', general:'⚪',
+};
 const fmtSz = b => b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
 
 export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
@@ -36,7 +62,8 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
   const [tags,        setTags]        = useState([]);
   const [filterTag,   setFilterTag]   = useState('');   // tag id to filter by
   const [filterName,  setFilterName]  = useState('');   // text search
-  const [sortBy,      setSortBy]      = useState('date');// date|name|size|status
+  const [sortBy,      setSortBy]      = useState('date');
+  const [filterType,  setFilterType]  = useState('');  // doc_type filter// date|name|size|status
   const [newTagName,  setNewTagName]  = useState('');
   const [showTagMgr,  setShowTagMgr]  = useState(false);
 
@@ -176,6 +203,45 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
           <option value="status">● Status</option>
         </select>
         {/* Tags manager toggle */}
+        <select value={filterType} onChange={e=>setFilterType(e.target.value)}
+          style={{ fontSize:11, padding:'3px 4px', background:'var(--s3)',
+            color: filterType ? (DOMAIN_COLORS[{contract:'legal',invoice:'finance',financial_statement:'finance',purchase_order:'finance',resume:'hr',job_description:'hr',offer_letter:'hr',medical_record:'medical',research_paper:'research',policy:'operations',report:'general'}[filterType]||'general']) : 'var(--tx)',
+            border:`1px solid var(--b2)`, borderRadius:'var(--r)', cursor:'pointer', flexShrink:0, width:72 }}>
+          <option value="">All types</option>
+          <optgroup label="🔵 Legal">
+            <option value="contract">Contract</option>
+            <option value="agreement">Agreement</option>
+            <option value="nda">NDA</option>
+            <option value="lease">Lease</option>
+          </optgroup>
+          <optgroup label="🟢 Finance">
+            <option value="invoice">Invoice</option>
+            <option value="purchase_order">PO</option>
+            <option value="financial_statement">Financial</option>
+            <option value="audit_report">Audit</option>
+          </optgroup>
+          <optgroup label="🟣 HR">
+            <option value="resume">Resume</option>
+            <option value="job_description">JD</option>
+            <option value="offer_letter">Offer</option>
+          </optgroup>
+          <optgroup label="🔴 Medical">
+            <option value="medical_record">Medical</option>
+            <option value="prescription">Rx</option>
+            <option value="lab_report">Lab</option>
+          </optgroup>
+          <optgroup label="🟡 Research">
+            <option value="research_paper">Research</option>
+            <option value="thesis">Thesis</option>
+            <option value="article">Article</option>
+          </optgroup>
+          <optgroup label="⚪ General">
+            <option value="report">Report</option>
+            <option value="policy">Policy</option>
+            <option value="email">Email</option>
+            <option value="general">General</option>
+          </optgroup>
+        </select>
         <button onClick={()=>setShowTagMgr(v=>!v)} title="Manage tags"
           style={{ fontSize:12, padding:'3px 6px', background:showTagMgr?'rgba(74,222,128,.1)':'var(--s3)', color:showTagMgr?'#4ade80':'var(--muted2)', border:`1px solid ${showTagMgr?'rgba(74,222,128,.3)':'var(--b2)'}`, borderRadius:'var(--r)', cursor:'pointer', flexShrink:0 }}>
           🏷{tags.length > 0 ? <sup style={{fontSize:9}}>{tags.length}</sup> : ''}
@@ -213,6 +279,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
           .filter(d => {
             if (filterName && !d.original_name.toLowerCase().includes(filterName.toLowerCase())) return false;
             if (filterTag  && !d.tags?.some(t => t.id === filterTag)) return false;
+            if (filterType && d.doc_type !== filterType) return false;
             return true;
           })
           .sort((a,b) => {
@@ -276,6 +343,38 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
             <span style={s.mt}>{(doc.file_type||'?').toUpperCase()}</span>
             <span style={s.mt}>{fmtSz(doc.file_size)}</span>
             {doc.chunk_count>0 && <span style={s.mt}>{doc.chunk_count} chunks</span>}
+            {(() => {
+              const domain = doc.doc_domain || 'general';
+              const color  = DOMAIN_COLORS[domain] || '#94a3b8';
+              const icon   = DOMAIN_ICONS[domain]  || '⚪';
+              const reclass = async e => {
+                e.stopPropagation();
+                try {
+                  const r = await reclassifyDocument(doc.id);
+                  await loadDocs();
+                } catch {}
+              };
+              if (!doc.doc_type) return (
+                <span style={{ fontSize:9.5, padding:'1px 6px', borderRadius:20, fontWeight:600,
+                  background:'rgba(148,163,184,.08)', color:'#6b7280', border:'1px solid rgba(148,163,184,.2)' }}>
+                  ⟳ Classifying
+                </span>
+              );
+              return (
+                <span title={`${domain} — click ↺ to re-classify`}
+                  style={{ display:'inline-flex', alignItems:'center', gap:3 }}>
+                  <span style={{ fontSize:9.5, padding:'1px 7px', borderRadius:20, fontWeight:600,
+                    background:`${color}18`, color, border:`1px solid ${color}35` }}>
+                    {icon} {DOC_TYPE_LABELS[doc.doc_type] || doc.doc_type}
+                  </span>
+                  <button onClick={reclass} title="Re-classify this document"
+                    style={{ background:'none', border:'none', color, cursor:'pointer',
+                      fontSize:10, opacity:.5, padding:'0 1px', lineHeight:1 }}>
+                    ↺
+                  </button>
+                </span>
+              );
+            })()}
           </div>
           {doc.error_message && <p style={{fontSize:11,color:'var(--red)',marginTop:4}}>{doc.error_message}</p>}
           {conf && (
