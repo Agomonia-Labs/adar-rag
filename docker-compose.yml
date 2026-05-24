@@ -24,6 +24,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      SKIP_EMAIL_VERIFICATION: true
       DATABASE_URL: postgresql://docintel:docintel_secret@postgres:5432/docintel
       GCS_SERVICE_ACCOUNT_KEY_PATH: /app/gcs-key.json
     depends_on:

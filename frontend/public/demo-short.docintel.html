@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>আদর DocIntel — 5-Minute Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --green:#15803d;--green-l:#dcfce7;--green-m:#86efac;
+  --gray:#f4f6f4;--white:#fff;--dark:#0d1f0d;--muted:#6b7280;
+  --blue:#2563eb;--amber:#b45309;--red:#dc2626;
+}
+body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;overflow:hidden;user-select:none}
+
+/* ── Splash ───────────────────────────────────────── */
+#splash{position:fixed;inset:0;background:linear-gradient(135deg,#0a1a0a 0%,#0f2d1a 100%);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:100;cursor:pointer;transition:opacity .6s}
+#splash.hide{opacity:0;pointer-events:none}
+.splash-brand{display:flex;align-items:center;gap:14px;margin-bottom:24px}
+.splash-leaf{font-size:56px;animation:float 3s ease-in-out infinite}
+.splash-text{text-align:left}
+.splash-bangla{font-size:42px;font-weight:800;color:var(--green);letter-spacing:-1px;line-height:1}
+.splash-en{font-size:18px;font-weight:500;color:#6b7280;letter-spacing:2px;margin-top:2px}
+.splash-tagline{font-size:15px;color:#4ade80;margin-top:16px;letter-spacing:.3px}
+.splash-cta{margin-top:36px;font-size:14px;color:#6b7280;animation:pulse 2s ease-in-out infinite}
+
+/* ── App shell ────────────────────────────────────── */
+#app{height:100vh;display:flex;flex-direction:column;opacity:0;transition:opacity .6s}
+#app.show{opacity:1}
+
+/* ── Top bar ──────────────────────────────────────── */
+.topbar{background:rgba(10,26,10,.95);border-bottom:1px solid rgba(255,255,255,.08);padding:10px 20px;display:flex;align-items:center;gap:14px;flex-shrink:0;backdrop-filter:blur(12px)}
+.tb-brand{display:flex;align-items:center;gap:8px}
+.tb-leaf{font-size:20px}
+.tb-bangla{font-size:17px;font-weight:800;color:var(--green)}
+.tb-en{font-size:12px;color:#6b7280;letter-spacing:1px;font-weight:500}
+.tb-mid{flex:1;display:flex;align-items:center;justify-content:center;gap:6px}
+.slide-dots{display:flex;gap:5px;align-items:center}
+.dot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.2);cursor:pointer;transition:all .2s}
+.dot.active{background:var(--green);transform:scale(1.3)}
+.tb-right{display:flex;align-items:center;gap:10px}
+.btn-icon{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:5px}
+.btn-icon:hover{background:rgba(255,255,255,.14)}
+.btn-icon.active{background:rgba(21,128,61,.2);border-color:rgba(21,128,61,.4);color:#4ade80}
+.slide-counter{font-size:12px;color:#4b5563;font-weight:500}
+
+/* ── Progress bar ─────────────────────────────────── */
+.progress-bar{height:3px;background:rgba(255,255,255,.06);flex-shrink:0}
+.progress-fill{height:100%;background:linear-gradient(90deg,#15803d,#4ade80);transition:width .4s ease;border-radius:0 2px 2px 0}
+
+/* ── Slides ───────────────────────────────────────── */
+.slides{flex:1;position:relative;overflow:hidden}
+.slide{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;opacity:0;transform:translateX(60px);transition:all .45s cubic-bezier(.4,0,.2,1);pointer-events:none}
+.slide.active{opacity:1;transform:translateX(0);pointer-events:all}
+.slide.exit{opacity:0;transform:translateX(-60px)}
+
+.slide-inner{width:100%;max-width:960px;display:grid;grid-template-columns:1fr 1fr;gap:28px;align-items:center}
+.slide-inner.full{grid-template-columns:1fr;max-width:700px;text-align:center}
+
+/* ── Narration panel ──────────────────────────────── */
+.narration{display:flex;flex-direction:column;gap:14px}
+.slide-num{font-size:11px;color:var(--green);font-weight:700;letter-spacing:2px;text-transform:uppercase}
+.slide-title{font-size:26px;font-weight:800;line-height:1.2;color:#fff}
+.slide-sub{font-size:13.5px;color:#9ca3af;line-height:1.7}
+.feature-list{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+.feature-item{display:flex;align-items:flex-start;gap:10px;font-size:13px;color:#d1fae5}
+.feature-icon{font-size:16px;flex-shrink:0;margin-top:1px}
+.btn-speak{display:inline-flex;align-items:center;gap:7px;background:rgba(21,128,61,.15);border:1px solid rgba(21,128,61,.35);color:#4ade80;padding:8px 16px;border-radius:20px;font-size:12.5px;font-weight:600;cursor:pointer;transition:all .15s;margin-top:8px;width:fit-content}
+.btn-speak:hover{background:rgba(21,128,61,.25)}
+.btn-speak.speaking{background:rgba(21,128,61,.3);border-color:#4ade80;animation:speakPulse 1.5s ease-in-out infinite}
+
+/* ── Mockup ───────────────────────────────────────── */
+.mockup{border-radius:14px;overflow:hidden;border:1px solid rgba(255,255,255,.1);background:#1a2e1a;box-shadow:0 24px 64px rgba(0,0,0,.5)}
+.mockup-bar{background:#111d11;padding:10px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(255,255,255,.06)}
+.mockup-dot{width:10px;height:10px;border-radius:50%}
+.mockup-url{flex:1;background:rgba(255,255,255,.06);border-radius:6px;padding:4px 10px;font-size:11px;color:#6b7280;text-align:center}
+.mockup-body{padding:16px;min-height:260px}
+
+/* Mock UI components */
+.mock-header{display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.07)}
+.mock-logo{font-size:16px}
+.mock-brand-b{font-size:14px;font-weight:800;color:#4ade80}
+.mock-brand-e{font-size:10px;color:#6b7280;letter-spacing:1px}
+.mock-tabs{display:flex;gap:4px;margin-left:auto}
+.mock-tab{font-size:10px;padding:4px 10px;border-radius:12px;color:#6b7280;cursor:pointer}
+.mock-tab.active{background:rgba(21,128,61,.2);color:#4ade80;font-weight:600}
+
+.mock-upload-zone{border:1.5px dashed rgba(134,239,172,.4);border-radius:10px;padding:20px;text-align:center;background:rgba(21,128,61,.05);margin-bottom:12px}
+.mock-upload-icon{font-size:28px;margin-bottom:6px}
+.mock-upload-text{font-size:11.5px;color:#4ade80;font-weight:600}
+.mock-upload-sub{font-size:10px;color:#6b7280;margin-top:2px}
+
+.mock-stats{display:flex;gap:12px;margin-bottom:12px}
+.mock-stat{text-align:center;flex:1}
+.mock-stat-val{font-size:18px;font-weight:700}
+.mock-stat-lbl{font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.5px}
+
+.mock-card{border-radius:8px;border:0.5px solid rgba(255,255,255,.08);overflow:hidden;margin-bottom:8px;background:rgba(255,255,255,.03)}
+.mock-card-strip{display:flex}
+.mock-card-bar{width:4px;flex-shrink:0}
+.mock-card-content{padding:8px 10px;flex:1}
+.mock-card-name{font-size:11.5px;font-weight:600;color:#e5e7eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+.mock-card-meta{display:flex;gap:5px;margin-top:4px;align-items:center;flex-wrap:wrap}
+.mock-badge{font-size:9px;padding:2px 7px;border-radius:20px;font-weight:600}
+.mock-card-footer{background:rgba(255,255,255,.03);border-top:0.5px solid rgba(255,255,255,.06);padding:5px 10px;display:flex;gap:4px}
+.mock-btn{font-size:9.5px;padding:2px 8px;border-radius:5px;border:0.5px solid rgba(255,255,255,.12);background:transparent;color:#9ca3af;cursor:pointer}
+.mock-btn.primary{background:#15803d;color:#fff;border:none;font-weight:600}
+.mock-btn.accent{background:rgba(21,128,61,.12);color:#4ade80;border-color:rgba(21,128,61,.3)}
+
+/* Chat mockup */
+.mock-chat-msgs{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.mock-msg-user{display:flex;justify-content:flex-end}
+.mock-msg-ai{display:flex;gap:6px;align-items:flex-start}
+.mock-avatar{width:22px;height:22px;border-radius:50%;background:rgba(21,128,61,.2);border:1px solid rgba(134,239,172,.3);display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0}
+.mock-bubble-user{background:#15803d;color:#fff;padding:7px 11px;border-radius:12px 12px 2px 12px;font-size:10.5px;max-width:75%}
+.mock-bubble-ai{background:rgba(255,255,255,.06);border:0.5px solid rgba(255,255,255,.1);padding:8px 11px;border-radius:2px 12px 12px 12px;font-size:10.5px;color:#e5e7eb;max-width:80%;line-height:1.5}
+.mock-input-row{display:flex;gap:6px;padding:6px;background:rgba(0,0,0,.2);border-radius:8px;border:1px solid rgba(255,255,255,.07)}
+.mock-input{flex:1;background:transparent;border:none;color:#9ca3af;font-size:10.5px;outline:none;font-family:inherit}
+.mock-send{background:#15803d;border:none;color:#fff;border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer}
+
+/* Table in chat */
+.mock-table{width:100%;border-collapse:collapse;font-size:9.5px;margin:6px 0}
+.mock-table th{background:rgba(255,255,255,.07);color:#9ca3af;padding:5px 8px;text-align:left;border-bottom:1px solid rgba(255,255,255,.08);font-weight:600}
+.mock-table td{padding:5px 8px;border-bottom:0.5px solid rgba(255,255,255,.05);color:#e5e7eb}
+.mock-table tr:nth-child(odd) td{background:rgba(255,255,255,.02)}
+
+/* Summary panel */
+.mock-summary-types{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px}
+.mock-stype{font-size:9px;padding:3px 9px;border-radius:20px;border:0.5px solid rgba(255,255,255,.12);color:#9ca3af}
+.mock-stype.active{background:rgba(21,128,61,.2);border-color:rgba(21,128,61,.4);color:#4ade80;font-weight:600}
+.mock-summary-output{background:rgba(255,255,255,.04);border-radius:8px;border:0.5px solid rgba(255,255,255,.08);padding:10px;font-size:10px;color:#d1fae5;line-height:1.7;min-height:80px}
+.mock-summary-hdr{font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px;display:flex;justify-content:space-between}
+
+/* Admin */
+.mock-admin-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px}
+.mock-admin-stat{background:rgba(255,255,255,.04);border-radius:8px;border:0.5px solid rgba(255,255,255,.08);padding:8px;text-align:center}
+.mock-admin-val{font-size:18px;font-weight:700}
+.mock-admin-lbl{font-size:8.5px;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-top:2px}
+.mock-table-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:0.5px solid rgba(255,255,255,.05);font-size:10px;color:#d1d5db}
+.mock-table-hdr{display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid rgba(255,255,255,.1);font-size:9px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:.4px;background:rgba(255,255,255,.03)}
+
+/* ── Nav arrows ───────────────────────────────────── */
+.nav-arrows{display:flex;align-items:center;gap:8px}
+.nav-btn{width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);color:#fff;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.nav-btn:hover{background:rgba(21,128,61,.2);border-color:rgba(21,128,61,.4)}
+.nav-btn:disabled{opacity:.3;cursor:not-allowed}
+
+/* ── Animations ───────────────────────────────────── */
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+@keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}
+@keyframes speakPulse{0%,100%{box-shadow:0 0 0 0 rgba(74,222,128,.3)}50%{box-shadow:0 0 0 6px rgba(74,222,128,0)}}
+@keyframes typing{0%,100%{opacity:0}50%{opacity:1}}
+.typing-dot{display:inline-block;width:5px;height:5px;border-radius:50%;background:#4ade80;margin:0 2px;animation:typing 1.2s ease-in-out infinite}
+.typing-dot:nth-child(2){animation-delay:.2s}
+.typing-dot:nth-child(3){animation-delay:.4s}
+.sum-card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.sum-card-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.sum-card-title{font-size:12.5px;font-weight:700;letter-spacing:.2px}
+.sum-card-list{list-style:none;display:flex;flex-direction:column;gap:3px}
+.sum-card-list li{font-size:10.5px;color:#9ca3af;padding-left:12px;position:relative}
+.sum-card-list li::before{content:"→";position:absolute;left:0;color:rgba(255,255,255,.2);font-size:9px}
+</style>
+</head>
+<body>
+
+<!-- ── Splash ── -->
+<div id="splash">
+  <div class="splash-brand">
+    <div class="splash-leaf">🌿</div>
+    <div class="splash-text">
+      <div class="splash-bangla">আদর</div>
+      <div class="splash-en">DOCINTEL</div>
+    </div>
+  </div>
+  <div class="splash-tagline">Document Intelligence Platform</div>
+  <div class="splash-cta">Tap anywhere to begin →</div>
+</div>
+
+<!-- ── App ── -->
+<div id="app">
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="tb-brand">
+      <span class="tb-leaf">🌿</span>
+      <div>
+        <div class="tb-bangla">আদর</div>
+        <div class="tb-en">DOCINTEL</div>
+      </div>
+    </div>
+    <div class="tb-mid">
+      <div class="slide-dots" id="dots"></div>
+    </div>
+    <div class="tb-right nav-arrows">
+      <span class="slide-counter" id="counter">1 / 10</span>
+      <button class="btn-icon" id="autoBtn" onclick="toggleAuto()">▶ Auto</button>
+      <button class="nav-btn" id="prevBtn" onclick="goSlide(-1)">←</button>
+      <button class="nav-btn" id="nextBtn" onclick="goSlide(1)">→</button>
+    </div>
+  </div>
+  <div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
+
+  <!-- ── Slides ── -->
+  <div class="slides" id="slides">
+
+    <!-- 1. Hero -->
+    <div class="slide" data-idx="0">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num" style="font-size:11px;letter-spacing:1px">5-MINUTE OVERVIEW</div>
+          <div class="slide-title">আদর DocIntel</div>
+          <div class="slide-sub">A self-service RAG platform — upload documents, ask questions in natural language, and get answers grounded in your own content. Built for teams that need document intelligence without the infrastructure overhead.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">📄</span><span>Upload PDFs, Word docs, CSVs, images — auto-chunked and indexed</span></div>
+            <div class="feature-item"><span class="feature-icon">💬</span><span>Semantic chat powered by Gemini embeddings and vector search</span></div>
+            <div class="feature-item"><span class="feature-icon">🏢</span><span>Multi-user, team workspaces, tiered billing — production-ready</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(0)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">docintel.adar.agomoniai.com</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:2rem">
+            <div style="font-size:48px">📚</div>
+            <div style="font-size:22px;font-weight:800;color:#f0fdf4;text-align:center;letter-spacing:-.5px">আদর DocIntel</div>
+            <div style="font-size:12px;color:#6b7280;text-align:center;line-height:1.7;max-width:220px">Semantic search · Chat · Summarise<br/>Tags · Workspaces · Stripe billing</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
+              <span style="font-size:10px;padding:3px 10px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.25);font-weight:600">Gemini Embeddings</span>
+              <span style="font-size:10px;padding:3px 10px;border-radius:20px;background:rgba(96,165,250,.1);color:#60a5fa;border:1px solid rgba(96,165,250,.25);font-weight:600">pgvector</span>
+              <span style="font-size:10px;padding:3px 10px;border-radius:20px;background:rgba(192,132,252,.1);color:#c084fc;border:1px solid rgba(192,132,252,.25);font-weight:600">FastAPI</span>
+              <span style="font-size:10px;padding:3px 10px;border-radius:20px;background:rgba(251,191,36,.1);color:#fbbf24;border:1px solid rgba(251,191,36,.25);font-weight:600">Cloud Run</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Upload Pipeline -->
+    <div class="slide" data-idx="1">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Step 1</div>
+          <div class="slide-title">Upload → Chunk → Embed</div>
+          <div class="slide-sub">Drop any file and the platform handles the rest automatically — chunking, storage in GCS, and vector embedding via Gemini. Documents move through a clear status pipeline you can watch in real time.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">⬆</span><span>PDF, DOCX, CSV, images, TXT — drag-and-drop or click to upload</span></div>
+            <div class="feature-item"><span class="feature-icon">✂</span><span>Auto-chunked into 350-word windows with 60-word overlap, stored in GCS</span></div>
+            <div class="feature-item"><span class="feature-icon">⚡</span><span>One-click embedding — Gemini generates 768-dim vectors, stored in pgvector</span></div>
+            <div class="feature-item"><span class="feature-icon">↻</span><span>Error recovery — Retry button re-downloads from GCS and re-runs the full pipeline</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(1)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">📂 Documents</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:7px">
+            <!-- Pipeline steps -->
+            <div style="display:flex;align-items:center;gap:6px;font-size:10px;color:#9ca3af;margin-bottom:4px">
+              <span style="padding:2px 8px;background:rgba(255,255,255,.06);border-radius:4px">Upload</span><span>→</span>
+              <span style="padding:2px 8px;background:rgba(255,255,255,.06);border-radius:4px">Chunk</span><span>→</span>
+              <span style="padding:2px 8px;background:rgba(255,255,255,.06);border-radius:4px">Embed</span><span>→</span>
+              <span style="padding:2px 8px;background:rgba(74,222,128,.1);color:#4ade80;border-radius:4px">Ready ✓</span>
+            </div>
+            <!-- Doc cards -->
+            <div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(74,222,128,.3);border-radius:8px;padding:9px 11px;display:flex;align-items:center;gap:8px">
+              <div style="width:3px;background:#4ade80;align-self:stretch;border-radius:1px;flex-shrink:0;margin:-9px 0;margin-right:4px"></div>
+              <span style="font-size:18px">📄</span>
+              <div style="flex:1">
+                <div style="font-size:11px;font-weight:600;color:#f0fdf4;margin-bottom:3px">Q3_Financial_Report.pdf</div>
+                <div style="display:flex;gap:5px;align-items:center">
+                  <span style="font-size:9px;padding:1px 7px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.2);font-weight:600">Embedded ✓</span>
+                  <span style="font-size:9px;color:#6b7280">PDF · 2.4 MB · 47 chunks</span>
+                </div>
+              </div>
+            </div>
+            <div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(251,191,36,.3);border-radius:8px;padding:9px 11px;display:flex;align-items:center;gap:8px">
+              <div style="width:3px;background:#fbbf24;align-self:stretch;border-radius:1px;flex-shrink:0;margin:-9px 0;margin-right:4px"></div>
+              <span style="font-size:18px">📝</span>
+              <div style="flex:1">
+                <div style="font-size:11px;font-weight:600;color:#f0fdf4;margin-bottom:3px">Legal_Agreement_v3.docx</div>
+                <div style="display:flex;gap:5px;align-items:center">
+                  <span style="font-size:9px;padding:1px 7px;border-radius:20px;background:rgba(251,191,36,.1);color:#fbbf24;border:1px solid rgba(251,191,36,.2);font-weight:600">⟳ Embedding…</span>
+                  <span style="font-size:9px;color:#6b7280">DOCX · 890 KB</span>
+                </div>
+              </div>
+            </div>
+            <div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(96,165,250,.3);border-radius:8px;padding:9px 11px;display:flex;align-items:center;gap:8px">
+              <div style="width:3px;background:#60a5fa;align-self:stretch;border-radius:1px;flex-shrink:0;margin:-9px 0;margin-right:4px"></div>
+              <span style="font-size:18px">📊</span>
+              <div style="flex:1">
+                <div style="font-size:11px;font-weight:600;color:#f0fdf4;margin-bottom:3px">Sales_Data_2026.csv</div>
+                <div style="display:flex;gap:5px">
+                  <span style="font-size:9px;padding:1px 7px;border-radius:20px;background:rgba(96,165,250,.1);color:#60a5fa;border:1px solid rgba(96,165,250,.2);font-weight:600">Ready to embed</span>
+                  <button style="font-size:9px;padding:1px 7px;border-radius:20px;background:#15803d;color:#fff;border:none">⚡ Embed</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. Semantic Chat -->
+    <div class="slide" data-idx="2">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Step 2</div>
+          <div class="slide-title">Semantic Chat</div>
+          <div class="slide-sub">Ask questions in plain English and get answers grounded in your documents. Hybrid search combines vector similarity with BM25 keyword matching, then a Gemini cross-encoder re-ranks results for maximum precision.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">🔍</span><span>Hybrid search — RRF fusion of vector + BM25, then Gemini re-ranking</span></div>
+            <div class="feature-item"><span class="feature-icon">💬</span><span>Streaming responses with markdown, tables, and source citations</span></div>
+            <div class="feature-item"><span class="feature-icon">📚</span><span>Persistent chat sessions — history saved, searchable, resumable</span></div>
+            <div class="feature-item"><span class="feature-icon">👍</span><span>Thumbs up/down feedback per message, exportable chat history</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(2)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">💬 Chat</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;justify-content:flex-end">
+              <div style="background:rgba(74,222,128,.12);border:1px solid rgba(74,222,128,.2);border-radius:10px 10px 2px 10px;padding:8px 12px;max-width:75%;font-size:11px;color:#f0fdf4">
+                What was the revenue growth in Q3 compared to Q2?
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:flex-start">
+              <div style="width:24px;height:24px;border-radius:50%;background:rgba(74,222,128,.15);border:1px solid rgba(74,222,128,.3);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">📚</div>
+              <div style="background:rgba(255,255,255,.04);border:0.5px solid rgba(255,255,255,.1);border-radius:2px 10px 10px 10px;padding:10px 12px;flex:1;font-size:11px;color:#d1d5db;line-height:1.7">
+                Based on <strong style="color:#4ade80">Q3_Financial_Report.pdf</strong>, revenue grew <strong style="color:#f0fdf4">18.4%</strong> from Q2 to Q3, reaching <strong style="color:#f0fdf4">$4.2M</strong>.<br/><br/>
+                <table style="border-collapse:collapse;width:100%;font-size:10px">
+                  <tr style="border-bottom:1px solid rgba(255,255,255,.1)"><th style="text-align:left;color:#6b7280;padding:2px 6px">Quarter</th><th style="color:#6b7280;padding:2px 6px">Revenue</th><th style="color:#6b7280;padding:2px 6px">Growth</th></tr>
+                  <tr><td style="padding:2px 6px;color:#9ca3af">Q2 2026</td><td style="padding:2px 6px;text-align:center;color:#f0fdf4">$3.5M</td><td style="padding:2px 6px;text-align:center;color:#9ca3af">—</td></tr>
+                  <tr><td style="padding:2px 6px;color:#9ca3af">Q3 2026</td><td style="padding:2px 6px;text-align:center;color:#4ade80;font-weight:700">$4.2M</td><td style="padding:2px 6px;text-align:center;color:#4ade80">+18.4%</td></tr>
+                </table>
+                <div style="margin-top:6px;display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+                  <span style="font-size:8px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:.3px">Eval</span>
+                  <span style="font-size:9.5px;padding:1px 7px;border-radius:20px;background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.3);font-weight:600">🎯 5/5</span>
+                  <span style="font-size:9.5px;padding:1px 7px;border-radius:20px;background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.3);font-weight:600">🔍 5/5</span>
+                  <span style="font-size:9.5px;padding:1px 7px;border-radius:20px;background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.3);font-weight:600">⚖️ 4/5</span>
+                </div>
+                <div style="margin-top:5px;display:flex;gap:6px;align-items:center">
+                  <span style="font-size:9px;color:#6b7280">Sources: pg. 4, 7</span>
+                  <span style="font-size:14px;cursor:pointer;opacity:.6">👍</span>
+                  <span style="font-size:14px;cursor:pointer;opacity:.6">👎</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. Summarise + Compare -->
+    <div class="slide" data-idx="3">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Step 3</div>
+          <div class="slide-title">Summarise & Compare</div>
+          <div class="slide-sub">Generate five different types of summaries for any document — brief, detailed, bullet points, executive, or key findings — all streamed in real time. Select two documents to compare them side by side with a structured analysis.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">📝</span><span>5-type streaming summaries — brief, detailed, bullets, executive, key findings</span></div>
+            <div class="feature-item"><span class="feature-icon">⇄</span><span>Document comparison — select 2 docs, get a structured side-by-side analysis</span></div>
+            <div class="feature-item"><span class="feature-icon">📦</span><span>Multi-doc summarisation — summarise a batch of selected documents at once</span></div>
+            <div class="feature-item"><span class="feature-icon">↓</span><span>Export summaries and chat history as Markdown files</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(3)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">📝 Summary Panel</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:8px">
+            <!-- Summary type selector -->
+            <div style="display:flex;gap:4px;flex-wrap:wrap">
+              {['Brief','Detailed','Bullets','Executive','Key Findings'].map((t,i) => "")}
+              <div style="padding:3px 9px;border-radius:20px;font-size:9.5px;font-weight:600;background:rgba(74,222,128,.15);color:#4ade80;border:1px solid rgba(74,222,128,.3)">Brief</div>
+              <div style="padding:3px 9px;border-radius:20px;font-size:9.5px;background:rgba(255,255,255,.05);color:#6b7280;border:0.5px solid rgba(255,255,255,.1)">Detailed</div>
+              <div style="padding:3px 9px;border-radius:20px;font-size:9.5px;background:rgba(255,255,255,.05);color:#6b7280;border:0.5px solid rgba(255,255,255,.1)">Bullets</div>
+              <div style="padding:3px 9px;border-radius:20px;font-size:9.5px;background:rgba(255,255,255,.05);color:#6b7280;border:0.5px solid rgba(255,255,255,.1)">Executive</div>
+              <div style="padding:3px 9px;border-radius:20px;font-size:9.5px;background:rgba(255,255,255,.05);color:#6b7280;border:0.5px solid rgba(255,255,255,.1)">Key Findings</div>
+            </div>
+            <!-- Summary content -->
+            <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.08);border-radius:8px;padding:10px 12px;font-size:11px;color:#d1d5db;line-height:1.7;flex:1">
+              <strong style="color:#4ade80">Q3 Financial Report</strong> shows strong quarterly performance driven by a <strong style="color:#f0fdf4">18.4% revenue increase</strong>. Operating margins improved by 2.1 percentage points, reaching 24.3%. Customer acquisition costs fell 12% year-over-year while average contract value grew to $48K.
+              <div style="margin-top:8px;display:flex;gap:6px">
+                <div style="padding:3px 10px;font-size:9.5px;background:#15803d;color:#fff;border-radius:4px;cursor:pointer">↓ Export .md</div>
+              </div>
+            </div>
+            <!-- Compare banner -->
+            <div style="background:rgba(96,165,250,.06);border:0.5px solid rgba(96,165,250,.2);border-radius:8px;padding:8px 10px;font-size:10px;color:#60a5fa;display:flex;align-items:center;gap:8px">
+              <span>⇄</span>
+              <span>Select 2 documents above to compare them side by side</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. Organise — Tags + Search -->
+    <div class="slide" data-idx="4">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Organise</div>
+          <div class="slide-title">Tags, Search & Sort</div>
+          <div class="slide-sub">With hundreds of documents, a flat list becomes unusable. Tags let you create named collections by project, client, or topic. A single-line control bar gives you live search, tag filtering, and sort order in one place.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">🏷</span><span>Colour-coded tags — create, assign, and remove from any document instantly</span></div>
+            <div class="feature-item"><span class="feature-icon">🔍</span><span>Live name search — filters the list as you type, no page reload</span></div>
+            <div class="feature-item"><span class="feature-icon">⇅</span><span>Sort by date, name, size, or status — combined with tag filter</span></div>
+            <div class="feature-item"><span class="feature-icon">🗄</span><span>Tags stored per-user in PostgreSQL — persist across sessions and devices</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(4)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">📂 Documents — Tags</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:8px">
+            <!-- Filter bar -->
+            <div style="display:flex;gap:4px;align-items:center;background:rgba(255,255,255,.03);border-radius:6px;padding:5px 8px">
+              <div style="flex:1;background:rgba(255,255,255,.05);border:0.5px solid rgba(255,255,255,.1);border-radius:4px;padding:3px 7px;font-size:9.5px;color:#6b7280">🔍 Q3...</div>
+              <div style="background:rgba(74,222,128,.08);border:0.5px solid rgba(74,222,128,.2);border-radius:4px;padding:3px 6px;font-size:9.5px;color:#4ade80;width:64px;text-align:center">🏷 Q3 Fin</div>
+              <div style="background:rgba(255,255,255,.05);border:0.5px solid rgba(255,255,255,.1);border-radius:4px;padding:3px 6px;font-size:9.5px;color:#9ca3af;width:52px;text-align:center">↓ Date</div>
+              <div style="background:rgba(74,222,128,.08);border:0.5px solid rgba(74,222,128,.2);border-radius:4px;padding:3px 6px;font-size:9.5px;color:#4ade80">🏷<sup style="font-size:7px">4</sup></div>
+            </div>
+            <!-- Tag manager -->
+            <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.07);border-radius:6px;padding:7px 9px">
+              <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">
+                <span style="font-size:9.5px;padding:2px 7px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.3);font-weight:600">Q3 Finance (3) ✕</span>
+                <span style="font-size:9.5px;padding:2px 7px;border-radius:20px;background:rgba(96,165,250,.1);color:#60a5fa;border:1px solid rgba(96,165,250,.3);font-weight:600">Legal (5) ✕</span>
+                <span style="font-size:9.5px;padding:2px 7px;border-radius:20px;background:rgba(192,132,252,.1);color:#c084fc;border:1px solid rgba(192,132,252,.3);font-weight:600">HR (2) ✕</span>
+              </div>
+              <div style="display:flex;gap:4px">
+                <div style="flex:1;background:rgba(255,255,255,.05);border:0.5px solid rgba(255,255,255,.1);border-radius:4px;padding:3px 7px;font-size:9px;color:#6b7280">New tag name…</div>
+                <div style="padding:3px 8px;background:#15803d;color:#fff;border-radius:4px;font-size:9px;font-weight:700">＋ Add</div>
+              </div>
+            </div>
+            <!-- Doc with chips -->
+            <div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(255,255,255,.08);border-radius:8px;padding:9px 10px;display:flex;align-items:flex-start;gap:8px">
+              <span style="font-size:18px">📄</span>
+              <div style="flex:1">
+                <div style="font-size:11px;font-weight:600;color:#f0fdf4;margin-bottom:4px">Q3_Financial_Report.pdf</div>
+                <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">
+                  <span style="font-size:9px;padding:1px 6px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.35);font-weight:600">Q3 Finance ✕</span>
+                  <span style="font-size:9px;padding:1px 6px;border-radius:20px;background:rgba(96,165,250,.1);color:#60a5fa;border:1px solid rgba(96,165,250,.35);font-weight:600">Legal ✕</span>
+                  <select style="font-size:9px;padding:1px 3px;background:rgba(255,255,255,.05);color:#6b7280;border:1px dashed rgba(255,255,255,.15);border-radius:20px;width:48px"><option>＋ tag</option></select>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6. Team Workspaces -->
+    <div class="slide" data-idx="5">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Collaborate</div>
+          <div class="slide-title">Team Workspaces</div>
+          <div class="slide-sub">Create shared workspaces where teams can access the same documents and chat history. Role-based access controls — Owner, Editor, Viewer — keep sensitive documents safe while enabling collaboration.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">🏢</span><span>Workspaces with Owner / Editor / Viewer roles — fine-grained access</span></div>
+            <div class="feature-item"><span class="feature-icon">📧</span><span>Invite teammates by email — they receive a workspace invite notification</span></div>
+            <div class="feature-item"><span class="feature-icon">📁</span><span>Workspace-scoped documents, chat sessions, and tags — fully isolated</span></div>
+            <div class="feature-item"><span class="feature-icon">🔄</span><span>Switch between personal and workspace context in one click</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(5)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">🏢 Workspaces</div></div>
+          <div class="mockup-body" style="display:flex;gap:8px;height:100%">
+            <!-- Sidebar -->
+            <div style="width:110px;display:flex;flex-direction:column;gap:4px;flex-shrink:0">
+              <div style="font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Workspaces</div>
+              <div style="padding:5px 7px;background:rgba(255,255,255,.06);border:0.5px solid rgba(255,255,255,.12);border-radius:5px;font-size:10px;color:#9ca3af;display:flex;align-items:center;gap:5px"><span>🏠</span> Personal</div>
+              <div style="padding:5px 7px;background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.3);border-radius:5px;font-size:10px;color:#4ade80;display:flex;align-items:center;gap:5px"><span>🏢</span> Finance</div>
+              <div style="padding:5px 7px;background:rgba(255,255,255,.03);border:0.5px solid rgba(255,255,255,.08);border-radius:5px;font-size:10px;color:#9ca3af;display:flex;align-items:center;gap:5px"><span>🏢</span> Legal</div>
+              <div style="margin-top:6px;padding:5px 7px;background:rgba(74,222,128,.05);border:0.5px dashed rgba(74,222,128,.2);border-radius:5px;font-size:9.5px;color:#4ade80;text-align:center;cursor:pointer">＋ New</div>
+            </div>
+            <!-- Members -->
+            <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+              <div style="font-size:11px;font-weight:700;color:#f0fdf4">Finance Team</div>
+              <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.07);border-radius:6px;overflow:hidden;flex:1">
+                <div style="background:rgba(255,255,255,.04);padding:5px 8px;font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase">Members (3)</div>
+                {[['admin@co.com','owner'],['analyst@co.com','editor'],['view@co.com','viewer']].map(([e,r])=>"")}
+                <div style="padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);display:flex;justify-content:space-between;align-items:center">
+                  <span style="font-size:10px;color:#60a5fa">admin@co.com</span>
+                  <span style="font-size:8.5px;padding:1px 7px;border-radius:20px;background:rgba(251,191,36,.1);color:#fbbf24;font-weight:600">owner</span>
+                </div>
+                <div style="padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,.01)">
+                  <span style="font-size:10px;color:#60a5fa">analyst@co.com</span>
+                  <span style="font-size:8.5px;padding:1px 7px;border-radius:20px;background:rgba(192,132,252,.1);color:#c084fc;font-weight:600">editor</span>
+                </div>
+                <div style="padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);display:flex;justify-content:space-between;align-items:center">
+                  <span style="font-size:10px;color:#60a5fa">view@co.com</span>
+                  <span style="font-size:8.5px;padding:1px 7px;border-radius:20px;background:rgba(96,165,250,.1);color:#60a5fa;font-weight:600">viewer</span>
+                </div>
+              </div>
+              <div style="display:flex;gap:4px">
+                <div style="flex:1;background:rgba(255,255,255,.04);border:0.5px solid rgba(255,255,255,.1);border-radius:4px;padding:3px 6px;font-size:9px;color:#6b7280">invite@email.com</div>
+                <div style="padding:3px 7px;background:#15803d;color:#fff;border-radius:4px;font-size:9px;font-weight:700">Invite</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 7. Billing -->
+    <div class="slide" data-idx="6">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Monetise</div>
+          <div class="slide-title">Stripe Billing — 3 Plans</div>
+          <div class="slide-sub">Full Stripe checkout integration with three usage tiers, a 3-day free trial on paid plans, and automatic plan activation on login. All limits are enforced in real time on every request.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">🆓</span><span>Free — 20 docs · 10 MB · 50 queries/day</span></div>
+            <div class="feature-item"><span class="feature-icon">🚀</span><span>Pro $20/mo — 500 docs · 500 MB · 500 queries/day</span></div>
+            <div class="feature-item"><span class="feature-icon">🏢</span><span>Enterprise $100/mo — Unlimited docs · 10 GB · Unlimited queries</span></div>
+            <div class="feature-item"><span class="feature-icon">🔄</span><span>Auto-sync on login — Stripe API checked every sign-in, tier updated instantly</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(6)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">💳 Plans & Billing</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:7px">
+            <div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(255,255,255,.1);border-radius:8px;padding:9px 11px;display:flex;justify-content:space-between;align-items:center">
+              <div><div style="font-size:11px;font-weight:700;color:#60a5fa;margin-bottom:4px">Free</div><div style="font-size:9.5px;color:#6b7280;line-height:1.6">20 docs · 10 MB · 50 queries/day</div></div>
+              <div style="text-align:right"><div style="font-size:16px;font-weight:800;color:#f0fdf4">$0</div><div style="font-size:9px;padding:3px 8px;background:rgba(96,165,250,.1);color:#60a5fa;border-radius:4px;font-weight:700;margin-top:4px">✓ Active</div></div>
+            </div>
+            <div style="background:rgba(192,132,252,.05);border:1px solid rgba(192,132,252,.3);border-radius:8px;padding:9px 11px;position:relative">
+              <div style="position:absolute;top:-7px;right:10px;font-size:8px;font-weight:700;background:#c084fc;color:#000;padding:2px 7px;border-radius:20px">Most popular</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <div style="font-size:11px;font-weight:700;color:#c084fc">Pro</div>
+                <div style="font-size:16px;font-weight:800;color:#f0fdf4">$20<span style="font-size:9px;color:#6b7280">/mo</span></div>
+              </div>
+              <div style="font-size:9.5px;color:#6b7280;line-height:1.6;margin-bottom:6px">500 docs · 500 MB · 500 queries/day</div>
+              <div style="background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.25);border-radius:4px;padding:3px 7px;text-align:center;font-size:9px;font-weight:700;color:#4ade80;margin-bottom:5px">🎁 3-day free trial</div>
+              <div style="background:#c084fc;color:#000;border-radius:4px;padding:5px;text-align:center;font-size:9.5px;font-weight:700">Start 3-day free trial →</div>
+            </div>
+            <div style="background:rgba(251,191,36,.04);border:0.5px solid rgba(251,191,36,.2);border-radius:8px;padding:9px 11px;display:flex;justify-content:space-between;align-items:center">
+              <div><div style="font-size:11px;font-weight:700;color:#fbbf24;margin-bottom:4px">Enterprise</div><div style="font-size:9.5px;color:#6b7280;line-height:1.6">Unlimited · 10 GB · Unlimited</div></div>
+              <div style="font-size:16px;font-weight:800;color:#f0fdf4">$100<span style="font-size:9px;color:#6b7280">/mo</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 8. Security & Admin -->
+    <div class="slide" data-idx="7">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Security & Ops</div>
+          <div class="slide-title">Admin, Audit & Security</div>
+          <div class="slide-sub">Built for enterprise: every account verifies their email before login, every action is logged to a queryable audit trail, and admins get a full dashboard to manage users, documents, and subscriptions.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">📧</span><span>Email verification — all new accounts verify before first login</span></div>
+            <div class="feature-item"><span class="feature-icon">🔍</span><span>Audit log — every upload, login, invite, and delete logged with IP and timestamp</span></div>
+            <div class="feature-item"><span class="feature-icon">⚙</span><span>Admin dashboard — users, documents, tier management, audit log filter</span></div>
+            <div class="feature-item"><span class="feature-icon">🔔</span><span>Email notifications — embedding complete, workspace invite, password reset</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(7)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">⚙ Admin → Audit Log</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:8px">
+            <!-- Stats bar -->
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+              <div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(255,255,255,.08);border-radius:6px;padding:7px;text-align:center">
+                <div style="font-size:18px;font-weight:700;color:#4ade80">12</div>
+                <div style="font-size:8.5px;color:#6b7280;text-transform:uppercase">Users</div>
+              </div>
+              <div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(255,255,255,.08);border-radius:6px;padding:7px;text-align:center">
+                <div style="font-size:18px;font-weight:700;color:#60a5fa">148</div>
+                <div style="font-size:8.5px;color:#6b7280;text-transform:uppercase">Docs</div>
+              </div>
+              <div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(255,255,255,.08);border-radius:6px;padding:7px;text-align:center">
+                <div style="font-size:18px;font-weight:700;color:#c084fc">3</div>
+                <div style="font-size:8.5px;color:#6b7280;text-transform:uppercase">Pro users</div>
+              </div>
+            </div>
+            <!-- Audit log -->
+            <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.07);border-radius:6px;overflow:hidden;flex:1">
+              <div style="background:rgba(255,255,255,.04);padding:5px 8px;font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase">Recent audit events</div>
+              <div style="padding:5px 8px;border-top:0.5px solid rgba(255,255,255,.05);display:grid;grid-template-columns:80px 1fr 90px;gap:4px;align-items:center;font-size:9.5px">
+                <span style="color:#6b7280">10:14 PM</span>
+                <span style="color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">admin@co.com</span>
+                <span style="padding:1px 6px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;font-size:8.5px;font-weight:600">upload_doc</span>
+              </div>
+              <div style="padding:5px 8px;border-top:0.5px solid rgba(255,255,255,.05);display:grid;grid-template-columns:80px 1fr 90px;gap:4px;align-items:center;font-size:9.5px;background:rgba(255,255,255,.01)">
+                <span style="color:#6b7280">10:08 PM</span>
+                <span style="color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">analyst@co.com</span>
+                <span style="padding:1px 6px;border-radius:20px;background:rgba(96,165,250,.1);color:#60a5fa;font-size:8.5px;font-weight:600">login</span>
+              </div>
+              <div style="padding:5px 8px;border-top:0.5px solid rgba(255,255,255,.05);display:grid;grid-template-columns:80px 1fr 90px;gap:4px;align-items:center;font-size:9.5px">
+                <span style="color:#6b7280">9:55 PM</span>
+                <span style="color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">admin@co.com</span>
+                <span style="padding:1px 6px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;font-size:8.5px;font-weight:600">invite_member</span>
+              </div>
+              <div style="padding:5px 8px;border-top:0.5px solid rgba(255,255,255,.05);display:grid;grid-template-columns:80px 1fr 90px;gap:4px;align-items:center;font-size:9.5px;background:rgba(255,255,255,.01)">
+                <span style="color:#6b7280">9:31 PM</span>
+                <span style="color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">admin@co.com</span>
+                <span style="padding:1px 6px;border-radius:20px;background:rgba(248,113,113,.1);color:#f87171;font-size:8.5px;font-weight:600">delete_doc</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 9. Infrastructure -->
+    <div class="slide" data-idx="8">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Infrastructure</div>
+          <div class="slide-title">Production-Ready Stack</div>
+          <div class="slide-sub">Deployed on Google Cloud — Cloud Run for the backend, Firebase Hosting for the frontend, Cloud SQL with pgvector for semantic search, and GCS for document storage. Rate limiting, audit logging, and tiered usage enforcement built in.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">☁</span><span>FastAPI on Cloud Run · React on Firebase Hosting · PostgreSQL + pgvector</span></div>
+            <div class="feature-item"><span class="feature-icon">🔐</span><span>JWT auth · bcrypt passwords · rate limiting · IP audit logging</span></div>
+            <div class="feature-item"><span class="feature-icon">📊</span><span>Usage metering per user — queries, embeddings, summaries tracked daily</span></div>
+            <div class="feature-item"><span class="feature-icon">🌐</span><span>Custom domain · SSL · Secret Manager for all credentials</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(8)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">📊 Usage & Infrastructure</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:8px">
+            <!-- Stack pills -->
+            <div style="display:flex;flex-wrap:wrap;gap:5px">
+              <span style="font-size:9.5px;padding:3px 9px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.2);font-weight:600">FastAPI</span>
+              <span style="font-size:9.5px;padding:3px 9px;border-radius:20px;background:rgba(96,165,250,.1);color:#60a5fa;border:1px solid rgba(96,165,250,.2);font-weight:600">React 18</span>
+              <span style="font-size:9.5px;padding:3px 9px;border-radius:20px;background:rgba(192,132,252,.1);color:#c084fc;border:1px solid rgba(192,132,252,.2);font-weight:600">pgvector</span>
+              <span style="font-size:9.5px;padding:3px 9px;border-radius:20px;background:rgba(251,191,36,.1);color:#fbbf24;border:1px solid rgba(251,191,36,.2);font-weight:600">Gemini</span>
+              <span style="font-size:9.5px;padding:3px 9px;border-radius:20px;background:rgba(255,255,255,.06);color:#9ca3af;border:0.5px solid rgba(255,255,255,.1)">Cloud Run</span>
+              <span style="font-size:9.5px;padding:3px 9px;border-radius:20px;background:rgba(255,255,255,.06);color:#9ca3af;border:0.5px solid rgba(255,255,255,.1)">GCS</span>
+              <span style="font-size:9.5px;padding:3px 9px;border-radius:20px;background:rgba(255,255,255,.06);color:#9ca3af;border:0.5px solid rgba(255,255,255,.1)">Stripe</span>
+              <span style="font-size:9.5px;padding:3px 9px;border-radius:20px;background:rgba(255,255,255,.06);color:#9ca3af;border:0.5px solid rgba(255,255,255,.1)">Firebase</span>
+            </div>
+            <!-- Usage meters -->
+            <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.07);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px">
+              <div style="font-size:10px;font-weight:700;color:#f0fdf4;display:flex;justify-content:space-between">
+                <span>Daily Usage</span>
+                <span style="font-size:9px;padding:1px 8px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;font-weight:600">Pro Plan</span>
+              </div>
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:9.5px;color:#6b7280;margin-bottom:3px"><span>Chat queries</span><span style="color:#f0fdf4">47 / 500</span></div>
+                <div style="background:rgba(255,255,255,.06);border-radius:4px;height:5px"><div style="background:#4ade80;width:9.4%;height:100%;border-radius:4px"></div></div>
+              </div>
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:9.5px;color:#6b7280;margin-bottom:3px"><span>Embeddings</span><span style="color:#f0fdf4">23 / 100</span></div>
+                <div style="background:rgba(255,255,255,.06);border-radius:4px;height:5px"><div style="background:#60a5fa;width:23%;height:100%;border-radius:4px"></div></div>
+              </div>
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:9.5px;color:#6b7280;margin-bottom:3px"><span>Documents</span><span style="color:#f0fdf4">148 / 500</span></div>
+                <div style="background:rgba(255,255,255,.06);border-radius:4px;height:5px"><div style="background:#c084fc;width:29.6%;height:100%;border-radius:4px"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 10. Summary -->
+    <div class="slide" data-idx="9">
+      <div class="slide-inner" style="flex-direction:column;align-items:center;text-align:center">
+        <div class="slide-num" style="font-size:11px">COMPLETE FEATURE SET</div>
+        <div class="slide-title" style="font-size:28px">Everything in 5 minutes</div>
+        <div class="slide-sub" style="max-width:560px">আদর DocIntel is a production-ready RAG platform with every layer built — from document ingestion to billing to compliance.</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;width:100%;max-width:700px;margin-top:1.5rem">
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">📄</div><div class="sum-card-title" style="color:#4ade80">Upload Pipeline</div><ul class="sum-card-list"><li>PDF DOCX CSV Images</li><li>Auto-chunk + GCS store</li><li>Gemini embeddings</li><li>↻ Retry on error</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">💬</div><div class="sum-card-title" style="color:#60a5fa">Semantic Chat</div><ul class="sum-card-list"><li>Hybrid search + RRF</li><li>Gemini re-ranking</li><li>Streaming markdown</li><li>Persistent sessions</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">📝</div><div class="sum-card-title" style="color:#c084fc">Summarise</div><ul class="sum-card-list"><li>5 summary types</li><li>Document compare</li><li>Multi-doc batch</li><li>Export Markdown</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">🏷</div><div class="sum-card-title" style="color:#fbbf24">Organise</div><ul class="sum-card-list"><li>Colour-coded tags</li><li>Live search + filter</li><li>Sort controls</li><li>Tag manager</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">🏢</div><div class="sum-card-title" style="color:#4ade80">Workspaces</div><ul class="sum-card-list"><li>Owner/Editor/Viewer</li><li>Invite by email</li><li>Scoped docs + chat</li><li>One-click switch</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">💳</div><div class="sum-card-title" style="color:#c084fc">Stripe Billing</div><ul class="sum-card-list"><li>Free / Pro / Enterprise</li><li>3-day free trial</li><li>Auto-sync on login</li><li>Cancel → auto-free</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(248,113,113,.12);color:#f87171">🔒</div><div class="sum-card-title" style="color:#f87171">Security</div><ul class="sum-card-list"><li>Email verification</li><li>JWT + bcrypt</li><li>Rate limiting</li><li>IP audit log</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">☁</div><div class="sum-card-title" style="color:#60a5fa">Infrastructure</div><ul class="sum-card-list"><li>Cloud Run + Firebase</li><li>pgvector + GCS</li><li>Usage metering</li><li>Secret Manager</li></ul></div>
+        </div>
+        <button class="btn-speak" style="margin-top:1.5rem" onclick="speakSlide(9)">🔊 Play narration</button>
+      </div>
+    </div>
+
+
+  </div>
+<!-- /slides -->
+</div><!-- /app -->
+
+<script>
+const SLIDES = [
+  { text: "আদর DocIntel is a self-service Retrieval Augmented Generation platform. You upload documents, ask questions in natural language, and get answers grounded in your own content — not hallucinations. The platform handles everything from document ingestion to semantic search to team collaboration and Stripe billing. It is production-ready, deployed on Google Cloud, and built for teams that need document intelligence without managing AI infrastructure." },
+  { text: "Once you upload a document, the platform handles the full pipeline automatically. Files are split into 350-word chunks with overlap, stored in Google Cloud Storage, and indexed in PostgreSQL with pgvector. One click triggers Gemini embedding — generating 768-dimensional vectors for every chunk. The status moves from uploading through chunking to embedded. If anything fails, a Retry button re-downloads the original from GCS and re-runs the entire pipeline." },
+  { text: "The core feature is semantic chat. Ask a question in plain English and the system runs hybrid search — combining Gemini vector similarity with BM25 keyword matching, fused with Reciprocal Rank Fusion, then re-ranked by a Gemini cross-encoder. The result is a streaming response with markdown formatting, tables, and source citations. Every new answer is automatically scored by Gemini acting as an independent judge — three quality badges appear below the answer: Relevance, Specificity, and Confidence, each graded 1 to 5. Hover any badge to see the reasoning. All chat sessions are saved and resumable." },
+  { text: "For any document, you can generate five types of summaries — brief, detailed, bullet points, executive, or key findings — all streamed in real time. After the summary completes, a 📊 Evaluate button appears below the content — click it to get Coherence and Specificity scores from Gemini. Select two documents to run a side-by-side comparison with a structured analysis, then evaluate the comparison quality on demand. Every summary and chat session can be exported as a Markdown file." },
+  { text: "With hundreds of documents, organisation matters. Tags let you create named collections by project, client, or topic — colour-coded and stored per user in PostgreSQL. A single tight control bar gives you live name search, tag filter, and sort order — by date, name, size, or status — all in one line above the document list. Assign tags with a dropdown on each card and remove them with a single click." },
+  { text: "Teams work in shared workspaces with three role levels — Owner, Editor, and Viewer. Owners and editors can upload and delete documents. Viewers get read-only access. Documents, chat sessions, and tags are fully scoped to the workspace. Invite teammates by email — they receive a notification. Switch between personal and workspace context in one click from the sidebar." },
+  { text: "Monetisation is handled by Stripe with three plans. Free gives you 20 documents, 10 megabyte files, and 50 chat queries per day. Pro at 20 dollars per month scales to 500 documents, 500 megabyte files, and 500 queries per day. Enterprise at 100 dollars per month is fully unlimited. Both paid plans include a 3-day free trial — Stripe collects the card but charges nothing until day 4. On every login, the backend queries the Stripe API directly and updates the user's tier instantly." },
+  { text: "Security and compliance are built in. Every new account verifies their email address before logging in — a 24-hour link is sent via Gmail SMTP. Every significant action — upload, login, invite, delete — is logged to a PostgreSQL audit table with the user's IP address and timestamp. Admins get a full dashboard with user management, tier overrides, document overview, and a filterable audit log. Email notifications fire when embedding completes or when a workspace invite is sent." },
+  { text: "The stack is Google Cloud end to end. FastAPI on Cloud Run serves the backend. React on Firebase Hosting serves the frontend. PostgreSQL with pgvector handles both relational data and semantic search. Google Cloud Storage holds all uploaded files. All credentials are stored in Secret Manager. Rate limiting, usage metering, and tiered limit enforcement run on every request — so Free users cannot exceed their quota and paid users get their full allocation." },
+  { text: "That covers আদর DocIntel in 5 minutes. Upload pipeline, semantic chat, summarisation, tags and search, team workspaces, Stripe billing, email verification, audit logging, and a production Google Cloud deployment — all built and running. Thank you." }
+];
+
+
+let current = 0;
+let autoPlay = false;
+let autoTimer = null;
+let speaking = false;
+let voicesLoaded = false;
+let maleVoice = null;
+
+// ── Voice setup ──────────────────────────────────────
+function loadVoices() {
+  const voices = speechSynthesis.getVoices();
+  if (!voices.length) return;
+  voicesLoaded = true;
+  // Prefer male English voices
+  const preferred = ['Daniel','David','Alex','Google UK English Male','Microsoft David','en-GB-News-G'];
+  maleVoice = voices.find(v => preferred.some(p => v.name.includes(p)));
+  if (!maleVoice) maleVoice = voices.find(v => v.lang === 'en-GB' && v.name.toLowerCase().includes('male'));
+  if (!maleVoice) maleVoice = voices.find(v => v.lang.startsWith('en-GB'));
+  if (!maleVoice) maleVoice = voices.find(v => v.lang.startsWith('en-US') && !v.name.toLowerCase().includes('female') && !v.name.toLowerCase().includes('samantha'));
+  if (!maleVoice) maleVoice = voices.find(v => v.lang.startsWith('en'));
+}
+speechSynthesis.addEventListener('voiceschanged', loadVoices);
+loadVoices();
+
+// Chrome Speech Synthesis keepalive — Chrome silently pauses utterances
+// after ~15s; pause()+resume() every 10s prevents this bug
+let _synthKeepAlive = null;
+function _startKeepAlive() {
+  _stopKeepAlive();
+  _synthKeepAlive = setInterval(() => {
+    if (speechSynthesis.speaking && !speechSynthesis.paused) {
+      speechSynthesis.pause();
+      speechSynthesis.resume();
+    }
+  }, 10000);
+}
+function _stopKeepAlive() {
+  if (_synthKeepAlive) { clearInterval(_synthKeepAlive); _synthKeepAlive = null; }
+}
+
+function speakSlide(idx) {
+  speechSynthesis.cancel();
+  _stopKeepAlive();
+
+  const btn = document.querySelectorAll('.btn-speak')[idx] || document.querySelector('.btn-speak');
+  if (btn) btn.classList.add('speaking');
+
+  const u = new SpeechSynthesisUtterance(SLIDES[idx].text);
+  if (maleVoice) u.voice = maleVoice;
+  u.rate  = 0.92;
+  u.pitch = 0.88;
+  u.volume = 1;
+
+  u.onstart = () => _startKeepAlive();
+
+  u.onend = () => {
+    _stopKeepAlive();
+    if (btn) btn.classList.remove('speaking');
+    if (autoPlay && idx === current) {
+      if (current >= SLIDES.length - 1) {
+        autoPlay = false;
+        const ab = document.getElementById('autoBtn');
+        if (ab) { ab.classList.remove('active'); ab.textContent = '▶ Auto'; }
+      } else {
+        autoTimer = setTimeout(() => { if (autoPlay) goSlide(1); }, 1200);
+      }
+    }
+  };
+
+  u.onerror = (e) => {
+    _stopKeepAlive();
+    if (btn) btn.classList.remove('speaking');
+    // 'interrupted' is normal when user skips — don't treat as error
+    if (e.error !== 'interrupted' && autoPlay && idx === current) {
+      autoTimer = setTimeout(() => { if (autoPlay) goSlide(1); }, 800);
+    }
+  };
+
+  speechSynthesis.speak(u);
+}
+
+// ── Navigation ──────────────────────────────────────
+function buildDots() {
+  const c = document.getElementById('dots');
+  c.innerHTML = '';
+  SLIDES.forEach((_, i) => {
+    const d = document.createElement('div');
+    d.className = 'dot' + (i === current ? ' active' : '');
+    d.onclick = () => jumpTo(i);
+    c.appendChild(d);
+  });
+}
+
+function updateUI() {
+  const slides = document.querySelectorAll('.slide');
+  slides.forEach((s, i) => {
+    s.classList.toggle('active', i === current);
+    s.classList.toggle('exit', false);
+  });
+  document.getElementById('counter').textContent = `${current + 1} / ${SLIDES.length}`;
+  document.getElementById('progress').style.width = `${((current + 1) / SLIDES.length) * 100}%`;
+  document.getElementById('prevBtn').disabled = current === 0;
+  document.getElementById('nextBtn').disabled = current === SLIDES.length - 1;
+  buildDots();
+}
+
+function jumpTo(idx) {
+  clearTimeout(autoTimer);
+  speechSynthesis.cancel();
+  document.querySelectorAll('.btn-speak').forEach(b => b.classList.remove('speaking'));
+  current = Math.max(0, Math.min(SLIDES.length - 1, idx));
+  updateUI();
+  if (autoPlay) speakSlide(current);
+}
+
+function goSlide(dir) { jumpTo(current + dir); }
+
+function toggleAuto() {
+  autoPlay = !autoPlay;
+  const btn = document.getElementById('autoBtn');
+  btn.classList.toggle('active', autoPlay);
+  btn.textContent = autoPlay ? '⏸ Auto' : '▶ Auto';
+  if (autoPlay) speakSlide(current);
+  else { clearTimeout(autoTimer); speechSynthesis.cancel(); document.querySelectorAll('.btn-speak').forEach(b => b.classList.remove('speaking')); }
+}
+
+// ── Keyboard nav ────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === ' ') goSlide(1);
+  if (e.key === 'ArrowLeft') goSlide(-1);
+  if (e.key === 'Escape') { speechSynthesis.cancel(); if (autoPlay) toggleAuto(); }
+});
+
+// ── Splash → App ────────────────────────────────────
+document.getElementById('splash').addEventListener('click', () => {
+  document.getElementById('splash').classList.add('hide');
+  document.getElementById('app').classList.add('show');
+  loadVoices();
+  setTimeout(() => {
+    updateUI();
+    // Auto-start voice on first slide after short delay
+    setTimeout(() => speakSlide(0), 400);
+  }, 100);
+});
+
+// init dots
+setTimeout(() => { buildDots(); updateUI(); }, 0);
+</script>
+</body>
+</html>

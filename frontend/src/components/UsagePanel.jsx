@@ -39,7 +39,7 @@ function StatCard({ icon, label, value, sub }) {
   );
 }
 
-export default function UsagePanel({ onClose }) {
+export default function UsagePanel({ onClose, onUpgrade }) {
   const [usage,   setUsage]   = useState(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState('');
@@ -121,11 +121,18 @@ export default function UsagePanel({ onClose }) {
               </div>
 
               {/* Upgrade prompt for free users */}
-              {tier === 'free' && (
+              {tier !== 'enterprise' && (
                 <div style={{ marginTop:'1rem', background:'rgba(192,132,252,.08)', border:'1px solid rgba(192,132,252,.2)', borderRadius:'var(--r)', padding:'12px 14px', textAlign:'center' }}>
-                  <p style={{ fontSize:13, color:'#c084fc', fontWeight:600, marginBottom:4 }}>Upgrade to Pro</p>
-                  <p style={{ fontSize:12, color:'var(--muted2)' }}>500 documents · 500 queries/day · 50 MB files</p>
-                  <p style={{ fontSize:11, color:'var(--muted2)', marginTop:4 }}>Contact your administrator to upgrade</p>
+                  <p style={{ fontSize:13, color:'#c084fc', fontWeight:600, marginBottom:4 }}>
+                    {tier === 'free' ? 'Upgrade to Pro' : 'Upgrade to Enterprise'}
+                  </p>
+                  <p style={{ fontSize:12, color:'var(--muted2)', marginBottom:10 }}>
+                    {tier === 'free' ? '500 docs · 500 MB files · 500 queries/day — $20/month' : 'Unlimited docs · 10 GB files · Unlimited queries — $100/month'}
+                  </p>
+                  <button onClick={onUpgrade}
+                    style={{ padding:'7px 20px', background:'#c084fc', color:'#000', border:'none', borderRadius:'var(--r)', fontSize:13, fontWeight:700, cursor:'pointer' }}>
+                    {tier === 'free' ? '→ Upgrade to Pro' : '→ Upgrade to Enterprise'}
+                  </button>
                 </div>
               )}
             </>

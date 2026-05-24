@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { AuthFlow }   from './pages/AuthPages.jsx';
 import UsagePanel       from './components/UsagePanel.jsx';
+import BillingPanel     from './components/BillingPanel.jsx';
 import WorkspacesTab    from './components/WorkspacesTab.jsx';
 import DocumentsTab    from './components/DocumentsTab.jsx';
 import ChatTab         from './components/ChatTab.jsx';
@@ -15,7 +16,20 @@ export default function App() {
   const [checking,     setChecking]     = useState(true);
   const [tab,          setTab]          = useState('documents');
   const [showUsage,        setShowUsage]        = useState(false);
-  const [activeWorkspace,  setActiveWorkspace]  = useState(null); // {id,name,my_role} or null=personal
+  const [showBilling,      setShowBilling]      = useState(false);
+  const [activeWorkspace,  setActiveWorkspace]  = useState(null);
+
+  // Handle Stripe redirect — force logout so user re-authenticates with updated plan
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    if (p.get('billing') === 'success' && p.get('logout')) {
+      // Clear JWT so user must log in fresh (login endpoint will sync Stripe tier)
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      // Keep the billing params in URL for the login screen banner
+      // App will re-render showing AuthFlow with the success banner
+    }
+  }, []); // {id,name,my_role} or null=personal
   const [embeddedDocs, setEmbeddedDocs] = useState([]);
 
   useEffect(() => {
@@ -61,7 +75,8 @@ export default function App() {
   return (
     <>
       <ToastContainer />
-      {showUsage && <UsagePanel onClose={() => setShowUsage(false)} />}
+      {showUsage && <UsagePanel onClose={() => setShowUsage(false)} onUpgrade={() => { setShowUsage(false); setShowBilling(true); }} />}
+      {showBilling && <BillingPanel onClose={() => setShowBilling(false)} />}
       <div style={s.shell}>
         <header style={s.header}>
           <div style={s.brand}>
@@ -107,6 +122,14 @@ export default function App() {
               onClick={() => setShowUsage(true)}
               title="Your usage and plan limits">
               📊 Usage
+            </button>
+            <button
+              style={{ fontSize:12, padding:'5px 12px', background:'rgba(192,132,252,.1)',
+                       color:'#c084fc', border:'1px solid rgba(192,132,252,.3)',
+                       borderRadius:'var(--r)', cursor:'pointer', fontWeight:600 }}
+              onClick={() => setShowBilling(true)}
+              title="Plans & Billing">
+              💳 Plans
             </button>
             <button style={s.signOutBtn} onClick={handleLogout}>Sign out</button>
           </div>

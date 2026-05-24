@@ -129,6 +129,14 @@ CREATE TABLE IF NOT EXISTS document_tag_map (
 CREATE INDEX IF NOT EXISTS idx_dtmap_doc ON document_tag_map(document_id);
 CREATE INDEX IF NOT EXISTS idx_dtmap_tag ON document_tag_map(tag_id);
 
+-- Stripe billing
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS stripe_customer_id      TEXT,
+    ADD COLUMN IF NOT EXISTS stripe_subscription_id  TEXT,
+    ADD COLUMN IF NOT EXISTS subscription_status     TEXT NOT NULL DEFAULT 'inactive',
+    ADD COLUMN IF NOT EXISTS subscription_period_end TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_users_stripe_customer ON users(stripe_customer_id);
+
 -- Email verification
 ALTER TABLE users
     ADD COLUMN IF NOT EXISTS is_verified              BOOLEAN     NOT NULL DEFAULT FALSE,
@@ -242,3 +250,58 @@ async def create_additional_tables() -> None:
             WHERE search_vector IS NULL AND content IS NOT NULL AND content != ''
         """)
     print("✓ Additional schema ready (password_reset_tokens, chat_sessions, hybrid search FTS)")
+
+
+async def create_eval_tables() -> None:
+    """Create evaluation suite tables — called at startup."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS eval_suites (
+                id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+                owner_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name        TEXT        NOT NULL,
+                eval_type   TEXT        NOT NULL,
+                description TEXT,
+                created_at  TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE TABLE IF NOT EXISTS eval_cases (
+                id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+                suite_id        UUID        NOT NULL REFERENCES eval_suites(id) ON DELETE CASCADE,
+                document_id     UUID        REFERENCES documents(id) ON DELETE SET NULL,
+                question        TEXT        NOT NULL,
+                expected_answer TEXT,
+                expected_fields JSONB       DEFAULT '{}'::jsonb,
+                metadata        JSONB       DEFAULT '{}'::jsonb,
+                created_at      TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE TABLE IF NOT EXISTS eval_runs (
+                id            UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+                suite_id      UUID        NOT NULL REFERENCES eval_suites(id) ON DELETE CASCADE,
+                run_by        UUID        REFERENCES users(id) ON DELETE SET NULL,
+                status        TEXT        NOT NULL DEFAULT 'pending',
+                overall_score FLOAT,
+                total_cases   INT         DEFAULT 0,
+                passed_cases  INT         DEFAULT 0,
+                metadata      JSONB       DEFAULT '{}'::jsonb,
+                started_at    TIMESTAMPTZ DEFAULT NOW(),
+                completed_at  TIMESTAMPTZ
+            );
+            CREATE TABLE IF NOT EXISTS eval_results (
+                id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+                run_id          UUID        NOT NULL REFERENCES eval_runs(id) ON DELETE CASCADE,
+                case_id         UUID        NOT NULL REFERENCES eval_cases(id) ON DELETE CASCADE,
+                actual_answer   TEXT,
+                actual_chunks   JSONB       DEFAULT '[]'::jsonb,
+                score           FLOAT,
+                passed          BOOLEAN,
+                judge_verdict   TEXT,
+                judge_reasoning TEXT,
+                error_message   TEXT,
+                created_at      TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_eval_cases_suite  ON eval_cases(suite_id);
+            CREATE INDEX IF NOT EXISTS idx_eval_results_run  ON eval_results(run_id);
+            CREATE INDEX IF NOT EXISTS idx_eval_runs_suite   ON eval_runs(suite_id);
+        """)
+    print("\u2713 Eval tables ready")

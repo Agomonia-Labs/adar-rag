@@ -193,7 +193,7 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
       <div class="slide-dots" id="dots"></div>
     </div>
     <div class="tb-right nav-arrows">
-      <span class="slide-counter" id="counter">1 / 24</span>
+      <span class="slide-counter" id="counter">1 / 27</span>
       <button class="btn-icon" id="autoBtn" onclick="toggleAuto()">▶ Auto</button>
       <button class="nav-btn" id="prevBtn" onclick="goSlide(-1)">←</button>
       <button class="nav-btn" id="nextBtn" onclick="goSlide(1)">→</button>
@@ -1518,7 +1518,277 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
       </div>
     </div>
 
-<div class="slide" data-idx="23">
+
+    <!-- 24. Document Re-processing + Tags -->
+    <div class="slide" data-idx="23">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Organisation</div>
+          <div class="slide-title">Document Recovery & Tags</div>
+          <div class="slide-sub">Errored documents can be retried with one click — the original file is re-downloaded from GCS and re-processed. Tags let you organise hundreds of documents into named collections with colour-coded chips, filtering, and sorting.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">↻</span><span>Retry button on error-state documents — wipes stale chunks, re-downloads from GCS, re-runs the full chunk → embed pipeline</span></div>
+            <div class="feature-item"><span class="feature-icon">🏷</span><span>Create colour-coded tags — assign multiple tags to any document with a single dropdown click</span></div>
+            <div class="feature-item"><span class="feature-icon">✕</span><span>Remove tags from documents instantly — the ✕ on each chip unassigns without deleting the tag</span></div>
+            <div class="feature-item"><span class="feature-icon">🔍</span><span>Live search bar filters documents as you type — no page reload</span></div>
+            <div class="feature-item"><span class="feature-icon">⇅</span><span>Sort by date, name A–Z, file size, or status — combined with tag filter for precision</span></div>
+            <div class="feature-item"><span class="feature-icon">🗄</span><span>Tags stored in PostgreSQL — survive sessions, shared across devices, visible per-user</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(23)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">📂 Documents — Tags & Filter</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:8px">
+
+            <!-- Filter bar -->
+            <div style="display:flex;gap:4px;padding:5px 8px;background:rgba(255,255,255,.03);border-radius:6px;border:0.5px solid rgba(255,255,255,.08);align-items:center">
+              <div style="flex:1;background:rgba(255,255,255,.05);border:0.5px solid rgba(255,255,255,.1);border-radius:4px;padding:3px 7px;font-size:9.5px;color:#6b7280">🔍 Search…</div>
+              <div style="background:rgba(74,222,128,.08);border:0.5px solid rgba(74,222,128,.2);border-radius:4px;padding:3px 6px;font-size:9.5px;color:#4ade80;width:68px;text-align:center">🏷 Q3</div>
+              <div style="background:rgba(255,255,255,.05);border:0.5px solid rgba(255,255,255,.1);border-radius:4px;padding:3px 6px;font-size:9.5px;color:#9ca3af;width:58px;text-align:center">↓ Date</div>
+              <div style="background:rgba(74,222,128,.08);border:0.5px solid rgba(74,222,128,.2);border-radius:4px;padding:3px 6px;font-size:9.5px;color:#4ade80">🏷<sup style="font-size:7px">3</sup></div>
+            </div>
+
+            <!-- Tag manager panel -->
+            <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.07);border-radius:6px;padding:8px 10px">
+              <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">
+                <span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.3);font-weight:600">Q3 Finance (3) ✕</span>
+                <span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(96,165,250,.1);color:#60a5fa;border:1px solid rgba(96,165,250,.3);font-weight:600">Legal (5) ✕</span>
+                <span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(192,132,252,.1);color:#c084fc;border:1px solid rgba(192,132,252,.3);font-weight:600">HR (2) ✕</span>
+              </div>
+              <div style="display:flex;gap:5px">
+                <div style="flex:1;background:rgba(255,255,255,.05);border:0.5px solid rgba(255,255,255,.1);border-radius:4px;padding:3px 7px;font-size:9.5px;color:#6b7280">New tag name…</div>
+                <div style="padding:3px 8px;background:#15803d;color:#fff;border-radius:4px;font-size:9.5px;font-weight:700">＋ Add</div>
+              </div>
+            </div>
+
+            <!-- Doc with tag chips -->
+            <div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(255,255,255,.08);border-radius:8px;overflow:hidden">
+              <div style="display:flex;align-items:flex-start;gap:8px;padding:9px 10px">
+                <div style="width:3px;background:#4ade80;align-self:stretch;border-radius:1px;flex-shrink:0;margin:-9px 0;margin-right:4px"></div>
+                <span style="font-size:18px">📄</span>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:11.5px;font-weight:600;color:#f0fdf4;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Q3_Financial_Report_2026.pdf</div>
+                  <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+                    <span style="font-size:9.5px;padding:1px 7px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.2);font-weight:600">Embedded ✓</span>
+                    <span style="font-size:9.5px;padding:1px 6px;border-radius:20px;background:rgba(148,163,184,.06);color:#94a3b8;border:0.5px solid rgba(148,163,184,.12)">🏠 Personal</span>
+                    <span style="font-size:9.5px;color:#6b7280">PDF · 2.4 MB · 47 chunks</span>
+                  </div>
+                  <!-- Tag chips -->
+                  <div style="display:flex;gap:4px;margin-top:5px;flex-wrap:wrap;align-items:center">
+                    <span style="font-size:10px;padding:1px 7px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.35);font-weight:600;display:inline-flex;align-items:center;gap:2px">Q3 Finance <span style="opacity:.6">✕</span></span>
+                    <span style="font-size:10px;padding:1px 7px;border-radius:20px;background:rgba(96,165,250,.1);color:#60a5fa;border:1px solid rgba(96,165,250,.35);font-weight:600;display:inline-flex;align-items:center;gap:2px">Legal <span style="opacity:.6">✕</span></span>
+                    <select style="font-size:9.5px;padding:1px 4px;background:rgba(255,255,255,.05);color:#6b7280;border:1px dashed rgba(255,255,255,.15);border-radius:20px;width:55px">
+                      <option>＋ tag</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div style="display:flex;gap:4px;padding:5px 10px;border-top:0.5px solid rgba(255,255,255,.06);background:rgba(0,0,0,.15)">
+                <div style="padding:3px 8px;background:transparent;border:0.5px solid rgba(255,255,255,.1);border-radius:5px;font-size:9.5px;color:#9ca3af">🔗 Source</div>
+                <div style="padding:3px 8px;background:transparent;border:0.5px solid rgba(255,255,255,.1);border-radius:5px;font-size:9.5px;color:#9ca3af">📋 Chunks</div>
+                <div style="padding:3px 8px;background:rgba(74,222,128,.1);border:0.5px solid rgba(74,222,128,.3);border-radius:5px;font-size:9.5px;color:#4ade80">📝 Summary</div>
+                <div style="padding:3px 8px;background:transparent;border:0.5px solid rgba(255,255,255,.1);border-radius:5px;font-size:9.5px;color:#9ca3af">↩ Re-embed</div>
+              </div>
+            </div>
+
+            <!-- Error doc with Retry button -->
+            <div style="background:rgba(248,113,113,.04);border:0.5px solid rgba(248,113,113,.2);border-radius:8px;overflow:hidden">
+              <div style="display:flex;align-items:flex-start;gap:8px;padding:9px 10px">
+                <div style="width:3px;background:#f87171;align-self:stretch;border-radius:1px;flex-shrink:0;margin:-9px 0;margin-right:4px"></div>
+                <span style="font-size:18px">📝</span>
+                <div style="flex:1">
+                  <div style="font-size:11.5px;font-weight:600;color:#f0fdf4;margin-bottom:4px">corrupted_report.docx</div>
+                  <div style="display:flex;gap:5px;align-items:center">
+                    <span style="font-size:9.5px;padding:1px 7px;border-radius:20px;background:rgba(248,113,113,.1);color:#f87171;border:1px solid rgba(248,113,113,.2);font-weight:600">Error</span>
+                    <span style="font-size:9.5px;color:#6b7280">Chunking timeout after 30s</span>
+                  </div>
+                </div>
+              </div>
+              <div style="display:flex;gap:4px;padding:5px 10px;border-top:0.5px solid rgba(248,113,113,.15);background:rgba(0,0,0,.15)">
+                <div style="padding:3px 8px;background:rgba(251,191,36,.08);border:0.5px solid rgba(251,191,36,.3);border-radius:5px;font-size:9.5px;color:#fbbf24;font-weight:600">↻ Retry</div>
+                <div style="padding:3px 8px;background:transparent;border:0.5px solid rgba(255,255,255,.1);border-radius:5px;font-size:9.5px;color:#9ca3af">🔗 Source</div>
+                <div style="flex:1"></div>
+                <div style="padding:3px 8px;background:rgba(248,113,113,.08);border:0.5px solid rgba(248,113,113,.3);border-radius:5px;font-size:9.5px;color:#f87171">🗑 Delete</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- 25. Stripe Billing -->
+    <div class="slide" data-idx="24">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Monetisation</div>
+          <div class="slide-title">Stripe Billing — 3 Plans</div>
+          <div class="slide-sub">Full Stripe Checkout integration with three tiers, a 3-day free trial on paid plans, and automatic plan activation on login — no manual intervention needed.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">🆓</span><span>Free — 20 docs · 10 MB · 50 queries/day · 10 embeds/day</span></div>
+            <div class="feature-item"><span class="feature-icon">🚀</span><span>Pro ($20/mo) — 500 docs · 500 MB · 500 queries/day · 100 embeds/day</span></div>
+            <div class="feature-item"><span class="feature-icon">🏢</span><span>Enterprise ($100/mo) — Unlimited docs · 10 GB · Unlimited queries · 500 embeds/day</span></div>
+            <div class="feature-item"><span class="feature-icon">🎁</span><span>3-day free trial on Pro & Enterprise — card collected, no charge until day 4</span></div>
+            <div class="feature-item"><span class="feature-icon">🔄</span><span>Auto-sync on login — Stripe subscription status checked on every sign-in, tier updated instantly</span></div>
+            <div class="feature-item"><span class="feature-icon">🔒</span><span>Cancel anytime via Stripe portal — downgrade to Free reflected on next login automatically</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(24)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">💳 Plans & Billing</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:8px">
+
+            <!-- Free plan -->
+            <div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(255,255,255,.08);border-radius:8px;padding:10px 12px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <span style="font-size:12px;font-weight:700;color:#60a5fa">Free</span>
+                <span style="font-size:16px;font-weight:800;color:#f0fdf4">$0</span>
+              </div>
+              <ul style="margin:0;padding-left:14px;font-size:10px;color:#6b7280;line-height:1.8">
+                <li>20 documents · 10 MB files</li><li>50 queries/day · 10 embeds/day</li>
+              </ul>
+              <div style="margin-top:8px;text-align:center;font-size:10px;font-weight:700;color:#60a5fa;padding:4px;background:rgba(96,165,250,.1);border-radius:4px">✓ Active</div>
+            </div>
+
+            <!-- Pro plan -->
+            <div style="background:rgba(192,132,252,.05);border:1px solid rgba(192,132,252,.3);border-radius:8px;padding:10px 12px;position:relative">
+              <div style="position:absolute;top:-8px;right:10px;font-size:9px;font-weight:700;background:#c084fc;color:#000;padding:2px 8px;border-radius:20px">Most popular</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <span style="font-size:12px;font-weight:700;color:#c084fc">Pro</span>
+                <div><span style="font-size:16px;font-weight:800;color:#f0fdf4">$20</span><span style="font-size:10px;color:#6b7280">/mo</span></div>
+              </div>
+              <ul style="margin:0;padding-left:14px;font-size:10px;color:#6b7280;line-height:1.8">
+                <li>500 documents · 500 MB files</li><li>500 queries/day · 100 embeds/day</li>
+              </ul>
+              <div style="margin-top:6px;background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.25);border-radius:4px;padding:3px 8px;text-align:center;font-size:9.5px;font-weight:700;color:#4ade80">
+                🎁 3-day free trial — no charge until day 4
+              </div>
+              <div style="margin-top:6px;background:#c084fc;color:#000;border-radius:4px;padding:5px;text-align:center;font-size:10px;font-weight:700">Start 3-day free trial →</div>
+            </div>
+
+            <!-- Enterprise plan -->
+            <div style="background:rgba(251,191,36,.04);border:0.5px solid rgba(251,191,36,.2);border-radius:8px;padding:10px 12px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <span style="font-size:12px;font-weight:700;color:#fbbf24">Enterprise</span>
+                <div><span style="font-size:16px;font-weight:800;color:#f0fdf4">$100</span><span style="font-size:10px;color:#6b7280">/mo</span></div>
+              </div>
+              <ul style="margin:0;padding-left:14px;font-size:10px;color:#6b7280;line-height:1.8">
+                <li>Unlimited docs · 10 GB files</li><li>Unlimited queries · 500 embeds/day</li>
+              </ul>
+              <div style="margin-top:6px;background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.25);border-radius:4px;padding:3px 8px;text-align:center;font-size:9.5px;font-weight:700;color:#4ade80">
+                🎁 3-day free trial — no charge until day 4
+              </div>
+            </div>
+
+            <!-- Flow summary -->
+            <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.07);border-radius:6px;padding:8px 10px">
+              <div style="font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Activation Flow</div>
+              <div style="display:flex;align-items:center;gap:4px;font-size:9.5px;color:#9ca3af;flex-wrap:wrap">
+                <span style="background:rgba(255,255,255,.06);padding:2px 6px;border-radius:4px">Stripe Checkout</span>
+                <span style="color:#6b7280">→</span>
+                <span style="background:rgba(255,255,255,.06);padding:2px 6px;border-radius:4px">Redirect to login</span>
+                <span style="color:#6b7280">→</span>
+                <span style="background:rgba(74,222,128,.1);color:#4ade80;padding:2px 6px;border-radius:4px">Plan active on sign-in ✓</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- 25. Inline RAG Evaluation -->
+    <div class="slide" data-idx="25">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Quality Assurance</div>
+          <div class="slide-title">Inline RAG Evaluation</div>
+          <div class="slide-sub">Every AI response is automatically scored by Gemini acting as an independent judge — no reference documents needed. Three quality dimensions appear as colour-coded grade badges directly below each answer.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">🎯</span><span>Relevance — does the answer actually address the question asked?</span></div>
+            <div class="feature-item"><span class="feature-icon">🔍</span><span>Specificity — does it give concrete details, numbers, and dates vs vague generalities?</span></div>
+            <div class="feature-item"><span class="feature-icon">⚖️</span><span>Confidence — is uncertainty expressed proportionally, neither overconfident nor over-hedged?</span></div>
+            <div class="feature-item"><span class="feature-icon">🧩</span><span>Coherence — is the summary or comparison logically structured with no contradictions?</span></div>
+            <div class="feature-item"><span class="feature-icon">📊</span><span>On-demand Evaluate button in summary and comparison panels — fires only after streaming completes</span></div>
+            <div class="feature-item"><span class="feature-icon">🏆</span><span>Graded 1–5: Excellent · Good · Acceptable · Poor · Fail — hover for judge reasoning</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(25)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">💬 Chat — with inline eval scores</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:8px">
+
+            <!-- Question -->
+            <div style="display:flex;justify-content:flex-end">
+              <div style="background:rgba(74,222,128,.12);border:1px solid rgba(74,222,128,.2);border-radius:10px 10px 2px 10px;padding:8px 12px;max-width:75%;font-size:11px;color:#f0fdf4">
+                What was the revenue growth in Q3 compared to Q2?
+              </div>
+            </div>
+
+            <!-- AI Answer -->
+            <div style="display:flex;gap:8px;align-items:flex-start">
+              <div style="width:24px;height:24px;border-radius:50%;background:rgba(74,222,128,.15);border:1px solid rgba(74,222,128,.3);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">📚</div>
+              <div style="flex:1">
+                <div style="background:rgba(255,255,255,.04);border:0.5px solid rgba(255,255,255,.1);border-radius:2px 10px 10px 10px;padding:10px 12px;font-size:11px;color:#d1d5db;line-height:1.7">
+                  Based on the Q3 Financial Report, revenue grew <strong style="color:#f0fdf4">18.4%</strong> from Q2 to Q3, reaching <strong style="color:#f0fdf4">$4.2M</strong>. Operating margin improved by 2.1 percentage points to 24.3%.
+                </div>
+
+                <!-- Eval badges -->
+                <div style="display:flex;gap:5px;align-items:center;margin-top:5px;flex-wrap:wrap">
+                  <span style="font-size:8.5px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:.3px">Eval</span>
+                  <!-- Relevance 5/5 -->
+                  <div style="position:relative">
+                    <span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.3);font-weight:600;cursor:help" title="Directly and completely addresses the question">
+                      🎯 5/5
+                    </span>
+                  </div>
+                  <!-- Specificity 5/5 -->
+                  <span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.3);font-weight:600;cursor:help" title="Very specific — concrete figures and percentages cited">
+                    🔍 5/5
+                  </span>
+                  <!-- Confidence 4/5 -->
+                  <span style="font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.3);font-weight:600;cursor:help" title="Mostly calibrated — confident where data is clear">
+                    ⚖️ 4/5
+                  </span>
+                  <span style="font-size:9px;color:#4b5563;cursor:pointer">↻</span>
+                  <span style="font-size:9px;color:#374151;cursor:pointer">✕</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tooltip example -->
+            <div style="background:#1a2a1a;border:1px solid rgba(74,222,128,.3);border-radius:8px;padding:8px 10px;margin-top:2px;max-width:220px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <span style="font-size:10px;font-weight:700;color:#4ade80">🎯 Relevance</span>
+                <span style="font-size:13px;font-weight:800;color:#4ade80">5/5</span>
+              </div>
+              <div style="height:4px;background:rgba(255,255,255,.08);border-radius:2px;margin-bottom:5px">
+                <div style="height:100%;width:100%;background:#4ade80;border-radius:2px"></div>
+              </div>
+              <span style="font-size:10px;font-weight:700;color:#4ade80">Excellent ✓</span>
+              <p style="font-size:10px;color:#6b7280;margin:3px 0 0;line-height:1.5">Directly and completely addresses the revenue growth question with specific figures</p>
+              <p style="font-size:9px;color:#4b5563;margin-top:4px;border-top:1px solid rgba(255,255,255,.05);padding-top:4px">Does the answer address the question?</p>
+            </div>
+
+            <!-- Summary eval button -->
+            <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.07);border-radius:8px;padding:8px 10px">
+              <div style="font-size:9.5px;color:#6b7280;margin-bottom:6px;font-weight:600">After summarization completes:</div>
+              <div style="display:flex;gap:6px;align-items:center">
+                <div style="padding:3px 9px;background:rgba(96,165,250,.08);color:#60a5fa;border:1px solid rgba(96,165,250,.2);border-radius:20px;font-size:10.5px;font-weight:600;cursor:pointer">📊 Evaluate</div>
+                <span style="font-size:10px;color:#6b7280">→</span>
+                <span style="font-size:10px;padding:2px 7px;border-radius:20px;background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.3);font-weight:600">🧩 4/5</span>
+                <span style="font-size:10px;padding:2px 7px;border-radius:20px;background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.3);font-weight:600">🔍 5/5</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+<div class="slide" data-idx="26">
       <div class="slide-inner full">
         <div style="font-size:52px;margin-bottom:16px">🌿</div>
         <div class="slide-num">আদর DocIntel</div>
@@ -1544,6 +1814,10 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">🏢</div><div class="sum-card-title" style="color:#4ade80">Team Workspaces</div><ul class="sum-card-list"><li>Owner / Editor / Viewer roles</li><li>Invite teammates by email</li><li>Workspace-scoped docs + chat</li><li>Switch context in one click</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">📧</div><div class="sum-card-title" style="color:#60a5fa">Email Verification</div><ul class="sum-card-list"><li>Verify before first login</li><li>24-hour token via Gmail SMTP</li><li>Resend button available</li><li>Admin auto-verified</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">🔍</div><div class="sum-card-title" style="color:#fbbf24">Audit Log</div><ul class="sum-card-list"><li>Every action logged to PostgreSQL</li><li>user · action · IP · timestamp</li><li>Filter by action type</li><li>Embed + invite email notifications</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">💳</div><div class="sum-card-title" style="color:#c084fc">Stripe Billing</div><ul class="sum-card-list"><li>Free / Pro $20 / Enterprise $100</li><li>3-day free trial on paid plans</li><li>Auto-sync tier on every login</li><li>Cancel → auto-downgrade to Free</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">📊</div><div class="sum-card-title" style="color:#4ade80">Inline Eval</div><ul class="sum-card-list"><li>Auto-scores every chat answer</li><li>🎯 Relevance · 🔍 Specificity · ⚖️ Confidence</li><li>Grades 1–5 with judge reasoning</li><li>On-demand for summaries & compare</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">↻</div><div class="sum-card-title" style="color:#fbbf24">Doc Recovery</div><ul class="sum-card-list"><li>Retry button on error docs</li><li>Re-downloads from GCS</li><li>Re-runs full chunk → embed</li><li>No delete + re-upload needed</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">🏷</div><div class="sum-card-title" style="color:#4ade80">Document Tags</div><ul class="sum-card-list"><li>Colour-coded tag collections</li><li>Assign/remove per document</li><li>Search · filter · sort bar</li><li>Stored in PostgreSQL per user</li></ul></div>
         </div>
 
         <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:20px">
@@ -1561,7 +1835,7 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
           <span>🐘 pgvector</span><span>☁ Google Cloud</span><span>🤖 Gemini AI</span><span>⚡ FastAPI</span><span>⚛ React</span><span>🔥 Firebase</span>
         </div>
 
-        <button class="btn-speak" style="margin:20px auto 0" onclick="speakSlide(23)">🔊 Play narration</button>
+        <button class="btn-speak" style="margin:20px auto 0" onclick="speakSlide(26)">🔊 Play narration</button>
       </div>
     </div>
 
@@ -1593,6 +1867,9 @@ const SLIDES = [
   { text: "আদর DocIntel supports team workspaces — shared environments where multiple users collaborate on the same document set. Create a workspace, name it, and invite teammates by email. Three roles control access: owners have full control including member management; editors can upload and embed documents but cannot manage members; and viewers can only chat with and search shared documents — their upload button is hidden entirely. When you switch to a workspace, a green badge appears in the header, the documents tab loads only workspace files, and chat history is scoped to that workspace. Switching back to personal clears everything and loads your private documents and sessions. Workspaces are protected against accidental deletion — you must type the exact workspace name to confirm, and the system warns you if other members would lose access." },
   { text: "আদর DocIntel requires every new user to verify their email address before logging in. On registration, a 24-hour verification link is sent via Gmail SMTP. Clicking login without verifying returns HTTP 403 with a clear message. A resend button is available — the response is intentionally vague to avoid revealing whether an email address is registered. The first user on any deployment is automatically verified to avoid the chicken-and-egg problem of needing to log in to send email. Tokens are stored as SHA-256 hashes so the raw token never touches the database." },
   { text: "আদর DocIntel keeps users informed and maintains a full audit trail. When a document finishes embedding — which can take minutes for large files — an in-app toast notification appears immediately: the document name and chunk count, confirming it is ready for chat. The same event also triggers an email notification to the uploader. Workspace invite emails are sent when members are added. Administrators can view a complete audit log in the Admin dashboard — every login, registration, document upload, workspace creation, and member invite is recorded with the action type, user email, resource ID, IP address, and timestamp. The log is filterable by action type and queryable directly in PostgreSQL for compliance exports." },
+  { text: "আদর DocIntel includes two features that keep your document library healthy and organised. First, document recovery: when a document lands in error state — due to a corrupted PDF, chunking timeout, or extraction failure — a yellow Retry button appears on the card. Clicking it wipes the stale chunks, re-downloads the original file from Google Cloud Storage, and re-runs the full chunk then embed pipeline automatically. You never need to delete and re-upload. Second, document tags: create colour-coded named tags like Q3 Finance or Legal, and assign them to documents from a compact dropdown on each card. A live search bar, tag filter, and sort dropdown sit in a single tight row above the list, letting you instantly narrow 500 documents to exactly what you need. Tags are stored in PostgreSQL, persist across sessions, and are scoped per user." },
+  { text: "আদর DocIntel includes full Stripe billing with three plans. Free gives you 20 documents, 10 megabyte file limit, 50 chat queries per day, and 10 embeddings per day — no card required. Pro at 20 dollars per month gives you 500 documents, 500 megabyte files, 500 queries per day, and 100 embeddings per day. Enterprise at 100 dollars per month gives unlimited documents, 10 gigabyte files, unlimited queries, and 500 embeddings per day. Both Pro and Enterprise include a 3-day free trial — Stripe collects the card but charges nothing until day 4. The activation flow is seamless: after Stripe checkout, the user is redirected to the login screen, and on sign-in the backend queries the Stripe API directly to detect the active subscription and set the correct tier. Cancellations are also handled — if no active subscription is found on login, the user is automatically downgraded to the free plan." },
+  { text: "আদর DocIntel includes an inline RAG evaluation system — every AI answer is automatically scored by Gemini acting as an independent judge. No reference documents or expected answers are needed. Three quality dimensions appear as colour-coded grade badges directly below each chat response: Relevance grades whether the answer addresses the question, Specificity grades whether it cites concrete details rather than vague generalities — a reliable proxy for groundedness — and Confidence grades whether uncertainty is expressed proportionally. Grades run from 1 to 5: Excellent, Good, Acceptable, Poor, and Fail. Hover any badge to see the judge's reasoning in a tooltip. For summaries and comparisons, a 📊 Evaluate button appears after streaming completes — click it to see Coherence and Specificity scores. Evaluation fires after the primary response finishes, never during streaming, so it never interferes with the answer itself." },
   { text: "That's আদর DocIntel — a complete self-service Document Intelligence Platform. Upload and store up to 500 documents per workspace on Google Cloud. Automatically chunk and index them with rich metadata. Generate vector embeddings using Gemini and store them in pgvector for semantic search. Chat with your documents in natural language and get source-cited answers. Summarize in five different ways — from a three-sentence executive overview to a full section-by-section breakdown. And manage everything with a full admin dashboard. Built by Agomonia Labs on the ADAR platform. Try it free at docintel dot adar dot agomoniai dot com. We'd love to hear what you build with it." }
 ];
 

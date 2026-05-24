@@ -4,6 +4,7 @@ import { streamChat, listSessions, createSession, getSession,
          saveSessionMessages, deleteSession, submitFeedback,
          getSessionFeedback } from '../services/api.js';
 import MarkdownRenderer from './MarkdownRenderer.jsx';
+import EvalBadges from './EvalBadges.jsx';
 
 const nanoid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 const QUICK  = ['Summarise all documents','What are the key findings?',
@@ -158,7 +159,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
 
     const aid     = nanoid();
     const userMsg = normalizeMsg({ id: nanoid(), role: 'user',      content: q           });
-    const aiMsg   = normalizeMsg({ id: aid,      role: 'assistant', content: '', sources: null });
+    const aiMsg   = normalizeMsg({ id: aid,      role: 'assistant', content: '', sources: null, isNew: true });
 
     setMessages(prev => [...prev, userMsg, aiMsg]);
     setThinking(true);
@@ -324,7 +325,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
 }
 
 // ── Message bubble ────────────────────────────────────────────────────────────
-function Msg({ m, sessionId, prevUserMsg, initialFeedback, onFeedback }) {
+function Msg({ m, sessionId, prevUserMsg, initialFeedback, onFeedback, isNew = false }) {
   const isUser = m.role === 'user';
   const [open,     setOpen]     = useState(false);
   const [feedback, setFeedback] = useState(initialFeedback ?? null);  // null | 1 | -1
@@ -364,6 +365,17 @@ function Msg({ m, sessionId, prevUserMsg, initialFeedback, onFeedback }) {
             ? (m.content || <span style={{ opacity: .4 }}>…</span>)
             : <MarkdownRenderer text={m.content || ''} style={{ fontSize: 13.5 }} />}
         </div>
+
+        {/* Eval scores — auto-run after every AI answer */}
+        {!isUser && m.content && (
+          <EvalBadges
+            question={prevUserMsg?.content || ''}
+            answer={m.content}
+            evalTypes={['relevance', 'specificity', 'confidence']}
+            compact={false}
+            autoRun={isNew}
+          />
+        )}
 
         {/* Feedback + sources row */}
         {!isUser && m.content && (

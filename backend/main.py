@@ -39,8 +39,9 @@ async def lifespan(app: FastAPI):
         await init_pool()
         log.info("✓ Database pool ready")
         await create_tables()
-        from database.models import create_additional_tables
+        from database.models import create_additional_tables, create_eval_tables
         await create_additional_tables()
+        await create_eval_tables()
         log.info("✓ Schema ready")
     except Exception as e:
         log.exception(f"✗ Database startup failed: {e}")
@@ -97,6 +98,8 @@ _ROUTERS = [
     ("routes.usage",          "usage_router",          "/api/usage",         ["usage"]),
     ("routes.workspaces",     "workspaces_router",     "/api/workspaces",    ["workspaces"]),
     ("routes.tags",           "tags_router",           "/api/tags",          ["tags"]),
+    ("routes.billing",        "billing_router",        "/api/billing",       ["billing"]),
+    ("routes.evals",          "evals_router",          "/api/evals",         ["evals"]),
 ]
 
 for _module, _attr, _prefix, _tags in _ROUTERS:

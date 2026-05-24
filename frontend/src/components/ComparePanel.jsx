@@ -218,6 +218,15 @@ export default function ComparePanel({ doc1, doc2, onClose }) {
           </div>
         )}
       </div>
+    {result && !loading && (
+      <div style={{ padding:'0 1.25rem 1rem' }}>
+        <InlineEval
+          question="Document comparison analysis"
+          answer={result.summary || JSON.stringify(result.sections?.slice(0,3))}
+          types={['coherence','relevance']}
+        />
+      </div>
+    )}
     </div>
   );
 }
@@ -246,3 +255,44 @@ const s = {
   tableHdr:   { display:'flex', gap:8, padding:'8px 12px', borderBottom:'1.5px solid var(--b2)', background:'var(--s3)', fontSize:11, fontWeight:600, color:'var(--muted2)', textTransform:'uppercase', letterSpacing:'.4px', flexShrink:0 },
   tableRow:   { display:'flex', gap:8, padding:'10px 12px', alignItems:'flex-start', transition:'background .1s' },
 };
+
+
+function InlineEval({ question, answer, types = ['coherence','relevance'] }) {
+  const [scores, setScores] = React.useState(null);
+  const [busy,   setBusy]   = React.useState(false);
+  const C = { 5:'#4ade80', 4:'#4ade80', 3:'#fbbf24', 2:'#f87171', 1:'#f87171' };
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      const tok = localStorage.getItem('token');
+      const r = await fetch('/api/evals/quick-score', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${tok}` },
+        body: JSON.stringify({ question, answer, eval_types: types }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const { scores: s } = await r.json();
+      setScores(s);
+    } catch(e) { console.error('Eval error:', e); }
+    finally { setBusy(false); }
+  };
+
+  if (scores) return (
+    <div style={{ display:'flex', gap:4, flexWrap:'wrap', marginTop:8, alignItems:'center' }}>
+      <span style={{ fontSize:9.5, color:'#6b7280', fontWeight:600, textTransform:'uppercase' }}>Eval</span>
+      {Object.entries(scores).map(([k,v]) => (
+        <span key={k} title={v?.reasoning||''} style={{ fontSize:10.5, padding:'2px 8px', borderRadius:20, background:`${(C[v?.score]||'#6b7280')}12`, color:C[v?.score]||'#6b7280', border:`1px solid ${(C[v?.score]||'#6b7280')}35`, fontWeight:600, cursor:'help' }}>
+          {k} {v?.score!=null?`${v.score}/5`:'—'}
+        </span>
+      ))}
+    </div>
+  );
+
+  return (
+    <button onClick={run} disabled={busy}
+      style={{ fontSize:10.5, padding:'2px 9px', background:'rgba(96,165,250,.08)', color:'#60a5fa', border:'1px solid rgba(96,165,250,.2)', borderRadius:20, cursor:'pointer', marginTop:8, opacity:busy?.6:1 }}>
+      {busy ? '⟳ Evaluating…' : '📊 Evaluate'}
+    </button>
+  );
+}

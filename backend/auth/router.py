@@ -169,15 +169,22 @@ async def login(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect email or password")
 
     if not row["is_verified"]:
-        raise HTTPException(
-            403,
-            "Please verify your email address before logging in. "
-            "Check your inbox or use the resend link."
-        )
+        # Allow bypass in dev when SMTP is not configured
+        import os
+        skip_verify = os.getenv("SKIP_EMAIL_VERIFICATION", "false").lower() == "true"
+        if not skip_verify:
+            raise HTTPException(
+                403,
+                "Please verify your email address before logging in. "
+                "Check your inbox or use the resend link."
+            )
 
     await audit(db, user_id=str(row["id"]), action="login",
                 resource_type="user", resource_id=str(row["id"]),
                 ip_address=ip_from(request), user_agent=ua_from(request))
+
+    # Sync Stripe subscription status on every login (keeps tier always up-to-date)
+    await _sync_stripe_on_login(db, str(row["id"]))
 
     token = create_access_token(str(row["id"]), row["email"])
     return TokenResponse(
@@ -198,3 +205,73 @@ async def me(current_user: CurrentUser):
         "full_name": current_user.get("full_name", ""),
         "role":      current_user.get("role", "user"),
     }
+
+async def _sync_stripe_on_login(db, user_id: str) -> None:
+    """Sync Stripe tier on every login using raw REST — never raises."""
+    import os, logging, httpx, datetime
+    _log = logging.getLogger("docintel.auth")
+
+    stripe_key   = os.getenv("STRIPE_SECRET_KEY", "")
+    pro_price_id = os.getenv("STRIPE_PRO_PRICE_ID", "")
+    ent_price_id = os.getenv("STRIPE_ENTERPRISE_PRICE_ID", "")
+
+    if not stripe_key:
+        _log.warning("[stripe_sync] STRIPE_SECRET_KEY not set")
+        return
+
+    try:
+        row = await db.fetchrow(
+            "SELECT stripe_customer_id FROM users WHERE id=$1", user_id
+        )
+        if not row or not row["stripe_customer_id"]:
+            _log.info(f"[stripe_sync] no customer for user={user_id}")
+            return
+
+        auth = (stripe_key, "")
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                "https://api.stripe.com/v1/subscriptions",
+                params={"customer": row["stripe_customer_id"], "limit": 10},
+                auth=auth, timeout=10,
+            )
+            resp     = r.json()
+            all_subs = resp.get("data", [])
+            _log.info(f"[stripe_sync] user={user_id} found={len(all_subs)} subs status={r.status_code}")
+
+        active_sub  = None
+        active_tier = "free"
+        tier_rank   = {"free": 0, "pro": 1, "enterprise": 2}
+
+        for sub in all_subs:
+            status = sub.get("status", "")
+            if status not in ("active", "trialing", "past_due"):
+                continue
+            items    = sub.get("items", {}).get("data", [])
+            price_id = items[0]["price"]["id"] if items else ""
+            plan     = sub.get("metadata", {}).get("plan")
+            if not plan:
+                plan = "enterprise" if price_id == ent_price_id else "pro"
+            tier = plan if status in ("active", "trialing") else "free"
+            if tier_rank.get(tier, 0) > tier_rank.get(active_tier, 0):
+                active_tier = tier
+                active_sub  = sub
+
+        _log.info(f"[stripe_sync] resolved tier={active_tier} sub={active_sub.get('id') if active_sub else None}")
+
+        if active_sub:
+            cpe        = active_sub.get("current_period_end")
+            period_end = datetime.datetime.fromtimestamp(cpe, tz=datetime.timezone.utc) if cpe else None
+            await db.execute(
+                """UPDATE users SET tier=$1, stripe_subscription_id=$2,
+                   subscription_status=$3, subscription_period_end=$4
+                   WHERE id=$5::uuid""",
+                active_tier, active_sub["id"], active_sub["status"], period_end, user_id,
+            )
+        else:
+            await db.execute(
+                "UPDATE users SET tier='free', stripe_subscription_id=NULL, subscription_status='inactive' WHERE id=$1::uuid",
+                user_id,
+            )
+    except Exception as e:
+        import logging as _l
+        _l.getLogger("docintel.auth").error(f"[stripe_sync] FAILED user={user_id}: {e}")

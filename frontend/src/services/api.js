@@ -404,3 +404,68 @@ export async function removeTagAssignment(documentId, tagId) {
     { method:'DELETE', headers: authHdr() }
   ));
 }
+
+// ── Stripe Billing ────────────────────────────────────────────────────────────
+export async function getBillingStatus() {
+  return handleRes(await fetch(`${BASE}/billing/status`, { headers: authHdr() }));
+}
+export async function createCheckout(plan) {
+  return handleRes(await fetch(`${BASE}/billing/checkout`, {
+    method:'POST', headers:{'Content-Type':'application/json',...authHdr()},
+    body: JSON.stringify({ plan }),
+  }));
+}
+export async function syncBilling(sessionId = '') {
+  const q = sessionId ? `?session_id=${sessionId}` : '';
+  return handleRes(await fetch(`${BASE}/billing/sync${q}`, { method:'POST', headers: authHdr() }));
+}
+export async function openBillingPortal() {
+  return handleRes(await fetch(`${BASE}/billing/portal`, {
+    method:'POST', headers: authHdr(),
+  }));
+}
+
+// ── Evaluation Suites ─────────────────────────────────────────────────────────
+export async function listEvalSuites() {
+  return handleRes(await fetch(`${BASE}/evals/suites`, { headers: authHdr() }));
+}
+export async function createEvalSuite(name, eval_type, description='') {
+  return handleRes(await fetch(`${BASE}/evals/suites`, {
+    method:'POST', headers:{'Content-Type':'application/json',...authHdr()},
+    body: JSON.stringify({ name, eval_type, description }),
+  }));
+}
+export async function deleteEvalSuite(suiteId) {
+  return handleRes(await fetch(`${BASE}/evals/suites/${suiteId}`, { method:'DELETE', headers:authHdr() }));
+}
+export async function listEvalCases(suiteId) {
+  return handleRes(await fetch(`${BASE}/evals/suites/${suiteId}/cases`, { headers: authHdr() }));
+}
+export async function createEvalCase(suiteId, data) {
+  return handleRes(await fetch(`${BASE}/evals/suites/${suiteId}/cases`, {
+    method:'POST', headers:{'Content-Type':'application/json',...authHdr()},
+    body: JSON.stringify(data),
+  }));
+}
+export async function deleteEvalCase(suiteId, caseId) {
+  return handleRes(await fetch(`${BASE}/evals/suites/${suiteId}/cases/${caseId}`, { method:'DELETE', headers:authHdr() }));
+}
+export async function seedEvalCases(suiteId) {
+  return handleRes(await fetch(`${BASE}/evals/suites/${suiteId}/seed`, { method:'POST', headers:authHdr() }));
+}
+export async function startEvalRun(suiteId) {
+  return handleRes(await fetch(`${BASE}/evals/suites/${suiteId}/run`, { method:'POST', headers:authHdr() }));
+}
+export async function listEvalRuns(suiteId) {
+  return handleRes(await fetch(`${BASE}/evals/suites/${suiteId}/runs`, { headers: authHdr() }));
+}
+export async function getEvalRunResults(runId) {
+  return handleRes(await fetch(`${BASE}/evals/runs/${runId}`, { headers: authHdr() }));
+}
+export async function quickScore(question, answer, context="", chunks=[], evalTypes=["relevance","specificity","confidence"]) {
+  return handleRes(await fetch(`${BASE}/evals/quick-score`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json',...authHdr()},
+    body: JSON.stringify({ question, answer, eval_types: evalTypes }),
+  }));
+}

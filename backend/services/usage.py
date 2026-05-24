@@ -10,27 +10,30 @@ log = logging.getLogger("docintel.usage")
 TIER_LIMITS: dict[str, dict] = {
     "free": {
         "max_documents":    20,
-        "max_file_mb":      10,
+        "max_file_mb":      10,      # 10 MB per file
         "max_queries_day":  50,
         "max_embeds_day":   10,
         "max_summaries_day":5,
         "label":            "Free",
+        "price_monthly":    0,
     },
     "pro": {
         "max_documents":    500,
-        "max_file_mb":      50,
+        "max_file_mb":      500,     # 500 MB per file
         "max_queries_day":  500,
         "max_embeds_day":   100,
         "max_summaries_day":50,
         "label":            "Pro",
+        "price_monthly":    20,
     },
     "enterprise": {
-        "max_documents":    -1,    # -1 = unlimited
-        "max_file_mb":      200,
-        "max_queries_day":  -1,
-        "max_embeds_day":   -1,
-        "max_summaries_day":-1,
+        "max_documents":    -1,      # unlimited
+        "max_file_mb":      10240,   # 10 GB per file
+        "max_queries_day":  -1,      # unlimited
+        "max_embeds_day":   500,
+        "max_summaries_day":-1,      # unlimited
         "label":            "Enterprise",
+        "price_monthly":    100,
     },
 }
 

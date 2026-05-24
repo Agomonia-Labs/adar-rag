@@ -1,7 +1,7 @@
 // src/pages/AuthPages.jsx
 // Auth flow managed internally: login → forgot → reset / register
 import React, { useState, useEffect } from 'react';
-import { login, register, forgotPassword, verifyResetToken, resetPassword, resendVerification } from '../services/api.js';
+import { login, register, forgotPassword, verifyResetToken, resetPassword, resendVerification, verifyEmail } from '../services/api.js';
 
 const Brand = () => (
   <div style={{ textAlign:'center', marginBottom:'1.75rem' }}>
@@ -19,8 +19,10 @@ export function AuthFlow({ onLogin }) {
   const [pendingEmail, setPendingEmail] = useState('');
   const [resendMsg,    setResendMsg]    = useState('');
   const [screen, setScreen] = useState(() => {
-    const p = new URLSearchParams(window.location.search);
-    if (p.get('token')) return 'reset';
+    const p    = new URLSearchParams(window.location.search);
+    const path = window.location.pathname;
+    if (path === '/verify-email' && p.get('token')) return 'verify-email';
+    if (p.get('token') && !path.includes('verify')) return 'reset';
     return 'login';
   });
   const [resetToken] = useState(() => {
@@ -28,6 +30,8 @@ export function AuthFlow({ onLogin }) {
     return p.get('token') || '';
   });
 
+  if (screen === 'verify-email')
+    return <VerifyEmailScreen token={new URLSearchParams(window.location.search).get('token') || ''} />;
   if (screen === 'reset')
     return <ResetPasswordScreen token={resetToken} onDone={() => { window.history.replaceState({}, '', '/'); setScreen('login'); }} />;
   if (screen === 'forgot')
@@ -60,6 +64,9 @@ export function AuthFlow({ onLogin }) {
 
 // ── Login ─────────────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin, onSwitch, onForgot }) {
+  const _bParams      = new URLSearchParams(window.location.search);
+  const billingSuccess = _bParams.get('billing') === 'success';
+  const billingPlan    = _bParams.get('plan') || 'pro';
   const [email, setEmail] = useState('');
   const [pass,  setPass]  = useState('');
   const [error, setError] = useState('');
@@ -334,3 +341,53 @@ const s = {
   demoBadge: { fontSize:10, background:'rgba(74,222,128,.12)', color:'#4ade80',
                padding:'2px 7px', borderRadius:20, border:'1px solid rgba(74,222,128,.25)' },
 };
+
+
+// ── Email Verification Screen ─────────────────────────────────────────────────
+function VerifyEmailScreen({ token }) {
+  const [status, setStatus] = React.useState('loading'); // loading | success | error
+  const [message, setMessage] = React.useState('');
+
+  React.useEffect(() => {
+    if (!token) { setStatus('error'); setMessage('No verification token in URL.'); return; }
+    verifyEmail(token)
+      .then(data => {
+        setStatus('success');
+        setMessage(data.message || 'Email verified! You can now log in.');
+        // Clean up URL
+        window.history.replaceState({}, '', '/');
+      })
+      .catch(e => {
+        setStatus('error');
+        setMessage(e.message || 'Verification failed. The link may have expired.');
+      });
+  }, [token]);
+
+  const bg = { success: 'rgba(74,222,128,.08)', error: 'rgba(248,113,113,.08)', loading: 'rgba(255,255,255,.04)' }[status];
+  const border = { success: 'rgba(74,222,128,.25)', error: 'rgba(248,113,113,.25)', loading: 'rgba(255,255,255,.1)' }[status];
+  const icon = { success: '✅', error: '❌', loading: '⏳' }[status];
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:'100vh', background:'var(--bg)', padding:'2rem' }}>
+      <div style={{ background:'var(--s1)', border:'1px solid var(--b2)', borderRadius:12, padding:'2rem 2.5rem', maxWidth:420, width:'100%', textAlign:'center' }}>
+        <div style={{ fontSize:48, marginBottom:16 }}>{icon}</div>
+        <h2 style={{ fontSize:20, fontWeight:700, color:'var(--tx)', marginBottom:10 }}>
+          {status === 'loading' ? 'Verifying your email…' : status === 'success' ? 'Email verified!' : 'Verification failed'}
+        </h2>
+        <div style={{ background:bg, border:`1px solid ${border}`, borderRadius:8, padding:'10px 14px', fontSize:13.5, color:'var(--tx)', marginBottom:20, lineHeight:1.6 }}>
+          {status === 'loading' ? 'Please wait…' : message}
+        </div>
+        {status !== 'loading' && (
+          <a href="/" style={{ display:'inline-block', padding:'8px 20px', background:'#15803d', color:'#fff', borderRadius:8, fontSize:14, fontWeight:600, textDecoration:'none' }}>
+            {status === 'success' ? 'Go to login →' : 'Back to app →'}
+          </a>
+        )}
+        {status === 'error' && (
+          <p style={{ fontSize:12, color:'var(--muted2)', marginTop:12 }}>
+            Request a new link from the login screen → "Resend verification email"
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -135,6 +135,11 @@ export default function SummaryPanel({ docId, docName, documentIds, docNames, ch
             <div ref={outRef} style={{flex:1,overflowY:'auto',padding:'1.25rem 1.5rem',background:'var(--bg)'}}>
               {output ? <MarkdownRenderer text={output} style={{fontSize:14,lineHeight:1.75,color:'var(--tx)'}}/> : <span style={{color:'var(--muted2)',fontStyle:'italic'}}>Starting…</span>}
               {stage==='running' && <span style={{display:'inline-block',animation:'blink 1s step-end infinite',color:'#4ade80',fontWeight:700,fontSize:16}}>▌</span>}
+              {stage==='done' && output && (
+                <div style={{marginTop:12,paddingTop:10,borderTop:'1px solid var(--b1)'}}>
+                  <InlineEval question={type + ' summary'} answer={output} />
+                </div>
+              )}
             </div>
           </div>
         ) : stage==='' ? (
@@ -170,3 +175,45 @@ const s = {
   typeBtn: { display:'flex', alignItems:'center', gap:5, padding:'6px 12px', borderRadius:20, border:'1px solid var(--b2)', background:'transparent', color:'var(--muted2)', cursor:'pointer', fontSize:12, fontWeight:500, transition:'all .15s', whiteSpace:'nowrap' },
   typeBtnOn:{ background:'rgba(74,222,128,.12)', borderColor:'rgba(74,222,128,.35)', color:'#4ade80', fontWeight:700 },
 };
+
+
+function InlineEval({ question, answer, evalTypes = ['coherence', 'specificity'] }) {
+  const [scores, setScores] = React.useState(null);
+  const [busy,   setBusy]   = React.useState(false);
+  const C = { 5:'#4ade80', 4:'#4ade80', 3:'#fbbf24', 2:'#f87171', 1:'#f87171' };
+  const L = { 5:'Excellent', 4:'Good', 3:'Acceptable', 2:'Poor', 1:'Fail' };
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      const tok = localStorage.getItem('token');
+      const r = await fetch('/api/evals/quick-score', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${tok}` },
+        body: JSON.stringify({ question, answer, eval_types: evalTypes }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const { scores: s } = await r.json();
+      setScores(s);
+    } catch(e) { console.error('Eval error:', e); }
+    finally { setBusy(false); }
+  };
+
+  if (scores) return (
+    <div style={{ display:'flex', gap:4, flexWrap:'wrap', marginTop:5, alignItems:'center' }}>
+      <span style={{ fontSize:9.5, color:'#6b7280', fontWeight:600, textTransform:'uppercase', letterSpacing:'.3px' }}>Eval</span>
+      {Object.entries(scores).map(([k, v]) => (
+        <span key={k} title={v?.reasoning || ''} style={{ fontSize:10.5, padding:'2px 8px', borderRadius:20, background:`${(C[v?.score]||'#6b7280')}12`, color:C[v?.score]||'#6b7280', border:`1px solid ${(C[v?.score]||'#6b7280')}35`, fontWeight:600, cursor:'help' }}>
+          {k} {v?.score != null ? `${v.score}/5` : '—'}
+        </span>
+      ))}
+    </div>
+  );
+
+  return (
+    <button onClick={run} disabled={busy}
+      style={{ fontSize:10.5, padding:'2px 9px', background:'rgba(96,165,250,.08)', color:'#60a5fa', border:'1px solid rgba(96,165,250,.2)', borderRadius:20, cursor:'pointer', marginTop:5, opacity:busy?.6:1 }}>
+      {busy ? '⟳ Evaluating…' : '📊 Evaluate'}
+    </button>
+  );
+}

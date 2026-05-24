@@ -72,6 +72,25 @@ else
   echo "  Gmail SMTP   : ⚠ not configured (reset emails will be logged only)"
 fi
 
+# Cohere Rerank — add if secret exists
+if gcloud secrets describe docintel-cohere-key --project="$PROJECT_ID" &>/dev/null; then
+  SECRETS+=("COHERE_API_KEY=docintel-cohere-key:latest")
+  echo "  Cohere Rerank: enabled"
+else
+  echo "  Cohere Rerank: not configured (Gemini fallback active)"
+fi
+
+# Stripe Billing — add if secrets exist
+if gcloud secrets describe docintel-stripe-secret-key --project="$PROJECT_ID" &>/dev/null; then
+  SECRETS+=("STRIPE_SECRET_KEY=docintel-stripe-secret-key:latest")
+  SECRETS+=("STRIPE_WEBHOOK_SECRET=docintel-stripe-webhook-secret:latest")
+  SECRETS+=("STRIPE_PRO_PRICE_ID=docintel-stripe-pro-price-id:latest")
+  SECRETS+=("STRIPE_ENTERPRISE_PRICE_ID=docintel-stripe-enterprise-price-id:latest")
+  echo "  Stripe Billing: enabled"
+else
+  echo "  Stripe Billing: ⚠ not configured (billing features disabled)"
+fi
+
 # Format as --set-secrets flags
 SECRETS_FLAGS=""
 for s in "${SECRETS[@]}"; do
@@ -113,6 +132,9 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="APP_URL=https://docintel.adar.agomoniai.com" \
   --set-env-vars="EMAIL_FROM_NAME=আদর DocIntel" \
   --set-env-vars="RESET_TOKEN_EXPIRE_HOURS=1" \
+  --set-env-vars="RERANK_ENABLED=true" \
+  --set-env-vars="RERANK_FETCH_K=20" \
+  --set-env-vars="RRF_K=60" \
   $SECRETS_FLAGS \
   --quiet
 

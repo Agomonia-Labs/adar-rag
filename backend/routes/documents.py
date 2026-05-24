@@ -38,12 +38,29 @@ async def upload_documents(
     db=Depends(get_db),
 ):
     # Enforce per-user tier document limit (replaces global MAX_FILES env var)
-    await check_document_limit(db, str(current_user["id"]))
+    user_id = str(current_user["id"])
+    await check_document_limit(db, user_id)
+
+    # Enforce per-file size limit from tier
+    from services.usage import get_user_limits
+    limits   = await get_user_limits(db, user_id)
+    max_mb   = limits.get("max_file_mb", 10)
+    for upload in files:
+        content_peek = await upload.read(1)
+        await upload.seek(0)
+        # Check Content-Length header if present
+        cl = upload.size  # may be None on some clients
+        if cl and max_mb != -1 and cl > max_mb * 1024 * 1024:
+            raise HTTPException(
+                413,
+                f"File '{upload.filename}' exceeds your {max_mb} MB file size limit "
+                f"({limits.get('label','Free')} plan). Upgrade to upload larger files."
+            )
 
     # If workspace upload — verify editor/owner membership
     if workspace_id:
         from routes.workspaces import _require_role
-        await _require_role(db, workspace_id, str(current_user["id"]), "editor")
+        await _require_role(db, workspace_id, user_id, "editor")
     if len(files) > MAX_FILES:
         raise HTTPException(400, f"You can upload at most {MAX_FILES} files at once")
 

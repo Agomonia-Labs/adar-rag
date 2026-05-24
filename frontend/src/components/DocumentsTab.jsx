@@ -154,32 +154,32 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
       </div>
 
       {/* ── Filter / Sort / Tag bar — single line ─────────────────────── */}
-      <div style={{ display:'flex', gap:5, padding:'6px 10px', borderBottom:'1px solid var(--b1)', background:'var(--s2)', alignItems:'center', flexShrink:0, flexWrap:'nowrap', minWidth:0 }}>
+      <div style={{ display:'flex', gap:4, padding:'5px 10px', borderBottom:'1px solid var(--b1)', background:'var(--s2)', alignItems:'center', flexShrink:0, overflow:'hidden' }}>
+        {/* Search — grows to fill available space */}
         <input value={filterName} onChange={e=>setFilterName(e.target.value)}
           placeholder="🔍 Search…"
-          style={{ fontSize:11.5, padding:'3px 8px', background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:'var(--r)', color:'var(--tx)', outline:'none', minWidth:80, flex:'1 1 80px' }} />
+          style={{ fontSize:11.5, padding:'3px 7px', background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:'var(--r)', color:'var(--tx)', outline:'none', flex:'1 1 0', minWidth:0 }} />
+        {/* Tag filter — fixed narrow width, only shown when tags exist */}
         {tags.length > 0 && (
           <select value={filterTag} onChange={e=>setFilterTag(e.target.value)}
-            style={{ fontSize:11.5, padding:'3px 5px', background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:'var(--r)', cursor:'pointer', flexShrink:0, maxWidth:110 }}>
-            <option value="">All tags</option>
+            style={{ fontSize:11, padding:'3px 2px', background:'var(--s3)', color: filterTag ? '#4ade80' : 'var(--tx)', border:`1px solid ${filterTag?'rgba(74,222,128,.4)':'var(--b2)'}`, borderRadius:'var(--r)', cursor:'pointer', flexShrink:0, width:72 }}>
+            <option value="">🏷 All</option>
             {tags.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         )}
+        {/* Sort — fixed width */}
         <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
-          style={{ fontSize:11.5, padding:'3px 5px', background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:'var(--r)', cursor:'pointer', flexShrink:0 }}>
+          style={{ fontSize:11, padding:'3px 2px', background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:'var(--r)', cursor:'pointer', flexShrink:0, width:62 }}>
           <option value="date">↓ Date</option>
-          <option value="name">A–Z</option>
-          <option value="size">Size</option>
-          <option value="status">Status</option>
+          <option value="name">A–Z Name</option>
+          <option value="size">↕ Size</option>
+          <option value="status">● Status</option>
         </select>
+        {/* Tags manager toggle */}
         <button onClick={()=>setShowTagMgr(v=>!v)} title="Manage tags"
-          style={{ fontSize:11.5, padding:'3px 8px', background:showTagMgr?'rgba(74,222,128,.1)':'var(--s3)', color:showTagMgr?'#4ade80':'var(--muted2)', border:'1px solid var(--b2)', borderRadius:'var(--r)', cursor:'pointer', flexShrink:0, whiteSpace:'nowrap' }}>
-          🏷{tags.length > 0 ? ` (${tags.length})` : ''}
+          style={{ fontSize:12, padding:'3px 6px', background:showTagMgr?'rgba(74,222,128,.1)':'var(--s3)', color:showTagMgr?'#4ade80':'var(--muted2)', border:`1px solid ${showTagMgr?'rgba(74,222,128,.3)':'var(--b2)'}`, borderRadius:'var(--r)', cursor:'pointer', flexShrink:0 }}>
+          🏷{tags.length > 0 ? <sup style={{fontSize:9}}>{tags.length}</sup> : ''}
         </button>
-        {filterTag && (
-          <button onClick={()=>setFilterTag('')} title="Clear tag filter"
-            style={{ fontSize:11, padding:'3px 6px', background:'rgba(248,113,113,.08)', color:'#f87171', border:'1px solid rgba(248,113,113,.2)', borderRadius:'var(--r)', cursor:'pointer', flexShrink:0 }}>✕</button>
-        )}
       </div>
 
       {/* ── Tag manager ──────────────────────────────────────────────────── */}
