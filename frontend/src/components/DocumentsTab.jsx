@@ -1,7 +1,7 @@
 // src/components/DocumentsTab.jsx
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { uploadDocuments, listDocuments, listWorkspaceDocuments, getViewUrl, triggerEmbed, deleteDocument, retryDocument,
-         listTags, createTag, deleteTag, assignTag, removeTagAssignment } from '../services/api.js';
+         listTags, createTag, deleteTag, assignTag, removeTagAssignment, reclassifyDocument } from '../services/api.js';
 import { toast } from './Toast.jsx';
 import ChunksViewer from './ChunksViewer.jsx';
 import SummaryPanel from './SummaryPanel.jsx';
@@ -120,6 +120,15 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
   const handleView   = async id => { try{ const{url}=await getViewUrl(id); window.open(url,'_blank'); }catch(e){ toast(e.message,'error'); } };
   const handleRetry  = async id => { try{ await retryDocument(id); toast('Reprocessing started…','info'); await loadDocs(); }catch(e){ toast(e.message,'error'); } };
   const handleDelete = async id => { try{ await deleteDocument(id); await loadDocs(); toast('Deleted','success'); }catch(e){ toast(e.message,'error'); } };
+  const handleReclassify = async id => {
+    try {
+      const r = await reclassifyDocument(id);
+      await loadDocs();
+      toast(`Re-classified as ${DOC_TYPE_LABELS[r.doc_type] || r.doc_type}`, 'success');
+    } catch (e) {
+      toast(e.message || 'Re-classification failed', 'error');
+    }
+  };
   const toggleSel    = id => setSelected(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
 
   const total    = docs.filter(d=>!['error','deleted'].includes(d.status)).length;
@@ -299,6 +308,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
               onViewSource={()=>handleView(doc.id)} onViewChunks={()=>setViewer(doc.id)}
               onSummarize={()=>setSummary({docId:doc.id,docName:doc.original_name})}
               onRetry={()=>handleRetry(doc.id)}
+              onReclassify={()=>handleReclassify(doc.id)}
               onDelete={handleDelete}
               allTags={tags}
               onTagAssign={async(tagId)=>{ await assignTag(doc.id,tagId); loadDocs(); }}
@@ -318,7 +328,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
 
 function Stat({v,l,c}){ return <div style={{textAlign:'center',minWidth:50}}><div style={{fontSize:20,fontWeight:700,color:c}}>{v}</div><div style={{fontSize:9,color:'var(--muted2)',textTransform:'uppercase',letterSpacing:'.5px',marginTop:1}}>{l}</div></div>; }
 
-function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSummarize,onRetry,onDelete,allTags=[],onTagAssign,onTagRemove}){
+function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSummarize,onRetry,onReclassify,onDelete,allTags=[],onTagAssign,onTagRemove}){
   const [conf,setConf]=useState(false);
   const cfg=STATUS[doc.status]||{strip:'#6b7280',bg:'rgba(107,114,128,.1)',color:'#6b7280',label:doc.status};
   const spin=['chunking','embedding','uploading'].includes(doc.status);
@@ -349,10 +359,7 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
               const icon   = DOMAIN_ICONS[domain]  || '⚪';
               const reclass = async e => {
                 e.stopPropagation();
-                try {
-                  const r = await reclassifyDocument(doc.id);
-                  await loadDocs();
-                } catch {}
+                await onReclassify?.();
               };
               if (!doc.doc_type) return (
                 <span style={{ fontSize:9.5, padding:'1px 6px', borderRadius:20, fontWeight:600,
@@ -367,7 +374,7 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
                     background:`${color}18`, color, border:`1px solid ${color}35` }}>
                     {icon} {DOC_TYPE_LABELS[doc.doc_type] || doc.doc_type}
                   </span>
-                  <button onClick={reclass} title="Re-classify this document"
+                  <button type="button" onClick={reclass} title="Re-classify this document"
                     style={{ background:'none', border:'none', color, cursor:'pointer',
                       fontSize:10, opacity:.5, padding:'0 1px', lineHeight:1 }}>
                     ↺

@@ -55,12 +55,11 @@ SECRETS=(
   "JWT_SECRET_KEY=docintel-jwt-secret:latest"
   "DATABASE_URL=docintel-database-url:latest"
   "GCS_BUCKET_NAME=docintel-gcs-bucket:latest"
+  "GOOGLE_AI_KEY=docintel-gemini-key:latest"
 )
 
 if [[ "$LLM_PROVIDER" == "openai" ]]; then
   SECRETS+=("OPENAI_API_KEY=docintel-openai-key:latest")
-else
-  SECRETS+=("GOOGLE_AI_KEY=docintel-gemini-key:latest")
 fi
 
 # Gmail SMTP — add only if the secrets exist in Secret Manager

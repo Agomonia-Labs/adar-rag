@@ -283,7 +283,7 @@ async def _chunk_document(doc_id, user_id, file_path, filename, content_type, ft
 
         # ── Document classification ────────────────────────────────────────
         classification = await classify_document(
-            text_sample=text[:2000],
+            text_sample=text,
             filename=filename,
             file_type=ftype,
         )
@@ -295,7 +295,16 @@ async def _chunk_document(doc_id, user_id, file_path, filename, content_type, ft
                 classification["doc_language"],
                 doc_id,
             )
-        log.info(f"[{doc_id}] Classified as {classification['doc_type']}/{classification['doc_domain']}")
+        log.info(
+            "[%s] Classified as %s/%s confidence=%.0f%% source=%s sample_chars=%s reason=%s",
+            doc_id,
+            classification["doc_type"],
+            classification["doc_domain"],
+            classification.get("confidence", 0.0) * 100,
+            classification.get("source", "unknown"),
+            classification.get("sample_chars", "unknown"),
+            classification.get("reasoning", ""),
+        )
 
         # Build document-level metadata attached to every chunk
         doc_meta = {
@@ -459,34 +468,35 @@ def _doc_row(row: dict) -> dict:
 @router.post("/{doc_id}/classify")
 async def reclassify_document(doc_id: str, current_user: CurrentUser, db=Depends(get_db)):
     """Re-run classification on an existing document — useful if it was previously stored as general."""
-    row = await db.fetchrow(
-        "SELECT id, original_name, file_type, gcs_path FROM documents WHERE id=$1 AND user_id=$2",
-        doc_id, str(current_user["id"])
-    )
+    row = await _get_owned(doc_id, str(current_user["id"]), db)
     if not row:
         raise HTTPException(404, "Document not found")
 
     # Download text from GCS and re-classify
     import tempfile, os
-    from services.storage import StorageService
     from services.extractor import extract_text as _extract
 
-    gcs  = StorageService()
     ftype = row["file_type"] or "pdf"
+    tmp_path = None
 
     try:
-        file_bytes = await gcs.download_bytes(row["gcs_path"])
+        file_bytes = await gcs.download_bytes(row["gcs_source_path"])
         with tempfile.NamedTemporaryFile(suffix=f".{ftype}", delete=False) as tmp:
             tmp.write(file_bytes)
             tmp_path = tmp.name
 
         text = await _extract(tmp_path, row["original_name"], f"application/{ftype}")
-        os.unlink(tmp_path)
     except Exception as e:
         raise HTTPException(500, f"Could not download document for re-classification: {e}")
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     result = await classify_document(
-        text_sample=text[:2000],
+        text_sample=text,
         filename=row["original_name"],
         file_type=ftype,
     )
