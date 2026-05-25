@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>আদর DocIntel — Product Demo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Naskh+Arabic:wght@400;600;700&family=Noto+Sans+Bengali:wght@400;600;700;800&family=Noto+Sans+Devanagari:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -13,7 +13,7 @@
   --gray:#f4f6f4;--white:#fff;--dark:#0d1f0d;--muted:#6b7280;
   --blue:#2563eb;--amber:#b45309;--red:#dc2626;
 }
-body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;overflow:hidden;user-select:none}
+body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh Arabic',sans-serif;background:#0a1a0a;color:#fff;height:100vh;overflow:hidden;user-select:none}
 
 /* ── Splash ───────────────────────────────────────── */
 #splash{position:fixed;inset:0;background:linear-gradient(135deg,#0a1a0a 0%,#0f2d1a 100%);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:100;cursor:pointer;transition:opacity .6s}
@@ -161,6 +161,22 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
 .sum-card-list{list-style:none;display:flex;flex-direction:column;gap:3px}
 .sum-card-list li{font-size:10.5px;color:#9ca3af;padding-left:12px;position:relative}
 .sum-card-list li::before{content:"→";position:absolute;left:0;color:rgba(255,255,255,.2);font-size:9px}
+.final-summary{max-width:1120px!important;padding:8px!important}
+.final-summary .slide-title{font-size:22px!important;margin-bottom:3px!important}
+.final-summary .slide-sub{font-size:11.5px!important;line-height:1.35!important;margin-bottom:9px!important}
+.final-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;width:100%;max-width:1120px;margin:0 auto 8px}
+.final-grid .sum-card{border-radius:8px;padding:6px;gap:3px;min-width:0}
+.final-grid .sum-card-icon{width:22px;height:22px;border-radius:6px;font-size:12px}
+.final-grid .sum-card-title{font-size:10px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.final-grid .sum-card-list{gap:1px}
+.final-grid .sum-card-list li{font-size:8.2px;line-height:1.15;padding-left:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.final-grid .sum-card-list li:nth-child(n+4){display:none}
+.final-grid .sum-card-list li::before{font-size:7px}
+.final-links{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:6px}
+.final-links a{padding:6px 14px!important;font-size:11px!important;border-radius:18px!important}
+.final-stack{display:flex;gap:12px;justify-content:center;font-size:9.5px;color:#6b7280;flex-wrap:wrap}
+.final-summary .btn-speak{margin-top:8px!important;padding:5px 12px!important;font-size:10.5px!important}
+@media (max-width:900px){.final-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.final-grid .sum-card-list li{font-size:8px}}
 </style>
 </head>
 <body>
@@ -211,12 +227,12 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
         <div class="slide-num">Welcome</div>
         <div class="slide-title" style="font-size:36px;text-align:center">আদর DocIntel</div>
         <div class="slide-sub" style="text-align:center;max-width:500px;margin:0 auto">
-          Your intelligent document analysis platform — upload, chunk, embed, and chat with your documents using AI-powered semantic search
+          Your intelligent document analysis platform — upload, classify, detect language, embed, and chat with your documents using AI-powered semantic search
         </div>
         <div class="mock-stats" style="margin-top:28px;justify-content:center;gap:32px">
           <div class="mock-stat"><div class="mock-stat-val" style="color:#4ade80;font-size:28px">500</div><div class="mock-stat-lbl" style="font-size:11px">Docs per user</div></div>
           <div class="mock-stat"><div class="mock-stat-val" style="color:#60a5fa;font-size:28px">pgvector</div><div class="mock-stat-lbl" style="font-size:11px">Vector search</div></div>
-          <div class="mock-stat"><div class="mock-stat-val" style="color:#f59e0b;font-size:28px">5</div><div class="mock-stat-lbl" style="font-size:11px">Summary types</div></div>
+          <div class="mock-stat"><div class="mock-stat-val" style="color:#f59e0b;font-size:28px">4</div><div class="mock-stat-lbl" style="font-size:11px">Languages</div></div>
         </div>
         <button class="btn-speak" style="margin:20px auto 0" onclick="speakSlide(0)">🔊 Play narration</button>
       </div>
@@ -262,12 +278,13 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Step 2</div>
-          <div class="slide-title">Upload Up to 500 Documents</div>
-          <div class="slide-sub">Drag and drop files or click to browse. Every file is stored securely in Google Cloud Storage under your personal folder path.</div>
+          <div class="slide-title">Upload, Classify & Detect Language</div>
+          <div class="slide-sub">Drag and drop files or click to browse. Every file is stored securely in Google Cloud Storage, then classified by type, domain, and language.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">📄</span><span>Supports PDF, DOCX, CSV, images, and plain text</span></div>
+            <div class="feature-item"><span class="feature-icon">🌐</span><span>Detects English, Bengali, Hindi, Arabic, and other ISO language codes</span></div>
+            <div class="feature-item"><span class="feature-icon">🧭</span><span>Labels invoices, leases, resumes, reports, policies, and more</span></div>
             <div class="feature-item"><span class="feature-icon">☁</span><span>GCS path: <code style="font-size:10px;background:rgba(255,255,255,.1);padding:1px 5px;border-radius:3px">users/{uid}/documents/{did}/source/</code></span></div>
-            <div class="feature-item"><span class="feature-icon">🔒</span><span>Signed URLs for time-limited secure document access</span></div>
           </div>
           <button class="btn-speak" onclick="speakSlide(2)">🔊 Play narration</button>
         </div>
@@ -288,8 +305,8 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
             </div>
             <div class="mock-card">
               <div class="mock-card-strip"><div class="mock-card-bar" style="background:#15803d"></div>
-              <div class="mock-card-content"><div class="mock-card-name">Q3_Financial_Report.pdf</div>
-              <div class="mock-card-meta"><span class="mock-badge" style="background:rgba(21,128,61,.15);color:#4ade80;border:1px solid rgba(21,128,61,.3)">Embedded ✓</span><span style="font-size:9px;color:#6b7280">PDF · 2.4 MB · 42 chunks</span></div></div></div>
+              <div class="mock-card-content"><div class="mock-card-name">Lease_Extension_931_Bryant.pdf</div>
+              <div class="mock-card-meta"><span class="mock-badge" style="background:rgba(21,128,61,.15);color:#4ade80;border:1px solid rgba(21,128,61,.3)">Embedded ✓</span><span class="mock-badge" style="background:rgba(96,165,250,.12);color:#60a5fa;border:1px solid rgba(96,165,250,.25)">Lease · Legal</span><span style="font-size:9px;color:#6b7280">English · 42 chunks</span></div></div></div>
             </div>
           </div>
         </div>
@@ -418,10 +435,11 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Step 6</div>
-          <div class="slide-title">Semantic Chat with Your Documents</div>
-          <div class="slide-sub">Ask questions in natural language. DocIntel searches your embedded documents using cosine similarity and generates grounded, cited answers.</div>
+          <div class="slide-title">Multilingual Semantic Chat</div>
+          <div class="slide-sub">Ask questions in English, Bengali, Hindi, Arabic, or the language of the document. DocIntel searches embedded content and generates grounded, cited answers.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">🔍</span><span>pgvector cosine similarity — finds the most relevant chunks to your question</span></div>
+            <div class="feature-item"><span class="feature-icon">🌐</span><span>Response language follows the selected documents when appropriate</span></div>
             <div class="feature-item"><span class="feature-icon">📎</span><span>Every answer cites its source chunks with similarity percentage</span></div>
             <div class="feature-item"><span class="feature-icon">💬</span><span>Session memory — the model remembers your last 12 exchanges</span></div>
           </div>
@@ -496,11 +514,12 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Feature</div>
-          <div class="slide-title">5-Type Document Summarization</div>
-          <div class="slide-sub">Summarize any chunked document — no embedding required. Choose from five types, or write your own custom prompt. Large documents use map-reduce automatically.</div>
+          <div class="slide-title">Multilingual Document Summarization</div>
+          <div class="slide-sub">Summarize any chunked document — no embedding required. Choose from five types, or write your own custom prompt. Output follows the detected document language.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">⚡</span><span>Executive — 3-5 sentence overview with key conclusions</span></div>
             <div class="feature-item"><span class="feature-icon">📑</span><span>By Section — identifies every section and summarizes each</span></div>
+            <div class="feature-item"><span class="feature-icon">🌐</span><span>Bengali, Hindi, Arabic, and English summaries with exact citations preserved</span></div>
             <div class="feature-item"><span class="feature-icon">✏</span><span>Custom — write your own: "What are the financial risks?"</span></div>
           </div>
           <button class="btn-speak" onclick="speakSlide(8)">🔊 Play narration</button>
@@ -1789,13 +1808,13 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
     </div>
 
 <div class="slide" data-idx="26">
-      <div class="slide-inner full">
-        <div style="font-size:52px;margin-bottom:16px">🌿</div>
+      <div class="slide-inner full final-summary">
+        <div style="font-size:28px;margin-bottom:4px">🌿</div>
         <div class="slide-num">আদর DocIntel</div>
         <div class="slide-title" style="font-size:30px;text-align:center;margin-bottom:6px">Everything you need to work smarter with documents</div>
         <div class="slide-sub" style="text-align:center;max-width:560px;margin:0 auto 24px">A complete self-service Document Intelligence Platform — from upload to insight in minutes.</div>
 
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;width:100%;max-width:960px;margin:0 auto 20px">
+        <div class="final-grid">
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">📂</div><div class="sum-card-title" style="color:#60a5fa">Upload &amp; Store</div><ul class="sum-card-list"><li>Up to 500 documents</li><li>PDF, DOCX, CSV, Images</li><li>Secure Google Cloud Storage</li><li>Signed URL access</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">✂</div><div class="sum-card-title" style="color:#fbbf24">Chunk &amp; Index</div><ul class="sum-card-list"><li>Auto 350-word windows</li><li>Rich metadata per chunk</li><li>GCS path storage</li><li>Browse all chunks</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">⚡</div><div class="sum-card-title" style="color:#c084fc">Embed &amp; Search</div><ul class="sum-card-list"><li>Gemini Embedding-2</li><li>768-dim vectors</li><li>pgvector + HNSW index</li><li>Cosine similarity search</li></ul></div>
@@ -1820,7 +1839,7 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">🏷</div><div class="sum-card-title" style="color:#4ade80">Document Tags</div><ul class="sum-card-list"><li>Colour-coded tag collections</li><li>Assign/remove per document</li><li>Search · filter · sort bar</li><li>Stored in PostgreSQL per user</li></ul></div>
         </div>
 
-        <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:20px">
+        <div class="final-links">
           <a href="https://docintel.adar.agomoniai.com" target="_blank"
             style="background:#15803d;color:#fff;padding:11px 24px;border-radius:24px;text-decoration:none;font-size:14px;font-weight:700;letter-spacing:.2px;box-shadow:0 4px 16px rgba(21,128,61,.4);display:inline-flex;align-items:center;gap:7px">
             🚀 Try আদর DocIntel free
@@ -1831,7 +1850,7 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
           </a>
         </div>
 
-        <div style="display:flex;gap:20px;justify-content:center;font-size:11px;color:#6b7280;flex-wrap:wrap">
+        <div class="final-stack">
           <span>🐘 pgvector</span><span>☁ Google Cloud</span><span>🤖 Gemini AI</span><span>⚡ FastAPI</span><span>⚛ React</span><span>🔥 Firebase</span>
         </div>
 
@@ -1844,33 +1863,33 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
 
 <script>
 const SLIDES = [
-  { text: "Welcome to আদর DocIntel — your intelligent document analysis platform, built by Agomonia Labs. Upload up to 500 documents per user, extract insights through AI-powered semantic search, and chat with your content using pgvector embeddings. Everything is private and secure — each user's data is completely isolated." },
-  { text: "Getting started is simple. Register with your email and password to create your private workspace. DocIntel uses JWT-based authentication — your session persists across page refreshes. Passwords are secured with bcrypt hashing. There are two roles: regular users and system administrators, each with their own access level." },
-  { text: "Upload up to 500 documents per user. Drag and drop PDF, Word, CSV, images, and plain text files. Every file is stored securely in Google Cloud Storage under your personal folder structure — users slash your ID, slash documents, slash document ID, slash source. Access is controlled through time-limited signed URLs, so no direct cloud access is ever exposed." },
-  { text: "Immediately after upload, DocIntel automatically chunks your document into 350-word semantic windows with 60-word overlap. No manual step is needed. Each chunk carries full metadata — document ID, user ID, filename, file type, chunk position, word count, and its exact GCS storage path. This metadata is saved alongside the chunks in a JSON file in Google Cloud Storage." },
-  { text: "Browse your documents at any time. Click Source to open the original file via a signed URL valid for one hour. Click Chunks to open the chunk viewer — a slide-over panel showing all chunks with word counts. Select any chunk to view its full text content and metadata. You can also select multiple chunks for targeted summarization." },
-  { text: "When you're ready to query a document, click the Embed button. DocIntel reads the chunks from Google Cloud Storage, generates 768-dimensional vector embeddings using Gemini Embedding 2 via the REST API, and stores them in pgvector — PostgreSQL's vector extension with an HNSW index for fast cosine similarity search. Every vector is scoped to your user ID, ensuring complete data isolation." },
-  { text: "Now you can chat with your documents. Type any question in natural language. DocIntel embeds your question, performs cosine similarity search across your embedded documents, retrieves the most relevant chunks, and generates a grounded answer using Gemini 1.5 Flash. Every response cites the exact source chunks with similarity scores. The model remembers your last 12 exchanges within a session." },
-  { text: "When your documents contain structured data — financial tables, schedules, product comparisons, or specifications — DocIntel automatically formats the AI response as a proper readable table. The system prompt instructs the model to prefer tables for data with rows and columns. The markdown renderer also handles bold text, bullet lists, section headings, and inline code." },
-  { text: "Summarize any chunked document without embedding. Choose from five summary types: Executive gives a concise 3 to 5 sentence overview. Key Points creates structured bullet groups. By Section identifies every section and writes a dedicated summary for each. Detailed produces a comprehensive summary preserving all important facts and figures. And Custom lets you write your own prompt — for example, what are the financial risks? Large documents automatically use map-reduce for thorough coverage." },
-  { text: "System administrators get a full real-time dashboard. See total users, documents, embedded documents, and vector chunks at a glance. Manage users — promote to admin, demote, or delete with full data cascade including GCS files and pgvector rows. Oversee all documents across the platform and clean up data as needed. The admin tab appears automatically in the header after logging in with an admin account." },
-  { text: "আদর DocIntel includes a complete password reset flow. Click Forgot Password on the login screen, enter your email, and a secure reset link is sent instantly via Google SMTP. The reset token is SHA-256 hashed in the database — the raw token only exists in the email. Links expire in one hour and are single-use. After clicking the link, enter a new password and you can sign in immediately. This works for both Gmail and Google Workspace accounts." },
-  { text: "Every endpoint in আদর DocIntel is protected by intelligent rate limiting. Login attempts are capped at 10 per minute per IP address, preventing brute-force attacks. Registration is limited to 3 per minute. Password reset to 5 per minute. Chat queries are limited to 30 per minute per user, uploads to 20 per minute, and summarization to 15 per minute. When a limit is exceeded, the API returns HTTP 429 with a clear message telling the user to slow down. No external library is needed — the limiter is a pure FastAPI dependency function." },
-  { text: "Chat history in আদর DocIntel is fully persistent — stored in PostgreSQL, not just browser memory. Every conversation is automatically saved to the database 1.5 seconds after each AI response. The session is auto-titled from your first question, making it easy to find later. The session sidebar shows up to 50 past conversations ordered by most recent. Click any session to instantly restore the full conversation — including all questions, answers, and source citations. Your history is available from any device, any browser, any time." },
-  { text: "আদর DocIntel uses hybrid search combining two retrieval signals. First, pgvector finds semantically similar chunks using cosine similarity — great for concepts and meaning. Second, PostgreSQL full-text search finds exact keyword matches using a GIN index — essential for product codes, invoice numbers, names, and dates. The two ranked lists are fused using Reciprocal Rank Fusion: score equals one over sixty plus vector rank, plus one over sixty plus full-text rank. Chunks found by both methods score highest and receive a hybrid badge. The system automatically falls back to vector-only search if full-text search returns no results." },
-  { text: "Retrieval gets you candidates — re-ranking gets you the right answer. After hybrid search returns twenty candidates, Gemini acts as a cross-encoder re-ranker. Unlike bi-encoders that score the query and each chunk independently, Gemini reads the query and chunk together as a pair — giving it full context to judge true relevance. Each chunk receives a score from zero to one. The top six are passed to the language model for answer generation. Re-ranked source cards show a star badge alongside the match type and the Gemini relevance score. If re-ranking fails, the system falls back gracefully to retrieval order." },
-  { text: "Document comparison mode lets you select any two documents and compare them side by side. Click the Compare button that appears when exactly two documents are selected in the Documents tab. Gemini analyses every clause, term, date, amount, and obligation in both documents, then returns a structured breakdown. You see a similarity score from zero to one hundred percent, unique points from each document, and a section-by-section table colour-coded by difference type: modified sections in amber, added sections in blue, removed sections in red, and identical sections in green. Filter the table by type and click any row to expand and read the specific difference explanation. This feature is especially valuable for legal, finance, and compliance users comparing contracts, leases, policies, or regulations." },
-  { text: "আদর DocIntel captures quality feedback on every AI response. After each answer, thumbs-up and thumbs-down buttons appear below the message. Clicking one turns it green or red while dimming the other — making your selection unmistakable. Your rating is saved to PostgreSQL along with the triggering question and the AI answer for context. Feedback persists across sessions — when you reload or switch to a different session and come back, your previously rated messages restore their green or red state automatically. Administrators can retrieve all feedback via the API, seeing thumbs-up and thumbs-down counts alongside the most recent rated responses and user emails — creating a continuous loop for prompt and retrieval improvement." },
-  { text: "Any chat conversation in আদর DocIntel can be exported as a Markdown file with a single click. The Export button appears in the chat top bar once the session has messages. The downloaded file includes every question formatted in bold, every AI answer with full text, and a source citation block showing document name, chunk number, and relevance percentage for each retrieved chunk. Summaries can also be exported — click the Export .md button in the summary panel header after a summary generates. Both exports happen entirely in the browser with no server round-trip, producing a .md file you can open in Notion, Obsidian, VS Code, Confluence, or paste into any editor." },
-  { text: "আদর DocIntel tracks every billable action in real time using a usage events table in PostgreSQL. Click the Usage button in the header to open a live dashboard showing your plan tier, document count, storage used, and daily consumption for queries, embeddings, and summaries. Progress meters turn amber when you reach 80 percent of any limit. The all-time activity section shows cumulative totals across every event type — uploads, embeddings, queries, summaries, and comparisons. A refresh button updates all stats without closing the panel." },
-  { text: "আদর DocIntel enforces three tiers — Free, Pro, and Enterprise. Free accounts get 20 documents, 10 megabyte files, 50 queries per day, and 10 embeddings per day. Pro accounts get 500 documents, 50 megabyte files, 500 queries per day, and 100 embeddings per day. Enterprise accounts are fully unlimited on documents and queries with 200 megabyte file uploads. Administrators can upgrade any user's tier instantly from the Admin Users table using a dropdown — no environment variable changes, no redeployments needed. Exceeding the document limit returns HTTP 403 with a clear upgrade message. Exceeding daily limits returns HTTP 429 telling the user to try again tomorrow. Custom per-user overrides are also supported via a JSON column, so any individual limit can be set independently of their tier." },
-  { text: "আদর DocIntel supports team workspaces — shared environments where multiple users collaborate on the same document set. Create a workspace, name it, and invite teammates by email. Three roles control access: owners have full control including member management; editors can upload and embed documents but cannot manage members; and viewers can only chat with and search shared documents — their upload button is hidden entirely. When you switch to a workspace, a green badge appears in the header, the documents tab loads only workspace files, and chat history is scoped to that workspace. Switching back to personal clears everything and loads your private documents and sessions. Workspaces are protected against accidental deletion — you must type the exact workspace name to confirm, and the system warns you if other members would lose access." },
-  { text: "আদর DocIntel requires every new user to verify their email address before logging in. On registration, a 24-hour verification link is sent via Gmail SMTP. Clicking login without verifying returns HTTP 403 with a clear message. A resend button is available — the response is intentionally vague to avoid revealing whether an email address is registered. The first user on any deployment is automatically verified to avoid the chicken-and-egg problem of needing to log in to send email. Tokens are stored as SHA-256 hashes so the raw token never touches the database." },
-  { text: "আদর DocIntel keeps users informed and maintains a full audit trail. When a document finishes embedding — which can take minutes for large files — an in-app toast notification appears immediately: the document name and chunk count, confirming it is ready for chat. The same event also triggers an email notification to the uploader. Workspace invite emails are sent when members are added. Administrators can view a complete audit log in the Admin dashboard — every login, registration, document upload, workspace creation, and member invite is recorded with the action type, user email, resource ID, IP address, and timestamp. The log is filterable by action type and queryable directly in PostgreSQL for compliance exports." },
-  { text: "আদর DocIntel includes two features that keep your document library healthy and organised. First, document recovery: when a document lands in error state — due to a corrupted PDF, chunking timeout, or extraction failure — a yellow Retry button appears on the card. Clicking it wipes the stale chunks, re-downloads the original file from Google Cloud Storage, and re-runs the full chunk then embed pipeline automatically. You never need to delete and re-upload. Second, document tags: create colour-coded named tags like Q3 Finance or Legal, and assign them to documents from a compact dropdown on each card. A live search bar, tag filter, and sort dropdown sit in a single tight row above the list, letting you instantly narrow 500 documents to exactly what you need. Tags are stored in PostgreSQL, persist across sessions, and are scoped per user." },
-  { text: "আদর DocIntel includes full Stripe billing with three plans. Free gives you 20 documents, 10 megabyte file limit, 50 chat queries per day, and 10 embeddings per day — no card required. Pro at 20 dollars per month gives you 500 documents, 500 megabyte files, 500 queries per day, and 100 embeddings per day. Enterprise at 100 dollars per month gives unlimited documents, 10 gigabyte files, unlimited queries, and 500 embeddings per day. Both Pro and Enterprise include a 3-day free trial — Stripe collects the card but charges nothing until day 4. The activation flow is seamless: after Stripe checkout, the user is redirected to the login screen, and on sign-in the backend queries the Stripe API directly to detect the active subscription and set the correct tier. Cancellations are also handled — if no active subscription is found on login, the user is automatically downgraded to the free plan." },
-  { text: "আদর DocIntel includes an inline RAG evaluation system — every AI answer is automatically scored by Gemini acting as an independent judge. No reference documents or expected answers are needed. Three quality dimensions appear as colour-coded grade badges directly below each chat response: Relevance grades whether the answer addresses the question, Specificity grades whether it cites concrete details rather than vague generalities — a reliable proxy for groundedness — and Confidence grades whether uncertainty is expressed proportionally. Grades run from 1 to 5: Excellent, Good, Acceptable, Poor, and Fail. Hover any badge to see the judge's reasoning in a tooltip. For summaries and comparisons, a 📊 Evaluate button appears after streaming completes — click it to see Coherence and Specificity scores. Evaluation fires after the primary response finishes, never during streaming, so it never interferes with the answer itself." },
-  { text: "That's আদর DocIntel — a complete self-service Document Intelligence Platform. Upload and store up to 500 documents per workspace on Google Cloud. Automatically chunk and index them with rich metadata. Generate vector embeddings using Gemini and store them in pgvector for semantic search. Chat with your documents in natural language and get source-cited answers. Summarize in five different ways — from a three-sentence executive overview to a full section-by-section breakdown. And manage everything with a full admin dashboard. Built by Agomonia Labs on the ADAR platform. Try it free at docintel dot adar dot agomoniai dot com. We'd love to hear what you build with it." }
+  { text: "Welcome to আদর DocIntel — a self-service document intelligence platform from Agomonia Labs. Upload documents, classify them automatically, ask questions in natural language, and get grounded answers from your own content. The platform now supports multilingual workflows, including English, Bengali, Hindi, and Arabic." },
+  { text: "Getting started is simple. Users register with email and password, verify their email, and enter a private workspace protected by JWT sessions and bcrypt password hashing. Regular users and administrators see the right tools for their role, without exposing anyone else's data." },
+  { text: "Upload PDF, Word, CSV, image, and text files. Originals are stored securely in Google Cloud Storage and opened only through time-limited signed URLs. During ingestion, DocIntel extracts text, classifies the document type, detects the language, and stores those labels directly on the document card." },
+  { text: "After extraction, DocIntel chunks content into 350-word semantic windows with overlap and rich metadata. The chunk metadata, source path, position, file type, and document identity are all preserved, so retrieval can stay precise even as the library grows." },
+  { text: "The document list is not just storage. You can open the source, inspect chunks, reclassify a document, retry failed processing, and select specific chunks for targeted summarization. Each card shows status, type, domain, language, file size, and chunk count at a glance." },
+  { text: "When a document is ready, click Embed. DocIntel reads the chunks from Google Cloud Storage, generates Gemini embeddings, and stores vectors in pgvector for fast semantic search. Every vector remains scoped to the user or workspace, preserving data isolation." },
+  { text: "Now chat with your documents. Ask in English, Bengali, Hindi, Arabic, or the language of the document. DocIntel embeds the question, retrieves relevant chunks, and Gemini streams a grounded answer with source citations, tables, markdown, and exact document references." },
+  { text: "Structured answers are first-class. Financial tables, schedules, product comparisons, clauses, and specifications can render as readable markdown tables. The response language follows the document, while names, dates, amounts, citations, and legal terms stay precise." },
+  { text: "Summaries work before or after embedding. Choose executive, key points, by section, detailed, or custom. Large documents use map-reduce for coverage. Summaries also follow the detected document language, so a Bengali or Arabic document can produce a native-language summary." },
+  { text: "Administrators get a live operations dashboard: users, documents, embedded chunks, tier controls, and cleanup tools. Admins can promote or demote users, override tiers, inspect documents, and manage the system without touching the database directly." },
+  { text: "Password reset is fully implemented. Users request a reset link by email, the token is stored as a SHA-256 hash, and links expire after one hour. The raw token only exists in the email, keeping the database clean and safer." },
+  { text: "Rate limiting protects every major endpoint. Login, registration, password reset, upload, chat, and summarization each have clear limits. When a user exceeds a limit, the API returns a direct HTTP 429 message instead of failing mysteriously." },
+  { text: "Chat history is persistent in PostgreSQL. Conversations auto-save after responses, sessions are titled from the first question, and the sidebar restores previous chats with questions, answers, feedback, and source citations intact." },
+  { text: "Retrieval uses hybrid search. pgvector finds semantic matches, PostgreSQL full-text search catches exact names, invoice numbers, dates, and product codes, and Reciprocal Rank Fusion combines both lists so exact and conceptual matches work together." },
+  { text: "Re-ranking improves the final context. Gemini reads each query and candidate chunk together, scores true relevance, and passes the top chunks into answer generation. If re-ranking fails, DocIntel falls back gracefully to retrieval order." },
+  { text: "Comparison mode lets users select two documents and generate a side-by-side analysis. Gemini compares clauses, dates, amounts, obligations, and missing sections, then returns a similarity score, unique points, and a structured difference table." },
+  { text: "Quality feedback is built into the loop. Users can rate answers with thumbs up or down, and the rating is saved with the question and answer context. Gemini also scores answer quality for relevance, specificity, and confidence." },
+  { text: "Exports are one click. Chat sessions and summaries download as Markdown files directly from the browser, including full answers and source citation blocks, ready for Notion, Obsidian, Confluence, or a plain text review workflow." },
+  { text: "Usage metering runs in real time. The Usage panel shows plan tier, document count, storage used, daily queries, embeddings, summaries, comparisons, and all-time activity. Meters warn users before they hit their limits." },
+  { text: "Billing uses Stripe with Free, Pro, and Enterprise tiers. Free supports lightweight usage, Pro scales to hundreds of documents and daily queries, and Enterprise is designed for high-volume teams. Plan state syncs on login from the Stripe API." },
+  { text: "Team workspaces turn DocIntel into a shared environment. Owners manage members, editors upload and embed, and viewers chat and search read-only. Documents, tags, summaries, and chat sessions stay scoped to the selected workspace." },
+  { text: "Email verification is required before first login. Verification links last 24 hours, resend is available, and the first deployment user is auto-verified so an administrator can bootstrap the system cleanly." },
+  { text: "Notifications and audit trails keep teams informed. Uploads, logins, workspace invites, document deletion, and embedding completion are recorded with user, resource, IP address, and timestamp. Admins can filter the audit log for compliance reviews." },
+  { text: "Document recovery and organization keep the library healthy. Retry reprocesses failed files from the original GCS source. Tags create color-coded collections like Q3 Finance or Legal, and filters combine name, tag, status, type, and sort order." },
+  { text: "The production stack is Google Cloud end to end: FastAPI on Cloud Run, React on Firebase Hosting, Cloud SQL Postgres with pgvector, Google Cloud Storage, Secret Manager, Gmail SMTP, Stripe, and Gemini through REST APIs." },
+  { text: "Inline evaluation helps teams trust the system. Chat answers are automatically graded for relevance, specificity, and confidence. Summaries and comparisons can be evaluated on demand for coherence and specificity after generation completes." },
+  { text: "That's আদর DocIntel: upload, classify, detect language, chunk, embed, retrieve, re-rank, chat, summarize, compare, organize, collaborate, bill, audit, and deploy. Built by Agomonia Labs on the ADAR platform for multilingual document intelligence." }
 ];
 
 let current = 0;
@@ -1879,6 +1898,8 @@ let autoTimer = null;
 let speaking = false;
 let voicesLoaded = false;
 let maleVoice = null;
+let speechRunId = 0;
+let currentUtterance = null;
 
 // ── Voice setup ──────────────────────────────────────
 function loadVoices() {
@@ -1896,61 +1917,113 @@ function loadVoices() {
 speechSynthesis.addEventListener('voiceschanged', loadVoices);
 loadVoices();
 
-// Chrome Speech Synthesis keepalive — Chrome silently pauses utterances
-// after ~15s; pause()+resume() every 10s prevents this bug
+// Chrome sometimes pauses speech synthesis. Resume only when paused; do not
+// force pause/resume because that can interrupt narration and break Auto.
 let _synthKeepAlive = null;
 function _startKeepAlive() {
   _stopKeepAlive();
   _synthKeepAlive = setInterval(() => {
-    if (speechSynthesis.speaking && !speechSynthesis.paused) {
-      speechSynthesis.pause();
+    if (speechSynthesis.speaking && speechSynthesis.paused) {
       speechSynthesis.resume();
     }
-  }, 10000);
+  }, 4000);
 }
 function _stopKeepAlive() {
   if (_synthKeepAlive) { clearInterval(_synthKeepAlive); _synthKeepAlive = null; }
 }
 
+function _clearSpeechButtons() {
+  document.querySelectorAll('.btn-speak').forEach(b => b.classList.remove('speaking'));
+}
+
+function _setAutoButton(on) {
+  const btn = document.getElementById('autoBtn');
+  if (!btn) return;
+  btn.classList.toggle('active', on);
+  btn.textContent = on ? '⏸ Auto' : '▶ Auto';
+}
+
+function _splitNarration(text) {
+  const sentences = text.match(/[^.!?।]+[.!?।]+|[^.!?।]+$/g) || [text];
+  const chunks = [];
+  let buf = '';
+  for (const sentence of sentences) {
+    const next = (buf + ' ' + sentence.trim()).trim();
+    if (next.length > 220 && buf) {
+      chunks.push(buf);
+      buf = sentence.trim();
+    } else {
+      buf = next;
+    }
+  }
+  if (buf) chunks.push(buf);
+  return chunks;
+}
+
+function _finishSlideSpeech(runId, idx, btn) {
+  if (runId !== speechRunId) return;
+  speaking = false;
+  currentUtterance = null;
+  _stopKeepAlive();
+  if (btn) btn.classList.remove('speaking');
+  if (autoPlay && idx === current) {
+    if (current >= SLIDES.length - 1) {
+      autoPlay = false;
+      _setAutoButton(false);
+    } else {
+      autoTimer = setTimeout(() => { if (autoPlay) goSlide(1); }, 900);
+    }
+  }
+}
+
 function speakSlide(idx) {
+  const slide = SLIDES[idx];
+  if (!slide) return;
+  const runId = ++speechRunId;
+  clearTimeout(autoTimer);
   speechSynthesis.cancel();
   _stopKeepAlive();
+  _clearSpeechButtons();
+  loadVoices();
 
   const btn = document.querySelectorAll('.btn-speak')[idx] || document.querySelector('.btn-speak');
   if (btn) btn.classList.add('speaking');
 
-  const u = new SpeechSynthesisUtterance(SLIDES[idx].text);
-  if (maleVoice) u.voice = maleVoice;
-  u.rate  = 0.92;
-  u.pitch = 0.88;
-  u.volume = 1;
+  speaking = true;
+  const chunks = _splitNarration(slide.text);
+  let part = 0;
 
-  u.onstart = () => _startKeepAlive();
-
-  u.onend = () => {
-    _stopKeepAlive();
-    if (btn) btn.classList.remove('speaking');
-    if (autoPlay && idx === current) {
-      if (current >= SLIDES.length - 1) {
-        autoPlay = false;
-        const ab = document.getElementById('autoBtn');
-        if (ab) { ab.classList.remove('active'); ab.textContent = '▶ Auto'; }
-      } else {
-        autoTimer = setTimeout(() => { if (autoPlay) goSlide(1); }, 1200);
-      }
+  function speakNext() {
+    if (runId !== speechRunId) return;
+    if (part >= chunks.length) {
+      _finishSlideSpeech(runId, idx, btn);
+      return;
     }
-  };
 
-  u.onerror = (e) => {
-    _stopKeepAlive();
-    if (btn) btn.classList.remove('speaking');
-    // 'interrupted' is normal when user skips — don't treat as error
-    if (e.error !== 'interrupted' && autoPlay && idx === current) {
-      autoTimer = setTimeout(() => { if (autoPlay) goSlide(1); }, 800);
-    }
-  };
+    const u = new SpeechSynthesisUtterance(chunks[part]);
+    currentUtterance = u;
+    if (maleVoice) u.voice = maleVoice;
+    u.rate  = 0.92;
+    u.pitch = 0.88;
+    u.volume = 1;
 
-  speechSynthesis.speak(u);
+    u.onstart = () => { if (runId === speechRunId) _startKeepAlive(); };
+    u.onend = () => {
+      if (runId !== speechRunId) return;
+      part += 1;
+      setTimeout(speakNext, 60);
+    };
+    u.onerror = (e) => {
+      if (runId !== speechRunId) return;
+      if (e.error === 'interrupted' || e.error === 'canceled') return;
+      part += 1;
+      setTimeout(speakNext, 60);
+    };
+
+    speechSynthesis.speak(u);
+  }
+
+  setTimeout(speakNext, 80);
 }
 
 // ── Navigation ──────────────────────────────────────
@@ -1979,23 +2052,29 @@ function updateUI() {
 }
 
 function jumpTo(idx) {
+  speechRunId++;
   clearTimeout(autoTimer);
   speechSynthesis.cancel();
-  document.querySelectorAll('.btn-speak').forEach(b => b.classList.remove('speaking'));
+  _stopKeepAlive();
+  _clearSpeechButtons();
   current = Math.max(0, Math.min(SLIDES.length - 1, idx));
   updateUI();
-  if (autoPlay) speakSlide(current);
+  if (autoPlay) setTimeout(() => speakSlide(current), 180);
 }
 
 function goSlide(dir) { jumpTo(current + dir); }
 
 function toggleAuto() {
   autoPlay = !autoPlay;
-  const btn = document.getElementById('autoBtn');
-  btn.classList.toggle('active', autoPlay);
-  btn.textContent = autoPlay ? '⏸ Auto' : '▶ Auto';
+  _setAutoButton(autoPlay);
   if (autoPlay) speakSlide(current);
-  else { clearTimeout(autoTimer); speechSynthesis.cancel(); document.querySelectorAll('.btn-speak').forEach(b => b.classList.remove('speaking')); }
+  else {
+    speechRunId++;
+    clearTimeout(autoTimer);
+    speechSynthesis.cancel();
+    _stopKeepAlive();
+    _clearSpeechButtons();
+  }
 }
 
 // ── Keyboard nav ────────────────────────────────────

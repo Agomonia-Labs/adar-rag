@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>আদর DocIntel — 5-Minute Demo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Naskh+Arabic:wght@400;600;700&family=Noto+Sans+Bengali:wght@400;600;700;800&family=Noto+Sans+Devanagari:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -13,7 +13,7 @@
   --gray:#f4f6f4;--white:#fff;--dark:#0d1f0d;--muted:#6b7280;
   --blue:#2563eb;--amber:#b45309;--red:#dc2626;
 }
-body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;overflow:hidden;user-select:none}
+body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh Arabic',sans-serif;background:#0a1a0a;color:#fff;height:100vh;overflow:hidden;user-select:none}
 
 /* ── Splash ───────────────────────────────────────── */
 #splash{position:fixed;inset:0;background:linear-gradient(135deg,#0a1a0a 0%,#0f2d1a 100%);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:100;cursor:pointer;transition:opacity .6s}
@@ -223,10 +223,11 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
           <div class="mockup-body" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:2rem">
             <div style="font-size:48px">📚</div>
             <div style="font-size:22px;font-weight:800;color:#f0fdf4;text-align:center;letter-spacing:-.5px">আদর DocIntel</div>
-            <div style="font-size:12px;color:#6b7280;text-align:center;line-height:1.7;max-width:220px">Semantic search · Chat · Summarise<br/>Tags · Workspaces · Stripe billing</div>
+            <div style="font-size:12px;color:#6b7280;text-align:center;line-height:1.7;max-width:240px">Semantic search · Chat · Summarise<br/>Classification · Multilingual · Workspaces</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
               <span style="font-size:10px;padding:3px 10px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.25);font-weight:600">Gemini Embeddings</span>
               <span style="font-size:10px;padding:3px 10px;border-radius:20px;background:rgba(96,165,250,.1);color:#60a5fa;border:1px solid rgba(96,165,250,.25);font-weight:600">pgvector</span>
+              <span style="font-size:10px;padding:3px 10px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.25);font-weight:600">বাংলা · हिंदी · العربية</span>
               <span style="font-size:10px;padding:3px 10px;border-radius:20px;background:rgba(192,132,252,.1);color:#c084fc;border:1px solid rgba(192,132,252,.25);font-weight:600">FastAPI</span>
               <span style="font-size:10px;padding:3px 10px;border-radius:20px;background:rgba(251,191,36,.1);color:#fbbf24;border:1px solid rgba(251,191,36,.25);font-weight:600">Cloud Run</span>
             </div>
@@ -240,11 +241,12 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Step 1</div>
-          <div class="slide-title">Upload → Chunk → Embed</div>
-          <div class="slide-sub">Drop any file and the platform handles the rest automatically — chunking, storage in GCS, and vector embedding via Gemini. Documents move through a clear status pipeline you can watch in real time.</div>
+          <div class="slide-title">Upload → Classify → Embed</div>
+          <div class="slide-sub">Drop any file and the platform handles the rest automatically — extraction, document classification, language detection, chunking, GCS storage, and vector embedding via Gemini.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">⬆</span><span>PDF, DOCX, CSV, images, TXT — drag-and-drop or click to upload</span></div>
             <div class="feature-item"><span class="feature-icon">✂</span><span>Auto-chunked into 350-word windows with 60-word overlap, stored in GCS</span></div>
+            <div class="feature-item"><span class="feature-icon">🌐</span><span>Detects document type and language — Bengali, Hindi, Arabic, English</span></div>
             <div class="feature-item"><span class="feature-icon">⚡</span><span>One-click embedding — Gemini generates 768-dim vectors, stored in pgvector</span></div>
             <div class="feature-item"><span class="feature-icon">↻</span><span>Error recovery — Retry button re-downloads from GCS and re-runs the full pipeline</span></div>
           </div>
@@ -256,6 +258,7 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
             <!-- Pipeline steps -->
             <div style="display:flex;align-items:center;gap:6px;font-size:10px;color:#9ca3af;margin-bottom:4px">
               <span style="padding:2px 8px;background:rgba(255,255,255,.06);border-radius:4px">Upload</span><span>→</span>
+              <span style="padding:2px 8px;background:rgba(255,255,255,.06);border-radius:4px">Classify</span><span>→</span>
               <span style="padding:2px 8px;background:rgba(255,255,255,.06);border-radius:4px">Chunk</span><span>→</span>
               <span style="padding:2px 8px;background:rgba(255,255,255,.06);border-radius:4px">Embed</span><span>→</span>
               <span style="padding:2px 8px;background:rgba(74,222,128,.1);color:#4ade80;border-radius:4px">Ready ✓</span>
@@ -268,7 +271,7 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
                 <div style="font-size:11px;font-weight:600;color:#f0fdf4;margin-bottom:3px">Q3_Financial_Report.pdf</div>
                 <div style="display:flex;gap:5px;align-items:center">
                   <span style="font-size:9px;padding:1px 7px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.2);font-weight:600">Embedded ✓</span>
-                  <span style="font-size:9px;color:#6b7280">PDF · 2.4 MB · 47 chunks</span>
+                  <span style="font-size:9px;color:#6b7280">PDF · Finance · English · 47 chunks</span>
                 </div>
               </div>
             </div>
@@ -305,10 +308,11 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
         <div class="narration">
           <div class="slide-num">Step 2</div>
           <div class="slide-title">Semantic Chat</div>
-          <div class="slide-sub">Ask questions in plain English and get answers grounded in your documents. Hybrid search combines vector similarity with BM25 keyword matching, then a Gemini cross-encoder re-ranks results for maximum precision.</div>
+          <div class="slide-sub">Ask questions in English, Bengali, Hindi, Arabic, or the language of the document. Hybrid search combines vector similarity with BM25 keyword matching, then Gemini re-ranks results for precision.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">🔍</span><span>Hybrid search — RRF fusion of vector + BM25, then Gemini re-ranking</span></div>
             <div class="feature-item"><span class="feature-icon">💬</span><span>Streaming responses with markdown, tables, and source citations</span></div>
+            <div class="feature-item"><span class="feature-icon">🌐</span><span>Response language follows the document while preserving exact names, dates, and citations</span></div>
             <div class="feature-item"><span class="feature-icon">📚</span><span>Persistent chat sessions — history saved, searchable, resumable</span></div>
             <div class="feature-item"><span class="feature-icon">👍</span><span>Thumbs up/down feedback per message, exportable chat history</span></div>
           </div>
@@ -355,10 +359,11 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
         <div class="narration">
           <div class="slide-num">Step 3</div>
           <div class="slide-title">Summarise & Compare</div>
-          <div class="slide-sub">Generate five different types of summaries for any document — brief, detailed, bullet points, executive, or key findings — all streamed in real time. Select two documents to compare them side by side with a structured analysis.</div>
+          <div class="slide-sub">Generate five types of summaries for any document, streamed in real time and matched to the document language. Select two documents to compare them side by side with structured analysis.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">📝</span><span>5-type streaming summaries — brief, detailed, bullets, executive, key findings</span></div>
             <div class="feature-item"><span class="feature-icon">⇄</span><span>Document comparison — select 2 docs, get a structured side-by-side analysis</span></div>
+            <div class="feature-item"><span class="feature-icon">🌐</span><span>Multilingual summaries and comparisons for Bengali, Hindi, Arabic, and English</span></div>
             <div class="feature-item"><span class="feature-icon">📦</span><span>Multi-doc summarisation — summarise a batch of selected documents at once</span></div>
             <div class="feature-item"><span class="feature-icon">↓</span><span>Export summaries and chat history as Markdown files</span></div>
           </div>
@@ -398,10 +403,11 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Organise</div>
-          <div class="slide-title">Tags, Search & Sort</div>
-          <div class="slide-sub">With hundreds of documents, a flat list becomes unusable. Tags let you create named collections by project, client, or topic. A single-line control bar gives you live search, tag filtering, and sort order in one place.</div>
+          <div class="slide-title">Classify, Tag & Search</div>
+          <div class="slide-sub">With hundreds of documents, a flat list becomes unusable. Auto-classification labels invoices, leases, resumes, policies, and reports, while tags let you create your own project or client collections.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">🏷</span><span>Colour-coded tags — create, assign, and remove from any document instantly</span></div>
+            <div class="feature-item"><span class="feature-icon">🧭</span><span>Document badges — type, domain, and language visible on each card</span></div>
             <div class="feature-item"><span class="feature-icon">🔍</span><span>Live name search — filters the list as you type, no page reload</span></div>
             <div class="feature-item"><span class="feature-icon">⇅</span><span>Sort by date, name, size, or status — combined with tag filter</span></div>
             <div class="feature-item"><span class="feature-icon">🗄</span><span>Tags stored per-user in PostgreSQL — persist across sessions and devices</span></div>
@@ -685,16 +691,16 @@ body{font-family:'Inter',sans-serif;background:#0a1a0a;color:#fff;height:100vh;o
 
 <script>
 const SLIDES = [
-  { text: "আদর DocIntel is a self-service Retrieval Augmented Generation platform. You upload documents, ask questions in natural language, and get answers grounded in your own content — not hallucinations. The platform handles everything from document ingestion to semantic search to team collaboration and Stripe billing. It is production-ready, deployed on Google Cloud, and built for teams that need document intelligence without managing AI infrastructure." },
-  { text: "Once you upload a document, the platform handles the full pipeline automatically. Files are split into 350-word chunks with overlap, stored in Google Cloud Storage, and indexed in PostgreSQL with pgvector. One click triggers Gemini embedding — generating 768-dimensional vectors for every chunk. The status moves from uploading through chunking to embedded. If anything fails, a Retry button re-downloads the original from GCS and re-runs the entire pipeline." },
-  { text: "The core feature is semantic chat. Ask a question in plain English and the system runs hybrid search — combining Gemini vector similarity with BM25 keyword matching, fused with Reciprocal Rank Fusion, then re-ranked by a Gemini cross-encoder. The result is a streaming response with markdown formatting, tables, and source citations. Every new answer is automatically scored by Gemini acting as an independent judge — three quality badges appear below the answer: Relevance, Specificity, and Confidence, each graded 1 to 5. Hover any badge to see the reasoning. All chat sessions are saved and resumable." },
-  { text: "For any document, you can generate five types of summaries — brief, detailed, bullet points, executive, or key findings — all streamed in real time. After the summary completes, a 📊 Evaluate button appears below the content — click it to get Coherence and Specificity scores from Gemini. Select two documents to run a side-by-side comparison with a structured analysis, then evaluate the comparison quality on demand. Every summary and chat session can be exported as a Markdown file." },
-  { text: "With hundreds of documents, organisation matters. Tags let you create named collections by project, client, or topic — colour-coded and stored per user in PostgreSQL. A single tight control bar gives you live name search, tag filter, and sort order — by date, name, size, or status — all in one line above the document list. Assign tags with a dropdown on each card and remove them with a single click." },
-  { text: "Teams work in shared workspaces with three role levels — Owner, Editor, and Viewer. Owners and editors can upload and delete documents. Viewers get read-only access. Documents, chat sessions, and tags are fully scoped to the workspace. Invite teammates by email — they receive a notification. Switch between personal and workspace context in one click from the sidebar." },
-  { text: "Monetisation is handled by Stripe with three plans. Free gives you 20 documents, 10 megabyte files, and 50 chat queries per day. Pro at 20 dollars per month scales to 500 documents, 500 megabyte files, and 500 queries per day. Enterprise at 100 dollars per month is fully unlimited. Both paid plans include a 3-day free trial — Stripe collects the card but charges nothing until day 4. On every login, the backend queries the Stripe API directly and updates the user's tier instantly." },
-  { text: "Security and compliance are built in. Every new account verifies their email address before logging in — a 24-hour link is sent via Gmail SMTP. Every significant action — upload, login, invite, delete — is logged to a PostgreSQL audit table with the user's IP address and timestamp. Admins get a full dashboard with user management, tier overrides, document overview, and a filterable audit log. Email notifications fire when embedding completes or when a workspace invite is sent." },
-  { text: "The stack is Google Cloud end to end. FastAPI on Cloud Run serves the backend. React on Firebase Hosting serves the frontend. PostgreSQL with pgvector handles both relational data and semantic search. Google Cloud Storage holds all uploaded files. All credentials are stored in Secret Manager. Rate limiting, usage metering, and tiered limit enforcement run on every request — so Free users cannot exceed their quota and paid users get their full allocation." },
-  { text: "That covers আদর DocIntel in 5 minutes. Upload pipeline, semantic chat, summarisation, tags and search, team workspaces, Stripe billing, email verification, audit logging, and a production Google Cloud deployment — all built and running. Thank you." }
+  { text: "আদর DocIntel is a self-service Retrieval Augmented Generation platform. Upload documents, ask questions in natural language, and get grounded answers from your own content — with citations, not guesses. The platform now also classifies every document, detects its language, and can respond in English, Bengali, Hindi, or Arabic while keeping the আদর brand native to Bengali." },
+  { text: "The upload pipeline is automatic. DocIntel extracts text, detects the document type and language, stores the original in Google Cloud Storage, chunks the content into overlapping semantic windows, and prepares it for Gemini embeddings in pgvector. If extraction, chunking, or embedding fails, Retry re-downloads the source file and re-runs the pipeline without forcing the user to upload again." },
+  { text: "Semantic chat is the core workflow. Ask in English, Bengali, Hindi, Arabic, or the language of the document. The system combines Gemini vector similarity with BM25 keyword search, fuses the results with Reciprocal Rank Fusion, and re-ranks candidates with Gemini before generating a cited streaming answer. Chat history is persistent, feedback is saved, and responses are evaluated for relevance, specificity, and confidence." },
+  { text: "For analysis, DocIntel streams summaries, comparisons, and exports. Generate executive, detailed, bullet, section-by-section, or custom summaries. Select two documents for a structured side-by-side comparison. The same language rules apply, so a Bengali lease can produce a Bengali summary, while names, dates, clauses, and source citations remain exact." },
+  { text: "As libraries grow, DocIntel keeps them navigable. Auto-classification labels invoices, leases, resumes, reports, policies, and other common document types. Tags create your own project or client collections. A compact control bar combines live name search, type filtering, tag filtering, and sort order, so hundreds of documents stay manageable." },
+  { text: "Teams work in shared workspaces with Owner, Editor, and Viewer roles. Uploads, tags, chat sessions, and summaries are scoped to the workspace. Owners invite teammates by email, editors contribute documents, and viewers get read-only access for chat and search. Switching between personal and workspace context is one click." },
+  { text: "Monetisation is handled by Stripe with Free, Pro, and Enterprise tiers. Free supports lightweight usage, Pro scales to hundreds of documents and daily queries, and Enterprise removes practical limits. Paid plans include a 3-day trial, and every login syncs the user's active Stripe subscription so plan limits update immediately." },
+  { text: "Security and operations are built in. New accounts verify email before first login. Password reset links are single-use. Important actions are written to an audit log with IP address and timestamp. Admins manage users, tiers, documents, and audit history from one dashboard, while notifications fire for embedding completion and workspace invites." },
+  { text: "The stack is Google Cloud end to end: FastAPI on Cloud Run, React on Firebase Hosting, Cloud SQL Postgres with pgvector, and Google Cloud Storage for documents. Secret Manager protects credentials, usage metering enforces tier limits, and Gemini powers extraction support, classification, embeddings, reranking, multilingual chat, summaries, and comparison." },
+  { text: "That is আদর DocIntel in five minutes: upload, classify, detect language, embed, chat, summarize, compare, organize, collaborate, bill, audit, and deploy — a production document intelligence platform ready for multilingual teams." }
 ];
 
 
@@ -704,6 +710,8 @@ let autoTimer = null;
 let speaking = false;
 let voicesLoaded = false;
 let maleVoice = null;
+let speechRunId = 0;
+let currentUtterance = null;
 
 // ── Voice setup ──────────────────────────────────────
 function loadVoices() {
@@ -721,61 +729,113 @@ function loadVoices() {
 speechSynthesis.addEventListener('voiceschanged', loadVoices);
 loadVoices();
 
-// Chrome Speech Synthesis keepalive — Chrome silently pauses utterances
-// after ~15s; pause()+resume() every 10s prevents this bug
+// Chrome sometimes pauses speech synthesis. Resume only when paused; do not
+// force pause/resume because that can interrupt narration and break Auto.
 let _synthKeepAlive = null;
 function _startKeepAlive() {
   _stopKeepAlive();
   _synthKeepAlive = setInterval(() => {
-    if (speechSynthesis.speaking && !speechSynthesis.paused) {
-      speechSynthesis.pause();
+    if (speechSynthesis.speaking && speechSynthesis.paused) {
       speechSynthesis.resume();
     }
-  }, 10000);
+  }, 4000);
 }
 function _stopKeepAlive() {
   if (_synthKeepAlive) { clearInterval(_synthKeepAlive); _synthKeepAlive = null; }
 }
 
+function _clearSpeechButtons() {
+  document.querySelectorAll('.btn-speak').forEach(b => b.classList.remove('speaking'));
+}
+
+function _setAutoButton(on) {
+  const btn = document.getElementById('autoBtn');
+  if (!btn) return;
+  btn.classList.toggle('active', on);
+  btn.textContent = on ? '⏸ Auto' : '▶ Auto';
+}
+
+function _splitNarration(text) {
+  const sentences = text.match(/[^.!?।]+[.!?।]+|[^.!?।]+$/g) || [text];
+  const chunks = [];
+  let buf = '';
+  for (const sentence of sentences) {
+    const next = (buf + ' ' + sentence.trim()).trim();
+    if (next.length > 220 && buf) {
+      chunks.push(buf);
+      buf = sentence.trim();
+    } else {
+      buf = next;
+    }
+  }
+  if (buf) chunks.push(buf);
+  return chunks;
+}
+
+function _finishSlideSpeech(runId, idx, btn) {
+  if (runId !== speechRunId) return;
+  speaking = false;
+  currentUtterance = null;
+  _stopKeepAlive();
+  if (btn) btn.classList.remove('speaking');
+  if (autoPlay && idx === current) {
+    if (current >= SLIDES.length - 1) {
+      autoPlay = false;
+      _setAutoButton(false);
+    } else {
+      autoTimer = setTimeout(() => { if (autoPlay) goSlide(1); }, 900);
+    }
+  }
+}
+
 function speakSlide(idx) {
+  const slide = SLIDES[idx];
+  if (!slide) return;
+  const runId = ++speechRunId;
+  clearTimeout(autoTimer);
   speechSynthesis.cancel();
   _stopKeepAlive();
+  _clearSpeechButtons();
+  loadVoices();
 
   const btn = document.querySelectorAll('.btn-speak')[idx] || document.querySelector('.btn-speak');
   if (btn) btn.classList.add('speaking');
 
-  const u = new SpeechSynthesisUtterance(SLIDES[idx].text);
-  if (maleVoice) u.voice = maleVoice;
-  u.rate  = 0.92;
-  u.pitch = 0.88;
-  u.volume = 1;
+  speaking = true;
+  const chunks = _splitNarration(slide.text);
+  let part = 0;
 
-  u.onstart = () => _startKeepAlive();
-
-  u.onend = () => {
-    _stopKeepAlive();
-    if (btn) btn.classList.remove('speaking');
-    if (autoPlay && idx === current) {
-      if (current >= SLIDES.length - 1) {
-        autoPlay = false;
-        const ab = document.getElementById('autoBtn');
-        if (ab) { ab.classList.remove('active'); ab.textContent = '▶ Auto'; }
-      } else {
-        autoTimer = setTimeout(() => { if (autoPlay) goSlide(1); }, 1200);
-      }
+  function speakNext() {
+    if (runId !== speechRunId) return;
+    if (part >= chunks.length) {
+      _finishSlideSpeech(runId, idx, btn);
+      return;
     }
-  };
 
-  u.onerror = (e) => {
-    _stopKeepAlive();
-    if (btn) btn.classList.remove('speaking');
-    // 'interrupted' is normal when user skips — don't treat as error
-    if (e.error !== 'interrupted' && autoPlay && idx === current) {
-      autoTimer = setTimeout(() => { if (autoPlay) goSlide(1); }, 800);
-    }
-  };
+    const u = new SpeechSynthesisUtterance(chunks[part]);
+    currentUtterance = u;
+    if (maleVoice) u.voice = maleVoice;
+    u.rate  = 0.92;
+    u.pitch = 0.88;
+    u.volume = 1;
 
-  speechSynthesis.speak(u);
+    u.onstart = () => { if (runId === speechRunId) _startKeepAlive(); };
+    u.onend = () => {
+      if (runId !== speechRunId) return;
+      part += 1;
+      setTimeout(speakNext, 60);
+    };
+    u.onerror = (e) => {
+      if (runId !== speechRunId) return;
+      if (e.error === 'interrupted' || e.error === 'canceled') return;
+      part += 1;
+      setTimeout(speakNext, 60);
+    };
+
+    speechSynthesis.speak(u);
+  }
+
+  setTimeout(speakNext, 80);
 }
 
 // ── Navigation ──────────────────────────────────────
@@ -804,23 +864,29 @@ function updateUI() {
 }
 
 function jumpTo(idx) {
+  speechRunId++;
   clearTimeout(autoTimer);
   speechSynthesis.cancel();
-  document.querySelectorAll('.btn-speak').forEach(b => b.classList.remove('speaking'));
+  _stopKeepAlive();
+  _clearSpeechButtons();
   current = Math.max(0, Math.min(SLIDES.length - 1, idx));
   updateUI();
-  if (autoPlay) speakSlide(current);
+  if (autoPlay) setTimeout(() => speakSlide(current), 180);
 }
 
 function goSlide(dir) { jumpTo(current + dir); }
 
 function toggleAuto() {
   autoPlay = !autoPlay;
-  const btn = document.getElementById('autoBtn');
-  btn.classList.toggle('active', autoPlay);
-  btn.textContent = autoPlay ? '⏸ Auto' : '▶ Auto';
+  _setAutoButton(autoPlay);
   if (autoPlay) speakSlide(current);
-  else { clearTimeout(autoTimer); speechSynthesis.cancel(); document.querySelectorAll('.btn-speak').forEach(b => b.classList.remove('speaking')); }
+  else {
+    speechRunId++;
+    clearTimeout(autoTimer);
+    speechSynthesis.cancel();
+    _stopKeepAlive();
+    _clearSpeechButtons();
+  }
 }
 
 // ── Keyboard nav ────────────────────────────────────
