@@ -293,6 +293,7 @@ async def list_workspace_documents(
     rows = await db.fetch(
         """SELECT d.id, d.original_name, d.status, d.error_message, d.file_type,
                   d.file_size, d.workspace_id, d.created_at, d.user_id,
+                  d.doc_type, d.doc_domain, d.doc_language,
                   (SELECT COUNT(*) FROM document_chunks WHERE document_id=d.id) AS chunk_count,
                   COALESCE(
                     json_agg(json_build_object(
@@ -324,6 +325,9 @@ async def list_workspace_documents(
             "file_type":     r["file_type"],
             "file_size":     r["file_size"],
             "chunk_count":   int(r["chunk_count"]),
+            "doc_type":      r["doc_type"] or "general",
+            "doc_domain":    r["doc_domain"] or "general",
+            "doc_language":  r["doc_language"] or "en",
             "workspace_id":  str(r["workspace_id"]) if r["workspace_id"] else None,
             "uploaded_by":   str(r["user_id"]),
             "created_at":    r["created_at"].isoformat(),

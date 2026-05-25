@@ -11,6 +11,7 @@ from services.llm import embed_query, chat_stream, rag_system
 from services.vectordb import find_similar, TOP_K, RERANK_FETCH_K
 from services.usage import check_daily_limit, log_event
 from services.reranker import rerank, RERANK_ENABLED
+from services.language import primary_language, response_language_instruction
 
 router = APIRouter()
 
@@ -38,7 +39,7 @@ async def chat_stream_endpoint(
 
     user_id = str(current_user["id"])
     rows = await db.fetch(
-        """SELECT d.id, d.status FROM documents d
+        """SELECT d.id, d.status, d.doc_language FROM documents d
            WHERE d.id = ANY($1::uuid[])
              AND d.status != 'deleted'
              AND (
@@ -54,6 +55,7 @@ async def chat_stream_endpoint(
     found_ids    = {str(r["id"]) for r in rows}
     not_found    = set(req.document_ids) - found_ids
     not_embedded = {str(r["id"]) for r in rows if r["status"] != "embedded"}
+    response_lang = primary_language([r["doc_language"] for r in rows])
 
     if not_found:
         raise HTTPException(403, f"Documents not found or not accessible: {not_found}")
@@ -104,7 +106,8 @@ async def chat_stream_endpoint(
                     if m.get("role") and m.get("content")
                 ] + [{"role": "user", "content": req.question}]
 
-                await chat_stream(messages, rag_system(context), on_token)
+                language_instruction = response_language_instruction(response_lang)
+                await chat_stream(messages, rag_system(context, language_instruction), on_token)
                 async with get_pool().acquire() as _conn:
                     await log_event(_conn, user_id, "query", metadata={"doc_count": len(req.document_ids), "chunks_used": len(chunks)})
                 await queue.put(("done", _sanitise(chunks)))

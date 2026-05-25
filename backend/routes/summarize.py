@@ -10,6 +10,7 @@ from database.connection import get_db, get_pool
 from services.usage import check_daily_limit, log_event
 import services.storage as gcs
 from services.llm import chat_stream, summarize_system, mini_summarize_system
+from services.language import primary_language, response_language_instruction
 
 from fastapi import Request
 
@@ -64,7 +65,11 @@ async def summarize_document(
 
             texts = await _load_chunk_texts(chunks)
             async for event in _stream_summary(
-                texts, body.summary_type, body.custom_prompt, row["original_name"]
+                texts,
+                body.summary_type,
+                body.custom_prompt,
+                row["original_name"],
+                row.get("doc_language") or "en",
             ):
                 yield event
         except Exception as e:
@@ -86,7 +91,7 @@ async def summarize_multiple_documents(
 
     user_id = str(current_user["id"])
     rows = await db.fetch(
-        """SELECT id, original_name, status FROM documents
+        """SELECT id, original_name, status, doc_language FROM documents
            WHERE id = ANY($1::uuid[]) AND user_id = $2 AND status != 'deleted'""",
         body.document_ids, user_id,
     )
@@ -111,7 +116,8 @@ async def summarize_multiple_documents(
                 all_texts.append(f"=== {row['original_name']} ===\n" + "\n\n".join(texts))
 
             label = f"{len(body.document_ids)} documents"
-            async for event in _stream_summary(all_texts, body.summary_type, body.custom_prompt, label):
+            lang = primary_language([r["doc_language"] for r in rows])
+            async for event in _stream_summary(all_texts, body.summary_type, body.custom_prompt, label, lang):
                 yield event
         except Exception as e:
             yield _sse_error(str(e))
@@ -126,6 +132,7 @@ async def _stream_summary(
     summary_type:  str,
     custom_prompt: str,
     label:         str,
+    response_lang: str = "en",
 ):
     full_text = "\n\n".join(texts)
 
@@ -140,7 +147,8 @@ async def _stream_summary(
 
     # ── Direct path ───────────────────────────────────────────────────────────
     if len(full_text) <= DIRECT_CHAR_LIMIT:
-        system   = summarize_system(summary_type, label, base_prompt)
+        language_instruction = response_language_instruction(response_lang)
+        system   = summarize_system(summary_type, label, base_prompt, language_instruction)
         # For sections, give the model a two-step instruction in the user message
         if summary_type == "sections":
             user_msg = (
@@ -167,7 +175,8 @@ async def _stream_summary(
         yield _sse_meta({"stage": "map", "batch": batch_num, "of": total_batches})
 
         batch_text = "\n\n".join(batch)
-        system     = mini_summarize_system(label)
+        language_instruction = response_language_instruction(response_lang)
+        system     = mini_summarize_system(label, language_instruction)
         messages   = [{"role": "user", "content": f"Summarise this section thoroughly:\n\n{batch_text}"}]
 
         tokens: list[str] = []
@@ -180,7 +189,8 @@ async def _stream_summary(
     combined = "\n\n---\n\n".join(
         f"[Section {i+1}]\n{s}" for i, s in enumerate(batch_summaries)
     )
-    system   = summarize_system(summary_type, label, base_prompt)
+    language_instruction = response_language_instruction(response_lang)
+    system   = summarize_system(summary_type, label, base_prompt, language_instruction)
     messages = [{"role": "user", "content": (
         f"Using these section summaries, produce a single high-quality {summary_type} summary:\n\n{combined}"
     )}]

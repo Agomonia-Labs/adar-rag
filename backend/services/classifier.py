@@ -1,6 +1,7 @@
 # services/classifier.py — Document classification via Gemini
 from __future__ import annotations
 import os, json, re, logging
+from services.language import normalize_language
 
 log = logging.getLogger("docintel.classifier")
 
@@ -134,7 +135,7 @@ Classify this document and respond ONLY with valid JSON:
 
             doc_type   = result.get("doc_type", "general")
             doc_domain = result.get("doc_domain", "general")
-            language   = result.get("doc_language", "en")
+            language   = normalize_language(result.get("doc_language", "en"))
             confidence = float(result.get("confidence", 0.5))
             reasoning  = result.get("reasoning", "")
 

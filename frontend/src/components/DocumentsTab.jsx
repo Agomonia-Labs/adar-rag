@@ -45,6 +45,7 @@ const DOMAIN_COLORS = {
 const DOMAIN_ICONS = {
   legal:'🔵', finance:'🟢', hr:'🟣', medical:'🔴', research:'🟡', operations:'🟢', general:'⚪',
 };
+const LANGUAGE_LABELS = { en:'English', bn:'বাংলা', hi:'हिन्दी', ar:'العربية' };
 const fmtSz = b => b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
 
 export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
@@ -351,6 +352,7 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
               : <span style={{fontSize:9.5,padding:'1px 6px',borderRadius:20,background:'rgba(148,163,184,.06)',color:'#94a3b8',border:'1px solid rgba(148,163,184,.12)'}}>🏠 Personal</span>
             }
             <span style={s.mt}>{(doc.file_type||'?').toUpperCase()}</span>
+            <span style={s.mt}>🌐 {LANGUAGE_LABELS[doc.doc_language] || doc.doc_language || 'English'}</span>
             <span style={s.mt}>{fmtSz(doc.file_size)}</span>
             {doc.chunk_count>0 && <span style={s.mt}>{doc.chunk_count} chunks</span>}
             {(() => {

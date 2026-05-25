@@ -9,6 +9,7 @@ import json, httpx
 from auth.dependencies import CurrentUser
 from database.connection import get_db, get_pool
 from services.usage import log_event
+from services.language import primary_language, response_language_instruction
 
 router = APIRouter()
 log = logging.getLogger("docintel.compare")
@@ -33,7 +34,7 @@ async def compare_documents(
     user_id = str(current_user["id"])
 
     rows = await db.fetch(
-        """SELECT id, original_name, status FROM documents
+        """SELECT id, original_name, status, doc_language FROM documents
            WHERE id = ANY($1::uuid[]) AND user_id = $2 AND status != 'deleted'""",
         [body.document_id_1, body.document_id_2], user_id,
     )
@@ -65,7 +66,14 @@ async def compare_documents(
                 yield _sse({"type": "error", "error": f"No text found for {doc2['original_name']}. Ensure it is chunked."}); return
 
             yield _sse({"type": "status", "message": "Gemini is analysing differences..."})
-            result, err = await _gemini_compare(doc1["original_name"], text1, doc2["original_name"], text2)
+            lang = primary_language([doc1.get("doc_language"), doc2.get("doc_language")])
+            result, err = await _gemini_compare(
+                doc1["original_name"],
+                text1,
+                doc2["original_name"],
+                text2,
+                response_language_instruction(lang),
+            )
 
             if result:
                 # Log compare event using a fresh pool connection
@@ -103,13 +111,15 @@ async def _load_from_db(conn, document_id: str, user_id: str) -> str:
     return "\n\n".join(parts)
 
 
-async def _gemini_compare(doc1_name, doc1_text, doc2_name, doc2_text):
+async def _gemini_compare(doc1_name, doc1_text, doc2_name, doc2_text, language_instruction=""):
     """
     Uses a structured TEXT format with markers instead of JSON.
     Legal documents contain quotes/newlines that break JSON parsing.
     Markers like ===SECTION=== are unambiguous and always parseable.
     """
+    language_rule = f"\nLANGUAGE RULE:\n{language_instruction}\n" if language_instruction else ""
     prompt = f"""You are a legal and financial document comparison expert.
+{language_rule}
 
 Compare Document 1 and Document 2 thoroughly, then output your analysis using
 EXACTLY the marker format shown below. Do not use JSON. Do not deviate from the format.

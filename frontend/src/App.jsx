@@ -9,6 +9,7 @@ import ChatTab         from './components/ChatTab.jsx';
 import AdminDashboard  from './components/AdminDashboard.jsx';
 import { ToastContainer } from './components/Toast.jsx';
 import { getMe }       from './services/api.js';
+import { LANGUAGES, getLanguage, getStrings } from './i18n.js';
 
 export default function App() {
   const [authPage,     setAuthPage]     = useState('login');
@@ -18,6 +19,16 @@ export default function App() {
   const [showUsage,        setShowUsage]        = useState(false);
   const [showBilling,      setShowBilling]      = useState(false);
   const [activeWorkspace,  setActiveWorkspace]  = useState(null);
+  const [uiLang,           setUiLang]           = useState(() => localStorage.getItem('ui_lang') || 'en');
+  const lang = getLanguage(uiLang);
+  const t = getStrings(uiLang);
+
+  useEffect(() => {
+    const current = getLanguage(uiLang);
+    localStorage.setItem('ui_lang', current.code);
+    document.documentElement.lang = current.code;
+    document.documentElement.dir = current.dir;
+  }, [uiLang]);
 
   // Handle Stripe redirect — force logout so user re-authenticates with updated plan
   useEffect(() => {
@@ -54,7 +65,7 @@ export default function App() {
     return (
       <div style={{ height:'100vh', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:10, background:'#0a1a0a' }}>
         <span style={{ fontSize:36 }}>🌿</span>
-        <span style={{ color:'#4ade80', fontSize:13, opacity:.6 }}>Loading আদর DocIntel…</span>
+        <span style={{ color:'#4ade80', fontSize:13, opacity:.6 }}>{t.loading}</span>
       </div>
     );
   }
@@ -65,11 +76,11 @@ export default function App() {
 
   const isAdmin = user.role==='admin';
   const TABS = [
-    { key:'documents', label:'📂 Documents', show:true },
-    { key:'chat',      label:'💬 Chat',      show:true, disabled:!embeddedDocs.length,
-      title:!embeddedDocs.length?'Embed at least one document first':undefined },
-    { key:'workspaces', label:'🏢 Workspaces', show:true },
-    { key:'admin',     label:'⚙ Admin',      show:isAdmin },
+    { key:'documents', icon:'📂', label:t.documents, show:true },
+    { key:'chat',      icon:'💬', label:t.chat,      show:true, disabled:!embeddedDocs.length,
+      title:!embeddedDocs.length?t.embedFirst:undefined },
+    { key:'workspaces', icon:'🏢', label:t.workspaces, show:true },
+    { key:'admin',     icon:'⚙', label:t.admin,      show:isAdmin },
   ].filter(t=>t.show);
 
   return (
@@ -86,16 +97,17 @@ export default function App() {
                 <span style={s.brandB}>আদর</span>
                 <span style={s.brandE}>DocIntel</span>
               </div>
-              <span style={s.brandTag}>Document Intelligence</span>
+              <span style={s.brandTag}>{t.brandTag}</span>
             </div>
             {isAdmin && <span style={s.adminPill}>admin</span>}
           </div>
 
           <nav style={s.tabs}>
-            {TABS.map(({ key, label, disabled, title }) => (
+            {TABS.map(({ key, icon, label, disabled, title }) => (
               <button key={key} onClick={()=>!disabled&&setTab(key)} disabled={disabled} title={title}
                 style={{ ...s.tabBtn, ...(tab===key?s.tabActive:{}), ...(disabled?{opacity:.35,cursor:'not-allowed'}:{}), ...(key==='admin'?{color:tab==='admin'?'#4ade80':'#fbbf24'}:{}) }}>
-                {label}
+                <span>{icon}</span>
+                <span>{label}</span>
                 {key==='chat' && embeddedDocs.length>0 && <span style={s.badge}>{embeddedDocs.length}</span>}
               </button>
             ))}
@@ -121,7 +133,7 @@ export default function App() {
                        borderRadius:'var(--r)', cursor:'pointer' }}
               onClick={() => setShowUsage(true)}
               title="Your usage and plan limits">
-              📊 Usage
+              📊 {t.usage}
             </button>
             <button
               style={{ fontSize:12, padding:'5px 12px', background:'rgba(192,132,252,.1)',
@@ -129,9 +141,19 @@ export default function App() {
                        borderRadius:'var(--r)', cursor:'pointer', fontWeight:600 }}
               onClick={() => setShowBilling(true)}
               title="Plans & Billing">
-              💳 Plans
+              💳 {t.plans}
             </button>
-            <button style={s.signOutBtn} onClick={handleLogout}>Sign out</button>
+            <label style={s.langWrap} title={t.language}>
+              <span style={{fontSize:12}}>🌐</span>
+              <select
+                value={lang.code}
+                onChange={e => setUiLang(e.target.value)}
+                aria-label={t.language}
+                style={s.langSelect}>
+                {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.native}</option>)}
+              </select>
+            </label>
+            <button style={s.signOutBtn} onClick={handleLogout}>{t.signOut}</button>
           </div>
         </header>
 
@@ -167,6 +189,8 @@ const s = {
   tabActive: { background:'rgba(74,222,128,.12)', color:'#4ade80', fontWeight:700 },
   badge:     { fontSize:10, padding:'2px 7px', borderRadius:20, background:'#15803d', color:'#fff', fontWeight:700 },
   userArea:  { display:'flex', alignItems:'center', gap:12, flexShrink:0 },
+  langWrap:  { display:'flex', alignItems:'center', gap:5, padding:'4px 8px', border:'1px solid var(--b2)', borderRadius:'var(--r)', background:'var(--s2)' },
+  langSelect:{ width:'auto', minWidth:78, padding:'2px 4px', border:'none', boxShadow:'none', background:'transparent', color:'var(--tx2)', fontSize:12, cursor:'pointer' },
   signOutBtn:{ padding:'6px 14px', fontSize:12, fontWeight:500, background:'transparent', border:'1px solid var(--b2)', color:'var(--muted2)', borderRadius:'var(--r)', cursor:'pointer', transition:'all .15s' },
   content:   { flex:1, overflow:'hidden' },
 };

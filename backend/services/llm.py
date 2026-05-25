@@ -174,10 +174,15 @@ else:
 
 # ── System prompts ────────────────────────────────────────────────────────────
 
-def rag_system(context: str) -> str:
+def rag_system(context: str, language_instruction: str = "") -> str:
     """System prompt for RAG chat — grounds answers in retrieved chunks."""
+    language_rule = (
+        f"LANGUAGE RULE:\n{language_instruction}\n\n"
+        if language_instruction else ""
+    )
     return (
         "You are DocIntel, a precise document intelligence assistant.\n\n"
+        f"{language_rule}"
         "ANSWER RULES:\n"
         "1. Answer ONLY from the retrieved chunks below.\n"
         "2. Cite sources inline with [Source N].\n"
@@ -203,7 +208,12 @@ def rag_system(context: str) -> str:
     )
 
 
-def summarize_system(summary_type: str, label: str, base_prompt: str) -> str:
+def summarize_system(
+    summary_type: str,
+    label: str,
+    base_prompt: str,
+    language_instruction: str = "",
+) -> str:
     """System prompt for summarization — focused on quality output."""
 
     common_rules = (
@@ -279,16 +289,18 @@ def summarize_system(summary_type: str, label: str, base_prompt: str) -> str:
 
     return (
         f"You are an expert document analyst. You are summarising: \"{label}\"\n\n"
-        f"YOUR TASK:\n{task}\n\n"
+        + (f"LANGUAGE RULE:\n{language_instruction}\n\n" if language_instruction else "")
+        + f"YOUR TASK:\n{task}\n\n"
         f"{common_rules}"
     )
 
 
-def mini_summarize_system(label: str) -> str:
+def mini_summarize_system(label: str, language_instruction: str = "") -> str:
     """System prompt for map-reduce batch summarisation."""
     return (
         f"You are summarising a section of: \"{label}\"\n\n"
-        "Write a thorough summary of this section. "
+        + (f"LANGUAGE RULE:\n{language_instruction}\n\n" if language_instruction else "")
+        + "Write a thorough summary of this section. "
         "Preserve all key facts, figures, names, dates, and conclusions. "
         "Be complete — nothing important should be omitted."
     )

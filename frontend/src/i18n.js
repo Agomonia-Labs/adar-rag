@@ -1,0 +1,69 @@
+export const LANGUAGES = [
+  { code: 'en', label: 'English', native: 'English', dir: 'ltr' },
+  { code: 'bn', label: 'Bengali', native: 'বাংলা', dir: 'ltr' },
+  { code: 'hi', label: 'Hindi', native: 'हिन्दी', dir: 'ltr' },
+  { code: 'ar', label: 'Arabic', native: 'العربية', dir: 'rtl' },
+];
+
+export const STRINGS = {
+  en: {
+    loading: 'Loading আদর DocIntel…',
+    brandTag: 'Document Intelligence',
+    documents: 'Documents',
+    chat: 'Chat',
+    workspaces: 'Workspaces',
+    admin: 'Admin',
+    embedFirst: 'Embed at least one document first',
+    usage: 'Usage',
+    plans: 'Plans',
+    signOut: 'Sign out',
+    language: 'Language',
+  },
+  bn: {
+    loading: 'আদর DocIntel লোড হচ্ছে…',
+    brandTag: 'ডকুমেন্ট ইন্টেলিজেন্স',
+    documents: 'ডকুমেন্ট',
+    chat: 'চ্যাট',
+    workspaces: 'ওয়ার্কস্পেস',
+    admin: 'অ্যাডমিন',
+    embedFirst: 'আগে অন্তত একটি ডকুমেন্ট এমবেড করুন',
+    usage: 'ব্যবহার',
+    plans: 'প্ল্যান',
+    signOut: 'সাইন আউট',
+    language: 'ভাষা',
+  },
+  hi: {
+    loading: 'আদর DocIntel लोड हो रहा है…',
+    brandTag: 'डॉक्यूमेंट इंटेलिजेंस',
+    documents: 'दस्तावेज़',
+    chat: 'चैट',
+    workspaces: 'वर्कस्पेस',
+    admin: 'एडमिन',
+    embedFirst: 'पहले कम से कम एक दस्तावेज़ एम्बेड करें',
+    usage: 'उपयोग',
+    plans: 'प्लान',
+    signOut: 'साइन आउट',
+    language: 'भाषा',
+  },
+  ar: {
+    loading: 'جار تحميل আদর DocIntel…',
+    brandTag: 'ذكاء المستندات',
+    documents: 'المستندات',
+    chat: 'الدردشة',
+    workspaces: 'مساحات العمل',
+    admin: 'المشرف',
+    embedFirst: 'قم بتضمين مستند واحد على الأقل أولا',
+    usage: 'الاستخدام',
+    plans: 'الخطط',
+    signOut: 'تسجيل الخروج',
+    language: 'اللغة',
+  },
+};
+
+export function getLanguage(code) {
+  return LANGUAGES.find(l => l.code === code) || LANGUAGES[0];
+}
+
+export function getStrings(code) {
+  return STRINGS[code] || STRINGS.en;
+}
