@@ -1,10 +1,13 @@
 # services/extractor.py
 from __future__ import annotations
 import csv, asyncio, os, base64, tempfile
+import logging
 from pathlib import Path
 
 import fitz                  # PyMuPDF
 from docx import Document
+
+log = logging.getLogger("docintel.extractor")
 
 SCANNED_THRESHOLD = 200      # chars below which we treat a PDF as scanned
 
