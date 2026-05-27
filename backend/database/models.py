@@ -253,6 +253,68 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_id      ON chat_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_updated_at   ON chat_sessions(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_workspace_id ON chat_sessions(workspace_id);
 
+-- Traceability: request flows, internal spans, and LLM/tool calls
+CREATE TABLE IF NOT EXISTS trace_flows (
+    id                 UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    trace_id           TEXT        UNIQUE NOT NULL,
+    request_type       TEXT        NOT NULL,
+    user_id            UUID        REFERENCES users(id) ON DELETE SET NULL,
+    workspace_id       UUID        REFERENCES workspaces(id) ON DELETE SET NULL,
+    session_id         UUID        REFERENCES chat_sessions(id) ON DELETE SET NULL,
+    status             TEXT        NOT NULL DEFAULT 'running',
+    input_text_hash    TEXT,
+    input_text_preview TEXT,
+    client_info        JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    metadata           JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    error_message      TEXT,
+    started_at         TIMESTAMPTZ DEFAULT NOW(),
+    ended_at           TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_trace_flows_user    ON trace_flows(user_id);
+CREATE INDEX IF NOT EXISTS idx_trace_flows_type    ON trace_flows(request_type);
+CREATE INDEX IF NOT EXISTS idx_trace_flows_started ON trace_flows(started_at DESC);
+
+CREATE TABLE IF NOT EXISTS trace_spans (
+    id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    span_id        TEXT        UNIQUE NOT NULL,
+    trace_id       TEXT        NOT NULL REFERENCES trace_flows(trace_id) ON DELETE CASCADE,
+    parent_span_id TEXT,
+    name           TEXT        NOT NULL,
+    status         TEXT        NOT NULL DEFAULT 'running',
+    metadata       JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    error          JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    started_at     TIMESTAMPTZ DEFAULT NOW(),
+    ended_at       TIMESTAMPTZ,
+    duration_ms    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_trace_spans_trace ON trace_spans(trace_id);
+CREATE INDEX IF NOT EXISTS idx_trace_spans_name  ON trace_spans(name);
+
+CREATE TABLE IF NOT EXISTS trace_llm_events (
+    id                UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    event_id          TEXT        UNIQUE NOT NULL,
+    trace_id          TEXT        NOT NULL REFERENCES trace_flows(trace_id) ON DELETE CASCADE,
+    span_id           TEXT        REFERENCES trace_spans(span_id) ON DELETE SET NULL,
+    provider          TEXT        NOT NULL,
+    model             TEXT,
+    operation         TEXT        NOT NULL,
+    system_prompt     TEXT,
+    user_prompt       TEXT,
+    tool_request_json JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    tool_response_json JSONB      NOT NULL DEFAULT '{}'::jsonb,
+    llm_response      TEXT,
+    input_tokens      INTEGER,
+    output_tokens     INTEGER,
+    latency_ms        INTEGER,
+    finish_reason     TEXT,
+    redaction_status  TEXT        NOT NULL DEFAULT 'redacted',
+    error             TEXT,
+    created_at        TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_trace_llm_trace ON trace_llm_events(trace_id);
+CREATE INDEX IF NOT EXISTS idx_trace_llm_span  ON trace_llm_events(span_id);
+CREATE INDEX IF NOT EXISTS idx_trace_llm_op    ON trace_llm_events(operation);
+
 """
 
 

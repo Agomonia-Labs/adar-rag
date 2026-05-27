@@ -2,13 +2,15 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { streamChat, listSessions, createSession, getSession,
          saveSessionMessages, deleteSession, submitFeedback,
-         getSessionFeedback } from '../services/api.js';
+         getSessionFeedback, transcribeVoice } from '../services/api.js';
 import MarkdownRenderer from './MarkdownRenderer.jsx';
 import EvalBadges from './EvalBadges.jsx';
 
 const nanoid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 const QUICK  = ['Summarise all documents','What are the key findings?',
                 'Show data in a table','List all dates and deadlines'];
+const SPEECH_LOCALES = { en:'en-US', es:'es-ES', bn:'bn-BD', hi:'hi-IN', ar:'ar-SA' };
+const SPEECH_LABELS = { en:'English', es:'Spanish', bn:'Bangla', hi:'Hindi', ar:'Arabic' };
 
 const normalizeMsg = (m, i) => ({
   id:      m.id      || `msg-${i}-${Date.now()}`,
@@ -16,6 +18,35 @@ const normalizeMsg = (m, i) => ({
   content: typeof m.content === 'string' ? m.content : '',
   sources: Array.isArray(m.sources) ? m.sources : null,
 });
+
+const getSpeechLocale = () => {
+  const raw = (document.documentElement.lang || navigator.language || 'en-US').toLowerCase();
+  const primary = raw.split('-')[0];
+  return raw.includes('-') ? raw : (SPEECH_LOCALES[primary] || navigator.language || 'en-US');
+};
+
+const getSpeechLanguageLabel = (locale) => {
+  const primary = (locale || '').toLowerCase().split('-')[0];
+  return SPEECH_LABELS[primary] || locale || 'this language';
+};
+
+const isSafari = () =>
+  /^((?!chrome|android|crios|fxios).)*safari/i.test(navigator.userAgent || '');
+
+const unsupportedVoiceMessage = () =>
+  /firefox|fxios/i.test(navigator.userAgent || '')
+    ? 'Firefox does not support browser speech-to-text yet. Please use Chrome, Edge, or Safari for voice input.'
+    : 'Voice input is not supported in this browser.';
+
+const pickAudioMimeType = () => {
+  if (!window.MediaRecorder?.isTypeSupported) return '';
+  return [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/ogg;codecs=opus',
+  ].find(type => window.MediaRecorder.isTypeSupported(type)) || '';
+};
 
 
 // ── Export helpers ────────────────────────────────────────────────────────────
@@ -63,11 +94,25 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
   const [messages, setMessages] = useState([]);
   const [input,    setInput]    = useState('');
   const [thinking, setThinking] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const [voiceMode, setVoiceMode] = useState('idle');
+  const [voiceStatus, setVoiceStatus] = useState('');
   const [saving,        setSaving]        = useState(false);
   const [sessionFeedback, setSessionFeedback] = useState({});  // {messageId: 1|-1}
+  const [redactPii, setRedactPii] = useState(() => localStorage.getItem('redact_pii_chat') === '1');
 
   const endRef    = useRef(null);
   const saveTimer = useRef(null);
+  const recognitionRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioStreamRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const recordingTimerRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const silenceFrameRef = useRef(null);
+  const finalTranscriptRef = useRef('');
+  const suppressVoiceSubmitRef = useRef(false);
 
   useEffect(() => {
     setActiveSession(null);
@@ -77,6 +122,18 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
   }, [activeWorkspace?.id]);
   useEffect(() => { if (!activeSession) setSelected(embeddedDocs.map(d => d.id)); }, [embeddedDocs.length]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, thinking]);
+  useEffect(() => {
+    setVoiceSupported(Boolean(window.SpeechRecognition || window.webkitSpeechRecognition));
+    return () => {
+      recognitionRef.current?.abort?.();
+      recognitionRef.current = null;
+      mediaRecorderRef.current?.state === 'recording' && mediaRecorderRef.current.stop();
+      audioStreamRef.current?.getTracks().forEach(track => track.stop());
+      audioContextRef.current?.close?.();
+      cancelAnimationFrame(silenceFrameRef.current);
+      clearTimeout(recordingTimerRef.current);
+    };
+  }, []);
 
   const loadSessions = async () => {
     setLoadingSessions(true);
@@ -143,9 +200,21 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
 
   const toggleDoc = id => setSelected(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
 
-  const send = useCallback(async () => {
-    const q = input.trim();
+  const stopListening = useCallback(() => {
+    recognitionRef.current?.stop?.();
+    setListening(false);
+    setVoiceMode('idle');
+    setVoiceStatus('');
+  }, []);
+
+  const submitQuestion = useCallback(async (question, { fromVoice = false, traceId = null } = {}) => {
+    const q = question.trim();
     if (!q || thinking || !selected.length) return;
+    if (!fromVoice) {
+      suppressVoiceSubmitRef.current = true;
+      stopListening();
+    }
+    setVoiceStatus('');
     setInput('');
 
     let sess = activeSession;
@@ -168,7 +237,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
                             .map(({ role, content }) => ({ role, content }));
 
     await streamChat(
-      { question: q, documentIds: selected, history, workspaceId: activeWorkspace?.id || null },
+      { question: q, documentIds: selected, history, workspaceId: activeWorkspace?.id || null, traceId, redactPii },
       {
         onToken: t   => setMessages(p => p.map(m => m.id === aid ? { ...m, content: m.content + t } : m)),
         onDone:  src => {
@@ -186,7 +255,229 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
         },
       }
     );
-  }, [input, thinking, selected, messages, activeSession, scheduleSave]);
+  }, [thinking, selected, messages, activeSession, scheduleSave, stopListening, activeWorkspace?.id, redactPii]);
+
+  const stopServerVoiceInput = useCallback(() => {
+    clearTimeout(recordingTimerRef.current);
+    cancelAnimationFrame(silenceFrameRef.current);
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state === 'recording') {
+      recorder.stop();
+    }
+  }, []);
+
+  const startServerVoiceInput = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      setVoiceStatus(unsupportedVoiceMessage());
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = pickAudioMimeType();
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+      audioStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+      suppressVoiceSubmitRef.current = false;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) audioChunksRef.current.push(event.data);
+      };
+
+      recorder.onerror = (event) => {
+        console.warn('Voice recording error:', event.error || event);
+        setVoiceMode('idle');
+        setListening(false);
+        setVoiceStatus('Microphone recording failed. Please try again.');
+      };
+
+      recorder.onstop = async () => {
+        clearTimeout(recordingTimerRef.current);
+        cancelAnimationFrame(silenceFrameRef.current);
+        audioContextRef.current?.close?.();
+        audioContextRef.current = null;
+        stream.getTracks().forEach(track => track.stop());
+        audioStreamRef.current = null;
+        mediaRecorderRef.current = null;
+        setListening(false);
+
+        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || mimeType || 'audio/webm' });
+        audioChunksRef.current = [];
+        if (!blob.size || suppressVoiceSubmitRef.current) {
+          setVoiceMode('idle');
+          setVoiceStatus('');
+          return;
+        }
+
+        try {
+          setVoiceMode('transcribing');
+          setVoiceStatus(`Transcribing ${getSpeechLanguageLabel(getSpeechLocale())} voice…`);
+          const { text, trace_id } = await transcribeVoice(blob, getSpeechLocale());
+          const transcript = (text || '').trim();
+          if (!transcript) {
+            setVoiceMode('idle');
+            setVoiceStatus('No speech detected. Please try again.');
+            return;
+          }
+          await submitQuestion(transcript, { fromVoice: true, traceId: trace_id });
+        } catch (e) {
+          console.warn('Voice transcription failed:', e);
+          setVoiceStatus(e.message || 'Voice transcription failed. Please try again.');
+        } finally {
+          setVoiceMode('idle');
+        }
+      };
+
+      recorder.start();
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (AudioContext) {
+        const audioContext = new AudioContext();
+        const analyser = audioContext.createAnalyser();
+        const source = audioContext.createMediaStreamSource(stream);
+        let heardSpeech = false;
+        let silenceSince = null;
+
+        analyser.fftSize = 1024;
+        const data = new Uint8Array(analyser.fftSize);
+        source.connect(analyser);
+        audioContextRef.current = audioContext;
+        audioContext.resume?.().catch(() => {});
+
+        const watchSilence = () => {
+          analyser.getByteTimeDomainData(data);
+          let sum = 0;
+          for (const value of data) {
+            const centered = (value - 128) / 128;
+            sum += centered * centered;
+          }
+          const rms = Math.sqrt(sum / data.length);
+          if (rms > 0.018) {
+            heardSpeech = true;
+            silenceSince = null;
+          } else if (heardSpeech) {
+            if (!silenceSince) silenceSince = Date.now();
+            if (Date.now() - silenceSince > 1400) {
+              if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+              return;
+            }
+          }
+          silenceFrameRef.current = requestAnimationFrame(watchSilence);
+        };
+        silenceFrameRef.current = requestAnimationFrame(watchSilence);
+      }
+      setListening(true);
+      setVoiceMode('recording');
+      setVoiceStatus(`Recording ${getSpeechLanguageLabel(getSpeechLocale())} voice… I will send after you pause.`);
+      recordingTimerRef.current = setTimeout(() => {
+        if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+      }, 20000);
+    } catch (e) {
+      console.warn('Microphone permission/recording failed:', e);
+      setListening(false);
+      setVoiceMode('idle');
+      setVoiceStatus('Microphone permission was blocked. Allow microphone access in the browser, then try again.');
+    }
+  }, [submitQuestion]);
+
+  const toggleVoiceInput = useCallback(() => {
+    if (listening) {
+      if (voiceMode === 'recording') stopServerVoiceInput();
+      else stopListening();
+      return;
+    }
+    if (voiceMode === 'transcribing') {
+      return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      startServerVoiceInput();
+      return;
+    }
+    if (thinking || !selected.length || loadingSession) return;
+
+    recognitionRef.current?.abort?.();
+    suppressVoiceSubmitRef.current = false;
+    finalTranscriptRef.current = input.trim();
+    const speechLocale = getSpeechLocale();
+
+    if (isSafari() && !speechLocale.toLowerCase().startsWith('en')) {
+      startServerVoiceInput();
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = speechLocale;
+    recognition.continuous = !isSafari();
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    let hadError = false;
+
+    recognition.onresult = (event) => {
+      let interim = '';
+      let finalText = finalTranscriptRef.current;
+
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const transcript = event.results[i][0]?.transcript || '';
+        if (event.results[i].isFinal) {
+          finalText = `${finalText} ${transcript}`.trim();
+        } else {
+          interim = `${interim} ${transcript}`.trim();
+        }
+      }
+
+      finalTranscriptRef.current = finalText;
+      setInput(`${finalText}${interim ? ` ${interim}` : ''}`.trimStart());
+      setVoiceStatus('');
+    };
+
+    recognition.onerror = (event) => {
+      hadError = true;
+      if (event.error !== 'no-speech') console.warn('Voice input error:', event.error);
+      const msg = {
+        'not-allowed': 'Microphone permission was blocked. Allow microphone access in the browser, then try again.',
+        'service-not-allowed': isSafari() ? 'Safari blocked Web Speech. Switching to audio transcription…' : 'Speech recognition is blocked by this browser or network.',
+        'language-not-supported': `Speech recognition does not support ${recognition.lang} in this browser.`,
+        'no-speech': 'No speech detected. Try again and speak after the mic turns red.',
+        'audio-capture': 'No microphone was found by the browser.',
+      }[event.error] || `Voice input stopped: ${event.error}`;
+      setVoiceStatus(msg);
+      setListening(false);
+      if (event.error === 'service-not-allowed' && isSafari()) {
+        setTimeout(startServerVoiceInput, 250);
+      }
+    };
+    recognition.onend = () => {
+      setListening(false);
+      const spokenQuestion = finalTranscriptRef.current.trim();
+      if (!hadError && !suppressVoiceSubmitRef.current && spokenQuestion) {
+        setVoiceStatus('Sending voice question…');
+        submitQuestion(spokenQuestion, { fromVoice: true });
+      } else if (!hadError) {
+        setVoiceStatus('');
+      }
+    };
+
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+      setListening(true);
+      setVoiceMode('speech');
+      setVoiceStatus(`Listening (${recognition.lang})…`);
+    } catch (e) {
+      console.warn('Voice input could not start:', e);
+      recognitionRef.current = null;
+      setListening(false);
+      setVoiceMode('idle');
+      setVoiceStatus('Voice input could not start. Please try again.');
+    }
+  }, [input, listening, loadingSession, selected.length, startServerVoiceInput, stopListening, stopServerVoiceInput, submitQuestion, thinking, voiceMode]);
+
+  const send = useCallback(() => {
+    submitQuestion(input);
+  }, [input, submitQuestion]);
 
   if (!embeddedDocs.length) return (
     <div style={s.empty}>
@@ -246,6 +537,17 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
             })}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <label style={s.privacy} title="Redact common PII from chat prompts and retrieved context before sending to the model">
+              <input
+                type="checkbox"
+                checked={redactPii}
+                onChange={e=>{
+                  setRedactPii(e.target.checked);
+                  localStorage.setItem('redact_pii_chat', e.target.checked ? '1' : '0');
+                }}
+              />
+              <span>PII</span>
+            </label>
             {saving && <span style={{ fontSize: 10, color: 'var(--muted2)', opacity: .6 }}>saving…</span>}
             <span style={{ fontSize: 11, color: 'var(--muted2)' }}>{selected.length}/{embeddedDocs.length}</span>
             {activeSession && (
@@ -280,7 +582,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
                 {activeSession ? activeSession.title : 'Ask anything about your documents'}
               </p>
               <p style={{ color: 'var(--muted2)', fontSize: 13, marginTop: 4 }}>
-                Hybrid search · Gemini re-ranking · pgvector
+                Hybrid search · Gemini re-ranking · pgvector{redactPii ? ' · PII redaction on' : ''}
               </p>
               <div style={{ display: 'flex', gap: 7, marginTop: '1.25rem', flexWrap: 'wrap', justifyContent: 'center' }}>
                 {QUICK.map(q => <button key={q} style={s.quick} onClick={() => setInput(q)}>{q}</button>)}
@@ -307,12 +609,30 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
         </div>
 
         <div style={s.inputBar}>
-          <input style={s.input} value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-            placeholder={selected.length ? 'Ask a question about your documents…' : 'Select a document above first'}
-            disabled={thinking || !selected.length || loadingSession}
-          />
+          <div style={s.inputWrap}>
+            <input style={s.input} value={input}
+              onChange={e => { setInput(e.target.value); if (voiceStatus) setVoiceStatus(''); }}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+              placeholder={selected.length ? 'Ask a question about your documents…' : 'Select a document above first'}
+              disabled={thinking || !selected.length || loadingSession}
+            />
+            {voiceStatus && <span style={s.voiceStatus}>{voiceStatus}</span>}
+          </div>
+          <button
+            type="button"
+            style={{
+              ...s.voice,
+              ...(listening || voiceMode === 'transcribing' ? s.voiceOn : {}),
+              ...(!voiceSupported || thinking || !selected.length || loadingSession || voiceMode === 'transcribing' ? s.voiceOff : {}),
+              ...(!voiceSupported && selected.length && !thinking && !loadingSession && voiceMode !== 'transcribing' ? { cursor:'pointer', opacity:.75 } : {}),
+            }}
+            onClick={toggleVoiceInput}
+            disabled={thinking || !selected.length || loadingSession || voiceMode === 'transcribing'}
+            aria-label={listening ? 'Stop and send voice input' : 'Start voice input'}
+            title={listening ? 'Stop and send voice question' : 'Speak and send your question'}
+          >
+            {voiceMode === 'transcribing' ? '…' : listening ? '■' : '🎙'}
+          </button>
           <button
             style={{ ...s.send, ...(input.trim() && !thinking && selected.length && !loadingSession ? s.sendOn : s.sendOff) }}
             onClick={send}
@@ -504,6 +824,7 @@ const s = {
   main:          { flex:1, display:'flex', flexDirection:'column', overflow:'hidden' },
   topBar:        { display:'flex', alignItems:'center', gap:7, padding:'8px 12px', background:'var(--s1)', borderBottom:'1px solid var(--b1)', flexWrap:'wrap', flexShrink:0 },
   sidebarToggle: { fontSize:11.5, padding:'4px 8px', background:'var(--s3)', border:'1px solid var(--b2)', color:'var(--muted2)', borderRadius:6, cursor:'pointer', flexShrink:0 },
+  privacy:       { display:'flex', alignItems:'center', gap:4, fontSize:10.5, color:'#fbbf24', border:'1px solid rgba(251,191,36,.25)', background:'rgba(251,191,36,.06)', padding:'3px 7px', borderRadius:20, cursor:'pointer', flexShrink:0 },
   chips:         { display:'flex', gap:5, flex:1, flexWrap:'wrap' },
   chip:          { fontSize:11.5, padding:'3px 10px', borderRadius:20, cursor:'pointer', fontWeight:500, transition:'all .15s', border:'1px solid transparent', whiteSpace:'nowrap' },
   chipOn:        { background:'rgba(74,222,128,.12)', color:'#4ade80', border:'1px solid rgba(74,222,128,.3)', fontWeight:700 },
@@ -518,7 +839,12 @@ const s = {
   bubUser:       { background:'#15803d', color:'#fff', borderBottomRightRadius:3 },
   bubAI:         { background:'var(--s2)', border:'1px solid var(--b1)', borderBottomLeftRadius:3, color:'var(--tx)' },
   inputBar:      { display:'flex', gap:8, padding:'10px 14px', borderTop:'1px solid var(--b1)', background:'var(--s1)', flexShrink:0 },
-  input:         { flex:1, padding:'10px 14px', fontSize:13.5, background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:'var(--r)', color:'var(--tx)', outline:'none' },
+  inputWrap:     { flex:1, minWidth:0, display:'flex', flexDirection:'column', gap:5 },
+  input:         { width:'100%', padding:'10px 14px', fontSize:13.5, background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:'var(--r)', color:'var(--tx)', outline:'none' },
+  voice:         { width:40, height:40, border:'1px solid var(--b2)', borderRadius:'var(--r)', background:'var(--s3)', color:'var(--tx)', cursor:'pointer', fontSize:15, display:'flex', alignItems:'center', justifyContent:'center', transition:'all .15s', flexShrink:0 },
+  voiceOn:       { background:'rgba(220,38,38,.16)', border:'1px solid rgba(248,113,113,.45)', color:'#f87171', boxShadow:'0 0 0 3px rgba(248,113,113,.08)' },
+  voiceOff:      { color:'var(--muted2)', opacity:.55, cursor:'not-allowed' },
+  voiceStatus:   { color:'var(--muted2)', fontSize:10.5, lineHeight:1.25, paddingLeft:2 },
   send:          { padding:'10px 16px', border:'none', borderRadius:'var(--r)', cursor:'pointer', fontSize:16, transition:'all .15s', flexShrink:0 },
   sendOn:        { background:'#15803d', color:'#fff' },
   sendOff:       { background:'var(--s3)', color:'var(--muted2)', cursor:'not-allowed' },

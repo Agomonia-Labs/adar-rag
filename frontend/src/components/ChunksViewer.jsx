@@ -13,6 +13,7 @@ export default function ChunksViewer({ docId, onClose }) {
   const [error,   setError]   = useState('');
   const [selected,setSelected]= useState([]);
   const [summary, setSummary] = useState(null);
+  const [redactPii,setRedactPii] = useState(() => localStorage.getItem('redact_pii_chunks') === '1');
 
   useEffect(()=>{
     setLoading(true);
@@ -21,10 +22,11 @@ export default function ChunksViewer({ docId, onClose }) {
 
   const select = async idx => {
     setActive(idx); setCLoad(true); setContent('');
-    try{ const d=await getChunkContent(docId,idx); setContent(d.content); }
+    try{ const d=await getChunkContent(docId,idx,{redactPii}); setContent(d.content); }
     catch(e){ setContent(`Error: ${e.message}`); }
     finally{ setCLoad(false); }
   };
+  useEffect(()=>{ if(active!==null) select(active); }, [redactPii]);
   const toggleSel = idx => setSelected(p=>p.includes(idx)?p.filter(x=>x!==idx):[...p,idx]);
 
   return (
@@ -36,6 +38,17 @@ export default function ChunksViewer({ docId, onClose }) {
             <p style={s.hdrS}>{chunks.length} chunks · {meta?.file_type?.toUpperCase()}</p>
           </div>
           <div style={{display:'flex',gap:8}}>
+            <label style={s.privacy} title="Redact common PII while viewing chunk text">
+              <input
+                type="checkbox"
+                checked={redactPii}
+                onChange={e=>{
+                  setRedactPii(e.target.checked);
+                  localStorage.setItem('redact_pii_chunks', e.target.checked ? '1' : '0');
+                }}
+              />
+              <span>PII</span>
+            </label>
             <button style={s.sumBtn} onClick={()=>setSummary({all:true})}>📝 Summarize all</button>
             {selected.length>0 && <button style={{...s.sumBtn,...s.sumBtnOn}} onClick={()=>setSummary({sel:true})}>📝 {selected.length} selected</button>}
             <button style={s.closeBtn} onClick={onClose}>✕</button>
@@ -99,6 +112,7 @@ const s={
   hdrT:    {fontWeight:600,fontSize:14,color:'var(--tx)'},
   hdrS:    {fontSize:12,color:'var(--muted2)',marginTop:2},
   sumBtn:  {padding:'5px 10px',fontSize:11.5,fontWeight:500,background:'transparent',border:'1px solid var(--b2)',color:'var(--muted2)',borderRadius:'var(--r)',cursor:'pointer'},
+  privacy: {display:'flex',alignItems:'center',gap:4,padding:'5px 8px',fontSize:11,color:'#fbbf24',background:'rgba(251,191,36,.06)',border:'1px solid rgba(251,191,36,.25)',borderRadius:'var(--r)',cursor:'pointer'},
   sumBtnOn:{background:'rgba(74,222,128,.1)',borderColor:'rgba(74,222,128,.3)',color:'#4ade80'},
   closeBtn:{background:'none',border:'none',color:'var(--muted2)',cursor:'pointer',fontSize:18,padding:4},
   body:    {flex:1,display:'flex',overflow:'hidden'},

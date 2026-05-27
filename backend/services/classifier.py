@@ -96,7 +96,7 @@ Classify this document and respond ONLY with valid JSON:
 {{
   "doc_type": "<one of: {', '.join(DOCUMENT_TYPES)}>",
   "doc_domain": "<one of: {', '.join(DOMAINS)}>",
-  "doc_language": "<ISO 639-1 language code, e.g. en, bn, fr>",
+  "doc_language": "<ISO 639-1 language code, e.g. en, es, bn, fr>",
   "confidence": <0.0-1.0>,
   "reasoning": "<one sentence>"
 }}"""

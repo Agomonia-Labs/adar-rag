@@ -1,5 +1,6 @@
 export const LANGUAGES = [
   { code: 'en', label: 'English', native: 'English', dir: 'ltr' },
+  { code: 'es', label: 'Spanish', native: 'Español', dir: 'ltr' },
   { code: 'bn', label: 'Bengali', native: 'বাংলা', dir: 'ltr' },
   { code: 'hi', label: 'Hindi', native: 'हिन्दी', dir: 'ltr' },
   { code: 'ar', label: 'Arabic', native: 'العربية', dir: 'rtl' },
@@ -18,6 +19,19 @@ export const STRINGS = {
     plans: 'Plans',
     signOut: 'Sign out',
     language: 'Language',
+  },
+  es: {
+    loading: 'Cargando আদর DocIntel…',
+    brandTag: 'Inteligencia documental',
+    documents: 'Documentos',
+    chat: 'Chat',
+    workspaces: 'Espacios de trabajo',
+    admin: 'Admin',
+    embedFirst: 'Incrusta al menos un documento primero',
+    usage: 'Uso',
+    plans: 'Planes',
+    signOut: 'Cerrar sesión',
+    language: 'Idioma',
   },
   bn: {
     loading: 'আদর DocIntel লোড হচ্ছে…',

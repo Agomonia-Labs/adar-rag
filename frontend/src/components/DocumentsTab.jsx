@@ -45,7 +45,7 @@ const DOMAIN_COLORS = {
 const DOMAIN_ICONS = {
   legal:'🔵', finance:'🟢', hr:'🟣', medical:'🔴', research:'🟡', operations:'🟢', general:'⚪',
 };
-const LANGUAGE_LABELS = { en:'English', bn:'বাংলা', hi:'हिन्दी', ar:'العربية' };
+const LANGUAGE_LABELS = { en:'English', es:'Español', bn:'বাংলা', hi:'हिन्दी', ar:'العربية' };
 const fmtSz = b => b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
 
 export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
@@ -67,6 +67,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
   const [filterType,  setFilterType]  = useState('');  // doc_type filter// date|name|size|status
   const [newTagName,  setNewTagName]  = useState('');
   const [showTagMgr,  setShowTagMgr]  = useState(false);
+  const [redactPiiOnUpload, setRedactPiiOnUpload] = useState(() => localStorage.getItem('redact_pii_upload') === '1');
 
   // Workspace role enforcement
   const wsRole    = activeWorkspace?.my_role || null;
@@ -112,10 +113,14 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
     const ex = docs.filter(d=>!['error','deleted'].includes(d.status)).length;
     if (ex+files.length>MAX_FILES){ toast(`Max ${MAX_FILES} docs. Have ${ex}; can add ${MAX_FILES-ex} more.`,'error'); return; }
     setBusy(true);
-    try{ await uploadDocuments(files, activeWorkspace?.id || null); await loadDocs(); toast(`${files.length} file${files.length>1?'s':''} uploaded`,'success'); }
+    try{
+      await uploadDocuments(files, activeWorkspace?.id || null, { redactPii: redactPiiOnUpload });
+      await loadDocs();
+      toast(`${files.length} file${files.length>1?'s':''} uploaded${redactPiiOnUpload ? ' with PII redaction' : ''}`,'success');
+    }
     catch(e){ toast(e.message,'error'); }
     finally{ setBusy(false); }
-  }, [docs, loadDocs]);
+  }, [docs, loadDocs, activeWorkspace?.id, redactPiiOnUpload]);
 
   const handleEmbed  = async id => { try{ await triggerEmbed(id); await loadDocs(); toast('Embedding started','info'); }catch(e){ toast(e.message,'error'); } };
   const handleView   = async id => { try{ const{url}=await getViewUrl(id); window.open(url,'_blank'); }catch(e){ toast(e.message,'error'); } };
@@ -178,6 +183,17 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
           <div style={{fontSize:30,marginBottom:6}}>⬆</div>
           <p style={{fontWeight:600,fontSize:13,color:'#4ade80'}}>{drag?'Drop to upload':'Drop files or click to upload'}</p>
           <p style={{fontSize:11,color:'var(--muted2)',marginTop:3}}>PDF · DOCX · CSV · Images · TXT &nbsp;·&nbsp; {MAX_FILES-total} slots remaining</p>
+          <label onClick={e=>e.stopPropagation()} style={s.privacyToggle}>
+            <input
+              type="checkbox"
+              checked={redactPiiOnUpload}
+              onChange={e=>{
+                setRedactPiiOnUpload(e.target.checked);
+                localStorage.setItem('redact_pii_upload', e.target.checked ? '1' : '0');
+              }}
+            />
+            <span>Redact PII before chunking and embedding</span>
+          </label>
         </div>
       )}
 
@@ -353,6 +369,11 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
             }
             <span style={s.mt}>{(doc.file_type||'?').toUpperCase()}</span>
             <span style={s.mt}>🌐 {LANGUAGE_LABELS[doc.doc_language] || doc.doc_language || 'English'}</span>
+            {doc.doc_metadata?.pii_redaction?.enabled && (
+              <span style={{...s.mt, color:'#fbbf24', borderColor:'rgba(251,191,36,.25)', background:'rgba(251,191,36,.08)'}}>
+                🔒 PII redacted
+              </span>
+            )}
             <span style={s.mt}>{fmtSz(doc.file_size)}</span>
             {doc.chunk_count>0 && <span style={s.mt}>{doc.chunk_count} chunks</span>}
             {(() => {
@@ -447,6 +468,7 @@ const s={
   multiBtn:{background:'rgba(74,222,128,.1)',color:'#4ade80',border:'1px solid rgba(74,222,128,.25)',borderRadius:20,padding:'6px 14px',fontSize:12,fontWeight:600,cursor:'pointer'},
   dz:      {border:'1.5px dashed rgba(74,222,128,.3)',borderRadius:'var(--rl)',padding:'1.75rem',textAlign:'center',cursor:'pointer',background:'rgba(74,222,128,.04)',marginBottom:10,transition:'all .15s',display:'flex',flexDirection:'column',alignItems:'center'},
   dzOn:    {borderColor:'#4ade80',background:'rgba(74,222,128,.08)'},
+  privacyToggle:{display:'flex',alignItems:'center',gap:6,marginTop:10,fontSize:11.5,color:'var(--tx2)',cursor:'pointer',padding:'5px 10px',border:'1px solid rgba(251,191,36,.25)',borderRadius:20,background:'rgba(251,191,36,.06)'},
   hint:    {display:'flex',gap:12,marginBottom:10,fontSize:11.5,color:'var(--muted2)',flexWrap:'wrap'},
   list:    {display:'flex',flexDirection:'column',gap:8},
   ctr:     {textAlign:'center',padding:'3rem',color:'var(--muted2)'},

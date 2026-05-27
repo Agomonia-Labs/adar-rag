@@ -35,9 +35,10 @@ export async function getMe() {
 }
 
 // ── Documents ─────────────────────────────────────────────────────────────────
-export async function uploadDocuments(files, workspaceId = null) {
+export async function uploadDocuments(files, workspaceId = null, options = {}) {
   const form = new FormData();
   for (const f of files) form.append('files', f);
+  if (options.redactPii) form.append('redact_pii', 'true');
   const url = workspaceId
     ? `${BASE}/documents/upload?workspace_id=${workspaceId}`
     : `${BASE}/documents/upload`;
@@ -56,8 +57,9 @@ export async function getChunks(docId) {
   return handleRes(await fetch(`${BASE}/documents/${docId}/chunks`, { headers: authHdr() }));
 }
 
-export async function getChunkContent(docId, chunkIndex) {
-  return handleRes(await fetch(`${BASE}/documents/${docId}/chunks/${chunkIndex}`, { headers: authHdr() }));
+export async function getChunkContent(docId, chunkIndex, options = {}) {
+  const qs = options.redactPii ? '?redact_pii=true' : '';
+  return handleRes(await fetch(`${BASE}/documents/${docId}/chunks/${chunkIndex}${qs}`, { headers: authHdr() }));
 }
 
 export async function triggerEmbed(docId) {
@@ -69,12 +71,14 @@ export async function deleteDocument(docId) {
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
-export async function streamChat({ question, documentIds, document_ids, history, workspaceId = null }, { onToken, onDone, onError }) {
+export async function streamChat({ question, documentIds, document_ids, history, workspaceId = null, traceId = null, redactPii = false }, { onToken, onDone, onError }) {
   const docIds = documentIds || document_ids;  // accept both forms
+  const headers = {'Content-Type':'application/json', ...authHdr()};
+  if (traceId) headers['X-Trace-Id'] = traceId;
   const res = await fetch(`${STREAM_BASE}/chat/stream`, {
     method:'POST',
-    headers:{'Content-Type':'application/json', ...authHdr()},
-    body: JSON.stringify({ question, document_ids: docIds, history, workspace_id: workspaceId }),
+    headers,
+    body: JSON.stringify({ question, document_ids: docIds, history, workspace_id: workspaceId, redact_pii: redactPii }),
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
@@ -97,6 +101,21 @@ export async function streamChat({ question, documentIds, document_ids, history,
       if (ev.type === 'error') onError?.(ev.error);
     }
   }
+}
+
+export async function transcribeVoice(audioBlob, language = '') {
+  const form = new FormData();
+  const ext = audioBlob.type.includes('mp4') ? 'mp4'
+    : audioBlob.type.includes('ogg') ? 'ogg'
+    : audioBlob.type.includes('wav') ? 'wav'
+    : 'webm';
+  form.append('audio', audioBlob, `voice-input.${ext}`);
+  if (language) form.append('language', language);
+  return handleRes(await fetch(`${BASE}/voice/transcribe`, {
+    method:'POST',
+    headers: authHdr(),
+    body: form,
+  }));
 }
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
@@ -127,9 +146,24 @@ export async function adminDeleteDocument(docId) {
   return handleRes(await fetch(`${BASE}/admin/documents/${docId}`, { method:'DELETE', headers: authHdr() }));
 }
 
+export async function fetchTraces({ limit = 50, requestType = '', status = '' } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (requestType) params.set('request_type', requestType);
+  if (status) params.set('status', status);
+  return handleRes(await fetch(`${BASE}/traces/?${params.toString()}`, { headers: authHdr() }));
+}
+
+export async function fetchTraceSummary() {
+  return handleRes(await fetch(`${BASE}/traces/summary`, { headers: authHdr() }));
+}
+
+export async function fetchTrace(traceId) {
+  return handleRes(await fetch(`${BASE}/traces/${traceId}`, { headers: authHdr() }));
+}
+
 // ── Summarize ─────────────────────────────────────────────────────────────────
 export async function streamSummary(
-  { doc_id, document_ids, summary_type, custom_prompt, chunk_indices },
+  { doc_id, document_ids, summary_type, custom_prompt, chunk_indices, redact_pii = false, redactPii = false },
   { onToken, onMeta, onDone, onError }
 ) {
   const isMulti = !!document_ids;
@@ -138,8 +172,8 @@ export async function streamSummary(
     : `${STREAM_BASE}/summarize/document/${doc_id}/stream`;
 
   const body = isMulti
-    ? { document_ids, summary_type, custom_prompt }
-    : { summary_type, custom_prompt, chunk_indices: chunk_indices || [] };
+    ? { document_ids, summary_type, custom_prompt, redact_pii: redact_pii || redactPii }
+    : { summary_type, custom_prompt, chunk_indices: chunk_indices || [], redact_pii: redact_pii || redactPii };
 
   const res = await fetch(url, {
     method:  'POST',
@@ -232,12 +266,12 @@ export async function deleteSession(id) {
 }
 
 // ── Document comparison ────────────────────────────────────────────────────────
-export async function compareDocuments(doc_id_1, doc_id_2, callbacks) {
+export async function compareDocuments(doc_id_1, doc_id_2, callbacks, options = {}) {
   const { onStatus, onResult, onError } = callbacks;
   const res = await fetch(`${BASE}/compare/stream`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json', ...authHdr() },
-    body:    JSON.stringify({ document_id_1: doc_id_1, document_id_2: doc_id_2 }),
+    body:    JSON.stringify({ document_id_1: doc_id_1, document_id_2: doc_id_2, redact_pii: !!options.redactPii }),
   });
   if (!res.ok) { onError?.(`HTTP ${res.status}`); return; }
   const reader  = res.body.getReader();

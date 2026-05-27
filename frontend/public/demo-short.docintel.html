@@ -227,7 +227,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
               <span style="font-size:10px;padding:3px 10px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.25);font-weight:600">Gemini Embeddings</span>
               <span style="font-size:10px;padding:3px 10px;border-radius:20px;background:rgba(96,165,250,.1);color:#60a5fa;border:1px solid rgba(96,165,250,.25);font-weight:600">pgvector</span>
-              <span style="font-size:10px;padding:3px 10px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.25);font-weight:600">বাংলা · हिंदी · العربية</span>
+              <span style="font-size:10px;padding:3px 10px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.25);font-weight:600">5 languages · English · Español · বাংলা · हिंदी · العربية</span>
               <span style="font-size:10px;padding:3px 10px;border-radius:20px;background:rgba(192,132,252,.1);color:#c084fc;border:1px solid rgba(192,132,252,.25);font-weight:600">FastAPI</span>
               <span style="font-size:10px;padding:3px 10px;border-radius:20px;background:rgba(251,191,36,.1);color:#fbbf24;border:1px solid rgba(251,191,36,.25);font-weight:600">Cloud Run</span>
             </div>
@@ -242,11 +242,12 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
         <div class="narration">
           <div class="slide-num">Step 1</div>
           <div class="slide-title">Upload → Classify → Embed</div>
-          <div class="slide-sub">Drop any file and the platform handles the rest automatically — extraction, document classification, language detection, chunking, GCS storage, and vector embedding via Gemini.</div>
+          <div class="slide-sub">Drop any file and the platform handles the rest automatically — extraction, optional PII redaction, document classification, language detection, chunking, GCS storage, and vector embedding via Gemini.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">⬆</span><span>PDF, DOCX, CSV, images, TXT — drag-and-drop or click to upload</span></div>
             <div class="feature-item"><span class="feature-icon">✂</span><span>Auto-chunked into 350-word windows with 60-word overlap, stored in GCS</span></div>
-            <div class="feature-item"><span class="feature-icon">🌐</span><span>Detects document type and language — Bengali, Hindi, Arabic, English</span></div>
+            <div class="feature-item"><span class="feature-icon">🔒</span><span>PII redaction before chunking and embedding — emails, phones, SSNs, cards, DOB, bank IDs, IPs</span></div>
+            <div class="feature-item"><span class="feature-icon">🌐</span><span>Detects document type and language — English, Spanish, Bengali, Hindi, Arabic</span></div>
             <div class="feature-item"><span class="feature-icon">⚡</span><span>One-click embedding — Gemini generates 768-dim vectors, stored in pgvector</span></div>
             <div class="feature-item"><span class="feature-icon">↻</span><span>Error recovery — Retry button re-downloads from GCS and re-runs the full pipeline</span></div>
           </div>
@@ -258,6 +259,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <!-- Pipeline steps -->
             <div style="display:flex;align-items:center;gap:6px;font-size:10px;color:#9ca3af;margin-bottom:4px">
               <span style="padding:2px 8px;background:rgba(255,255,255,.06);border-radius:4px">Upload</span><span>→</span>
+              <span style="padding:2px 8px;background:rgba(251,191,36,.08);color:#fbbf24;border-radius:4px">Redact PII</span><span>→</span>
               <span style="padding:2px 8px;background:rgba(255,255,255,.06);border-radius:4px">Classify</span><span>→</span>
               <span style="padding:2px 8px;background:rgba(255,255,255,.06);border-radius:4px">Chunk</span><span>→</span>
               <span style="padding:2px 8px;background:rgba(255,255,255,.06);border-radius:4px">Embed</span><span>→</span>
@@ -271,7 +273,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
                 <div style="font-size:11px;font-weight:600;color:#f0fdf4;margin-bottom:3px">Q3_Financial_Report.pdf</div>
                 <div style="display:flex;gap:5px;align-items:center">
                   <span style="font-size:9px;padding:1px 7px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.2);font-weight:600">Embedded ✓</span>
-                  <span style="font-size:9px;color:#6b7280">PDF · Finance · English · 47 chunks</span>
+                  <span style="font-size:9px;color:#6b7280">PDF · Finance · English · 47 chunks · PII redacted</span>
                 </div>
               </div>
             </div>
@@ -307,14 +309,15 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Step 2</div>
-          <div class="slide-title">Semantic Chat</div>
-          <div class="slide-sub">Ask questions in English, Bengali, Hindi, Arabic, or the language of the document. Hybrid search combines vector similarity with BM25 keyword matching, then Gemini re-ranks results for precision.</div>
+          <div class="slide-title">Voice + Semantic Chat</div>
+          <div class="slide-sub">Ask by typing or speaking in English, Spanish, Bengali, Hindi, Arabic, or the language of the document. Privacy mode can redact PII from the question, chat history, retrieved context, trace previews, and source previews before model use.</div>
           <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">🎙</span><span>Spanish microphone input — Web Speech where available, Gemini audio transcription fallback everywhere else</span></div>
+            <div class="feature-item"><span class="feature-icon">🔒</span><span>PII privacy toggle — masks structured identifiers even when OCR inserts spaces</span></div>
             <div class="feature-item"><span class="feature-icon">🔍</span><span>Hybrid search — RRF fusion of vector + BM25, then Gemini re-ranking</span></div>
             <div class="feature-item"><span class="feature-icon">💬</span><span>Streaming responses with markdown, tables, and source citations</span></div>
             <div class="feature-item"><span class="feature-icon">🌐</span><span>Response language follows the document while preserving exact names, dates, and citations</span></div>
-            <div class="feature-item"><span class="feature-icon">📚</span><span>Persistent chat sessions — history saved, searchable, resumable</span></div>
-            <div class="feature-item"><span class="feature-icon">👍</span><span>Thumbs up/down feedback per message, exportable chat history</span></div>
+            <div class="feature-item"><span class="feature-icon">📚</span><span>Persistent sessions, feedback, evaluation, and exportable chat history</span></div>
           </div>
           <button class="btn-speak" onclick="speakSlide(2)">🔊 Play narration</button>
         </div>
@@ -323,15 +326,22 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
           <div class="mockup-body" style="display:flex;flex-direction:column;gap:8px">
             <div style="display:flex;justify-content:flex-end">
               <div style="background:rgba(74,222,128,.12);border:1px solid rgba(74,222,128,.2);border-radius:10px 10px 2px 10px;padding:8px 12px;max-width:75%;font-size:11px;color:#f0fdf4">
-                What was the revenue growth in Q3 compared to Q2?
+                ¿Cuál fue el crecimiento de ingresos en Q3 frente a Q2?
               </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:7px;margin:0 0 8px 32px;color:#4ade80;font-size:10px">
+              <span style="width:24px;height:24px;border-radius:8px;background:rgba(220,38,38,.16);border:1px solid rgba(248,113,113,.45);display:flex;align-items:center;justify-content:center;color:#f87171">■</span>
+              <span>Recording Spanish voice… sends after pause</span>
+            </div>
+            <div style="display:flex;justify-content:flex-end;margin-bottom:2px">
+              <span style="font-size:9px;padding:2px 8px;border-radius:20px;background:rgba(251,191,36,.08);color:#fbbf24;border:1px solid rgba(251,191,36,.25)">🔒 PII privacy on</span>
             </div>
             <div style="display:flex;gap:8px;align-items:flex-start">
               <div style="width:24px;height:24px;border-radius:50%;background:rgba(74,222,128,.15);border:1px solid rgba(74,222,128,.3);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">📚</div>
               <div style="background:rgba(255,255,255,.04);border:0.5px solid rgba(255,255,255,.1);border-radius:2px 10px 10px 10px;padding:10px 12px;flex:1;font-size:11px;color:#d1d5db;line-height:1.7">
-                Based on <strong style="color:#4ade80">Q3_Financial_Report.pdf</strong>, revenue grew <strong style="color:#f0fdf4">18.4%</strong> from Q2 to Q3, reaching <strong style="color:#f0fdf4">$4.2M</strong>.<br/><br/>
+                Según <strong style="color:#4ade80">Q3_Financial_Report.pdf</strong>, los ingresos crecieron <strong style="color:#f0fdf4">18.4%</strong> de Q2 a Q3, alcanzando <strong style="color:#f0fdf4">$4.2M</strong>.<br/><br/>
                 <table style="border-collapse:collapse;width:100%;font-size:10px">
-                  <tr style="border-bottom:1px solid rgba(255,255,255,.1)"><th style="text-align:left;color:#6b7280;padding:2px 6px">Quarter</th><th style="color:#6b7280;padding:2px 6px">Revenue</th><th style="color:#6b7280;padding:2px 6px">Growth</th></tr>
+                  <tr style="border-bottom:1px solid rgba(255,255,255,.1)"><th style="text-align:left;color:#6b7280;padding:2px 6px">Trimestre</th><th style="color:#6b7280;padding:2px 6px">Ingresos</th><th style="color:#6b7280;padding:2px 6px">Crecimiento</th></tr>
                   <tr><td style="padding:2px 6px;color:#9ca3af">Q2 2026</td><td style="padding:2px 6px;text-align:center;color:#f0fdf4">$3.5M</td><td style="padding:2px 6px;text-align:center;color:#9ca3af">—</td></tr>
                   <tr><td style="padding:2px 6px;color:#9ca3af">Q3 2026</td><td style="padding:2px 6px;text-align:center;color:#4ade80;font-weight:700">$4.2M</td><td style="padding:2px 6px;text-align:center;color:#4ade80">+18.4%</td></tr>
                 </table>
@@ -348,6 +358,11 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
                 </div>
               </div>
             </div>
+            <div class="mock-input-row">
+              <input class="mock-input" value="¿Cuál fue el crecimiento de ingresos en Q3?" readonly>
+              <button class="mock-send" style="background:rgba(220,38,38,.16);border:1px solid rgba(248,113,113,.45);color:#f87171">🎙</button>
+              <button class="mock-send">➤</button>
+            </div>
           </div>
         </div>
       </div>
@@ -359,11 +374,12 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
         <div class="narration">
           <div class="slide-num">Step 3</div>
           <div class="slide-title">Summarise & Compare</div>
-          <div class="slide-sub">Generate five types of summaries for any document, streamed in real time and matched to the document language. Select two documents to compare them side by side with structured analysis.</div>
+          <div class="slide-sub">Generate five types of summaries for any document, streamed in real time and matched to the document language. Summary and comparison privacy toggles redact PII before content is sent to Gemini.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">📝</span><span>5-type streaming summaries — brief, detailed, bullets, executive, key findings</span></div>
             <div class="feature-item"><span class="feature-icon">⇄</span><span>Document comparison — select 2 docs, get a structured side-by-side analysis</span></div>
-            <div class="feature-item"><span class="feature-icon">🌐</span><span>Multilingual summaries and comparisons for Bengali, Hindi, Arabic, and English</span></div>
+            <div class="feature-item"><span class="feature-icon">🌐</span><span>Multilingual summaries and comparisons for English, Spanish, Bengali, Hindi, and Arabic</span></div>
+            <div class="feature-item"><span class="feature-icon">🔒</span><span>PII-safe summaries — email, phone, SSN, card, DOB, bank/account, and IP patterns are masked</span></div>
             <div class="feature-item"><span class="feature-icon">📦</span><span>Multi-doc summarisation — summarise a batch of selected documents at once</span></div>
             <div class="feature-item"><span class="feature-icon">↓</span><span>Export summaries and chat history as Markdown files</span></div>
           </div>
@@ -554,18 +570,20 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Security & Ops</div>
-          <div class="slide-title">Admin, Audit & Security</div>
-          <div class="slide-sub">Built for enterprise: every account verifies their email before login, every action is logged to a queryable audit trail, and admins get a full dashboard to manage users, documents, and subscriptions.</div>
+          <div class="slide-title">Admin, Audit & Traceability</div>
+          <div class="slide-sub">For serious document AI, the final answer is not enough. Teams need privacy, traceability, and proof: what was redacted, which sources were used, what prompt was sent, what tools ran, and where an error happened.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">📧</span><span>Email verification — all new accounts verify before first login</span></div>
             <div class="feature-item"><span class="feature-icon">🔍</span><span>Audit log — every upload, login, invite, and delete logged with IP and timestamp</span></div>
-            <div class="feature-item"><span class="feature-icon">⚙</span><span>Admin dashboard — users, documents, tier management, audit log filter</span></div>
+            <div class="feature-item"><span class="feature-icon">🔒</span><span>PII redaction — upload-time and runtime privacy modes for chunks, chat, summaries, and traces</span></div>
+            <div class="feature-item"><span class="feature-icon">🧭</span><span>Trace viewer — select a question to inspect spans, retrieved chunks, prompts, and LLM/tool events</span></div>
+            <div class="feature-item"><span class="feature-icon">🧩</span><span>How it works — X-Trace-Id links trace flows, spans, and LLM events for one question</span></div>
             <div class="feature-item"><span class="feature-icon">🔔</span><span>Email notifications — embedding complete, workspace invite, password reset</span></div>
           </div>
           <button class="btn-speak" onclick="speakSlide(7)">🔊 Play narration</button>
         </div>
         <div class="mockup">
-          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">⚙ Admin → Audit Log</div></div>
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">⚙ Admin → Traces</div></div>
           <div class="mockup-body" style="display:flex;flex-direction:column;gap:8px">
             <!-- Stats bar -->
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
@@ -582,28 +600,29 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
                 <div style="font-size:8.5px;color:#6b7280;text-transform:uppercase">Pro users</div>
               </div>
             </div>
-            <!-- Audit log -->
+            <!-- Trace viewer -->
             <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.07);border-radius:6px;overflow:hidden;flex:1">
-              <div style="background:rgba(255,255,255,.04);padding:5px 8px;font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase">Recent audit events</div>
+              <div style="background:rgba(255,255,255,.04);padding:5px 8px;font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase">Question traces</div>
               <div style="padding:5px 8px;border-top:0.5px solid rgba(255,255,255,.05);display:grid;grid-template-columns:80px 1fr 90px;gap:4px;align-items:center;font-size:9.5px">
                 <span style="color:#6b7280">10:14 PM</span>
-                <span style="color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">admin@co.com</span>
-                <span style="padding:1px 6px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;font-size:8.5px;font-weight:600">upload_doc</span>
+                <span style="color:#f0fdf4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Q3 revenue?</span>
+                <span style="padding:1px 6px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;font-size:8.5px;font-weight:600">success</span>
               </div>
               <div style="padding:5px 8px;border-top:0.5px solid rgba(255,255,255,.05);display:grid;grid-template-columns:80px 1fr 90px;gap:4px;align-items:center;font-size:9.5px;background:rgba(255,255,255,.01)">
                 <span style="color:#6b7280">10:08 PM</span>
-                <span style="color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">analyst@co.com</span>
-                <span style="padding:1px 6px;border-radius:20px;background:rgba(96,165,250,.1);color:#60a5fa;font-size:8.5px;font-weight:600">login</span>
+                <span style="color:#f0fdf4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Spanish contract summary</span>
+                <span style="padding:1px 6px;border-radius:20px;background:rgba(96,165,250,.1);color:#60a5fa;font-size:8.5px;font-weight:600">voice</span>
               </div>
               <div style="padding:5px 8px;border-top:0.5px solid rgba(255,255,255,.05);display:grid;grid-template-columns:80px 1fr 90px;gap:4px;align-items:center;font-size:9.5px">
                 <span style="color:#6b7280">9:55 PM</span>
-                <span style="color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">admin@co.com</span>
-                <span style="padding:1px 6px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;font-size:8.5px;font-weight:600">invite_member</span>
+                <span style="color:#f0fdf4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Invoice terms?</span>
+                <span style="padding:1px 6px;border-radius:20px;background:rgba(251,191,36,.1);color:#fbbf24;font-size:8.5px;font-weight:600">review</span>
               </div>
-              <div style="padding:5px 8px;border-top:0.5px solid rgba(255,255,255,.05);display:grid;grid-template-columns:80px 1fr 90px;gap:4px;align-items:center;font-size:9.5px;background:rgba(255,255,255,.01)">
-                <span style="color:#6b7280">9:31 PM</span>
-                <span style="color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">admin@co.com</span>
-                <span style="padding:1px 6px;border-radius:20px;background:rgba(248,113,113,.1);color:#f87171;font-size:8.5px;font-weight:600">delete_doc</span>
+              <div style="padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);font-size:9px;color:#9ca3af;background:rgba(74,222,128,.04)">
+                Why it matters: verify sources, prompts, tool calls, model output, and failure point
+              </div>
+              <div style="padding:5px 8px;border-top:0.5px solid rgba(255,255,255,.05);font-size:8.5px;color:#6b7280;background:rgba(255,255,255,.02);font-family:monospace">
+                X-Trace-Id → trace_flows → trace_spans → trace_llm_events
               </div>
             </div>
           </div>
@@ -617,12 +636,12 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
         <div class="narration">
           <div class="slide-num">Infrastructure</div>
           <div class="slide-title">Production-Ready Stack</div>
-          <div class="slide-sub">Deployed on Google Cloud — Cloud Run for the backend, Firebase Hosting for the frontend, Cloud SQL with pgvector for semantic search, and GCS for document storage. Rate limiting, audit logging, and tiered usage enforcement built in.</div>
+          <div class="slide-sub">Deployed on Google Cloud — Cloud Run for the backend, Firebase Hosting for the frontend, Cloud SQL with pgvector for semantic search, and GCS for document storage. Production migrations, health checks, tracing, and tiered usage enforcement are built in.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">☁</span><span>FastAPI on Cloud Run · React on Firebase Hosting · PostgreSQL + pgvector</span></div>
             <div class="feature-item"><span class="feature-icon">🔐</span><span>JWT auth · bcrypt passwords · rate limiting · IP audit logging</span></div>
             <div class="feature-item"><span class="feature-icon">📊</span><span>Usage metering per user — queries, embeddings, summaries tracked daily</span></div>
-            <div class="feature-item"><span class="feature-icon">🌐</span><span>Custom domain · SSL · Secret Manager for all credentials</span></div>
+            <div class="feature-item"><span class="feature-icon">🧬</span><span>Production migration path — DB backup, backend-first deploy, trace table health check</span></div>
           </div>
           <button class="btn-speak" onclick="speakSlide(8)">🔊 Play narration</button>
         </div>
@@ -672,12 +691,12 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
         <div class="slide-sub" style="max-width:560px">আদর DocIntel is a production-ready RAG platform with every layer built — from document ingestion to billing to compliance.</div>
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;width:100%;max-width:700px;margin-top:1.5rem">
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">📄</div><div class="sum-card-title" style="color:#4ade80">Upload Pipeline</div><ul class="sum-card-list"><li>PDF DOCX CSV Images</li><li>Auto-chunk + GCS store</li><li>Gemini embeddings</li><li>↻ Retry on error</li></ul></div>
-          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">💬</div><div class="sum-card-title" style="color:#60a5fa">Semantic Chat</div><ul class="sum-card-list"><li>Hybrid search + RRF</li><li>Gemini re-ranking</li><li>Streaming markdown</li><li>Persistent sessions</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">🎙</div><div class="sum-card-title" style="color:#60a5fa">Voice Chat</div><ul class="sum-card-list"><li>Speak + auto-send</li><li>Safari/Firefox fallback</li><li>Gemini transcription</li><li>Hybrid RAG answers</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">📝</div><div class="sum-card-title" style="color:#c084fc">Summarise</div><ul class="sum-card-list"><li>5 summary types</li><li>Document compare</li><li>Multi-doc batch</li><li>Export Markdown</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">🏷</div><div class="sum-card-title" style="color:#fbbf24">Organise</div><ul class="sum-card-list"><li>Colour-coded tags</li><li>Live search + filter</li><li>Sort controls</li><li>Tag manager</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">🏢</div><div class="sum-card-title" style="color:#4ade80">Workspaces</div><ul class="sum-card-list"><li>Owner/Editor/Viewer</li><li>Invite by email</li><li>Scoped docs + chat</li><li>One-click switch</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">💳</div><div class="sum-card-title" style="color:#c084fc">Stripe Billing</div><ul class="sum-card-list"><li>Free / Pro / Enterprise</li><li>3-day free trial</li><li>Auto-sync on login</li><li>Cancel → auto-free</li></ul></div>
-          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(248,113,113,.12);color:#f87171">🔒</div><div class="sum-card-title" style="color:#f87171">Security</div><ul class="sum-card-list"><li>Email verification</li><li>JWT + bcrypt</li><li>Rate limiting</li><li>IP audit log</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(248,113,113,.12);color:#f87171">🔒</div><div class="sum-card-title" style="color:#f87171">PII Redaction</div><ul class="sum-card-list"><li>Upload-time masking</li><li>Chat privacy toggle</li><li>Summary + chunk privacy</li><li>OCR spacing aware</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">☁</div><div class="sum-card-title" style="color:#60a5fa">Infrastructure</div><ul class="sum-card-list"><li>Cloud Run + Firebase</li><li>pgvector + GCS</li><li>Usage metering</li><li>Secret Manager</li></ul></div>
         </div>
         <button class="btn-speak" style="margin-top:1.5rem" onclick="speakSlide(9)">🔊 Play narration</button>
@@ -691,16 +710,16 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
 
 <script>
 const SLIDES = [
-  { text: "আদর DocIntel is a self-service Retrieval Augmented Generation platform. Upload documents, ask questions in natural language, and get grounded answers from your own content — with citations, not guesses. The platform now also classifies every document, detects its language, and can respond in English, Bengali, Hindi, or Arabic while keeping the আদর brand native to Bengali." },
-  { text: "The upload pipeline is automatic. DocIntel extracts text, detects the document type and language, stores the original in Google Cloud Storage, chunks the content into overlapping semantic windows, and prepares it for Gemini embeddings in pgvector. If extraction, chunking, or embedding fails, Retry re-downloads the source file and re-runs the pipeline without forcing the user to upload again." },
-  { text: "Semantic chat is the core workflow. Ask in English, Bengali, Hindi, Arabic, or the language of the document. The system combines Gemini vector similarity with BM25 keyword search, fuses the results with Reciprocal Rank Fusion, and re-ranks candidates with Gemini before generating a cited streaming answer. Chat history is persistent, feedback is saved, and responses are evaluated for relevance, specificity, and confidence." },
-  { text: "For analysis, DocIntel streams summaries, comparisons, and exports. Generate executive, detailed, bullet, section-by-section, or custom summaries. Select two documents for a structured side-by-side comparison. The same language rules apply, so a Bengali lease can produce a Bengali summary, while names, dates, clauses, and source citations remain exact." },
-  { text: "As libraries grow, DocIntel keeps them navigable. Auto-classification labels invoices, leases, resumes, reports, policies, and other common document types. Tags create your own project or client collections. A compact control bar combines live name search, type filtering, tag filtering, and sort order, so hundreds of documents stay manageable." },
-  { text: "Teams work in shared workspaces with Owner, Editor, and Viewer roles. Uploads, tags, chat sessions, and summaries are scoped to the workspace. Owners invite teammates by email, editors contribute documents, and viewers get read-only access for chat and search. Switching between personal and workspace context is one click." },
-  { text: "Monetisation is handled by Stripe with Free, Pro, and Enterprise tiers. Free supports lightweight usage, Pro scales to hundreds of documents and daily queries, and Enterprise removes practical limits. Paid plans include a 3-day trial, and every login syncs the user's active Stripe subscription so plan limits update immediately." },
-  { text: "Security and operations are built in. New accounts verify email before first login. Password reset links are single-use. Important actions are written to an audit log with IP address and timestamp. Admins manage users, tiers, documents, and audit history from one dashboard, while notifications fire for embedding completion and workspace invites." },
-  { text: "The stack is Google Cloud end to end: FastAPI on Cloud Run, React on Firebase Hosting, Cloud SQL Postgres with pgvector, and Google Cloud Storage for documents. Secret Manager protects credentials, usage metering enforces tier limits, and Gemini powers extraction support, classification, embeddings, reranking, multilingual chat, summaries, and comparison." },
-  { text: "That is আদর DocIntel in five minutes: upload, classify, detect language, embed, chat, summarize, compare, organize, collaborate, bill, audit, and deploy — a production document intelligence platform ready for multilingual teams." }
+  { text: "আদর DocIntel is a self-service RAG platform for document intelligence. Upload files, ask questions, and get grounded answers with citations. It now classifies documents, detects language, and supports English, Spanish, Bengali, Hindi, and Arabic." },
+  { text: "The upload pipeline is automatic. DocIntel extracts text, optionally redacts PII before chunking and embedding, classifies the document, stores the source in GCS, and prepares Gemini embeddings in pgvector. Redaction covers email, phone, SSN, card, date of birth, bank IDs, and IP addresses, including OCR-style spacing." },
+  { text: "Chat works by typing or speaking. Spanish, Bengali, Hindi, Arabic, English, and document-language questions can auto-submit after speech. Web Speech runs where supported; Safari and Firefox use MediaRecorder with Gemini transcription. Privacy mode redacts PII from prompts, context, sources, and trace previews before model use." },
+  { text: "For analysis, DocIntel streams summaries, comparisons, and exports. Choose executive, detailed, bullets, sections, or custom prompts. Compare two documents side by side. Summary and comparison privacy toggles redact sensitive identifiers before content is sent to Gemini." },
+  { text: "As libraries grow, DocIntel keeps them navigable. Auto-classification labels invoices, leases, resumes, reports, policies, and more. Tags create project or client collections, while search, type filters, tag filters, and sorting keep hundreds of documents manageable." },
+  { text: "Teams collaborate in workspaces with Owner, Editor, and Viewer roles. Uploads, tags, chat sessions, and summaries stay scoped to the selected workspace. Owners invite teammates, editors contribute documents, and viewers get read-only chat and search." },
+  { text: "Billing is handled by Stripe with Free, Pro, and Enterprise tiers. Usage limits cover documents, storage, queries, embeddings, summaries, and comparisons. Paid plans include a trial, and subscription state syncs on login." },
+  { text: "Security, privacy, audit, and traceability are built in. Email verification, password reset, audit logs, PII redaction, and question-level traces help teams understand both what users did and how each AI answer was produced." },
+  { text: "The stack is Google Cloud end to end: FastAPI on Cloud Run, React on Firebase Hosting, Cloud SQL Postgres with pgvector, and GCS for documents. Gemini powers classification, embeddings, reranking, transcription, chat, summaries, and comparison." },
+  { text: "That is আদর DocIntel: upload, redact, classify, embed, speak or type questions, summarize, compare, organize, collaborate, bill, audit, trace, and deploy — a production document intelligence platform for multilingual teams." }
 ];
 
 

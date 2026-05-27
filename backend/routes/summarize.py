@@ -11,6 +11,7 @@ from services.usage import check_daily_limit, log_event
 import services.storage as gcs
 from services.llm import chat_stream, summarize_system, mini_summarize_system
 from services.language import primary_language, response_language_instruction
+from services.pii import redact_text
 
 from fastapi import Request
 
@@ -32,12 +33,14 @@ class SummarizeRequest(BaseModel):
     summary_type:  str       = "executive"
     custom_prompt: str       = ""
     chunk_indices: list[int] = []
+    redact_pii:    bool      = False
 
 
 class MultiSummarizeRequest(BaseModel):
     document_ids:  list[str]
     summary_type:  str = "executive"
     custom_prompt: str = ""
+    redact_pii:    bool = False
 
 
 # ── Single document ───────────────────────────────────────────────────────────
@@ -70,6 +73,7 @@ async def summarize_document(
                 body.custom_prompt,
                 row["original_name"],
                 row.get("doc_language") or "en",
+                body.redact_pii,
             ):
                 yield event
         except Exception as e:
@@ -117,7 +121,7 @@ async def summarize_multiple_documents(
 
             label = f"{len(body.document_ids)} documents"
             lang = primary_language([r["doc_language"] for r in rows])
-            async for event in _stream_summary(all_texts, body.summary_type, body.custom_prompt, label, lang):
+            async for event in _stream_summary(all_texts, body.summary_type, body.custom_prompt, label, lang, body.redact_pii):
                 yield event
         except Exception as e:
             yield _sse_error(str(e))
@@ -133,15 +137,16 @@ async def _stream_summary(
     custom_prompt: str,
     label:         str,
     response_lang: str = "en",
+    redact_pii:    bool = False,
 ):
-    full_text = "\n\n".join(texts)
+    full_text = redact_text("\n\n".join(texts), redact_pii).text
 
     if summary_type == "custom" and not custom_prompt.strip():
         yield _sse_error("Provide a custom_prompt for custom summary type")
         return
 
     base_prompt = (
-        custom_prompt.strip() if summary_type == "custom"
+        redact_text(custom_prompt.strip(), redact_pii).text if summary_type == "custom"
         else SUMMARY_PROMPTS.get(summary_type, SUMMARY_PROMPTS["executive"])
     )
 
@@ -174,7 +179,7 @@ async def _stream_summary(
         batch_num = i // BATCH_SIZE + 1
         yield _sse_meta({"stage": "map", "batch": batch_num, "of": total_batches})
 
-        batch_text = "\n\n".join(batch)
+        batch_text = redact_text("\n\n".join(batch), redact_pii).text
         language_instruction = response_language_instruction(response_lang)
         system     = mini_summarize_system(label, language_instruction)
         messages   = [{"role": "user", "content": f"Summarise this section thoroughly:\n\n{batch_text}"}]

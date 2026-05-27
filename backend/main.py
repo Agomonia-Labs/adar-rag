@@ -12,9 +12,10 @@ logging.basicConfig(
 )
 log = logging.getLogger("docintel")
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from services.tracing import current_trace_id, new_trace_id
 
 
 @asynccontextmanager
@@ -67,13 +68,41 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def trace_id_middleware(request: Request, call_next):
+    trace_id = request.headers.get("X-Trace-Id") or new_trace_id()
+    request.state.trace_id = trace_id
+    token = current_trace_id.set(trace_id)
+    try:
+        response = await call_next(request)
+        response.headers["X-Trace-Id"] = trace_id
+        return response
+    finally:
+        current_trace_id.reset(token)
+
+
 @app.get("/api/health")
 async def health():
     from database.connection import _pool
+    trace_tables = []
+    if _pool is not None:
+        try:
+            async with _pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """SELECT table_name FROM information_schema.tables
+                       WHERE table_schema='public'
+                         AND table_name = ANY($1::text[])
+                       ORDER BY table_name""",
+                    ["trace_flows", "trace_spans", "trace_llm_events"],
+                )
+                trace_tables = [r["table_name"] for r in rows]
+        except Exception:
+            trace_tables = []
     return {
         "status":       "ok",
         "llm":          os.getenv("LLM_PROVIDER", "unknown"),
         "db_connected": _pool is not None,
+        "trace_tables": trace_tables,
     }
 
 
@@ -100,6 +129,8 @@ _ROUTERS = [
     ("routes.tags",           "tags_router",           "/api/tags",          ["tags"]),
     ("routes.billing",        "billing_router",        "/api/billing",       ["billing"]),
     ("routes.evals",          "evals_router",          "/api/evals",         ["evals"]),
+    ("routes.voice",          "voice_router",          "/api/voice",         ["voice"]),
+    ("routes.traces",         "traces_router",         "/api/traces",        ["traces"]),
 ]
 
 for _module, _attr, _prefix, _tags in _ROUTERS:

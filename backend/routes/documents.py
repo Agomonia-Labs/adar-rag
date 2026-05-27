@@ -6,7 +6,7 @@ from uuid import uuid4
 from datetime import datetime, timezone
 
 from typing import Optional
-from fastapi import Request, APIRouter, BackgroundTasks, UploadFile, File, HTTPException, Depends
+from fastapi import Request, APIRouter, BackgroundTasks, UploadFile, File, Form, HTTPException, Depends
 
 log = logging.getLogger('docintel.documents')
 
@@ -19,6 +19,7 @@ from services.extractor import extract_text, detect_type, extract_tables_from_pd
 from services.classifier import classify_document
 from services.chunker   import chunk_text
 from services.llm       import embed
+from services.pii       import redact_text
 from services.vectordb  import store_chunk, delete_document_vectors
 import services.storage as gcs
 
@@ -38,6 +39,7 @@ async def upload_documents(
     request:          Request,
     current_user:     CurrentUser,
     files:        list[UploadFile] = File(...),
+    redact_pii:   bool             = Form(False),
     workspace_id: Optional[str]   = None,   # if set, doc belongs to a workspace
     db=Depends(get_db),
 ):
@@ -104,7 +106,7 @@ async def upload_documents(
         # Update status to chunking, then kick off chunking in background
         await db.execute("UPDATE documents SET status='chunking' WHERE id=$1", doc_id)
         background_tasks.add_task(
-            _chunk_document, doc_id, user_id, tmp.name, filename, upload.content_type or "", ftype, workspace_id
+            _chunk_document, doc_id, user_id, tmp.name, filename, upload.content_type or "", ftype, workspace_id, redact_pii
         )
         created.append({"doc_id": doc_id, "filename": filename})
         await log_event(db, user_id, "upload", metadata={
@@ -112,10 +114,11 @@ async def upload_documents(
             "filename":  filename,
             "file_size": len(content),
             "file_type": ftype,
+            "redact_pii": redact_pii,
         })
         await audit(db, user_id=user_id, action="upload_document",
                     resource_type="document", resource_id=doc_id,
-                    metadata={"filename": filename, "workspace_id": workspace_id},
+                    metadata={"filename": filename, "workspace_id": workspace_id, "redact_pii": redact_pii},
                     ip_address=ip_from(request), user_agent=ua_from(request))
 
     return {"uploaded": created}
@@ -187,7 +190,7 @@ async def get_chunks(doc_id: str, current_user: CurrentUser, db=Depends(get_db))
 
 @router.get("/{doc_id}/chunks/{chunk_index}")
 async def get_chunk_content(
-    doc_id: str, chunk_index: int, current_user: CurrentUser, db=Depends(get_db)
+    doc_id: str, chunk_index: int, current_user: CurrentUser, redact_pii: bool = False, db=Depends(get_db)
 ):
     row = await _get_owned(doc_id, current_user["id"], db)
     if row["status"] not in ("chunked", "embedding", "embedded"):
@@ -196,6 +199,7 @@ async def get_chunk_content(
     user_id  = str(current_user["id"])
     path     = gcs.chunk_path(user_id, doc_id, chunk_index)
     content  = await gcs.download_text(path)
+    content  = redact_text(content, redact_pii).text
     return {"chunk_index": chunk_index, "content": content}
 
 
@@ -251,7 +255,7 @@ async def delete_document(doc_id: str, current_user: CurrentUser, db=Depends(get
 # ══════════════════════════════════════════════════════════════════════════════
 #  Background: chunking pipeline
 # ══════════════════════════════════════════════════════════════════════════════
-async def _chunk_document(doc_id, user_id, file_path, filename, content_type, ftype, workspace_id=None):
+async def _chunk_document(doc_id, user_id, file_path, filename, content_type, ftype, workspace_id=None, redact_pii=False):
     from database.connection import get_pool
     pool = get_pool()
 
@@ -280,6 +284,28 @@ async def _chunk_document(doc_id, user_id, file_path, filename, content_type, ft
             if tables:
                 text = text + tables_to_text(tables)
                 log.info(f"[{doc_id}] Extracted {len(tables)} tables from {filename}")
+
+        redaction = redact_text(text, enabled=redact_pii)
+        text = redaction.text
+        if redact_pii:
+            log.info("[%s] PII redaction applied to %s: %s redactions", doc_id, filename, redaction.total)
+            async with get_pool().acquire() as _pii_conn:
+                await _pii_conn.execute(
+                    """
+                    UPDATE documents
+                       SET doc_metadata = COALESCE(doc_metadata, '{}'::jsonb) || $1::jsonb,
+                           updated_at = NOW()
+                     WHERE id = $2
+                    """,
+                    json.dumps({
+                        "pii_redaction": {
+                            "enabled": True,
+                            "total": redaction.total,
+                            "counts": redaction.counts,
+                        }
+                    }),
+                    doc_id,
+                )
 
         # ── Document classification ────────────────────────────────────────
         classification = await classify_document(
@@ -312,6 +338,7 @@ async def _chunk_document(doc_id, user_id, file_path, filename, content_type, ft
             "user_id":      user_id,
             "filename":     filename,
             "file_type":    ftype,
+            "pii_redacted": redact_pii,
         }
 
         # Chunk
@@ -337,6 +364,11 @@ async def _chunk_document(doc_id, user_id, file_path, filename, content_type, ft
                 "file_type":    ftype,
                 "total_chunks": len(chunks),
                 "created_at":   now,
+                "pii_redaction": {
+                    "enabled": bool(redact_pii),
+                    "total": redaction.total,
+                    "counts": redaction.counts,
+                },
             },
             "chunks": [
                 {
@@ -455,6 +487,11 @@ def _doc_row(row: dict) -> dict:
     r["doc_type"]     = r.get("doc_type") or "general"
     r["doc_domain"]   = r.get("doc_domain") or "general"
     r["doc_language"] = r.get("doc_language") or "en"
+    raw_meta = r.get("doc_metadata") or {}
+    if isinstance(raw_meta, str):
+        import json as _json
+        raw_meta = _json.loads(raw_meta)
+    r["doc_metadata"] = raw_meta
     # Tags: may arrive as JSON string or list
     raw_tags = r.get("tags", [])
     if isinstance(raw_tags, str):

@@ -3,6 +3,7 @@ from collections import Counter
 
 LANGUAGE_NAMES = {
     "en": "English",
+    "es": "Spanish",
     "bn": "Bengali",
     "hi": "Hindi",
     "ar": "Arabic",

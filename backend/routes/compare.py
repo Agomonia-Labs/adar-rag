@@ -10,6 +10,7 @@ from auth.dependencies import CurrentUser
 from database.connection import get_db, get_pool
 from services.usage import log_event
 from services.language import primary_language, response_language_instruction
+from services.pii import redact_text
 
 router = APIRouter()
 log = logging.getLogger("docintel.compare")
@@ -23,6 +24,7 @@ MAX_CHARS_PER_DOC = int(os.getenv("COMPARE_MAX_CHARS", "30000"))
 class CompareRequest(BaseModel):
     document_id_1: str
     document_id_2: str
+    redact_pii: bool = False
 
 
 @router.post("/stream")
@@ -56,12 +58,14 @@ async def compare_documents(
             yield _sse({"type": "status", "message": f"Loading {doc1['original_name']}..."})
             async with pool.acquire() as conn:
                 text1 = await _load_from_db(conn, doc_id_1, user_id)
+            text1 = redact_text(text1, body.redact_pii).text
             if not text1:
                 yield _sse({"type": "error", "error": f"No text found for {doc1['original_name']}. Ensure it is chunked."}); return
 
             yield _sse({"type": "status", "message": f"Loading {doc2['original_name']}..."})
             async with pool.acquire() as conn:
                 text2 = await _load_from_db(conn, doc_id_2, user_id)
+            text2 = redact_text(text2, body.redact_pii).text
             if not text2:
                 yield _sse({"type": "error", "error": f"No text found for {doc2['original_name']}. Ensure it is chunked."}); return
 
@@ -83,6 +87,7 @@ async def compare_documents(
                         "doc_id_2": doc_id_2,
                         "sections": len(result.get("sections", [])),
                         "similarity": result.get("similarity_score"),
+                        "redact_pii": body.redact_pii,
                     })
                 yield _sse({"type": "result", "data": result})
             else:

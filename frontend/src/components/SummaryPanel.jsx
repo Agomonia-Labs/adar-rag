@@ -18,6 +18,7 @@ export default function SummaryPanel({ docId, docName, documentIds, docNames, ch
   const [stage,   setStage]   = useState('');
   const [progress,setProgress]= useState(null);
   const [error,   setError]   = useState('');
+  const [redactPii, setRedactPii] = useState(() => localStorage.getItem('redact_pii_summary') === '1');
   const outRef = useRef(null);
 
   useEffect(()=>{ if(stage==='running') outRef.current?.scrollTo({top:outRef.current.scrollHeight,behavior:'smooth'}); }, [output,stage]);
@@ -31,7 +32,7 @@ export default function SummaryPanel({ docId, docName, documentIds, docNames, ch
     if(type==='custom' && !prompt.trim()){ setError('Enter your custom prompt first'); return; }
     setOutput(''); setError(''); setStage('running'); setProgress(null);
     await streamSummary(
-      {doc_id:docId,document_ids:documentIds,summary_type:type,custom_prompt:prompt,chunk_indices:chunkIndices},
+      {doc_id:docId,document_ids:documentIds,summary_type:type,custom_prompt:prompt,chunk_indices:chunkIndices,redactPii},
       {
         onToken: t  => setOutput(p=>p+t),
         onMeta:  ev => { if(ev.stage==='map') setProgress({b:ev.batch,o:ev.of}); else setProgress(null); },
@@ -95,6 +96,17 @@ export default function SummaryPanel({ docId, docName, documentIds, docNames, ch
 
         {/* Actions */}
         <div style={{display:'flex',gap:8,padding:'0 1.5rem 10px',flexShrink:0}}>
+          <label style={s.privacy} title="Redact common PII before sending summary content to the model">
+            <input
+              type="checkbox"
+              checked={redactPii}
+              onChange={e=>{
+                setRedactPii(e.target.checked);
+                localStorage.setItem('redact_pii_summary', e.target.checked ? '1' : '0');
+              }}
+            />
+            <span>PII</span>
+          </label>
           <button onClick={run} disabled={stage==='running'}
             style={{flex:1,padding:'10px',background:stage==='running'?'var(--s3)':'#15803d',color:stage==='running'?'var(--muted2)':'#fff',border:'none',borderRadius:'var(--r)',cursor:stage==='running'?'not-allowed':'pointer',fontWeight:700,fontSize:13.5,boxShadow:stage==='running'?'none':'0 2px 10px rgba(21,128,61,.4)'}}>
             {stage==='running'?'⟳ Summarizing…':'▶ Generate Summary'}
@@ -174,6 +186,7 @@ const s = {
   typeRow: { display:'flex', gap:6, padding:'10px 1.5rem', borderBottom:'1px solid var(--b1)', flexWrap:'wrap', flexShrink:0 },
   typeBtn: { display:'flex', alignItems:'center', gap:5, padding:'6px 12px', borderRadius:20, border:'1px solid var(--b2)', background:'transparent', color:'var(--muted2)', cursor:'pointer', fontSize:12, fontWeight:500, transition:'all .15s', whiteSpace:'nowrap' },
   typeBtnOn:{ background:'rgba(74,222,128,.12)', borderColor:'rgba(74,222,128,.35)', color:'#4ade80', fontWeight:700 },
+  privacy:{ display:'flex', alignItems:'center', gap:5, padding:'8px 10px', borderRadius:'var(--r)', border:'1px solid rgba(251,191,36,.25)', background:'rgba(251,191,36,.06)', color:'#fbbf24', fontSize:12, cursor:'pointer', flexShrink:0 },
 };
 
 
