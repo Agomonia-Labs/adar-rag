@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Self-Service Document Intelligence in the AI Era: How DevOps is Shaping the Future of Intelligent Software Engineering</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Noto+Sans+Bengali:wght@400;600;700;800&family=Noto+Sans+Devanagari:wght@400;600;700&family=Noto+Naskh+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#07140f;--panel:#10221a;--panel2:#132a21;--line:rgba(255,255,255,.1);--text:#f3faf6;--muted:#9aa7a0;--green:#22c55e;--green2:#86efac;--blue:#60a5fa;--gold:#fbbf24;--red:#f87171;--violet:#c084fc}
+body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh Arabic',sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden;user-select:none}
+#splash{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:20;background:radial-gradient(circle at 50% 20%,#163b27 0%,#07140f 55%);cursor:pointer;transition:opacity .45s}
+#splash.hide{opacity:0;pointer-events:none}
+.splash-card{text-align:center;display:flex;flex-direction:column;align-items:center;gap:16px}
+.pnnl-logo{display:block;width:150px;height:auto;background:#fff;border-radius:4px;padding:8px}
+.brand-word{font-size:44px;font-weight:900;letter-spacing:-.5px}.brand-word span{color:var(--green)}
+.subtitle{font-size:14px;color:var(--muted);line-height:1.6;max-width:560px}
+.tap{font-size:12px;color:var(--green2);font-weight:700;letter-spacing:.8px;text-transform:uppercase;margin-top:10px}
+#app{height:100vh;display:flex;flex-direction:column;opacity:0;transition:opacity .45s}
+#app.show{opacity:1}
+.topbar{height:56px;display:flex;align-items:center;gap:14px;padding:0 18px;background:rgba(7,20,15,.94);border-bottom:1px solid var(--line);flex-shrink:0}
+.top-brand{display:flex;align-items:center;gap:8px;font-weight:900}.top-brand span{color:var(--green)}
+.top-note{font-size:11px;color:var(--muted);border-left:1px solid var(--line);padding-left:12px;white-space:nowrap}
+.dots{flex:1;display:flex;justify-content:center;gap:5px}.dot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.2);cursor:pointer}.dot.active{background:var(--green);transform:scale(1.25)}
+.controls{display:flex;align-items:center;gap:8px}.counter{font-size:12px;color:var(--muted);min-width:48px;text-align:right}
+button{font-family:inherit}.btn{border:1px solid var(--line);background:rgba(255,255,255,.07);color:#fff;border-radius:8px;padding:7px 11px;font-size:12px;cursor:pointer}.btn:hover{background:rgba(255,255,255,.12)}.btn.active{border-color:rgba(34,197,94,.55);background:rgba(34,197,94,.18);color:var(--green2)}
+.nav{width:34px;height:34px;padding:0;font-size:16px}.nav:disabled{opacity:.35;cursor:not-allowed}
+.progress{height:3px;background:rgba(255,255,255,.06);flex-shrink:0}.progress-fill{height:100%;background:linear-gradient(90deg,var(--green),var(--blue));transition:width .25s}
+.voice-tools{min-height:42px;display:flex;align-items:center;gap:8px;padding:6px 18px;background:rgba(10,28,20,.96);border-bottom:1px solid var(--line);flex-shrink:0}
+.voice-tools .btn{padding:6px 10px;font-size:11px}
+.voice-status{font-size:11px;color:var(--muted);line-height:1.4;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.voice-status.ready{color:var(--green2)}.voice-status.recording{color:var(--red);font-weight:800}.voice-status.warn{color:var(--gold)}
+.slides{flex:1;position:relative;overflow:hidden}
+.slide{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:22px;opacity:0;transform:translateX(50px);transition:all .35s cubic-bezier(.4,0,.2,1);pointer-events:none}
+.slide.active{opacity:1;transform:translateX(0);pointer-events:all}
+.slide-inner{width:100%;max-width:1120px;display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:center}
+.slide-inner.full{grid-template-columns:1fr;max-width:1000px}.slide-inner.wide{grid-template-columns:.9fr 1.1fr;max-width:1180px}
+.kicker{font-size:11px;color:var(--green);font-weight:900;letter-spacing:1.6px;text-transform:uppercase;margin-bottom:10px}
+.title{font-size:30px;line-height:1.15;font-weight:900;letter-spacing:-.2px;margin-bottom:12px}
+.copy{font-size:13.5px;line-height:1.7;color:var(--muted);max-width:520px}
+.bullets{display:flex;flex-direction:column;gap:9px;margin-top:14px}.bullet{display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.55;color:#d9fbe7}.bullet b{color:#fff}.icon{width:22px;text-align:center;flex-shrink:0}
+.panel{border:1px solid var(--line);background:linear-gradient(180deg,var(--panel),rgba(16,34,26,.72));border-radius:12px;padding:18px;box-shadow:0 24px 60px rgba(0,0,0,.38)}
+.mini-title{font-size:12px;font-weight:900;color:#fff;text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px}
+.chip-row{display:flex;gap:7px;flex-wrap:wrap}.chip{font-size:10px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);border-radius:999px;padding:4px 9px;color:#d8e5dd}.chip.green{border-color:rgba(34,197,94,.35);color:var(--green2);background:rgba(34,197,94,.1)}.chip.blue{border-color:rgba(96,165,250,.35);color:var(--blue);background:rgba(96,165,250,.1)}.chip.gold{border-color:rgba(251,191,36,.35);color:var(--gold);background:rgba(251,191,36,.1)}
+.bio{display:grid;grid-template-columns:150px 1fr;gap:18px;align-items:center}.headshot-wrap{position:relative;width:150px;height:150px;border-radius:50%;border:2px solid rgba(134,239,172,.35);background:rgba(255,255,255,.06);overflow:hidden;display:flex;align-items:center;justify-content:center}.headshot{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.initials{font-size:42px;font-weight:900;color:var(--green2)}
+.bio-name{font-size:26px;font-weight:900;margin-bottom:4px}.bio-line{font-size:12px;color:var(--muted);line-height:1.55}.bio-card{margin-top:14px;display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.small-card{border:1px solid var(--line);background:rgba(255,255,255,.04);border-radius:8px;padding:10px;min-height:72px}.small-card strong{display:block;font-size:11px;color:#fff;margin-bottom:5px}.small-card span{display:block;font-size:10px;color:var(--muted);line-height:1.45}
+.problem-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.problem{border-left:3px solid var(--red);background:rgba(248,113,113,.06);border-radius:8px;padding:12px}.problem.good{border-left-color:var(--green);background:rgba(34,197,94,.07)}.problem strong{display:block;font-size:12px;margin-bottom:6px}.problem span{font-size:10.5px;color:var(--muted);line-height:1.5}
+.arch{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;align-items:stretch}.arch-col{display:flex;flex-direction:column;gap:8px}.box{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);border-radius:8px;padding:9px;text-align:center;min-height:48px;display:flex;align-items:center;justify-content:center;font-size:10.5px;line-height:1.35;color:#e8fff0}.box.head{font-weight:900;color:#fff;background:rgba(34,197,94,.14);border-color:rgba(34,197,94,.35)}.arrow{font-size:18px;text-align:center;color:rgba(255,255,255,.28);align-self:center}
+.sequence{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}.lane{border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.035);padding:10px;min-height:260px}.lane-title{font-size:10px;font-weight:900;color:var(--green2);margin-bottom:10px;text-transform:uppercase}.step{font-size:9.5px;line-height:1.42;color:#dcefe3;border-left:2px solid rgba(96,165,250,.45);padding:6px 0 6px 7px;margin-bottom:7px;background:rgba(96,165,250,.05);border-radius:0 5px 5px 0}
+.diagram-panel{padding:12px;background:#f8faf9;border-radius:12px;box-shadow:0 24px 60px rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.12);overflow:hidden}
+.diagram-img{display:block;width:100%;max-height:510px;object-fit:contain;border-radius:8px;background:#fff}
+.e2e{display:grid;grid-template-columns:1fr 28px 1fr 28px 1fr;gap:10px;align-items:stretch}
+.e2e-col{border:1px solid var(--line);background:rgba(255,255,255,.04);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;min-height:330px}
+.e2e-title{font-size:12px;font-weight:900;color:#fff;text-transform:uppercase;letter-spacing:.8px}
+.e2e-node{font-size:10px;line-height:1.45;color:#dff8e7;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);border-radius:8px;padding:8px}
+.e2e-node.green{border-color:rgba(34,197,94,.35);background:rgba(34,197,94,.09)}
+.e2e-node.blue{border-color:rgba(96,165,250,.35);background:rgba(96,165,250,.09)}
+.e2e-node.gold{border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.09)}
+.e2e-side{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.e2e-side .e2e-node{min-height:58px}
+.design-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.code-card{border:1px solid var(--line);border-radius:9px;background:#07110d;padding:12px;min-height:260px}.code-card pre{white-space:pre-wrap;font-size:10px;line-height:1.55;color:#c7f9d6;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.feature-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.feature{border:1px solid var(--line);background:rgba(255,255,255,.04);border-radius:9px;padding:12px;min-height:112px}.feature div{font-size:22px;margin-bottom:8px}.feature strong{display:block;font-size:12px;color:#fff;margin-bottom:5px}.feature span{font-size:10.5px;color:var(--muted);line-height:1.45}
+.demo-box{display:grid;grid-template-columns:1fr 1fr;gap:12px}.demo-step{border:1px solid rgba(34,197,94,.24);background:rgba(34,197,94,.06);border-radius:9px;padding:13px}.demo-step strong{font-size:12px}.demo-step span{display:block;margin-top:6px;font-size:10.5px;line-height:1.5;color:var(--muted)}
+.answer{font-size:15px;line-height:1.7;color:#e9fff1;border:1px solid rgba(34,197,94,.3);background:rgba(34,197,94,.08);border-radius:10px;padding:14px;margin-top:14px}
+.caption{flex-shrink:0;min-height:84px;background:rgba(7,20,15,.97);border-top:1px solid var(--line);display:grid;grid-template-columns:118px 1fr;gap:14px;padding:11px 22px;align-items:start}.caption-label{font-size:10px;color:var(--green);font-weight:900;letter-spacing:1.5px;text-transform:uppercase;padding-top:2px}.caption-text{font-size:12px;color:#d5fbe3;line-height:1.55;max-width:1120px}
+.speak{margin-top:14px;display:inline-flex;gap:7px;align-items:center}.speak.speaking{border-color:rgba(34,197,94,.6);background:rgba(34,197,94,.18);color:var(--green2)}
+@media (max-width:900px){.slide-inner,.slide-inner.wide{grid-template-columns:1fr;gap:16px}.title{font-size:24px}.feature-grid,.problem-grid,.arch,.design-grid,.demo-box{grid-template-columns:1fr}.sequence{grid-template-columns:1fr}.caption{grid-template-columns:1fr}.top-note{display:none}}
+</style>
+</head>
+<body>
+<div id="splash">
+  <div class="splash-card">
+    <img class="pnnl-logo" src="https://www.pnnl.gov/sites/default/files/media/image/pnnl_logo_battelle.png" alt="Pacific Northwest National Laboratory logo">
+    <div class="brand-word"><span>Self-Service Document Intelligence in the AI Era:</span> How DevOps is Shaping the Future of Intelligent Software Engineering</div>
+    <div class="subtitle">Prepared by Braja Das for PNNL · 8-minute setup, then 10-minute live DocIntel demo.</div>
+    <div class="tap">Tap anywhere to begin</div>
+  </div>
+</div>
+
+<div id="app">
+  <div class="topbar">
+    <div class="top-brand"><span>আদর</span> DocIntel</div>
+    <div class="top-note">Prepared by Braja Das for PNNL · 8-minute setup + 10-minute live demo</div>
+    <div class="dots" id="dots"></div>
+    <div class="controls">
+      <span class="counter" id="counter">1 / 22</span>
+      <button class="btn" id="autoBtn" onclick="toggleAuto()">▶ Auto</button>
+      <button class="btn nav" id="prevBtn" onclick="goSlide(-1)">←</button>
+      <button class="btn nav" id="nextBtn" onclick="goSlide(1)">→</button>
+    </div>
+  </div>
+  <div class="progress"><div class="progress-fill" id="progress"></div></div>
+  <div class="voice-tools">
+    <button class="btn" id="voiceModeBtn" onclick="toggleVoiceMode()">🎙 My voice: On</button>
+    <button class="btn" id="recordBtn" onclick="startRecordingCurrentSlide()">● Record this slide</button>
+    <button class="btn" id="stopRecordBtn" onclick="stopRecordingCurrentSlide()" disabled>■ Stop + save</button>
+    <button class="btn" id="clearRecordBtn" onclick="clearCurrentRecording()">Clear slide audio</button>
+    <button class="btn" onclick="exportVoicePack()">Export voice pack</button>
+    <button class="btn" onclick="document.getElementById('voicePackFile').click()">Import voice pack</button>
+    <input id="voicePackFile" type="file" accept="application/json" style="display:none" onchange="importVoicePackFile(event)">
+    <div class="voice-status" id="voiceStatus">Record each slide once. Auto mode will play your saved voice when available.</div>
+  </div>
+
+  <div class="slides">
+    <section class="slide" data-idx="0">
+      <div class="slide-inner">
+        <div>
+          <div class="kicker">Opening · LinkedIn Bio</div>
+          <div class="title">Braja Krishna Das</div>
+          <div class="copy">Accomplished Engineering and Enterprise Architecture leader with 25+ years driving innovation across AI, cloud, large-scale data platforms, DevOps, SRE, and enterprise systems.</div>
+          <div class="bullets">
+            <div class="bullet"><span class="icon">🏗</span><span><b>AI and architecture:</b> Agentic AI, GenAI, machine learning, OCR, image processing, distributed systems, and patent inventorships.</span></div>
+            <div class="bullet"><span class="icon">☁</span><span><b>Platforms:</b> Cloud-native and edge solutions using Python, Scala, Java, JavaScript/TypeScript, microservices, Kubernetes, Kafka, Spark, and Flink.</span></div>
+            <div class="bullet"><span class="icon">🚀</span><span><b>Leadership:</b> High-performance engineering teams, hundreds-of-terabyte data platforms, real-time event-driven applications, DevOps, SRE, and conference speaking.</span></div>
+          </div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel">
+          <div class="bio">
+            <div class="headshot-wrap">
+              <div class="initials">BD</div>
+              <img class="headshot" src="profile_pic_pnnl.png" alt="Braja Das profile photo" onerror="this.remove()">
+            </div>
+            <div>
+              <div class="bio-name">Braja Krishna Das</div>
+              <div class="bio-line">Greater Seattle Area · 987 followers · 500+ connections</div>
+              <div class="chip-row" style="margin-top:10px">
+                <span class="chip green">Enterprise Architecture</span><span class="chip blue">Agentic AI</span><span class="chip gold">Data Platforms</span><span class="chip">DevOps/SRE</span>
+              </div>
+            </div>
+          </div>
+          <div class="bio-card">
+            <div class="small-card"><strong>Experience</strong><span>25+ years across AI, cloud, enterprise architecture, and large-scale data systems.</span></div>
+            <div class="small-card"><strong>Technical depth</strong><span>GenAI, OCR, ML, event streaming, distributed systems, cloud-native, and edge computing.</span></div>
+            <div class="small-card"><strong>Scale</strong><span>Hundreds-of-terabyte data platforms with Kafka, Spark, Flink, Kubernetes, and cloud technologies.</span></div>
+            <div class="small-card"><strong>Leadership</strong><span>Collaborative engineering leadership, patent inventorships, DevOps/SRE, and international conference speaking.</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="1">
+      <div class="slide-inner">
+        <div>
+          <div class="kicker">Title Meaning</div>
+          <div class="title">What This Demo Title Means</div>
+          <div class="copy">“Self-Service Document Intelligence in the AI Era” means users can unlock knowledge from their own documents without waiting for a data team, custom search project, or manual analysis workflow.</div>
+          <div class="answer">“How DevOps is Shaping the Future of Intelligent Software Engineering” means AI products must be engineered, operated, evaluated, secured, traced, and governed like production systems.</div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel feature-grid">
+          <div class="feature"><div>📄</div><strong>Self-service</strong><span>Upload, classify, redact, search, summarize, compare, and ask questions without custom engineering per document.</span></div>
+          <div class="feature"><div>🧠</div><strong>Document intelligence</strong><span>RAG turns unstructured content into grounded, cited, multilingual answers.</span></div>
+          <div class="feature"><div>🤖</div><strong>AI era</strong><span>Natural language, voice, GenAI, embeddings, and reranking become normal software capabilities.</span></div>
+          <div class="feature"><div>⚙</div><strong>DevOps shaping AI</strong><span>CI/CD, observability, migrations, health checks, secrets, cost controls, and rollback make AI reliable.</span></div>
+          <div class="feature"><div>🧭</div><strong>Traceability</strong><span>Every answer should explain which documents, chunks, prompts, tools, and model calls shaped it.</span></div>
+          <div class="feature"><div>🔒</div><strong>Governance</strong><span>Security, PII redaction, access control, audit logs, usage limits, and evaluation create trust.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="2">
+      <div class="slide-inner">
+        <div>
+          <div class="kicker">Problem Statement</div>
+          <div class="title">Documents Are Still a Knowledge Bottleneck</div>
+          <div class="copy">Teams have important knowledge trapped in PDFs, Word files, scanned images, policies, reports, leases, invoices, and spreadsheets. Search is shallow, summaries are manual, and AI answers are hard to trust without evidence.</div>
+          <div class="answer">DocIntel solves this by turning documents into searchable, multilingual, privacy-aware, traceable intelligence with citations and operational controls.</div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel problem-grid">
+          <div class="problem"><strong>Unstructured content</strong><span>Critical facts are scattered across PDFs, images, contracts, reports, and tabular files.</span></div>
+          <div class="problem"><strong>Manual analysis</strong><span>People spend time reading, comparing, extracting, and rewriting what AI can accelerate.</span></div>
+          <div class="problem"><strong>Privacy risk</strong><span>Documents contain PII and regulated identifiers that should not leak into prompts or logs.</span></div>
+          <div class="problem"><strong>Trust gap</strong><span>Answers without source context, traces, or audit records are difficult to use in serious workflows.</span></div>
+          <div class="problem good"><strong>DocIntel response</strong><span>Ingest, redact, classify, embed, retrieve, cite, trace, and govern every question flow.</span></div>
+          <div class="problem good"><strong>Interview relevance</strong><span>It is small enough to demo, but rich enough to discuss real AI DevOps concerns.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="3">
+      <div class="slide-inner wide">
+        <div>
+          <div class="kicker">Solution Overview</div>
+          <div class="title">DocIntel Product Flow</div>
+          <div class="copy">The product moves from document ingestion to grounded AI answers. Each stage is observable and designed for production: file storage, text extraction, PII redaction, classification, language detection, chunking, embedding, retrieval, reranking, generation, and trace capture.</div>
+          <div class="bullets">
+            <div class="bullet"><span class="icon">📥</span><span>Upload and process documents from multiple formats.</span></div>
+            <div class="bullet"><span class="icon">🔒</span><span>Redact sensitive identifiers before embedding or runtime model calls.</span></div>
+            <div class="bullet"><span class="icon">💬</span><span>Ask questions by text or voice and receive cited answers.</span></div>
+          </div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel arch">
+          <div class="arch-col"><div class="box head">User Experience</div><div class="box">React UI</div><div class="box">Voice input</div><div class="box">Summaries</div><div class="box">Admin traces</div></div>
+          <div class="arch-col"><div class="box head">Backend APIs</div><div class="box">FastAPI routes</div><div class="box">Auth + plans</div><div class="box">Document service</div><div class="box">Chat service</div></div>
+          <div class="arch-col"><div class="box head">AI Pipeline</div><div class="box">Gemini classify</div><div class="box">Embeddings</div><div class="box">Hybrid retrieval</div><div class="box">LLM response</div></div>
+          <div class="arch-col"><div class="box head">Data + Ops</div><div class="box">Cloud SQL pgvector</div><div class="box">GCS documents</div><div class="box">Trace tables</div><div class="box">Secret Manager</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="4">
+      <div class="slide-inner wide">
+        <div>
+          <div class="kicker">End-to-End Architecture</div>
+          <div class="title">Ingestion, Search, Chat, Observability, Security, Governance</div>
+          <div class="copy">This is the high-level view I want the interview panel to remember: DocIntel is not one model call. It is an operational AI platform where every user action moves through product, API, AI, data, security, governance, and observability layers.</div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel">
+          <div class="e2e">
+            <div class="e2e-col">
+              <div class="e2e-title">Ingestion</div>
+              <div class="e2e-node green">Upload PDFs, DOCX, CSV, images, text</div>
+              <div class="e2e-node">Extract text and OCR scanned files</div>
+              <div class="e2e-node">Classify document and detect language</div>
+              <div class="e2e-node">Redact PII before chunking when enabled</div>
+              <div class="e2e-node">Store source in GCS and metadata in Postgres</div>
+            </div>
+            <div class="arrow">→</div>
+            <div class="e2e-col">
+              <div class="e2e-title">Search + Chat</div>
+              <div class="e2e-node blue">Embed chunks with Gemini</div>
+              <div class="e2e-node">Vector search over pgvector</div>
+              <div class="e2e-node">Full-text search over search_vector</div>
+              <div class="e2e-node">Fuse candidates with RRF and rerank</div>
+              <div class="e2e-node">Generate cited chat, summaries, comparisons</div>
+            </div>
+            <div class="arrow">→</div>
+            <div class="e2e-col">
+              <div class="e2e-title">Operate + Govern</div>
+              <div class="e2e-node gold">Trace flows, spans, retrieved context, LLM events</div>
+              <div class="e2e-node">Audit uploads, deletes, invites, logins</div>
+              <div class="e2e-node">JWT auth, RBAC, workspaces, rate limits</div>
+              <div class="e2e-node">Usage metering and billing tiers</div>
+              <div class="e2e-node">Health checks, migrations, secrets, rollback</div>
+            </div>
+          </div>
+          <div class="e2e-side">
+            <div class="e2e-node green"><strong>Security</strong><br>PII redaction, secrets, auth, RBAC</div>
+            <div class="e2e-node blue"><strong>Observability</strong><br>Question traces, model calls, retrieved chunks</div>
+            <div class="e2e-node gold"><strong>Governance</strong><br>Audit logs, usage limits, evaluation, compliance evidence</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="5">
+      <div class="slide-inner full">
+        <div>
+          <div class="kicker">Detailed Diagram · Ingestion Sequence</div>
+          <div class="title">Document Pipeline: Upload, Chunk, Embed</div>
+          <div class="copy" style="max-width:860px">This detailed sequence shows how a document travels from the user to the frontend, FastAPI, GCS, Postgres with pgvector, and Gemini. It also shows the two-phase behavior: first upload and chunk, then embed chunks into the vector index.</div>
+          <div class="diagram-panel" style="margin-top:14px">
+            <img class="diagram-img" src="document_ingestion_pipeline.png" alt="Document ingestion pipeline sequence diagram">
+          </div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="6">
+      <div class="slide-inner full">
+        <div>
+          <div class="kicker">Detailed Diagram · Ingestion State Machine</div>
+          <div class="title">Document Status Workflow</div>
+          <div class="copy" style="max-width:860px">This workflow explains the document lifecycle: uploading, chunking, chunked, embedding, embedded, summarized, queried, error, and deleted. It helps explain how the UI knows what actions are safe at each stage.</div>
+          <div class="diagram-panel" style="margin-top:14px">
+            <img class="diagram-img" src="ingestion_workflow_diagram.png" alt="Document ingestion workflow status diagram">
+          </div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="7">
+      <div class="slide-inner full">
+        <div>
+          <div class="kicker">Detailed Diagram · RAG Search Internals</div>
+          <div class="title">Hybrid Retrieval, Reranking, and Streaming Answer</div>
+          <div class="copy" style="max-width:860px">This diagram shows the chat internals: document access checks, query embedding, vector search, full-text search, RRF fusion, Gemini reranking, grounded prompt construction, streaming tokens, source previews, and usage logging.</div>
+          <div class="diagram-panel" style="margin-top:14px">
+            <img class="diagram-img" src="rag_search_internals.png" alt="RAG and search internals sequence diagram">
+          </div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="8">
+      <div class="slide-inner wide">
+        <div>
+          <div class="kicker">Cloud-Native Stack</div>
+          <div class="title">Deployment Architecture Behind the Workflow</div>
+          <div class="copy">After the workflow diagrams, this view connects the implementation pieces: browser UI, FastAPI services, model APIs, object storage, vector database, audit/usage data, and operational controls.</div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel">
+          <div class="arch" style="grid-template-columns:1fr 30px 1fr 30px 1fr">
+            <div class="arch-col"><div class="box head">Client</div><div class="box">React browser UI</div><div class="box">Voice capture</div><div class="box">Demo + admin</div></div>
+            <div class="arrow">→</div>
+            <div class="arch-col"><div class="box head">Cloud Run API</div><div class="box">Auth middleware</div><div class="box">Documents API</div><div class="box">Chat API</div><div class="box">Trace API</div></div>
+            <div class="arrow">→</div>
+            <div class="arch-col"><div class="box head">AI + Data</div><div class="box">Gemini model APIs</div><div class="box">Cloud SQL + pgvector</div><div class="box">GCS object store</div><div class="box">Audit + usage</div></div>
+          </div>
+          <div class="chip-row" style="margin-top:14px"><span class="chip green">CI/CD</span><span class="chip blue">Migrations</span><span class="chip gold">Health checks</span><span class="chip">Rollback</span><span class="chip">Secrets</span><span class="chip">Observability</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="9">
+      <div class="slide-inner wide">
+        <div>
+          <div class="kicker">Sequence Diagram</div>
+          <div class="title">Question-to-Answer Trace Flow</div>
+          <div class="copy">The key DevOps point is that every question becomes a traceable workflow. A user question is not just a request and response. It is retrieval, prompt assembly, model invocation, privacy handling, citation generation, evaluation, and trace persistence.</div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel sequence">
+          <div class="lane"><div class="lane-title">User</div><div class="step">Ask by text or voice</div><div class="step">Select privacy mode</div><div class="step">Receives answer and sources</div></div>
+          <div class="lane"><div class="lane-title">Frontend</div><div class="step">Send chat request</div><div class="step">Pass trace header</div><div class="step">Stream answer</div><div class="step">Show trace link</div></div>
+          <div class="lane"><div class="lane-title">API</div><div class="step">Create trace flow</div><div class="step">Redact PII if enabled</div><div class="step">Run hybrid retrieval</div><div class="step">Assemble prompt</div></div>
+          <div class="lane"><div class="lane-title">AI</div><div class="step">Rerank chunks</div><div class="step">Generate grounded answer</div><div class="step">Score quality signals</div><div class="step">Return model metadata</div></div>
+          <div class="lane"><div class="lane-title">Data</div><div class="step">Read chunks from DB</div><div class="step">Persist spans and events</div><div class="step">Store chat history</div><div class="step">Expose admin trace</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="10">
+      <div class="slide-inner full">
+        <div>
+          <div class="kicker">API and Database Design</div>
+          <div class="title">API Surface and Core Tables</div>
+          <div class="copy" style="max-width:760px">The design keeps product behavior explicit: document APIs manage ingestion, chat APIs manage RAG interaction, privacy flags shape prompt construction, and trace tables preserve the operational story of each AI call.</div>
+          <div class="design-grid" style="margin-top:16px">
+            <div class="code-card"><div class="mini-title">Representative APIs</div><pre>POST /api/documents/upload
+POST /api/documents/{id}/classify
+POST /api/documents/{id}/embed
+POST /api/chat/sessions
+POST /api/chat/query
+POST /api/summaries
+POST /api/compare
+GET  /api/admin/traces
+GET  /api/admin/traces/{trace_id}
+
+Request controls:
+redact_pii: true
+language: auto | en | es | bn | hi | ar
+trace: enabled</pre></div>
+            <div class="code-card"><div class="mini-title">Core Tables</div><pre>users
+documents
+document_chunks
+chat_sessions
+chat_messages
+document_tags
+usage_events
+audit_logs
+trace_flows
+trace_spans
+trace_llm_events
+trace_retrieved_context
+
+Vector index:
+document_chunks.embedding vector(768)</pre></div>
+          </div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="11">
+      <div class="slide-inner">
+        <div>
+          <div class="kicker">Feature Set · Part 1</div>
+          <div class="title">Document Intelligence Features</div>
+          <div class="copy">The first feature group is about turning raw files into usable intelligence. This includes upload, extraction, PII redaction, classification, language detection, chunking, embedding, source previews, retries, and document organization.</div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel feature-grid">
+          <div class="feature"><div>📄</div><strong>Upload pipeline</strong><span>PDF, DOCX, CSV, TXT, images, extraction, chunking, GCS storage, and retry.</span></div>
+          <div class="feature"><div>🏷</div><strong>Classification</strong><span>Gemini classifies document type and domain, with manual reclassification support.</span></div>
+          <div class="feature"><div>🌐</div><strong>Language support</strong><span>English, Spanish, Bengali, Hindi, Arabic, plus document-language response behavior.</span></div>
+          <div class="feature"><div>🔒</div><strong>PII redaction</strong><span>Email, phone, SSN, cards, DOB, bank IDs, IPs, including OCR spacing variants.</span></div>
+          <div class="feature"><div>🔍</div><strong>Search and tags</strong><span>Live search, type badges, language badges, tags, filters, and sorting.</span></div>
+          <div class="feature"><div>🧠</div><strong>Embeddings</strong><span>Gemini embeddings stored in pgvector for semantic retrieval.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="12">
+      <div class="slide-inner">
+        <div>
+          <div class="kicker">Feature Set · Part 2</div>
+          <div class="title">Chat, Voice, Summary, Comparison</div>
+          <div class="copy">The second feature group is the user-facing AI layer. Users can type or speak questions, receive grounded answers, summarize documents, compare documents, export results, and keep privacy controls active during runtime.</div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel feature-grid">
+          <div class="feature"><div>🎙</div><strong>Voice input</strong><span>Microphone to text with Web Speech and Gemini audio fallback where browsers block recognition.</span></div>
+          <div class="feature"><div>💬</div><strong>RAG chat</strong><span>Hybrid retrieval, Gemini reranking, streaming markdown, tables, and citations.</span></div>
+          <div class="feature"><div>📝</div><strong>Summaries</strong><span>Brief, detailed, bullets, executive, and key findings with privacy toggles.</span></div>
+          <div class="feature"><div>⇄</div><strong>Compare</strong><span>Side-by-side document comparison with structured output.</span></div>
+          <div class="feature"><div>📤</div><strong>Export</strong><span>Download summaries and chat history as Markdown.</span></div>
+          <div class="feature"><div>✅</div><strong>Evaluation</strong><span>Track answer relevance, specificity, groundedness, and user feedback.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="13">
+      <div class="slide-inner">
+        <div>
+          <div class="kicker">Memory Model</div>
+          <div class="title">Session Memory, Chat History, Long-Term Memory</div>
+          <div class="copy">For interview clarity, I separate memory into three layers. Session memory is the short-lived context used during the current conversation. Chat history is the durable user-visible record of messages. Long-term memory is the persistent knowledge layer: documents, chunks, embeddings, summaries, tags, traces, and user/workspace metadata.</div>
+          <div class="answer">Important distinction: DocIntel should not blindly remember everything. It should retrieve the right context, respect privacy controls, and make memory inspectable through chat history and traces.</div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel feature-grid">
+          <div class="feature"><div>🧠</div><strong>Session memory</strong><span>Current question, selected documents, recent turns, language, privacy mode, and trace ID.</span></div>
+          <div class="feature"><div>💬</div><strong>Chat history</strong><span>Persisted messages per session for continuity, export, feedback, and user review.</span></div>
+          <div class="feature"><div>📚</div><strong>Long-term memory</strong><span>Document chunks, embeddings, tags, summaries, classifications, and workspace knowledge.</span></div>
+          <div class="feature"><div>🔍</div><strong>Retrieval boundary</strong><span>The model receives retrieved evidence, not the whole database or every past conversation.</span></div>
+          <div class="feature"><div>🔒</div><strong>Privacy boundary</strong><span>PII redaction and workspace permissions decide what can enter prompts and previews.</span></div>
+          <div class="feature"><div>🧭</div><strong>Traceability</strong><span>Traces show which memory/context was used to produce a specific answer.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="14">
+      <div class="slide-inner">
+        <div>
+          <div class="kicker">Feature Set · Part 3</div>
+          <div class="title">Governance, Teams, and Traceability</div>
+          <div class="copy">The third feature group is what makes the platform credible for real work. It includes workspace isolation, roles, audit logs, usage metering, billing tiers, admin dashboards, and question-level trace inspection.</div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel feature-grid">
+          <div class="feature"><div>🏢</div><strong>Workspaces</strong><span>Personal and team contexts with owner, editor, and viewer roles.</span></div>
+          <div class="feature"><div>🧾</div><strong>Audit logs</strong><span>Uploads, deletes, invites, logins, and sensitive operations with IP and timestamp.</span></div>
+          <div class="feature"><div>🧭</div><strong>Trace viewer</strong><span>Question, chunks, prompt construction, model calls, errors, and response.</span></div>
+          <div class="feature"><div>📊</div><strong>Usage metering</strong><span>Track queries, embeddings, summaries, comparisons, storage, and plan limits.</span></div>
+          <div class="feature"><div>💳</div><strong>Billing</strong><span>Free, Pro, and Enterprise plans with Stripe lifecycle sync.</span></div>
+          <div class="feature"><div>🔐</div><strong>Security</strong><span>JWT, password hashing, email verification, secrets, rate limits, and privacy controls.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="15">
+      <div class="slide-inner">
+        <div>
+          <div class="kicker">Live Demo Setup</div>
+          <div class="title">What I Will Show Live</div>
+          <div class="copy">After the 8-minute setup, I will spend about 10 minutes in the real product: document dashboard, ingestion status, multilingual voice question, citations, summary or comparison, memory/history, and trace inspection.</div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel demo-box">
+          <div class="demo-step"><strong>1. Document dashboard</strong><span>Show classification, language badge, tags, embed status, and PII redaction metadata.</span></div>
+          <div class="demo-step"><strong>2. Voice question</strong><span>Ask a question in English or Spanish and let it submit automatically.</span></div>
+          <div class="demo-step"><strong>3. Grounded answer</strong><span>Point to citations, retrieved source previews, and answer quality indicators.</span></div>
+          <div class="demo-step"><strong>4. Summary or comparison</strong><span>Generate an executive summary or compare two documents with privacy enabled.</span></div>
+          <div class="demo-step"><strong>5. Trace inspection</strong><span>Open the trace for that question and show chunks, prompt, model call, and response.</span></div>
+          <div class="demo-step"><strong>6. Tie back to DevOps</strong><span>Explain why this is an operational AI system, not just a model call.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="16">
+      <div class="slide-inner full">
+        <div>
+          <div class="kicker">Real Demo Placeholder · 10 minutes</div>
+          <div class="title">Switch to the Running DocIntel App</div>
+          <div class="copy" style="max-width:740px">This slide intentionally creates space for the real demo. Use the full 10 minutes to prove the product: ingest, search, chat, summarize, inspect memory/history, and open the trace.</div>
+          <div class="panel" style="margin-top:18px">
+            <div class="demo-box">
+              <div class="demo-step"><strong>Target time</strong><span>10 minutes for the running product, with two minutes protected at the end for DevOps summary.</span></div>
+              <div class="demo-step"><strong>Best order</strong><span>Documents → Chat/voice → Citations → Summary/compare → Trace viewer.</span></div>
+              <div class="demo-step"><strong>Talk track</strong><span>Each click maps to a pipeline step: ingest, retrieve, generate, evaluate, observe.</span></div>
+              <div class="demo-step"><strong>Recovery</strong><span>If network or model latency hits, return to slides and explain the workflow from traceability.</span></div>
+            </div>
+          </div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="17">
+      <div class="slide-inner">
+        <div>
+          <div class="kicker">Interview Question</div>
+          <div class="title">How AI Changes Software Engineering</div>
+          <div class="copy">AI changes both how engineers build and what engineers build. It accelerates coding, debugging, test generation, documentation, and prototyping. But it also introduces probabilistic behavior, prompt dependencies, data sensitivity, model cost, and new failure modes.</div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel problem-grid">
+          <div class="problem good"><strong>Faster engineering</strong><span>AI assists implementation, design exploration, test creation, debugging, and documentation.</span></div>
+          <div class="problem good"><strong>New products</strong><span>Natural language becomes an interface to documents, workflows, operations, and data.</span></div>
+          <div class="problem"><strong>Less deterministic</strong><span>Model answers can vary by prompt, context, retrieval, temperature, and model version.</span></div>
+          <div class="problem"><strong>New risk surface</strong><span>Prompt injection, PII leakage, hallucination, cost spikes, and silent regressions.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="18">
+      <div class="slide-inner">
+        <div>
+          <div class="kicker">DevOps Impact on AI</div>
+          <div class="title">DevOps Makes AI Production-Ready</div>
+          <div class="copy">DevOps gives AI systems the operating discipline they need: CI/CD, environment management, secrets, monitoring, logs, health checks, rollback, infrastructure automation, release gates, and incident response.</div>
+          <div class="answer">For AI, DevOps also adds prompt versioning, retrieval regression tests, model evaluation, traceability, data governance, privacy checks, and cost controls.</div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel feature-grid">
+          <div class="feature"><div>🚦</div><strong>Release gates</strong><span>Code tests plus prompt, retrieval, migration, and redaction validation.</span></div>
+          <div class="feature"><div>📈</div><strong>Observability</strong><span>Trace user question to chunks, prompt, model, response, and errors.</span></div>
+          <div class="feature"><div>🔐</div><strong>Governance</strong><span>Secrets, access control, audit logs, PII handling, and policy enforcement.</span></div>
+          <div class="feature"><div>💵</div><strong>Cost control</strong><span>Rate limits, quotas, metering, caching, retries, and fallback behavior.</span></div>
+          <div class="feature"><div>↩</div><strong>Rollback</strong><span>Plan for model, prompt, schema, and service rollback.</span></div>
+          <div class="feature"><div>🧪</div><strong>Evaluation</strong><span>Groundedness, relevance, specificity, and safety become deployment signals.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="19">
+      <div class="slide-inner">
+        <div>
+          <div class="kicker">How AI Impacts DevOps</div>
+          <div class="title">DevOps Itself Becomes More Intelligent</div>
+          <div class="copy">AI also changes DevOps practices. Teams can use AI to summarize incidents, generate runbooks, inspect logs, suggest infrastructure changes, write tests, find risky diffs, and help operators reason through complex systems faster.</div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel feature-grid">
+          <div class="feature"><div>🧾</div><strong>Incident summaries</strong><span>Condense logs, traces, metrics, and deploy history into a useful timeline.</span></div>
+          <div class="feature"><div>🛠</div><strong>Runbook assist</strong><span>Suggest known remediation steps while preserving human approval.</span></div>
+          <div class="feature"><div>🔍</div><strong>Change analysis</strong><span>Explain risky diffs, dependency changes, and migration impact.</span></div>
+          <div class="feature"><div>🧪</div><strong>Test generation</strong><span>Create targeted unit, integration, and regression tests from behavior changes.</span></div>
+          <div class="feature"><div>☁</div><strong>IaC review</strong><span>Check Terraform, Kubernetes, and cloud configuration for drift and risk.</span></div>
+          <div class="feature"><div>📚</div><strong>Knowledge reuse</strong><span>Turn past incidents and architecture docs into searchable operational memory.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="20">
+      <div class="slide-inner">
+        <div>
+          <div class="kicker">DocIntel Connection</div>
+          <div class="title">Why This Demo Answers the Question</div>
+          <div class="copy">DocIntel is a useful interview demo because it is both an AI application and a DevOps case study. It requires model integration, privacy, traceability, cloud architecture, database design, release discipline, monitoring, and user-centered product thinking.</div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+        <div class="panel">
+          <div class="answer" style="margin-top:0">My position: AI does not remove the need for DevOps. It raises the standard for DevOps because production AI must be observable, evaluable, secure, governed, and resilient.</div>
+          <div class="bio-card">
+            <div class="small-card"><strong>AI value</strong><span>Users can query documents naturally across languages and formats.</span></div>
+            <div class="small-card"><strong>DevOps value</strong><span>The system can be deployed, monitored, migrated, traced, limited, and improved.</span></div>
+            <div class="small-card"><strong>Trust value</strong><span>Answers are grounded in context, citations, privacy state, and trace evidence.</span></div>
+            <div class="small-card"><strong>PNNL relevance</strong><span>Complex research and operational documents need trustworthy knowledge workflows.</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" data-idx="21">
+      <div class="slide-inner full">
+        <div>
+          <div class="kicker">Brief Summary</div>
+          <div class="title">Closing in One Minute</div>
+          <div class="copy" style="max-width:800px">DocIntel shows a complete AI software path: start with a real document problem, design a RAG architecture, expose APIs and database tables, build multilingual features, add privacy and traceability, demonstrate the live product, and then explain why DevOps is essential for production AI.</div>
+          <div class="panel" style="margin-top:18px">
+            <div class="feature-grid">
+              <div class="feature"><div>1</div><strong>Problem</strong><span>Unstructured documents are difficult to search, trust, govern, and reuse.</span></div>
+              <div class="feature"><div>2</div><strong>Solution</strong><span>DocIntel turns documents into multilingual, grounded, traceable intelligence.</span></div>
+              <div class="feature"><div>3</div><strong>Architecture</strong><span>FastAPI, React, Cloud Run, Firebase, Cloud SQL pgvector, GCS, Gemini.</span></div>
+              <div class="feature"><div>4</div><strong>Demo</strong><span>Upload, classify, redact, ask, summarize, compare, trace.</span></div>
+              <div class="feature"><div>5</div><strong>DevOps answer</strong><span>AI raises the bar for observability, evaluation, security, and operations.</span></div>
+              <div class="feature"><div>6</div><strong>Takeaway</strong><span>Production AI succeeds when product, architecture, and DevOps work together.</span></div>
+            </div>
+          </div>
+          <button class="btn speak" onclick="speakSlide(current)">🔊 Play narration</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="caption" aria-live="polite">
+    <div class="caption-label">Voice Text</div>
+    <div class="caption-text" id="narrationText"></div>
+  </div>
+</div>
+
+<script>
+const SLIDES = [
+  { text: "Accomplished Engineering and Enterprise Architecture leader with 25+ years of experience driving innovation across AI, cloud, and large-scale data platforms. Proven expertise in Agentic AI, GenAI, machine learning, OCR, image processing, and distributed systems, with patent inventorships. Skilled in building scalable cloud-native and edge computing solutions using Python, Scala, Java, JavaScript/TypeScript, and microservices architectures. Recognized for leading high-performance engineering teams, architecting hundreds of terabyte-scale data platforms leveraging Kafka, Spark, Flink, Kubernetes, and cloud technologies, and delivering real-time, event-driven applications. Strong background in DevOps, SRE, serverless computing, and enterprise data solutions, combined with a collaborative leadership style and international conference speaking experience." },
+  { text: "The title means two things. First, self-service document intelligence means a user can upload documents, ask questions, summarize, compare, and inspect sources without a custom engineering project for every knowledge need. Second, DevOps shaping intelligent software means AI features are not only prompts and models. They require deployment discipline, observability, traceability, privacy, security, governance, evaluation, cost control, and rollback. That is the thread running through this DocIntel demo." },
+  { text: "The problem is trapped document knowledge. Teams have PDFs, scans, reports, policies, contracts, and spreadsheets that are hard to search, summarize, compare, and trust. DocIntel turns them into searchable, multilingual, privacy-aware intelligence with citations and traceability." },
+  { text: "DocIntel is a production-style RAG workflow: ingest files, extract text, redact PII, classify, detect language, chunk, embed, retrieve evidence, rerank, and generate cited answers. The goal is to show the difference between an LLM call and an AI system." },
+  { text: "End to end, DocIntel has ingestion, search and chat, observability, security, and governance. Ingestion prepares content. Search and chat ground answers. Observability records traces. Security and governance enforce privacy, access, usage limits, audit, migrations, secrets, and rollback readiness." },
+  { text: "The ingestion sequence starts with upload, creates the document row, stores the source file in GCS, extracts text or OCR, chunks content, saves metadata, then embeds chunks with Gemini and stores vectors plus full-text search data in Postgres with pgvector." },
+  { text: "The status workflow explains user-visible states: uploading, chunking, chunked, embedding, embedded, summarized, queried, error, and deleted. It also explains which actions are safe at each stage, such as summarize before embedding or chat after embedding." },
+  { text: "RAG internals start with the question, document IDs, and chat history. The backend checks access and limits, embeds the query, runs vector and full-text search, fuses candidates, reranks with Gemini, builds grounded context, streams the answer, logs usage, and returns source previews." },
+  { text: "The deployment stack is React, FastAPI on Cloud Run, GCS for files, Cloud SQL Postgres with pgvector, and Gemini for classification, embeddings, reranking, transcription, chat, summaries, and comparison. Operations include Secret Manager, migrations, health checks, logs, traces, and rollback planning." },
+  { text: "Traceability matters because a question is more than request and response. DocIntel captures the user question, privacy state, retrieved chunks, prompt construction, model calls, tool events, response, errors, and trace ID so the answer can be inspected." },
+  { text: "The API and database design keep behavior explicit. Document APIs handle upload, classification, embedding, summaries, and comparison. Chat APIs handle sessions and questions. Core tables include documents, chunks, messages, usage events, audit logs, trace flows, spans, LLM events, and retrieved context." },
+  { text: "Feature group one is document intelligence: upload, extraction, PII redaction, classification, language detection, chunking, embedding, previews, retry, live search, tags, filters, and sorting. These turn raw files into usable knowledge assets." },
+  { text: "Feature group two is the AI user layer: text and voice questions, English, Spanish, Bengali, Hindi, Arabic, hybrid retrieval, Gemini reranking, citations, streaming answers, summaries, comparisons, exports, and runtime privacy controls." },
+  { text: "For memory, I use three layers. Session memory is recent turns, selected documents, language, privacy mode, and trace ID. Chat history is the persisted conversation record. Long-term memory is documents, chunks, embeddings, tags, summaries, classifications, traces, and workspace metadata." },
+  { text: "Governance makes DocIntel a product, not a prototype: workspaces, roles, audit logs, usage metering, billing tiers, admin dashboards, question-level traces, PII redaction, permissions, and rate limits. Trust comes from the answer and the evidence around it." },
+  { text: "In the live demo, I will show the document dashboard, status and classification, a multilingual voice question, a grounded answer with citations, a summary or comparison, memory and chat history, and the trace viewer." },
+  { text: "Now I switch to the real DocIntel application for about ten minutes. The live flow is documents, chat or voice, citations, summary or comparison, memory or history, and traceability. The live product is the evidence behind the architecture." },
+  { text: "For the interview question: AI accelerates coding, tests, debugging, documentation, and product interfaces. But it also introduces probabilistic behavior, prompt sensitivity, retrieval dependency, data risk, model cost, and new failure modes." },
+  { text: "DevOps makes AI production-ready. Beyond CI and CD, AI needs prompt versioning, retrieval regression tests, model evaluation, traceability, data governance, privacy checks, cost controls, monitoring, rollback, and incident response." },
+  { text: "AI also changes DevOps. Teams can use AI to summarize incidents, inspect logs, generate runbooks, review infrastructure changes, create tests, explain risky diffs, and turn past incidents into operational memory, with humans still approving production actions." },
+  { text: "DocIntel connects both sides. AI creates new product value, while DevOps makes that value trustworthy: observable, evaluable, secure, governed, resilient, cost-aware, and traceable." },
+  { text: "My takeaway for PNNL is simple: AI does not reduce the need for DevOps. It raises the bar. Trustworthy AI requires product thinking, architecture, evaluation, security, governance, observability, and operations working together." }
+];
+
+let current = 0;
+let autoPlay = false;
+let autoTimer = null;
+let speechRunId = 0;
+let maleVoice = null;
+let keepAlive = null;
+let customVoiceEnabled = true;
+let currentAudio = null;
+let mediaRecorder = null;
+let recordingStream = null;
+let recordingChunks = [];
+let recordingSlide = null;
+let recordingMimeType = '';
+let voiceDbPromise = null;
+const TITLE_SLIDE_VOICE_MIGRATION_KEY = 'docintel-pnnl-demo-voice-title-slide-added-v1';
+
+function openVoiceDb(){
+  if (voiceDbPromise) return voiceDbPromise;
+  voiceDbPromise = new Promise((resolve,reject) => {
+    const req = indexedDB.open('docintel-pnnl-demo-voice-8min', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('recordings');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  return voiceDbPromise;
+}
+
+async function getRecording(idx){
+  const db = await openVoiceDb();
+  return new Promise((resolve,reject) => {
+    const req = db.transaction('recordings','readonly').objectStore('recordings').get(String(idx));
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveRecording(idx,recording){
+  const db = await openVoiceDb();
+  return new Promise((resolve,reject) => {
+    const req = db.transaction('recordings','readwrite').objectStore('recordings').put(recording,String(idx));
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function deleteRecording(idx){
+  const db = await openVoiceDb();
+  return new Promise((resolve,reject) => {
+    const req = db.transaction('recordings','readwrite').objectStore('recordings').delete(String(idx));
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function listRecordingKeys(){
+  const db = await openVoiceDb();
+  return new Promise((resolve,reject) => {
+    const store = db.transaction('recordings','readonly').objectStore('recordings');
+    const req = store.getAllKeys ? store.getAllKeys() : null;
+    if (req) {
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+      return;
+    }
+    const keys = [];
+    const cursor = store.openCursor();
+    cursor.onsuccess = () => {
+      const cur = cursor.result;
+      if (!cur) { resolve(keys); return; }
+      keys.push(cur.key);
+      cur.continue();
+    };
+    cursor.onerror = () => reject(cursor.error);
+  });
+}
+
+async function migrateVoiceRecordingsAfterTitleSlide(){
+  try {
+    if (localStorage.getItem(TITLE_SLIDE_VOICE_MIGRATION_KEY) === 'done') return;
+    const keys = (await listRecordingKeys())
+      .map(key => Number(key))
+      .filter(key => Number.isFinite(key))
+      .sort((a,b) => b - a);
+    if (!keys.length) {
+      localStorage.setItem(TITLE_SLIDE_VOICE_MIGRATION_KEY,'done');
+      return;
+    }
+    if (keys.includes(SLIDES.length - 1)) {
+      localStorage.setItem(TITLE_SLIDE_VOICE_MIGRATION_KEY,'done');
+      return;
+    }
+    let shifted = 0;
+    for (const key of keys) {
+      if (key < 1 || key >= SLIDES.length - 1) continue;
+      const rec = await getRecording(key);
+      if (!rec?.blob) continue;
+      await saveRecording(key + 1, rec);
+      await deleteRecording(key);
+      shifted += 1;
+    }
+    localStorage.setItem(TITLE_SLIDE_VOICE_MIGRATION_KEY,'done');
+    if (shifted) {
+      setVoiceStatus(`Adjusted ${shifted} saved voice recordings after the new title slide. Record slide 2 separately if needed.`, 'ready');
+    }
+  } catch (err) {
+    setVoiceStatus(`Could not adjust saved voice recordings automatically: ${err?.message || err}`, 'warn');
+  }
+}
+
+function blobToDataUrl(blob){
+  return new Promise((resolve,reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+function dataUrlToBlob(dataUrl){
+  const [meta,data] = dataUrl.split(',');
+  const mime = (meta.match(/data:(.*?);base64/) || [])[1] || 'audio/webm';
+  const bin = atob(data);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type:mime });
+}
+
+async function exportVoicePack(){
+  try {
+    const keys = await listRecordingKeys();
+    const recordings = [];
+    for (const key of keys) {
+      const rec = await getRecording(key);
+      if (!rec?.blob) continue;
+      recordings.push({
+        slide:Number(key),
+        type:rec.type || rec.blob.type || 'audio/webm',
+        savedAt:rec.savedAt || '',
+        dataUrl:await blobToDataUrl(rec.blob)
+      });
+    }
+    if (!recordings.length) {
+      setVoiceStatus('No recorded voice found yet. Record at least one slide before exporting.', 'warn');
+      return;
+    }
+    const pack = {
+      name:'DocIntel PNNL interview voice pack',
+      deck:'demo-pnnl-interview-18min.docintel.html',
+      version:1,
+      slideCount:SLIDES.length,
+      exportedAt:new Date().toISOString(),
+      recordings
+    };
+    const blob = new Blob([JSON.stringify(pack,null,2)], { type:'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'demo-pnnl-interview-8min-voice-pack.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setVoiceStatus(`Exported ${recordings.length} recorded slide voices. Keep the JSON file with the demo.`, 'ready');
+  } catch (err) {
+    setVoiceStatus(`Voice export failed: ${err?.message || err}`, 'warn');
+  }
+}
+
+async function importVoicePackObject(pack,source='voice pack'){
+  const recordings = Array.isArray(pack?.recordings) ? pack.recordings : [];
+  const importedSlideCount = Number(pack?.slideCount) || SLIDES.length;
+  const shouldShiftForTitleSlide = importedSlideCount === SLIDES.length - 1;
+  let imported = 0;
+  for (const item of recordings) {
+    if (!Number.isFinite(item.slide) || !item.dataUrl) continue;
+    const targetSlide = shouldShiftForTitleSlide && item.slide >= 1 ? item.slide + 1 : item.slide;
+    const blob = dataUrlToBlob(item.dataUrl);
+    await saveRecording(targetSlide, {
+      blob,
+      type:item.type || blob.type,
+      savedAt:item.savedAt || new Date().toLocaleTimeString()
+    });
+    imported += 1;
+  }
+  setVoiceStatus(`Imported ${imported} recorded slide voices from ${source}.`, imported ? 'ready' : 'warn');
+  refreshVoiceStatus();
+}
+
+async function importVoicePackFile(event){
+  const file = event.target.files?.[0];
+  event.target.value = '';
+  if (!file) return;
+  try {
+    const pack = JSON.parse(await file.text());
+    await importVoicePackObject(pack,file.name);
+  } catch (err) {
+    setVoiceStatus(`Voice import failed: ${err?.message || err}`, 'warn');
+  }
+}
+
+async function autoLoadBundledVoicePack(){
+  try {
+    const res = await fetch('demo-pnnl-interview-8min-voice-pack.json', { cache:'no-store' });
+    if (!res.ok) return;
+    const existing = await listRecordingKeys();
+    if (existing.length) return;
+    await importVoicePackObject(await res.json(),'bundled voice pack');
+  } catch (_) {
+    // Optional file. Ignore when the presentation is used without a voice pack.
+  }
+}
+
+async function prepareVoiceStorage(){
+  await migrateVoiceRecordingsAfterTitleSlide();
+  await autoLoadBundledVoicePack();
+}
+
+function setVoiceStatus(text,state=''){
+  const el = document.getElementById('voiceStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `voice-status${state ? ` ${state}` : ''}`;
+}
+
+function stopCurrentAudio(){
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.src = '';
+    currentAudio = null;
+  }
+}
+
+function loadVoices(){
+  const voices = speechSynthesis.getVoices();
+  if (!voices.length) return;
+  const preferred = ['Daniel','David','Alex','Google UK English Male','Microsoft David','en-GB-News-G'];
+  maleVoice = voices.find(v => preferred.some(p => v.name.includes(p))) ||
+    voices.find(v => v.lang && v.lang.startsWith('en') && !v.name.toLowerCase().includes('female')) ||
+    voices.find(v => v.lang && v.lang.startsWith('en'));
+}
+speechSynthesis.addEventListener('voiceschanged', loadVoices);
+loadVoices();
+
+function splitNarration(text){
+  const sentences = text.match(/[^.!?।]+[.!?।]+|[^.!?।]+$/g) || [text];
+  const chunks = [];
+  let buf = '';
+  for (const sentence of sentences) {
+    const next = `${buf} ${sentence.trim()}`.trim();
+    if (next.length > 230 && buf) { chunks.push(buf); buf = sentence.trim(); }
+    else buf = next;
+  }
+  if (buf) chunks.push(buf);
+  return chunks;
+}
+
+function startKeepAlive(){
+  stopKeepAlive();
+  keepAlive = setInterval(() => {
+    if (speechSynthesis.speaking && speechSynthesis.paused) speechSynthesis.resume();
+  }, 4000);
+}
+function stopKeepAlive(){ if (keepAlive) { clearInterval(keepAlive); keepAlive = null; } }
+function clearButtons(){ document.querySelectorAll('.speak').forEach(b => b.classList.remove('speaking')); }
+function setAutoButton(){
+  const btn = document.getElementById('autoBtn');
+  btn.classList.toggle('active', autoPlay);
+  btn.textContent = autoPlay ? '⏸ Auto' : '▶ Auto';
+}
+
+function finishRecordedPlayback(runId,idx){
+  if (runId !== speechRunId) return;
+  clearButtons();
+  currentAudio = null;
+  if (autoPlay && idx === current) {
+    if (current >= SLIDES.length - 1) { autoPlay = false; setAutoButton(); }
+    else autoTimer = setTimeout(() => { if (autoPlay) goSlide(1); }, 700);
+  }
+}
+
+async function playRecordedSlide(idx,runId,btn){
+  if (!customVoiceEnabled) return false;
+  let recording = null;
+  try { recording = await getRecording(idx); }
+  catch (err) {
+    setVoiceStatus(`Could not read saved voice. Falling back to browser narration. ${err?.message || ''}`,'warn');
+    return false;
+  }
+  if (!recording?.blob) return false;
+  if (runId !== speechRunId) return true;
+  const url = URL.createObjectURL(recording.blob);
+  const audio = new Audio(url);
+  currentAudio = audio;
+  if (btn) btn.classList.add('speaking');
+  setVoiceStatus(`Playing your recorded voice for slide ${idx + 1}.`,'ready');
+  audio.onended = () => { URL.revokeObjectURL(url); finishRecordedPlayback(runId,idx); };
+  audio.onerror = () => {
+    URL.revokeObjectURL(url);
+    currentAudio = null;
+    if (btn) btn.classList.remove('speaking');
+    setVoiceStatus('Recorded audio could not play. Falling back to browser narration.','warn');
+    speakSlideWithBrowserVoice(idx,runId,btn);
+  };
+  try { await audio.play(); }
+  catch (err) {
+    URL.revokeObjectURL(url);
+    currentAudio = null;
+    if (btn) btn.classList.remove('speaking');
+    setVoiceStatus(`Browser blocked recorded playback. Click Play narration once. ${err?.message || ''}`,'warn');
+  }
+  return true;
+}
+
+async function speakSlide(idx){
+  const slide = SLIDES[idx];
+  if (!slide) return;
+  const runId = ++speechRunId;
+  clearTimeout(autoTimer);
+  speechSynthesis.cancel();
+  stopCurrentAudio();
+  stopKeepAlive();
+  clearButtons();
+  loadVoices();
+  const btn = document.querySelectorAll('.speak')[idx];
+  if (btn) btn.classList.add('speaking');
+  if (await playRecordedSlide(idx,runId,btn)) return;
+  speakSlideWithBrowserVoice(idx,runId,btn);
+}
+
+function speakSlideWithBrowserVoice(idx,runId,btn){
+  const slide = SLIDES[idx];
+  if (!slide) return;
+  setVoiceStatus(customVoiceEnabled ? `No recording for slide ${idx + 1}; using browser narration.` : 'Using browser narration.');
+  const chunks = splitNarration(slide.text);
+  let part = 0;
+  function speakNext(){
+    if (runId !== speechRunId) return;
+    if (part >= chunks.length) {
+      if (btn) btn.classList.remove('speaking');
+      stopKeepAlive();
+      if (autoPlay && idx === current) {
+        if (current >= SLIDES.length - 1) { autoPlay = false; setAutoButton(); }
+        else autoTimer = setTimeout(() => { if (autoPlay) goSlide(1); }, 700);
+      }
+      return;
+    }
+    const u = new SpeechSynthesisUtterance(chunks[part]);
+    if (maleVoice) u.voice = maleVoice;
+    u.rate = .92; u.pitch = .9; u.volume = 1;
+    u.onstart = () => { if (runId === speechRunId) startKeepAlive(); };
+    u.onend = () => { if (runId === speechRunId) { part += 1; setTimeout(speakNext, 60); } };
+    u.onerror = e => {
+      if (runId !== speechRunId) return;
+      if (e.error === 'interrupted' || e.error === 'canceled') return;
+      part += 1; setTimeout(speakNext, 60);
+    };
+    speechSynthesis.speak(u);
+  }
+  setTimeout(speakNext, 80);
+}
+
+function buildDots(){
+  const dots = document.getElementById('dots');
+  dots.innerHTML = '';
+  SLIDES.forEach((_,i) => {
+    const dot = document.createElement('div');
+    dot.className = `dot${i === current ? ' active' : ''}`;
+    dot.onclick = () => jumpTo(i);
+    dots.appendChild(dot);
+  });
+}
+function updateUI(){
+  document.querySelectorAll('.slide').forEach((slide,i) => slide.classList.toggle('active', i === current));
+  document.getElementById('counter').textContent = `${current + 1} / ${SLIDES.length}`;
+  document.getElementById('progress').style.width = `${((current + 1) / SLIDES.length) * 100}%`;
+  document.getElementById('prevBtn').disabled = current === 0;
+  document.getElementById('nextBtn').disabled = current === SLIDES.length - 1;
+  document.getElementById('narrationText').textContent = SLIDES[current]?.text || '';
+  buildDots();
+  refreshVoiceStatus();
+}
+
+async function refreshVoiceStatus(){
+  if (mediaRecorder?.state === 'recording') return;
+  const modeBtn = document.getElementById('voiceModeBtn');
+  if (modeBtn) {
+    modeBtn.classList.toggle('active', customVoiceEnabled);
+    modeBtn.textContent = customVoiceEnabled ? '🎙 My voice: On' : '🔊 Browser voice';
+  }
+  try {
+    const recording = await getRecording(current);
+    if (recording?.blob) {
+      setVoiceStatus(`Slide ${current + 1} has your recorded voice saved. Auto will use it.`, 'ready');
+    } else {
+      setVoiceStatus(`No voice recording for slide ${current + 1}. Record it, or Auto will use browser narration.`);
+    }
+  } catch (err) {
+    setVoiceStatus(`Voice storage is unavailable in this browser. ${err?.message || ''}`, 'warn');
+  }
+}
+
+function toggleVoiceMode(){
+  customVoiceEnabled = !customVoiceEnabled;
+  refreshVoiceStatus();
+}
+
+function getPreferredAudioMimeType(){
+  const choices = ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus'];
+  return choices.find(type => window.MediaRecorder?.isTypeSupported?.(type)) || '';
+}
+
+async function startRecordingCurrentSlide(){
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    setVoiceStatus('This browser cannot record microphone audio here. Try Chrome or Safari over localhost/HTTPS.','warn');
+    return;
+  }
+  speechRunId++;
+  clearTimeout(autoTimer);
+  speechSynthesis.cancel();
+  stopCurrentAudio();
+  stopKeepAlive();
+  clearButtons();
+  try {
+    recordingStream = await navigator.mediaDevices.getUserMedia({ audio:true });
+    recordingChunks = [];
+    recordingSlide = current;
+    recordingMimeType = getPreferredAudioMimeType();
+    mediaRecorder = new MediaRecorder(recordingStream, recordingMimeType ? { mimeType: recordingMimeType } : undefined);
+    mediaRecorder.ondataavailable = e => { if (e.data?.size) recordingChunks.push(e.data); };
+    mediaRecorder.onstop = async () => {
+      const blob = new Blob(recordingChunks, { type: recordingMimeType || recordingChunks[0]?.type || 'audio/webm' });
+      const durationLabel = new Date().toLocaleTimeString();
+      await saveRecording(recordingSlide, { blob, type: blob.type, savedAt: durationLabel });
+      recordingStream?.getTracks().forEach(track => track.stop());
+      recordingStream = null;
+      mediaRecorder = null;
+      document.getElementById('recordBtn').disabled = false;
+      document.getElementById('stopRecordBtn').disabled = true;
+      setVoiceStatus(`Saved your voice for slide ${recordingSlide + 1}.`, 'ready');
+      recordingSlide = null;
+    };
+    mediaRecorder.start();
+    document.getElementById('recordBtn').disabled = true;
+    document.getElementById('stopRecordBtn').disabled = false;
+    setVoiceStatus(`Recording your voice for slide ${current + 1}. Read the Voice Text below, then click Stop + save.`, 'recording');
+  } catch (err) {
+    recordingStream?.getTracks().forEach(track => track.stop());
+    recordingStream = null;
+    mediaRecorder = null;
+    document.getElementById('recordBtn').disabled = false;
+    document.getElementById('stopRecordBtn').disabled = true;
+    setVoiceStatus(`Microphone recording failed: ${err?.message || err}.`, 'warn');
+  }
+}
+
+function stopRecordingCurrentSlide(){
+  if (mediaRecorder?.state === 'recording') {
+    mediaRecorder.stop();
+    setVoiceStatus('Saving recorded voice...', 'ready');
+  }
+}
+
+async function clearCurrentRecording(){
+  await deleteRecording(current);
+  setVoiceStatus(`Cleared recorded voice for slide ${current + 1}.`);
+  refreshVoiceStatus();
+}
+function jumpTo(idx){
+  speechRunId++;
+  clearTimeout(autoTimer);
+  speechSynthesis.cancel();
+  stopCurrentAudio();
+  stopKeepAlive();
+  clearButtons();
+  current = Math.max(0, Math.min(SLIDES.length - 1, idx));
+  updateUI();
+  if (autoPlay) setTimeout(() => speakSlide(current), 150);
+}
+function goSlide(dir){ jumpTo(current + dir); }
+function toggleAuto(){
+  autoPlay = !autoPlay;
+  setAutoButton();
+  if (autoPlay) speakSlide(current);
+  else { speechRunId++; clearTimeout(autoTimer); speechSynthesis.cancel(); stopCurrentAudio(); stopKeepAlive(); clearButtons(); }
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === ' ') goSlide(1);
+  if (e.key === 'ArrowLeft') goSlide(-1);
+  if (e.key === 'Escape') {
+    if (mediaRecorder?.state === 'recording') stopRecordingCurrentSlide();
+    if (autoPlay) toggleAuto();
+    speechSynthesis.cancel();
+    stopCurrentAudio();
+  }
+});
+document.getElementById('splash').addEventListener('click', () => {
+  document.getElementById('splash').classList.add('hide');
+  document.getElementById('app').classList.add('show');
+  loadVoices();
+  prepareVoiceStorage();
+  updateUI();
+  setTimeout(() => speakSlide(0), 350);
+});
+setTimeout(() => { prepareVoiceStorage(); updateUI(); },0);
+</script>
+</body>
+</html>
