@@ -19,4 +19,7 @@ dist/
 build/
 
 # Firebase cache
+.firebase
 ui/.firebase/
+.firebase/
+.deploy-config
