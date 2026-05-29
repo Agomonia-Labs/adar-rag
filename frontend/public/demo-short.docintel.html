@@ -368,46 +368,54 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
       </div>
     </div>
 
-    <!-- 4. Summarise + Compare -->
+    <!-- 4. Horizontal Platform + Vertical Agents -->
     <div class="slide" data-idx="3">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Step 3</div>
-          <div class="slide-title">Summarise & Compare</div>
-          <div class="slide-sub">Generate five types of summaries for any document, streamed in real time and matched to the document language. Summary and comparison privacy toggles redact PII before content is sent to Gemini.</div>
+          <div class="slide-title">Horizontal RAG, Vertical Agentic AI</div>
+          <div class="slide-sub">DocIntel separates reusable horizontal document intelligence from vertical domain workflows. The RAG layer handles ingestion, search, citations, privacy, multilingual chat, summaries, comparison, traces, and governance; agentic AI adds domain-specific reasoning on top.</div>
           <div class="feature-list">
-            <div class="feature-item"><span class="feature-icon">📝</span><span>5-type streaming summaries — brief, detailed, bullets, executive, key findings</span></div>
-            <div class="feature-item"><span class="feature-icon">⇄</span><span>Document comparison — select 2 docs, get a structured side-by-side analysis</span></div>
-            <div class="feature-item"><span class="feature-icon">🌐</span><span>Multilingual summaries and comparisons for English, Spanish, Bengali, Hindi, and Arabic</span></div>
-            <div class="feature-item"><span class="feature-icon">🔒</span><span>PII-safe summaries — email, phone, SSN, card, DOB, bank/account, and IP patterns are masked</span></div>
-            <div class="feature-item"><span class="feature-icon">📦</span><span>Multi-doc summarisation — summarise a batch of selected documents at once</span></div>
-            <div class="feature-item"><span class="feature-icon">↓</span><span>Export summaries and chat history as Markdown files</span></div>
+            <div class="feature-item"><span class="feature-icon">↔</span><span>Horizontal layer — upload, OCR, chunking, embeddings, hybrid RAG, rerank, citations, PII redaction, multilingual UX, traces, audit, billing</span></div>
+            <div class="feature-item"><span class="feature-icon">⚙</span><span>Vertical layer — JSON-configured orchestrator, domain agents, tools, approvals, saved structured outputs</span></div>
+            <div class="feature-item"><span class="feature-icon">🏢</span><span>Lease management — abstract, clauses, critical dates, amendment comparison, obligation checklist</span></div>
+            <div class="feature-item"><span class="feature-icon">🏥</span><span>Healthcare — intake packets, clinical records, prior auth, policy review, compliance evidence</span></div>
+            <div class="feature-item"><span class="feature-icon">📈</span><span>Brokerage — KYC, account forms, disclosures, research packets, suitability review</span></div>
+            <div class="feature-item"><span class="feature-icon">✓</span><span>Same platform controls every vertical: traceability, human approval, governance, and reusable RAG services</span></div>
           </div>
           <button class="btn-speak" onclick="speakSlide(3)">🔊 Play narration</button>
         </div>
         <div class="mockup">
-          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">📝 Summary Panel</div></div>
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">Layered Intelligence Architecture</div></div>
           <div class="mockup-body" style="display:flex;flex-direction:column;gap:8px">
-            <!-- Summary type selector -->
-            <div style="display:flex;gap:4px;flex-wrap:wrap">
-              {['Brief','Detailed','Bullets','Executive','Key Findings'].map((t,i) => "")}
-              <div style="padding:3px 9px;border-radius:20px;font-size:9.5px;font-weight:600;background:rgba(74,222,128,.15);color:#4ade80;border:1px solid rgba(74,222,128,.3)">Brief</div>
-              <div style="padding:3px 9px;border-radius:20px;font-size:9.5px;background:rgba(255,255,255,.05);color:#6b7280;border:0.5px solid rgba(255,255,255,.1)">Detailed</div>
-              <div style="padding:3px 9px;border-radius:20px;font-size:9.5px;background:rgba(255,255,255,.05);color:#6b7280;border:0.5px solid rgba(255,255,255,.1)">Bullets</div>
-              <div style="padding:3px 9px;border-radius:20px;font-size:9.5px;background:rgba(255,255,255,.05);color:#6b7280;border:0.5px solid rgba(255,255,255,.1)">Executive</div>
-              <div style="padding:3px 9px;border-radius:20px;font-size:9.5px;background:rgba(255,255,255,.05);color:#6b7280;border:0.5px solid rgba(255,255,255,.1)">Key Findings</div>
-            </div>
-            <!-- Summary content -->
-            <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.08);border-radius:8px;padding:10px 12px;font-size:11px;color:#d1d5db;line-height:1.7;flex:1">
-              <strong style="color:#4ade80">Q3 Financial Report</strong> shows strong quarterly performance driven by a <strong style="color:#f0fdf4">18.4% revenue increase</strong>. Operating margins improved by 2.1 percentage points, reaching 24.3%. Customer acquisition costs fell 12% year-over-year while average contract value grew to $48K.
-              <div style="margin-top:8px;display:flex;gap:6px">
-                <div style="padding:3px 10px;font-size:9.5px;background:#15803d;color:#fff;border-radius:4px;cursor:pointer">↓ Export .md</div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+              <div style="background:rgba(96,165,250,.06);border:0.5px solid rgba(96,165,250,.2);border-radius:8px;padding:8px 9px">
+                <div style="font-size:10px;font-weight:800;color:#60a5fa;margin-bottom:5px">Lease</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.55">Abstracts<br/>Critical dates<br/>Obligations</div>
+              </div>
+              <div style="background:rgba(74,222,128,.06);border:0.5px solid rgba(74,222,128,.2);border-radius:8px;padding:8px 9px">
+                <div style="font-size:10px;font-weight:800;color:#4ade80;margin-bottom:5px">Healthcare</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.55">Records<br/>Policy review<br/>Compliance</div>
+              </div>
+              <div style="background:rgba(251,191,36,.06);border:0.5px solid rgba(251,191,36,.2);border-radius:8px;padding:8px 9px">
+                <div style="font-size:10px;font-weight:800;color:#fbbf24;margin-bottom:5px">Brokerage</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.55">KYC<br/>Disclosures<br/>Suitability</div>
               </div>
             </div>
-            <!-- Compare banner -->
-            <div style="background:rgba(96,165,250,.06);border:0.5px solid rgba(96,165,250,.2);border-radius:8px;padding:8px 10px;font-size:10px;color:#60a5fa;display:flex;align-items:center;gap:8px">
-              <span>⇄</span>
-              <span>Select 2 documents above to compare them side by side</span>
+            <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.08);border-radius:8px;padding:9px 10px;font-size:10px;color:#d1d5db;line-height:1.7;flex:1">
+              <div style="font-weight:800;color:#f0fdf4;margin-bottom:4px">Horizontal RAG Platform</div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px">
+                <span style="padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">OCR</span>
+                <span style="padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">PII</span>
+                <span style="padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Hybrid search</span>
+                <span style="padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Rerank</span>
+                <span style="padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Citations</span>
+                <span style="padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Traces</span>
+                <span style="padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Governance</span>
+              </div>
+            </div>
+            <div style="background:rgba(96,165,250,.06);border:0.5px solid rgba(96,165,250,.2);border-radius:8px;padding:8px 10px;font-size:10px;color:#60a5fa;display:flex;align-items:center;justify-content:space-between;gap:8px">
+              <span>JSON workflow</span><span>→</span><span>Domain agents</span><span>→</span><span>Approval + saved outputs</span>
             </div>
           </div>
         </div>
@@ -697,7 +705,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">🏢</div><div class="sum-card-title" style="color:#4ade80">Workspaces</div><ul class="sum-card-list"><li>Owner/Editor/Viewer</li><li>Invite by email</li><li>Scoped docs + chat</li><li>One-click switch</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">💳</div><div class="sum-card-title" style="color:#c084fc">Stripe Billing</div><ul class="sum-card-list"><li>Free / Pro / Enterprise</li><li>3-day free trial</li><li>Auto-sync on login</li><li>Cancel → auto-free</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(248,113,113,.12);color:#f87171">🔒</div><div class="sum-card-title" style="color:#f87171">PII Redaction</div><ul class="sum-card-list"><li>Upload-time masking</li><li>Chat privacy toggle</li><li>Summary + chunk privacy</li><li>OCR spacing aware</li></ul></div>
-          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">☁</div><div class="sum-card-title" style="color:#60a5fa">Infrastructure</div><ul class="sum-card-list"><li>Cloud Run + Firebase</li><li>pgvector + GCS</li><li>Usage metering</li><li>Secret Manager</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">⚙</div><div class="sum-card-title" style="color:#60a5fa">Vertical Agents</div><ul class="sum-card-list"><li>Lease workflows</li><li>Healthcare ready</li><li>Brokerage ready</li><li>Human approval</li></ul></div>
         </div>
         <button class="btn-speak" style="margin-top:1.5rem" onclick="speakSlide(9)">🔊 Play narration</button>
       </div>
@@ -713,13 +721,13 @@ const SLIDES = [
   { text: "আদর DocIntel is a self-service RAG platform for document intelligence. Upload files, ask questions, and get grounded answers with citations. It now classifies documents, detects language, and supports English, Spanish, Bengali, Hindi, and Arabic." },
   { text: "The upload pipeline is automatic. DocIntel extracts text, optionally redacts PII before chunking and embedding, classifies the document, stores the source in GCS, and prepares Gemini embeddings in pgvector. Redaction covers email, phone, SSN, card, date of birth, bank IDs, and IP addresses, including OCR-style spacing." },
   { text: "Chat works by typing or speaking. Spanish, Bengali, Hindi, Arabic, English, and document-language questions can auto-submit after speech. Web Speech runs where supported; Safari and Firefox use MediaRecorder with Gemini transcription. Privacy mode redacts PII from prompts, context, sources, and trace previews before model use." },
-  { text: "For analysis, DocIntel streams summaries, comparisons, and exports. Choose executive, detailed, bullets, sections, or custom prompts. Compare two documents side by side. Summary and comparison privacy toggles redact sensitive identifiers before content is sent to Gemini." },
+  { text: "The architecture separates horizontal and vertical intelligence. The horizontal layer provides reusable RAG capabilities: ingestion, OCR, PII redaction, chunking, embeddings, hybrid search, reranking, citations, multilingual chat, summaries, comparisons, traces, audit, and governance. The vertical layer adds agentic AI for domain workflows. Lease management is the first example, with abstract, clause review, critical dates, amendment comparison, obligations, and approval. The same pattern can extend to healthcare, brokerage, legal, and other verticals." },
   { text: "As libraries grow, DocIntel keeps them navigable. Auto-classification labels invoices, leases, resumes, reports, policies, and more. Tags create project or client collections, while search, type filters, tag filters, and sorting keep hundreds of documents manageable." },
   { text: "Teams collaborate in workspaces with Owner, Editor, and Viewer roles. Uploads, tags, chat sessions, and summaries stay scoped to the selected workspace. Owners invite teammates, editors contribute documents, and viewers get read-only chat and search." },
   { text: "Billing is handled by Stripe with Free, Pro, and Enterprise tiers. Usage limits cover documents, storage, queries, embeddings, summaries, and comparisons. Paid plans include a trial, and subscription state syncs on login." },
   { text: "Security, privacy, audit, and traceability are built in. Email verification, password reset, audit logs, PII redaction, and question-level traces help teams understand both what users did and how each AI answer was produced." },
   { text: "The stack is Google Cloud end to end: FastAPI on Cloud Run, React on Firebase Hosting, Cloud SQL Postgres with pgvector, and GCS for documents. Gemini powers classification, embeddings, reranking, transcription, chat, summaries, and comparison." },
-  { text: "That is আদর DocIntel: upload, redact, classify, embed, speak or type questions, summarize, compare, organize, collaborate, bill, audit, trace, and deploy — a production document intelligence platform for multilingual teams." }
+  { text: "That is আদর DocIntel: a horizontal RAG and governance platform with vertical agentic AI layers for lease management, healthcare, brokerage, and beyond. Teams can upload, redact, classify, embed, speak or type questions, summarize, compare, run domain agents, audit, trace, and deploy." }
 ];
 
 

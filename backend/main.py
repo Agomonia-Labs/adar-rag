@@ -131,6 +131,7 @@ _ROUTERS = [
     ("routes.evals",          "evals_router",          "/api/evals",         ["evals"]),
     ("routes.voice",          "voice_router",          "/api/voice",         ["voice"]),
     ("routes.traces",         "traces_router",         "/api/traces",        ["traces"]),
+    ("routes.lease",          "lease_router",          "/api/lease",         ["lease"]),
 ]
 
 for _module, _attr, _prefix, _tags in _ROUTERS:

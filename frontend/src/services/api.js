@@ -4,6 +4,8 @@ const BASE        = '/api';
 const STREAM_BASE = import.meta.env.VITE_STREAM_BASE
   ? import.meta.env.VITE_STREAM_BASE + '/api'
   : '/api';
+// Long-running AI workflows should also bypass Firebase Hosting's /api proxy.
+const LONG_BASE = STREAM_BASE;
 
 function token()   { return localStorage.getItem('token'); }
 function authHdr() { return { Authorization: `Bearer ${token()}` }; }
@@ -293,6 +295,53 @@ export async function compareDocuments(doc_id_1, doc_id_2, callbacks, options = 
       } catch {}
     }
   }
+}
+
+// ── Lease intelligence ───────────────────────────────────────────────────────
+export async function fetchLeaseAbstract(docId) {
+  return handleRes(await fetch(`${BASE}/lease/${docId}/abstract`, { headers: authHdr() }));
+}
+
+export async function extractLeaseAbstract(docId) {
+  return handleRes(await fetch(`${BASE}/lease/${docId}/extract`, {
+    method:'POST',
+    headers:authHdr(),
+  }));
+}
+
+export async function compareLeaseDocuments(baseDocumentId, amendmentDocumentId) {
+  return handleRes(await fetch(`${BASE}/lease/compare`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({
+      base_document_id: baseDocumentId,
+      amendment_document_id: amendmentDocumentId,
+    }),
+  }));
+}
+
+export async function runLeaseAgentWorkflow(docId, amendmentDocumentId = null) {
+  return handleRes(await fetch(`${LONG_BASE}/lease/${docId}/agent-workflow`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({ amendment_document_id: amendmentDocumentId }),
+  }));
+}
+
+export async function fetchLeaseAgentRun(runId) {
+  return handleRes(await fetch(`${BASE}/lease/agent-runs/${runId}`, { headers: authHdr() }));
+}
+
+export async function fetchLatestLeaseAgentWorkflow(docId) {
+  return handleRes(await fetch(`${BASE}/lease/${docId}/agent-workflow/latest`, { headers: authHdr() }));
+}
+
+export async function approveLeaseAgentRun(runId, { approvedAbstract = null, notes = '' } = {}) {
+  return handleRes(await fetch(`${BASE}/lease/agent-runs/${runId}/approve`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({ approved_abstract: approvedAbstract, notes }),
+  }));
 }
 
 // ── Message feedback ────────────────────────────────────────────────────────

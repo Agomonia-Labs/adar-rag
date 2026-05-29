@@ -6,6 +6,7 @@ import { toast } from './Toast.jsx';
 import ChunksViewer from './ChunksViewer.jsx';
 import SummaryPanel from './SummaryPanel.jsx';
 import ComparePanel from './ComparePanel.jsx';
+import LeasePanel from './LeasePanel.jsx';
 
 const MAX_FILES = parseInt(import.meta.env.VITE_MAX_UPLOAD_FILES || '500');
 
@@ -22,6 +23,10 @@ const ICONS = { pdf:'📄', docx:'📝', csv:'📊', image:'🖼', text:'📃', 
 
 const DOC_TYPE_LABELS = {
   contract:'Contract', agreement:'Agreement', nda:'NDA', lease:'Lease',
+  lease_amendment:'Lease Amendment', lease_extension:'Lease Extension',
+  rent_roll:'Rent Roll', estoppel:'Estoppel', appraisal:'Appraisal',
+  inspection_report:'Inspection', property_management_agreement:'Property Mgmt',
+  cam_reconciliation:'CAM Recon',
   employment_contract:'Employment', terms_of_service:'Terms',
   invoice:'Invoice', receipt:'Receipt', purchase_order:'PO',
   financial_statement:'Financial', audit_report:'Audit', tax_return:'Tax',
@@ -56,6 +61,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
   const [viewer,  setViewer]  = useState(null);
   const [summary, setSummary] = useState(null);
   const [compare, setCompare] = useState(null);
+  const [leasePanel, setLeasePanel] = useState(null);
   const [selected,setSelected]= useState([]);
   const fileRef = useRef(null);
   const pollRef = useRef(null);
@@ -151,10 +157,16 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
         <Stat v={embedded} l="Embedded" c="var(--teal)" />
         <div style={{flex:1}}/>
         {selected.length===2 && (
-          <button style={{...s.multiBtn,background:'rgba(96,165,250,.1)',color:'#60a5fa',borderColor:'rgba(96,165,250,.3)'}}
-            onClick={()=>setCompare({doc1:selDocs[0],doc2:selDocs[1]})}>
-            ⇄ Compare 2 docs
-          </button>
+          <>
+            <button style={{...s.multiBtn,background:'rgba(96,165,250,.1)',color:'#60a5fa',borderColor:'rgba(96,165,250,.3)'}}
+              onClick={()=>setCompare({doc1:selDocs[0],doc2:selDocs[1]})}>
+              ⇄ Compare 2 docs
+            </button>
+            <button style={{...s.multiBtn,background:'rgba(251,191,36,.1)',color:'#fbbf24',borderColor:'rgba(251,191,36,.3)'}}
+              onClick={()=>setLeasePanel({compareDocs:selDocs})}>
+              🏢 Lease compare
+            </button>
+          </>
         )}
         {selected.length>=2 && (
           <button style={s.multiBtn} onClick={()=>setSummary({documentIds:selected,docNames:selDocs.map(d=>d.original_name)})}>
@@ -231,7 +243,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
         {/* Tags manager toggle */}
         <select value={filterType} onChange={e=>setFilterType(e.target.value)}
           style={{ fontSize:11, padding:'3px 4px', background:'var(--s3)',
-            color: filterType ? (DOMAIN_COLORS[{contract:'legal',invoice:'finance',financial_statement:'finance',purchase_order:'finance',resume:'hr',job_description:'hr',offer_letter:'hr',medical_record:'medical',research_paper:'research',policy:'operations',report:'general'}[filterType]||'general']) : 'var(--tx)',
+            color: filterType ? (DOMAIN_COLORS[{contract:'legal',agreement:'legal',nda:'legal',lease:'legal',lease_amendment:'legal',lease_extension:'legal',estoppel:'legal',property_management_agreement:'legal',invoice:'finance',financial_statement:'finance',purchase_order:'finance',audit_report:'finance',rent_roll:'finance',appraisal:'finance',cam_reconciliation:'finance',resume:'hr',job_description:'hr',offer_letter:'hr',medical_record:'medical',prescription:'medical',lab_report:'medical',research_paper:'research',thesis:'research',article:'research',policy:'operations',inspection_report:'operations',report:'general'}[filterType]||'general']) : 'var(--tx)',
             border:`1px solid var(--b2)`, borderRadius:'var(--r)', cursor:'pointer', flexShrink:0, width:72 }}>
           <option value="">All types</option>
           <optgroup label="🔵 Legal">
@@ -239,12 +251,19 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
             <option value="agreement">Agreement</option>
             <option value="nda">NDA</option>
             <option value="lease">Lease</option>
+            <option value="lease_amendment">Lease Amend</option>
+            <option value="lease_extension">Lease Ext</option>
+            <option value="estoppel">Estoppel</option>
+            <option value="property_management_agreement">Property Mgmt</option>
           </optgroup>
           <optgroup label="🟢 Finance">
             <option value="invoice">Invoice</option>
             <option value="purchase_order">PO</option>
             <option value="financial_statement">Financial</option>
             <option value="audit_report">Audit</option>
+            <option value="rent_roll">Rent Roll</option>
+            <option value="appraisal">Appraisal</option>
+            <option value="cam_reconciliation">CAM Recon</option>
           </optgroup>
           <optgroup label="🟣 HR">
             <option value="resume">Resume</option>
@@ -264,6 +283,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
           <optgroup label="⚪ General">
             <option value="report">Report</option>
             <option value="policy">Policy</option>
+            <option value="inspection_report">Inspection</option>
             <option value="email">Email</option>
             <option value="general">General</option>
           </optgroup>
@@ -324,6 +344,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
               onSelect={()=>toggleSel(doc.id)} onEmbed={()=>handleEmbed(doc.id)}
               onViewSource={()=>handleView(doc.id)} onViewChunks={()=>setViewer(doc.id)}
               onSummarize={()=>setSummary({docId:doc.id,docName:doc.original_name})}
+              onLease={()=>setLeasePanel({doc})}
               onRetry={()=>handleRetry(doc.id)}
               onReclassify={()=>handleReclassify(doc.id)}
               onDelete={handleDelete}
@@ -339,17 +360,19 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
       {compare && <ComparePanel doc1={compare.doc1} doc2={compare.doc2} onClose={()=>setCompare(null)} />
       }
       {summary && <SummaryPanel docId={summary.docId} docName={summary.docName} documentIds={summary.documentIds} docNames={summary.docNames} onClose={()=>setSummary(null)} />}
+      {leasePanel && <LeasePanel doc={leasePanel.doc} compareDocs={leasePanel.compareDocs} onClose={()=>setLeasePanel(null)} />}
     </div>
   );
 }
 
 function Stat({v,l,c}){ return <div style={{textAlign:'center',minWidth:50}}><div style={{fontSize:20,fontWeight:700,color:c}}>{v}</div><div style={{fontSize:9,color:'var(--muted2)',textTransform:'uppercase',letterSpacing:'.5px',marginTop:1}}>{l}</div></div>; }
 
-function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSummarize,onRetry,onReclassify,onDelete,allTags=[],onTagAssign,onTagRemove}){
+function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSummarize,onLease,onRetry,onReclassify,onDelete,allTags=[],onTagAssign,onTagRemove}){
   const [conf,setConf]=useState(false);
   const cfg=STATUS[doc.status]||{strip:'#6b7280',bg:'rgba(107,114,128,.1)',color:'#6b7280',label:doc.status};
   const spin=['chunking','embedding','uploading'].includes(doc.status);
   const canSum=['chunked','embedding','embedded'].includes(doc.status);
+  const canLease = ['lease','lease_amendment','lease_extension','contract','agreement','rent_roll','estoppel','appraisal','inspection_report','property_management_agreement','cam_reconciliation'].includes(doc.doc_type) || doc.doc_domain === 'legal';
   return (
     <div style={{...s.card,...(selected?s.cardSel:{})}}>
       <div style={s.cardInner}>
@@ -441,6 +464,7 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
         <Btn onClick={onViewSource} disabled={['uploading','chunking'].includes(doc.status)}>🔗 Source</Btn>
         {canSum && <Btn onClick={onViewChunks}>📋 Chunks</Btn>}
         {canSum && <Btn onClick={onSummarize} accent>📝 Summary</Btn>}
+        {canSum && canLease && <Btn onClick={onLease} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>🏢 Lease</Btn>}
         {doc.status==='error'    && <Btn onClick={onRetry} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>↻ Retry</Btn>}
         {doc.status==='chunked'  && <Btn onClick={onEmbed} primary>⚡ Embed</Btn>}
         {doc.status==='embedded' && <Btn onClick={onEmbed}>↩ Re-embed</Btn>}
@@ -451,13 +475,14 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
   );
 }
 
-function Btn({children,onClick,primary,danger,accent,disabled}){
+function Btn({children,onClick,primary,danger,accent,disabled,style}){
   return <button onClick={onClick} disabled={disabled} style={{
     display:'flex',alignItems:'center',gap:4,padding:'4px 10px',fontSize:11,fontWeight:500,borderRadius:6,cursor:disabled?'not-allowed':'pointer',
     border:primary?'none':accent?'1px solid rgba(74,222,128,.3)':danger?'1px solid rgba(248,113,113,.3)':'1px solid var(--b2)',
     background:primary?'#15803d':accent?'rgba(74,222,128,.1)':danger?'rgba(248,113,113,.08)':'transparent',
     color:primary?'#fff':accent?'#4ade80':danger?'var(--red)':'var(--muted2)',
     opacity:disabled?.4:1,transition:'all .15s',
+    ...style,
   }}>{children}</button>;
 }
 

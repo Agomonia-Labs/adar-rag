@@ -315,6 +315,128 @@ CREATE INDEX IF NOT EXISTS idx_trace_llm_trace ON trace_llm_events(trace_id);
 CREATE INDEX IF NOT EXISTS idx_trace_llm_span  ON trace_llm_events(span_id);
 CREATE INDEX IF NOT EXISTS idx_trace_llm_op    ON trace_llm_events(operation);
 
+-- Real Estate / Lease Intelligence vertical layer
+CREATE TABLE IF NOT EXISTS lease_abstracts (
+    id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    document_id    UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    user_id        UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id   UUID        REFERENCES workspaces(id) ON DELETE SET NULL,
+    abstract_data  JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    confidence     FLOAT,
+    status         TEXT        NOT NULL DEFAULT 'ready',
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(document_id)
+);
+CREATE INDEX IF NOT EXISTS idx_lease_abstracts_doc  ON lease_abstracts(document_id);
+CREATE INDEX IF NOT EXISTS idx_lease_abstracts_user ON lease_abstracts(user_id);
+
+CREATE TABLE IF NOT EXISTS lease_critical_dates (
+    id            UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    document_id   UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    user_id       UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id  UUID        REFERENCES workspaces(id) ON DELETE SET NULL,
+    date_type     TEXT        NOT NULL,
+    date_value    DATE,
+    raw_value     TEXT,
+    description   TEXT,
+    responsible_party TEXT,
+    source        TEXT,
+    confidence    FLOAT,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_lease_dates_doc  ON lease_critical_dates(document_id);
+CREATE INDEX IF NOT EXISTS idx_lease_dates_user ON lease_critical_dates(user_id);
+CREATE INDEX IF NOT EXISTS idx_lease_dates_date ON lease_critical_dates(date_value);
+
+CREATE TABLE IF NOT EXISTS lease_clause_flags (
+    id            UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    document_id   UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    user_id       UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id  UUID        REFERENCES workspaces(id) ON DELETE SET NULL,
+    clause_type   TEXT        NOT NULL,
+    status        TEXT        NOT NULL,
+    risk_level    TEXT        NOT NULL DEFAULT 'unknown',
+    finding       TEXT,
+    source        TEXT,
+    confidence    FLOAT,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_lease_flags_doc  ON lease_clause_flags(document_id);
+CREATE INDEX IF NOT EXISTS idx_lease_flags_user ON lease_clause_flags(user_id);
+
+CREATE TABLE IF NOT EXISTS lease_comparisons (
+    id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    base_document_id UUID      NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    amendment_document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    user_id        UUID       NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id   UUID       REFERENCES workspaces(id) ON DELETE SET NULL,
+    comparison_data JSONB     NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_lease_comparisons_base ON lease_comparisons(base_document_id);
+CREATE INDEX IF NOT EXISTS idx_lease_comparisons_user ON lease_comparisons(user_id);
+
+CREATE TABLE IF NOT EXISTS lease_agent_runs (
+    id                    UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    document_id           UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    amendment_document_id UUID        REFERENCES documents(id) ON DELETE SET NULL,
+    user_id               UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id          UUID        REFERENCES workspaces(id) ON DELETE SET NULL,
+    workflow_version      TEXT        NOT NULL DEFAULT 'phase2-adk-v1',
+    status                TEXT        NOT NULL DEFAULT 'running',
+    result_data           JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    error_message         TEXT,
+    approved_by           UUID        REFERENCES users(id) ON DELETE SET NULL,
+    approved_at           TIMESTAMPTZ,
+    approval_notes        TEXT,
+    created_at            TIMESTAMPTZ DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ DEFAULT NOW(),
+    completed_at          TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_lease_agent_runs_doc    ON lease_agent_runs(document_id);
+CREATE INDEX IF NOT EXISTS idx_lease_agent_runs_user   ON lease_agent_runs(user_id);
+CREATE INDEX IF NOT EXISTS idx_lease_agent_runs_status ON lease_agent_runs(status);
+
+CREATE TABLE IF NOT EXISTS lease_agent_steps (
+    id            UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    run_id        UUID        NOT NULL REFERENCES lease_agent_runs(id) ON DELETE CASCADE,
+    agent_name    TEXT        NOT NULL,
+    status        TEXT        NOT NULL DEFAULT 'pending',
+    input_summary TEXT,
+    output_data   JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    error_message TEXT,
+    started_at    TIMESTAMPTZ DEFAULT NOW(),
+    completed_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_lease_agent_steps_run   ON lease_agent_steps(run_id);
+CREATE INDEX IF NOT EXISTS idx_lease_agent_steps_agent ON lease_agent_steps(agent_name);
+
+CREATE TABLE IF NOT EXISTS lease_obligations (
+    id            UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    run_id        UUID        NOT NULL REFERENCES lease_agent_runs(id) ON DELETE CASCADE,
+    document_id   UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    user_id       UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id  UUID        REFERENCES workspaces(id) ON DELETE SET NULL,
+    title         TEXT        NOT NULL,
+    party         TEXT        NOT NULL DEFAULT 'unknown',
+    category      TEXT        NOT NULL DEFAULT 'other',
+    priority      TEXT        NOT NULL DEFAULT 'medium',
+    due_date      DATE,
+    trigger       TEXT,
+    source        TEXT,
+    status        TEXT        NOT NULL DEFAULT 'open',
+    notes         TEXT,
+    approved      BOOLEAN     NOT NULL DEFAULT FALSE,
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_lease_obligations_doc      ON lease_obligations(document_id);
+CREATE INDEX IF NOT EXISTS idx_lease_obligations_run      ON lease_obligations(run_id);
+CREATE INDEX IF NOT EXISTS idx_lease_obligations_user     ON lease_obligations(user_id);
+CREATE INDEX IF NOT EXISTS idx_lease_obligations_due_date ON lease_obligations(due_date);
+CREATE INDEX IF NOT EXISTS idx_lease_obligations_status   ON lease_obligations(status);
+
 """
 
 

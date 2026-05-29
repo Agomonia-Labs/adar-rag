@@ -909,81 +909,80 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
       </div>
     </div>
 
-    <!-- 15. Document Comparison -->
+    <!-- 15. Horizontal Platform + Vertical Agentic AI -->
     <div class="slide" data-idx="15">
       <div class="slide-inner">
         <div class="narration">
-          <div class="slide-num">Feature</div>
-          <div class="slide-title">Document Comparison Mode</div>
-          <div class="slide-sub">Select any two documents and compare them side-by-side. Gemini analyses every clause, term, date, and obligation — returning a colour-coded section breakdown with similarity score.</div>
+          <div class="slide-num">Architecture Positioning</div>
+          <div class="slide-title">Horizontal RAG Platform + Vertical Agentic AI</div>
+          <div class="slide-sub">DocIntel separates the reusable platform from domain specialization. The horizontal layer delivers all capabilities needed for production RAG; the vertical layer adds agentic workflows for lease management, healthcare, brokerage, and future industries.</div>
           <div class="feature-list">
-            <div class="feature-item"><span class="feature-icon">⇄</span><span>Select exactly 2 documents in the Documents tab — the Compare button appears automatically</span></div>
-            <div class="feature-item"><span class="feature-icon">🟡</span><span>Modified sections shown in amber — same topic, different content (e.g. rent $2,200 vs $2,500)</span></div>
-            <div class="feature-item"><span class="feature-icon">🔵</span><span>Added sections in blue — only in Document 2; Removed sections in red — only in Document 1</span></div>
-            <div class="feature-item"><span class="feature-icon">📊</span><span>Similarity meter shows 0–100% overlap score across all sections</span></div>
-            <div class="feature-item"><span class="feature-icon">🔍</span><span>Filter by Modified / Added / Removed / Same — click any row to expand and read the full diff</span></div>
-            <div class="feature-item"><span class="feature-icon">⚖</span><span>High-value for legal, finance, and compliance — compare contracts, leases, policies, regulations</span></div>
+            <div class="feature-item"><span class="feature-icon">↔</span><span>Horizontal RAG layer — ingestion, OCR, chunking, embeddings, hybrid search, rerank, citations, multilingual chat, summaries, comparison</span></div>
+            <div class="feature-item"><span class="feature-icon">🔒</span><span>Horizontal controls — PII redaction, auth, workspaces, usage limits, audit logs, traces, observability, governance, production deployment</span></div>
+            <div class="feature-item"><span class="feature-icon">⚙</span><span>Vertical agentic layer — JSON-configured orchestrator, domain agents, tool bindings, approval workflow, saved structured outputs</span></div>
+            <div class="feature-item"><span class="feature-icon">🏢</span><span>Lease management — abstract, clause review, critical dates, amendment comparison, obligation checklist</span></div>
+            <div class="feature-item"><span class="feature-icon">🏥</span><span>Healthcare — intake packets, medical records, prior authorization, policy review, compliance evidence</span></div>
+            <div class="feature-item"><span class="feature-icon">📈</span><span>Brokerage — KYC, account opening forms, disclosures, research packets, suitability and risk review</span></div>
           </div>
           <button class="btn-speak" onclick="speakSlide(15)">🔊 Play narration</button>
         </div>
         <div class="mockup">
-          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">⇄ Document Comparison</div></div>
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">Layered Intelligence Architecture</div></div>
           <div class="mockup-body" style="display:flex;flex-direction:column;gap:8px;padding:10px">
 
-            <!-- Doc header -->
-            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-              <span style="font-size:9.5px;padding:2px 9px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.25)">Lease_Extension_2025.pdf</span>
-              <span style="font-size:10px;color:#6b7280">vs</span>
-              <span style="font-size:9.5px;padding:2px 9px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.25)">Original_Lease_2023.pdf</span>
-            </div>
-
-            <!-- Similarity + counts -->
-            <div style="display:flex;gap:10px;align-items:center;background:rgba(255,255,255,.03);border-radius:8px;padding:8px 10px">
-              <div style="flex:1">
-                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-                  <span style="font-size:9.5px;color:#6b7280;font-weight:600">Similarity</span>
-                  <span style="font-size:13px;font-weight:800;color:#fbbf24">65%</span>
-                </div>
-                <div style="height:5px;background:rgba(255,255,255,.08);border-radius:3px"><div style="height:100%;width:65%;background:#fbbf24;border-radius:3px"></div></div>
+            <!-- Vertical cards -->
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:7px">
+              <div style="background:rgba(96,165,250,.06);border:0.5px solid rgba(96,165,250,.22);border-radius:8px;padding:8px 9px">
+                <div style="font-size:10px;font-weight:800;color:#60a5fa;margin-bottom:5px">Lease Management</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.55">Abstracts<br/>Clause review<br/>Dates + obligations</div>
               </div>
-              <div style="display:flex;gap:8px;font-size:9.5px">
-                <div style="display:flex;align-items:center;gap:3px"><div style="width:7px;height:7px;border-radius:50%;background:#fbbf24"></div><span style="color:#6b7280">Modified 8</span></div>
-                <div style="display:flex;align-items:center;gap:3px"><div style="width:7px;height:7px;border-radius:50%;background:#60a5fa"></div><span style="color:#6b7280">Added 2</span></div>
-                <div style="display:flex;align-items:center;gap:3px"><div style="width:7px;height:7px;border-radius:50%;background:#f87171"></div><span style="color:#6b7280">Removed 3</span></div>
-                <div style="display:flex;align-items:center;gap:3px"><div style="width:7px;height:7px;border-radius:50%;background:#4ade80"></div><span style="color:#6b7280">Same 5</span></div>
+              <div style="background:rgba(74,222,128,.06);border:0.5px solid rgba(74,222,128,.22);border-radius:8px;padding:8px 9px">
+                <div style="font-size:10px;font-weight:800;color:#4ade80;margin-bottom:5px">Healthcare</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.55">Records<br/>Prior auth<br/>Compliance evidence</div>
+              </div>
+              <div style="background:rgba(251,191,36,.06);border:0.5px solid rgba(251,191,36,.22);border-radius:8px;padding:8px 9px">
+                <div style="font-size:10px;font-weight:800;color:#fbbf24;margin-bottom:5px">Brokerage</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.55">KYC<br/>Disclosures<br/>Suitability review</div>
               </div>
             </div>
 
-            <!-- Section table -->
+            <!-- Horizontal platform band -->
+            <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.08);border-radius:8px;padding:9px 10px">
+              <div style="font-size:10px;font-weight:800;color:#f0fdf4;margin-bottom:6px">Horizontal RAG + Governance Platform</div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px">
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Upload</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">OCR</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">PII</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Embeddings</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Hybrid RAG</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Rerank</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Citations</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Voice</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Traces</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Audit</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Billing</span>
+              </div>
+            </div>
+
+            <!-- Agent pattern table -->
             <div style="background:rgba(255,255,255,.02);border-radius:8px;border:0.5px solid rgba(255,255,255,.08);overflow:hidden">
-              <!-- Header -->
-              <div style="display:grid;grid-template-columns:80px 1fr 1fr 70px;gap:4px;padding:5px 8px;background:rgba(255,255,255,.04);font-size:8.5px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.3px">
-                <div>Section</div><div>Doc 1</div><div>Doc 2</div><div>Status</div>
+              <div style="display:grid;grid-template-columns:98px 1fr 80px;gap:4px;padding:5px 8px;background:rgba(255,255,255,.04);font-size:8.5px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.3px">
+                <div>Pattern</div><div>Purpose</div><div>Control</div>
               </div>
-              <!-- Rows -->
-              <div style="display:grid;grid-template-columns:80px 1fr 1fr 70px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(251,191,36,.05)">
-                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Monthly Rent</div>
-                <div style="font-size:9px;color:#9ca3af">$2,500/month</div>
-                <div style="font-size:9px;color:#9ca3af">$2,200/month</div>
-                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)">Modified</span></div>
+              <div style="display:grid;grid-template-columns:98px 1fr 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(74,222,128,.04)">
+                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">JSON config</div>
+                <div style="font-size:9px;color:#9ca3af">Orchestrator, subagents, tools, output contract per vertical</div>
+                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.2)">Reusable</span></div>
               </div>
-              <div style="display:grid;grid-template-columns:80px 1fr 1fr 70px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(248,113,113,.05)">
-                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Security Dep.</div>
-                <div style="font-size:9px;color:#9ca3af">Not present</div>
-                <div style="font-size:9px;color:#9ca3af">$3,000</div>
-                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(248,113,113,.12);color:#f87171;border:1px solid rgba(248,113,113,.25)">Removed</span></div>
+              <div style="display:grid;grid-template-columns:98px 1fr 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(96,165,250,.04)">
+                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Domain agents</div>
+                <div style="font-size:9px;color:#9ca3af">Extract, review, compare, generate checklist, route decisions</div>
+                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(96,165,250,.12);color:#60a5fa;border:1px solid rgba(96,165,250,.25)">Agentic</span></div>
               </div>
-              <div style="display:grid;grid-template-columns:80px 1fr 1fr 70px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(251,191,36,.05)">
-                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Lease Term</div>
-                <div style="font-size:9px;color:#9ca3af">Jul 2025–Jun 2027</div>
-                <div style="font-size:9px;color:#9ca3af">Sep 2023–Jun 2025</div>
-                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)">Modified</span></div>
-              </div>
-              <div style="display:grid;grid-template-columns:80px 1fr 1fr 70px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(74,222,128,.04)">
-                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Property Address</div>
-                <div style="font-size:9px;color:#9ca3af">123 Main St, Unit 4B</div>
-                <div style="font-size:9px;color:#9ca3af">123 Main St, Unit 4B</div>
-                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.2)">Same</span></div>
+              <div style="display:grid;grid-template-columns:98px 1fr 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(251,191,36,.05)">
+                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Approval</div>
+                <div style="font-size:9px;color:#9ca3af">Human review saves abstracts, dates, obligations, or compliance findings</div>
+                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)">Governed</span></div>
               </div>
             </div>
 
@@ -1836,7 +1835,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">🗂</div><div class="sum-card-title" style="color:#4ade80">Chat Sessions</div><ul class="sum-card-list"><li>PostgreSQL-persisted history</li><li>Auto-titled from question</li><li>Access from any device</li><li>Up to 50 sessions per user</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">🔀</div><div class="sum-card-title" style="color:#c084fc">Hybrid Search</div><ul class="sum-card-list"><li>pgvector cosine similarity</li><li>PostgreSQL BM25 full-text</li><li>Reciprocal Rank Fusion</li><li>⚡ hybrid / 🔤 keyword / 🔍 vector badges</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">✦</div><div class="sum-card-title" style="color:#fbbf24">Gemini Re-ranking</div><ul class="sum-card-list"><li>20 candidates → Gemini scores</li><li>Cross-encoder (query + chunk)</li><li>Top 6 sent to LLM</li><li>Fallback to retrieval order</li></ul></div>
-          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">⇄</div><div class="sum-card-title" style="color:#60a5fa">Doc Comparison</div><ul class="sum-card-list"><li>Select any 2 documents</li><li>Gemini clause-by-clause diff</li><li>Colour-coded: same/modified/added/removed</li><li>Similarity score + filter tabs</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">⚙</div><div class="sum-card-title" style="color:#60a5fa">Vertical Agents</div><ul class="sum-card-list"><li>Lease management</li><li>Healthcare ready</li><li>Brokerage ready</li><li>Human approval + save</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">👍</div><div class="sum-card-title" style="color:#4ade80">Feedback Loop</div><ul class="sum-card-list"><li>Thumbs up/down on AI responses</li><li>Persists across sessions</li><li>Saved to PostgreSQL with context</li><li>Admin feedback analytics API</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">↓</div><div class="sum-card-title" style="color:#fbbf24">Export</div><ul class="sum-card-list"><li>Chat → Markdown with sources</li><li>Summary → Markdown .md</li><li>Client-side, instant download</li><li>Notion / Obsidian / VS Code ready</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">📊</div><div class="sum-card-title" style="color:#60a5fa">Usage Metering</div><ul class="sum-card-list"><li>Tracks uploads, queries, embeds</li><li>Today vs all-time breakdown</li><li>Storage bytes per user</li><li>Live usage panel in header</li></ul></div>
@@ -1889,7 +1888,7 @@ const SLIDES = [
   { text: "Chat history is persistent in PostgreSQL. Conversations auto-save after responses, sessions are titled from the first question, and the sidebar restores previous chats with questions, answers, feedback, and source citations intact." },
   { text: "Retrieval uses hybrid search. pgvector finds semantic matches, PostgreSQL full-text search catches exact names, invoice numbers, dates, and product codes, and Reciprocal Rank Fusion combines both lists so exact and conceptual matches work together." },
   { text: "Re-ranking improves the final context. Gemini reads each query and candidate chunk together, scores true relevance, and passes the top chunks into answer generation. If re-ranking fails, DocIntel falls back gracefully to retrieval order." },
-  { text: "Comparison mode lets users select two documents and generate a side-by-side analysis. Gemini compares clauses, dates, amounts, obligations, and missing sections, then returns a similarity score, unique points, and a structured difference table." },
+  { text: "This is where the product separates horizontal platform from vertical agentic AI. The horizontal layer is the reusable RAG foundation: ingestion, OCR, PII redaction, chunking, embeddings, hybrid search, reranking, citations, multilingual chat, summaries, comparisons, authentication, workspaces, usage controls, traces, audit logs, observability, and production deployment. The vertical layer adds domain intelligence through JSON-configured orchestrators, subagents, tools, approval workflows, and saved structured outputs. Lease management is the first vertical, with abstract, clause review, critical dates, amendment comparison, and obligations. The same architecture can support healthcare records and policy review, brokerage KYC and suitability review, legal, biotech, and other domain packages without rebuilding the RAG platform." },
   { text: "Quality feedback is built into the loop. Users can rate answers with thumbs up or down, and the rating is saved with the question and answer context. Gemini also scores answer quality for relevance, specificity, and confidence." },
   { text: "Exports are one click. Chat sessions and summaries download as Markdown files directly from the browser, including full answers and source citation blocks, ready for Notion, Obsidian, Confluence, or a plain text review workflow." },
   { text: "Usage metering runs in real time. The Usage panel shows plan tier, document count, storage used, daily queries, embeddings, summaries, comparisons, and all-time activity. Meters warn users before they hit their limits." },
@@ -1900,7 +1899,7 @@ const SLIDES = [
   { text: "Document recovery and organization keep the library healthy. Retry reprocesses failed files from the original GCS source. Tags create color-coded collections like Q3 Finance or Legal, and filters combine name, tag, status, type, and sort order." },
   { text: "The production stack is Google Cloud end to end: FastAPI on Cloud Run, React on Firebase Hosting, Cloud SQL Postgres with pgvector, Google Cloud Storage, Secret Manager, Gmail SMTP, Stripe, and Gemini through REST APIs for embeddings, chat, reranking, classification, and audio transcription. Production migration is explicit: back up Cloud SQL, deploy the backend first, confirm trace tables in the health check, then deploy the frontend." },
   { text: "Inline evaluation helps teams trust the system. Chat answers are automatically graded for relevance, specificity, and confidence. Summaries and comparisons can be evaluated on demand for coherence and specificity after generation completes." },
-  { text: "That's আদর DocIntel: upload, redact PII, classify, detect language, chunk, embed, speak or type questions, retrieve, re-rank, trace the full AI flow, summarize, compare, organize, collaborate, bill, audit, and deploy. Built by Agomonia Labs on the ADAR platform for multilingual document intelligence." }
+  { text: "That's আদর DocIntel: a horizontal RAG and governance platform with vertical agentic AI layers for lease management, healthcare, brokerage, legal, biotech, and beyond. Teams can upload, redact PII, classify, detect language, chunk, embed, speak or type questions, retrieve, re-rank, trace the full AI flow, summarize, compare, run domain agents, organize, collaborate, bill, audit, and deploy. Built by Agomonia Labs on the ADAR platform for multilingual document intelligence." }
 ];
 
 let current = 0;

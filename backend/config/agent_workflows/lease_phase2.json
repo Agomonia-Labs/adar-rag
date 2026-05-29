@@ -1,0 +1,63 @@
+{
+  "id": "lease_phase2",
+  "version": "phase2-adk-v1",
+  "domain": "real_estate_lease_management",
+  "description": "Config-driven ADK-style workflow for lease intelligence, amendment review, approval, and obligations.",
+  "orchestrator": {
+    "id": "lease_intelligence_orchestrator",
+    "name": "Lease Intelligence Orchestrator Agent",
+    "policy": {
+      "execution": "sequential",
+      "human_approval_required": true,
+      "persist_agent_steps": true,
+      "source_citations_required": true,
+      "max_agent_attempts": 2
+    },
+    "subagents": [
+      {
+        "id": "lease_abstraction",
+        "name": "Lease Abstraction Agent",
+        "tool": "lease.extract_abstract",
+        "output_key": "abstract",
+        "input_summary": "Extract structured lease abstract with citations.",
+        "max_attempts": 3
+      },
+      {
+        "id": "clause_review",
+        "name": "Clause Review Agent",
+        "tool": "lease.review_clauses",
+        "output_key": "clause_review",
+        "input_summary": "Review important clauses, risks, and human-review recommendations.",
+        "max_attempts": 2
+      },
+      {
+        "id": "critical_dates",
+        "name": "Critical Dates Agent",
+        "tool": "lease.extract_critical_dates",
+        "output_key": "critical_dates",
+        "input_summary": "Extract critical dates, reminders, responsible parties, and citations.",
+        "max_attempts": 2
+      },
+      {
+        "id": "amendment_comparison",
+        "name": "Amendment Comparison Agent",
+        "tool": "lease.compare_amendment",
+        "output_key": "amendment_comparison",
+        "input_summary": "Compare lease against amendment and identify changed terms.",
+        "max_attempts": 2,
+        "enabled_if": {
+          "context_key": "amendment_document_id"
+        }
+      },
+      {
+        "id": "obligation_checklist",
+        "name": "Obligation Checklist Agent",
+        "tool": "lease.generate_obligation_checklist",
+        "output_key": "obligation_checklist",
+        "input_summary": "Generate actionable obligation checklist for human approval.",
+        "max_attempts": 2
+      }
+    ],
+    "result_tool": "lease.merge_outputs"
+  }
+}

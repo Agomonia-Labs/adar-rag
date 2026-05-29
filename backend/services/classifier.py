@@ -10,7 +10,10 @@ CLASSIFICATION_SAMPLE_CHARS = 6000
 
 DOCUMENT_TYPES = [
     # Legal
-    "contract", "agreement", "nda", "lease", "employment_contract", "terms_of_service",
+    "contract", "agreement", "nda", "lease", "lease_amendment", "lease_extension",
+    "rent_roll", "estoppel", "appraisal", "inspection_report",
+    "property_management_agreement", "cam_reconciliation",
+    "employment_contract", "terms_of_service",
     # Finance
     "invoice", "receipt", "purchase_order", "financial_statement", "audit_report", "tax_return",
     # Business
@@ -38,7 +41,15 @@ HEURISTIC_RULES = [
     ("financial_statement", "finance", ("balance sheet", "income statement", "cash flow", "statement of operations")),
     ("tax_return", "finance", ("tax return", "form 1040", "w-2", "1099")),
     ("nda", "legal", ("non-disclosure", "confidentiality agreement", "nda")),
-    ("lease", "legal", ("lease", "lease agreement", "lease extension", "landlord", "tenant", "rent")),
+    ("lease_extension", "legal", ("lease extension", "extension agreement", "extend the term")),
+    ("lease_amendment", "legal", ("lease amendment", "amendment to lease", "first amendment", "second amendment")),
+    ("rent_roll", "finance", ("rent roll", "monthly rent", "tenant ledger")),
+    ("estoppel", "legal", ("estoppel", "tenant estoppel", "estoppel certificate")),
+    ("appraisal", "finance", ("appraisal", "appraised value", "market value")),
+    ("inspection_report", "operations", ("inspection report", "property inspection", "condition report")),
+    ("property_management_agreement", "legal", ("property management agreement", "management fee", "property manager")),
+    ("cam_reconciliation", "finance", ("cam reconciliation", "common area maintenance", "operating expenses")),
+    ("lease", "legal", ("lease", "lease agreement", "landlord", "tenant", "rent")),
     ("employment_contract", "legal", ("employment agreement", "employment contract")),
     ("contract", "legal", ("contract", "agreement", "terms and conditions", "party agrees")),
     ("resume", "hr", ("resume", "curriculum vitae", "work experience", "education", "skills")),
@@ -240,6 +251,14 @@ def _heuristic_classification(filename: str, sample: str) -> dict | None:
 DOC_TYPE_LABELS = {
     "contract": "Contract",           "agreement": "Agreement",
     "nda": "NDA",                     "lease": "Lease",
+    "lease_amendment": "Lease Amendment",
+    "lease_extension": "Lease Extension",
+    "rent_roll": "Rent Roll",
+    "estoppel": "Estoppel",
+    "appraisal": "Appraisal",
+    "inspection_report": "Inspection",
+    "property_management_agreement": "Property Mgmt",
+    "cam_reconciliation": "CAM Recon",
     "employment_contract": "Employment", "terms_of_service": "Terms",
     "invoice": "Invoice",             "receipt": "Receipt",
     "purchase_order": "PO",           "financial_statement": "Financial",
