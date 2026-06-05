@@ -8,7 +8,7 @@ import json, httpx
 
 from auth.dependencies import CurrentUser
 from database.connection import get_db, get_pool
-from services.usage import log_event
+from services.usage import check_and_log_daily_event
 from services.language import primary_language, response_language_instruction
 from services.pii import redact_text
 
@@ -51,6 +51,17 @@ async def compare_documents(
     doc1 = docs[body.document_id_1]
     doc2 = docs[body.document_id_2]
     doc_id_1, doc_id_2 = body.document_id_1, body.document_id_2
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "compare",
+        "max_compares_day",
+        metadata={
+            "doc_id_1": doc_id_1,
+            "doc_id_2": doc_id_2,
+            "redact_pii": body.redact_pii,
+        },
+    )
 
     async def generate():
         pool = get_pool()
@@ -80,15 +91,6 @@ async def compare_documents(
             )
 
             if result:
-                # Log compare event using a fresh pool connection
-                async with pool.acquire() as _c:
-                    await log_event(_c, user_id, "compare", metadata={
-                        "doc_id_1": doc_id_1,
-                        "doc_id_2": doc_id_2,
-                        "sections": len(result.get("sections", [])),
-                        "similarity": result.get("similarity_score"),
-                        "redact_pii": body.redact_pii,
-                    })
                 yield _sse({"type": "result", "data": result})
             else:
                 yield _sse({"type": "error", "error": err or "Comparison failed"})

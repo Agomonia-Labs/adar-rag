@@ -1128,14 +1128,14 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Metering</div>
-          <div class="slide-title">Usage Metering & Analytics</div>
-          <div class="slide-sub">Every billable action is tracked in real time. Users click 📊 Usage in the header to see a live dashboard of their consumption — documents, queries, embeddings, storage, and summaries.</div>
+          <div class="slide-title">Strict Usage Metering & Analytics</div>
+          <div class="slide-sub">Every costly action is tracked and enforced in real time. Users click 📊 Usage to see documents, file size, chat queries, embedding chunks, summaries, compares, lease AI, voice transcriptions, evals, storage, and all-time activity.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">📊</span><span>Usage panel in the header — always one click away, loads live stats from PostgreSQL</span></div>
-            <div class="feature-item"><span class="feature-icon">📤</span><span>Tracks uploads, embeddings, chat queries, summaries, and comparisons — all with metadata</span></div>
-            <div class="feature-item"><span class="feature-icon">📈</span><span>Today's counts vs all-time totals — see exactly how much you've used this session</span></div>
+            <div class="feature-item"><span class="feature-icon">📤</span><span>Tracks documents, upload size, embedding chunks, chat, summaries, compares, lease AI, voice, and eval cases</span></div>
+            <div class="feature-item"><span class="feature-icon">🧱</span><span>Quota is reserved atomically before expensive model work starts, preventing concurrent bypass</span></div>
             <div class="feature-item"><span class="feature-icon">🌡</span><span>Progress meters turn amber at 80% of your plan limit — visual warning before hitting the wall</span></div>
-            <div class="feature-item"><span class="feature-icon">🗄</span><span>Storage bytes tracked per upload — shows total GB/MB used across all documents</span></div>
+            <div class="feature-item"><span class="feature-icon">🛑</span><span>Over-limit requests return clear 403, 413, or 429 errors before consuming AI capacity</span></div>
           </div>
           <button class="btn-speak" onclick="speakSlide(18)">🔊 Play narration</button>
         </div>
@@ -1167,7 +1167,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
 
             <!-- Limit meters -->
             <div style="background:rgba(255,255,255,.03);border-radius:8px;border:0.5px solid rgba(255,255,255,.07);padding:9px 10px">
-              <div style="font-size:9px;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Plan limits</div>
+              <div style="font-size:9px;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Enforced plan limits</div>
 
               <div style="margin-bottom:7px">
                 <div style="display:flex;justify-content:space-between;margin-bottom:3px">
@@ -1187,10 +1187,16 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
 
               <div style="margin-bottom:7px">
                 <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-                  <span style="font-size:10.5px;color:#d1fae5">Embeddings today</span>
+                  <span style="font-size:10.5px;color:#d1fae5">Embedding chunks today</span>
                   <span style="font-size:10px;color:#fbbf24;font-weight:600">84 / 100</span>
                 </div>
                 <div style="height:4px;background:rgba(255,255,255,.08);border-radius:2px"><div style="height:100%;width:84%;background:#fbbf24;border-radius:2px"></div></div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;font-size:9px">
+                <div style="background:rgba(255,255,255,.04);border-radius:6px;padding:5px 6px;color:#9ca3af"><strong style="color:#38bdf8">8/50</strong><br>Compares</div>
+                <div style="background:rgba(255,255,255,.04);border-radius:6px;padding:5px 6px;color:#9ca3af"><strong style="color:#fb7185">4/50</strong><br>Lease AI</div>
+                <div style="background:rgba(255,255,255,.04);border-radius:6px;padding:5px 6px;color:#9ca3af"><strong style="color:#34d399">16/250</strong><br>Voice</div>
               </div>
 
             </div>
@@ -1201,7 +1207,9 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
               <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:0.5px solid rgba(255,255,255,.05)"><span style="font-size:10.5px;color:#9ca3af">📤 Uploads</span><span style="font-size:10.5px;font-weight:700;color:#f0fdf4">47</span></div>
               <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:0.5px solid rgba(255,255,255,.05)"><span style="font-size:10.5px;color:#9ca3af">⚡ Embeddings</span><span style="font-size:10.5px;font-weight:700;color:#f0fdf4">1,284</span></div>
               <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:0.5px solid rgba(255,255,255,.05)"><span style="font-size:10.5px;color:#9ca3af">💬 Queries</span><span style="font-size:10.5px;font-weight:700;color:#f0fdf4">312</span></div>
-              <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:10.5px;color:#9ca3af">⇄ Comparisons</span><span style="font-size:10.5px;font-weight:700;color:#f0fdf4">8</span></div>
+              <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:0.5px solid rgba(255,255,255,.05)"><span style="font-size:10.5px;color:#9ca3af">⇄ Comparisons</span><span style="font-size:10.5px;font-weight:700;color:#f0fdf4">8</span></div>
+              <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:0.5px solid rgba(255,255,255,.05)"><span style="font-size:10.5px;color:#9ca3af">🏢 Lease AI</span><span style="font-size:10.5px;font-weight:700;color:#f0fdf4">17</span></div>
+              <div style="display:flex;justify-content:space-between;padding:3px 0"><span style="font-size:10.5px;color:#9ca3af">📊 Eval cases</span><span style="font-size:10.5px;font-weight:700;color:#f0fdf4">24</span></div>
             </div>
           </div>
         </div>
@@ -1214,14 +1222,14 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
         <div class="narration">
           <div class="slide-num">Billing</div>
           <div class="slide-title">Tiered Limits & Plan Management</div>
-          <div class="slide-sub">Three plans — Free, Pro, and Enterprise — with limits enforced per user in the database. Admins upgrade any account instantly from the dashboard. No env vars, no redeploys.</div>
+          <div class="slide-sub">Three plans — Free, Pro, and Enterprise — with limits enforced per user in the database. Admins upgrade any account instantly, and JSONB overrides can tune individual quotas without redeploying.</div>
           <div class="feature-list">
-            <div class="feature-item"><span class="feature-icon">🆓</span><span>Free: 20 documents, 10 MB files, 50 queries/day, 10 embeddings/day — great for evaluation</span></div>
-            <div class="feature-item"><span class="feature-icon">⚡</span><span>Pro: 500 documents, 50 MB files, 500 queries/day, 100 embeddings/day</span></div>
-            <div class="feature-item"><span class="feature-icon">🏢</span><span>Enterprise: unlimited documents and queries, 200 MB files — no daily caps</span></div>
+            <div class="feature-item"><span class="feature-icon">🆓</span><span>Free: 20 docs, 10 MB files, 50 queries/day, 10 embedding chunks/day, 5 summaries/day, 3 compares/day</span></div>
+            <div class="feature-item"><span class="feature-icon">⚡</span><span>Pro: 500 docs, 500 MB files, 500 queries/day, 100 embedding chunks/day, 50 summaries/day, 50 compares/day</span></div>
+            <div class="feature-item"><span class="feature-icon">🏢</span><span>Enterprise: unlimited docs, queries, summaries, compares, lease AI, voice, and evals; 10 GB files</span></div>
             <div class="feature-item"><span class="feature-icon">⚙</span><span>Admins change any user's tier with a dropdown in the Users table — takes effect immediately</span></div>
-            <div class="feature-item"><span class="feature-icon">🔧</span><span>Custom per-user overrides via JSONB — set any individual limit independently of tier</span></div>
-            <div class="feature-item"><span class="feature-icon">🛑</span><span>Exceeding limits returns HTTP 403 (doc limit) or 429 (daily limit) with clear upgrade message</span></div>
+            <div class="feature-item"><span class="feature-icon">🔧</span><span>Lease AI, voice transcription, and eval quotas are enforced alongside core RAG usage</span></div>
+            <div class="feature-item"><span class="feature-icon">🛑</span><span>Exceeding limits returns HTTP 403, 413, or 429 with a clear upgrade message</span></div>
           </div>
           <button class="btn-speak" onclick="speakSlide(19)">🔊 Play narration</button>
         </div>
@@ -1233,16 +1241,16 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px">
               <div style="background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.2);border-radius:8px;padding:8px;text-align:center">
                 <div style="font-size:10.5px;font-weight:700;color:#60a5fa;margin-bottom:4px">FREE</div>
-                <div style="font-size:9px;color:#9ca3af;line-height:1.7">20 docs<br>10 MB<br>50 q/day<br>10 emb/day</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.7">20 docs<br>10 MB<br>50 q/day<br>5 summaries</div>
               </div>
               <div style="background:rgba(192,132,252,.08);border:1px solid rgba(192,132,252,.2);border-radius:8px;padding:8px;text-align:center;position:relative">
                 <div style="font-size:9px;background:#c084fc;color:#fff;border-radius:10px;padding:1px 5px;position:absolute;top:-7px;left:50%;transform:translateX(-50%);white-space:nowrap;font-weight:700">POPULAR</div>
                 <div style="font-size:10.5px;font-weight:700;color:#c084fc;margin-bottom:4px">PRO</div>
-                <div style="font-size:9px;color:#9ca3af;line-height:1.7">500 docs<br>50 MB<br>500 q/day<br>100 emb/day</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.7">500 docs<br>500 MB<br>500 q/day<br>50 summaries</div>
               </div>
               <div style="background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.2);border-radius:8px;padding:8px;text-align:center">
                 <div style="font-size:10.5px;font-weight:700;color:#fbbf24;margin-bottom:4px">ENTERPRISE</div>
-                <div style="font-size:9px;color:#9ca3af;line-height:1.7">∞ docs<br>200 MB<br>∞ q/day<br>∞ emb/day</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.7">∞ docs<br>10 GB<br>∞ q/day<br>∞ workflows</div>
               </div>
             </div>
 
@@ -1280,6 +1288,9 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
               </div>
               <div style="background:rgba(251,191,36,.06);border:0.5px solid rgba(251,191,36,.2);border-radius:6px;padding:7px 10px;font-size:9.5px;color:#fbbf24">
                 <strong>HTTP 429</strong> — Daily query limit reached (50 on Free tier). Try again tomorrow.
+              </div>
+              <div style="background:rgba(96,165,250,.06);border:0.5px solid rgba(96,165,250,.2);border-radius:6px;padding:7px 10px;font-size:9.5px;color:#60a5fa">
+                <strong>Atomic check</strong> — quota is reserved before model calls, embeddings, voice transcription, evals, or lease agents run.
               </div>
             </div>
           </div>
@@ -1653,11 +1664,11 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
         <div class="narration">
           <div class="slide-num">Monetisation</div>
           <div class="slide-title">Stripe Billing — 3 Plans</div>
-          <div class="slide-sub">Full Stripe Checkout integration with three tiers, a 3-day free trial on paid plans, and automatic plan activation on login — no manual intervention needed.</div>
+          <div class="slide-sub">Full Stripe Checkout integration with three tiers, a 3-day free trial on paid plans, and automatic plan activation on login — backed by the same strict quota enforcement shown in the Usage panel.</div>
           <div class="feature-list">
-            <div class="feature-item"><span class="feature-icon">🆓</span><span>Free — 20 docs · 10 MB · 50 queries/day · 10 embeds/day</span></div>
-            <div class="feature-item"><span class="feature-icon">🚀</span><span>Pro ($20/mo) — 500 docs · 500 MB · 500 queries/day · 100 embeds/day</span></div>
-            <div class="feature-item"><span class="feature-icon">🏢</span><span>Enterprise ($100/mo) — Unlimited docs · 10 GB · Unlimited queries · 500 embeds/day</span></div>
+            <div class="feature-item"><span class="feature-icon">🆓</span><span>Free — 20 docs · 10 MB files · 50 queries/day · 5 summaries/day · 3 compares/day</span></div>
+            <div class="feature-item"><span class="feature-icon">🚀</span><span>Pro ($20/mo) — 500 docs · 500 MB files · 500 queries/day · 50 summaries/day · 50 compares/day</span></div>
+            <div class="feature-item"><span class="feature-icon">🏢</span><span>Enterprise ($100/mo) — unlimited docs, queries, summaries, compares, lease AI, voice, and evals; 10 GB files</span></div>
             <div class="feature-item"><span class="feature-icon">🎁</span><span>3-day free trial on Pro & Enterprise — card collected, no charge until day 4</span></div>
             <div class="feature-item"><span class="feature-icon">🔄</span><span>Auto-sync on login — Stripe subscription status checked on every sign-in, tier updated instantly</span></div>
             <div class="feature-item"><span class="feature-icon">🔒</span><span>Cancel anytime via Stripe portal — downgrade to Free reflected on next login automatically</span></div>
@@ -1675,7 +1686,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
                 <span style="font-size:16px;font-weight:800;color:#f0fdf4">$0</span>
               </div>
               <ul style="margin:0;padding-left:14px;font-size:10px;color:#6b7280;line-height:1.8">
-                <li>20 documents · 10 MB files</li><li>50 queries/day · 10 embeds/day</li>
+                <li>20 documents · 10 MB files</li><li>50 queries · 5 summaries · 3 compares/day</li>
               </ul>
               <div style="margin-top:8px;text-align:center;font-size:10px;font-weight:700;color:#60a5fa;padding:4px;background:rgba(96,165,250,.1);border-radius:4px">✓ Active</div>
             </div>
@@ -1688,7 +1699,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
                 <div><span style="font-size:16px;font-weight:800;color:#f0fdf4">$20</span><span style="font-size:10px;color:#6b7280">/mo</span></div>
               </div>
               <ul style="margin:0;padding-left:14px;font-size:10px;color:#6b7280;line-height:1.8">
-                <li>500 documents · 500 MB files</li><li>500 queries/day · 100 embeds/day</li>
+                <li>500 documents · 500 MB files</li><li>500 queries · 50 summaries · 50 compares/day</li>
               </ul>
               <div style="margin-top:6px;background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.25);border-radius:4px;padding:3px 8px;text-align:center;font-size:9.5px;font-weight:700;color:#4ade80">
                 🎁 3-day free trial — no charge until day 4
@@ -1703,7 +1714,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
                 <div><span style="font-size:16px;font-weight:800;color:#f0fdf4">$100</span><span style="font-size:10px;color:#6b7280">/mo</span></div>
               </div>
               <ul style="margin:0;padding-left:14px;font-size:10px;color:#6b7280;line-height:1.8">
-                <li>Unlimited docs · 10 GB files</li><li>Unlimited queries · 500 embeds/day</li>
+                <li>Unlimited docs · 10 GB files</li><li>Unlimited queries, workflows, voice, evals</li>
               </ul>
               <div style="margin-top:6px;background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.25);border-radius:4px;padding:3px 8px;text-align:center;font-size:9.5px;font-weight:700;color:#4ade80">
                 🎁 3-day free trial — no charge until day 4
@@ -1891,8 +1902,8 @@ const SLIDES = [
   { text: "This is where the product separates horizontal platform from vertical agentic AI. The horizontal layer is the reusable RAG foundation: ingestion, OCR, PII redaction, chunking, embeddings, hybrid search, reranking, citations, multilingual chat, summaries, comparisons, authentication, workspaces, usage controls, traces, audit logs, observability, and production deployment. The vertical layer adds domain intelligence through JSON-configured orchestrators, subagents, tools, approval workflows, and saved structured outputs. Lease management is the first vertical, with abstract, clause review, critical dates, amendment comparison, and obligations. The same architecture can support healthcare records and policy review, brokerage KYC and suitability review, legal, biotech, and other domain packages without rebuilding the RAG platform." },
   { text: "Quality feedback is built into the loop. Users can rate answers with thumbs up or down, and the rating is saved with the question and answer context. Gemini also scores answer quality for relevance, specificity, and confidence." },
   { text: "Exports are one click. Chat sessions and summaries download as Markdown files directly from the browser, including full answers and source citation blocks, ready for Notion, Obsidian, Confluence, or a plain text review workflow." },
-  { text: "Usage metering runs in real time. The Usage panel shows plan tier, document count, storage used, daily queries, embeddings, summaries, comparisons, and all-time activity. Meters warn users before they hit their limits." },
-  { text: "Billing uses Stripe with Free, Pro, and Enterprise tiers. Free supports lightweight usage, Pro scales to hundreds of documents and daily queries, and Enterprise is designed for high-volume teams. Plan state syncs on login from the Stripe API." },
+  { text: "Usage metering runs in real time and is now strict enforcement, not just reporting. The Usage panel shows plan tier, document count, upload file size, storage used, daily chat queries, embedding chunks, summaries, compares, lease AI actions, voice transcriptions, eval cases, and all-time activity. Quota is reserved atomically before expensive model work starts, so concurrent requests cannot bypass the tier limit." },
+  { text: "Billing uses Stripe with Free, Pro, and Enterprise tiers. Free supports lightweight evaluation, Pro scales to 500 documents, 500 megabyte files, 500 daily queries, 50 daily summaries, 50 compares, lease AI, voice, and eval workflows, and Enterprise removes most daily caps with 10 gigabyte file support. Plan state syncs on login from the Stripe API." },
   { text: "Team workspaces turn DocIntel into a shared environment. Owners manage members, editors upload and embed, and viewers chat and search read-only. Documents, tags, summaries, and chat sessions stay scoped to the selected workspace." },
   { text: "Email verification is required before first login. Verification links last 24 hours, resend is available, and the first deployment user is auto-verified so an administrator can bootstrap the system cleanly." },
   { text: "Privacy, audit, and traceability work together. Teams cannot trust a document AI system by looking only at the final answer. In legal, financial, policy, and multilingual workflows, admins need to know which chunks were retrieved, how they were ranked, what prompt was sent, what tools ran, whether PII privacy mode was enabled, what the model returned, and where a failure happened. DocIntel assigns every chat or voice question an X-Trace-Id, stores the overall flow in trace flows, records each step in trace spans, stores LLM and tool events, and lets admins inspect the complete path from user input to cited answer." },

@@ -9,8 +9,10 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 from auth.dependencies import CurrentUser
+from database.connection import get_db
 from services.limiter import ip_10_per_min
 from services.tracing import start_trace, finish_trace, span, record_llm_event
+from services.usage import check_and_log_daily_event
 
 log = logging.getLogger("docintel.voice")
 router = APIRouter()
@@ -35,11 +37,13 @@ async def transcribe_voice(
     audio: UploadFile = File(...),
     language: str = Form(""),
     _rl=Depends(ip_10_per_min),
+    db=Depends(get_db),
 ):
+    user_id = str(current_user["id"])
     trace_id = await start_trace(
         "voice_chat",
         trace_id=getattr(request.state, "trace_id", None),
-        user_id=str(current_user["id"]),
+        user_id=user_id,
         client_info={
             "ip": request.client.host if request.client else None,
             "user_agent": request.headers.get("user-agent"),
@@ -63,6 +67,13 @@ async def transcribe_voice(
     if len(data) > MAX_AUDIO_BYTES:
         await finish_trace(trace_id, "error", "Audio is too large")
         raise HTTPException(413, f"Audio is too large. Max {MAX_AUDIO_BYTES // 1024 // 1024} MB")
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "voice_transcription",
+        "max_voice_transcriptions_day",
+        metadata={"language": language, "filename": audio.filename, "audio_bytes": len(data)},
+    )
 
     model = os.getenv("GEMINI_AUDIO_MODEL", os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")).removeprefix("models/")
     prompt = (

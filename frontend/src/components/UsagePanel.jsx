@@ -28,6 +28,12 @@ function Meter({ label, used, max, color = '#4ade80' }) {
   );
 }
 
+function fmtLimit(value, suffix = '') {
+  if (value === -1) return 'Unlimited';
+  if (value === undefined || value === null) return 'Not set';
+  return `${Number(value).toLocaleString()}${suffix}`;
+}
+
 function StatCard({ icon, label, value, sub }) {
   return (
     <div style={s.statCard}>
@@ -56,6 +62,7 @@ export default function UsagePanel({ onClose, onUpgrade }) {
   const limits = usage?.limits || {};
   const events = usage?.events || {};
   const fmtBytes = b => b > 1e9 ? `${(b/1e9).toFixed(1)} GB` : b > 1e6 ? `${(b/1e6).toFixed(1)} MB` : b > 1e3 ? `${(b/1e3).toFixed(1)} KB` : `${b} B`;
+  const fmtMbLimit = mb => mb === -1 ? 'Unlimited file size' : `${Number(mb || 0).toLocaleString()} MB files`;
 
   return (
     <div style={s.overlay} onClick={e => e.target === e.currentTarget && onClose()}>
@@ -90,17 +97,49 @@ export default function UsagePanel({ onClose, onUpgrade }) {
               <div style={s.statsGrid}>
                 <StatCard icon="📂" label="Documents" value={usage.document_count} sub={limits.max_documents === -1 ? 'unlimited' : `of ${limits.max_documents}`} />
                 <StatCard icon="💬" label="Queries today" value={events.query?.today || 0} sub={limits.max_queries_day === -1 ? 'unlimited' : `of ${limits.max_queries_day}`} />
-                <StatCard icon="⚡" label="Embeddings total" value={(events.embedding?.total || 0).toLocaleString()} sub="all time" />
+                <StatCard icon="⚡" label="Embedding chunks today" value={(events.embedding?.today || 0).toLocaleString()} sub={limits.max_embeds_day === -1 ? 'unlimited' : `of ${limits.max_embeds_day}`} />
                 <StatCard icon="🗄️" label="Storage" value={fmtBytes(usage.storage_bytes)} sub="uploaded" />
+              </div>
+
+              <div style={{ background:'var(--s2)', borderRadius:'var(--r)', padding:'12px 14px', marginBottom:'1rem', border:'1px solid var(--b1)', display:'flex', justifyContent:'space-between', alignItems:'center', gap:12 }}>
+                <div>
+                  <p style={{ fontSize:12, fontWeight:700, color:'var(--tx)', marginBottom:2 }}>Upload file size limit</p>
+                  <p style={{ fontSize:11, color:'var(--muted2)' }}>Applied to every uploaded file before ingestion starts</p>
+                </div>
+                <span style={{ fontSize:12, fontWeight:800, color:'#4ade80', whiteSpace:'nowrap' }}>{fmtMbLimit(limits.max_file_mb)}</span>
               </div>
 
               {/* Limit meters */}
               <div style={{ background:'var(--s2)', borderRadius:'var(--r)', padding:'1rem', marginBottom:'1rem', border:'1px solid var(--b1)' }}>
-                <p style={{ fontSize:12, fontWeight:700, color:'var(--muted)', marginBottom:12, textTransform:'uppercase', letterSpacing:'.5px' }}>Plan Limits</p>
+                <p style={{ fontSize:12, fontWeight:700, color:'var(--muted)', marginBottom:12, textTransform:'uppercase', letterSpacing:'.5px' }}>Enforced Plan Limits</p>
                 <Meter label="Documents"         used={usage.document_count}        max={limits.max_documents}    />
                 <Meter label="Queries today"     used={events.query?.today||0}       max={limits.max_queries_day} color='#60a5fa' />
-                <Meter label="Embeddings today"  used={events.embedding?.today||0}   max={limits.max_embeds_day}  color='#c084fc' />
+                <Meter label="Embedding chunks today" used={events.embedding?.today||0} max={limits.max_embeds_day} color='#c084fc' />
                 <Meter label="Summaries today"   used={events.summarize?.today||0}   max={limits.max_summaries_day} color='#fbbf24' />
+                <Meter label="Compares today"     used={events.compare?.today||0}     max={limits.max_compares_day} color='#38bdf8' />
+                <Meter label="Lease AI actions today" used={events.lease_ai?.today||0} max={limits.max_lease_ai_day} color='#fb7185' />
+                <Meter label="Voice transcriptions today" used={events.voice_transcription?.today||0} max={limits.max_voice_transcriptions_day} color='#34d399' />
+                <Meter label="Eval cases today"   used={events.eval?.today||0}        max={limits.max_evals_day} color='#a78bfa' />
+              </div>
+
+              <div style={{ background:'var(--s2)', borderRadius:'var(--r)', padding:'1rem', marginBottom:'1rem', border:'1px solid var(--b1)' }}>
+                <p style={{ fontSize:12, fontWeight:700, color:'var(--muted)', marginBottom:12, textTransform:'uppercase', letterSpacing:'.5px' }}>Tier Quotas</p>
+                {[
+                  ['Documents', fmtLimit(limits.max_documents)],
+                  ['File size', limits.max_file_mb === -1 ? 'Unlimited' : `${Number(limits.max_file_mb || 0).toLocaleString()} MB per file`],
+                  ['Chat queries/day', fmtLimit(limits.max_queries_day)],
+                  ['Embedding chunks/day', fmtLimit(limits.max_embeds_day)],
+                  ['Summaries/day', fmtLimit(limits.max_summaries_day)],
+                  ['Compares/day', fmtLimit(limits.max_compares_day)],
+                  ['Lease AI actions/day', fmtLimit(limits.max_lease_ai_day)],
+                  ['Voice transcriptions/day', fmtLimit(limits.max_voice_transcriptions_day)],
+                  ['Eval cases/day', fmtLimit(limits.max_evals_day)],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ display:'flex', justifyContent:'space-between', padding:'5px 0', borderBottom:'1px solid var(--b1)' }}>
+                    <span style={{ fontSize:12.5, color:'var(--tx2)' }}>{label}</span>
+                    <span style={{ fontSize:12.5, fontWeight:700, color:'var(--tx)' }}>{value}</span>
+                  </div>
+                ))}
               </div>
 
               {/* All-time breakdown */}
@@ -112,6 +151,9 @@ export default function UsagePanel({ onClose, onUpgrade }) {
                   ['💬 Queries',       events.query?.total],
                   ['📝 Summaries',     events.summarize?.total],
                   ['⇄ Comparisons',   events.compare?.total],
+                  ['🏢 Lease AI',      events.lease_ai?.total],
+                  ['🎙 Voice',         events.voice_transcription?.total],
+                  ['📊 Eval cases',    events.eval?.total],
                 ].map(([label, val]) => (
                   <div key={label} style={{ display:'flex', justifyContent:'space-between', padding:'5px 0', borderBottom:'1px solid var(--b1)' }}>
                     <span style={{ fontSize:12.5, color:'var(--tx2)' }}>{label}</span>
@@ -127,7 +169,9 @@ export default function UsagePanel({ onClose, onUpgrade }) {
                     {tier === 'free' ? 'Upgrade to Pro' : 'Upgrade to Enterprise'}
                   </p>
                   <p style={{ fontSize:12, color:'var(--muted2)', marginBottom:10 }}>
-                    {tier === 'free' ? '500 docs · 500 MB files · 500 queries/day — $20/month' : 'Unlimited docs · 10 GB files · Unlimited queries — $100/month'}
+                    {tier === 'free'
+                      ? '500 docs · 500 MB files · 500 queries/day · 50 summaries/day — $20/month'
+                      : 'Unlimited docs · 10 GB files · Unlimited queries · Enterprise workflows — $100/month'}
                   </p>
                   <button onClick={onUpgrade}
                     style={{ padding:'7px 20px', background:'#c084fc', color:'#000', border:'none', borderRadius:'var(--r)', fontSize:13, fontWeight:700, cursor:'pointer' }}>

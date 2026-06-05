@@ -11,6 +11,7 @@ from auth.dependencies import CurrentUser
 from database.connection import get_db, get_pool
 from services.evaluator import run_eval_case, PASS_THRESHOLD
 from services.vectordb import find_similar
+from services.usage import check_and_log_daily_event
 
 log    = logging.getLogger("docintel.evals")
 router = APIRouter()
@@ -199,6 +200,14 @@ async def start_run(suite_id: str, bg: BackgroundTasks, current_user: CurrentUse
     cases = await db.fetch("SELECT * FROM eval_cases WHERE suite_id=$1", suite_id)
     if not cases:
         raise HTTPException(400, "No cases in this suite. Add cases or use /seed first.")
+    await check_and_log_daily_event(
+        db,
+        str(current_user["id"]),
+        "eval",
+        "max_evals_day",
+        quantity=len(cases),
+        metadata={"suite_id": suite_id, "eval_type": suite["eval_type"], "case_count": len(cases)},
+    )
 
     run = await db.fetchrow(
         """INSERT INTO eval_runs (suite_id,run_by,status,total_cases)
@@ -363,11 +372,19 @@ class QuickScoreRequest(BaseModel):
     eval_types: list[str] = ["relevance", "specificity", "confidence"]
 
 @router.post("/quick-score")
-async def quick_score(body: QuickScoreRequest, current_user: CurrentUser):
+async def quick_score(body: QuickScoreRequest, current_user: CurrentUser, db=Depends(get_db)):
     """Run self-contained evals — only question + answer needed, no reference data."""
     from services.evaluator import (
         eval_relevance, eval_specificity,
         eval_confidence_calibration, eval_coherence,
+    )
+    await check_and_log_daily_event(
+        db,
+        str(current_user["id"]),
+        "eval",
+        "max_evals_day",
+        quantity=len(body.eval_types),
+        metadata={"mode": "quick_score", "eval_types": body.eval_types},
     )
 
     results = {}

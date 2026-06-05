@@ -14,6 +14,10 @@ TIER_LIMITS: dict[str, dict] = {
         "max_queries_day":  50,
         "max_embeds_day":   10,
         "max_summaries_day":5,
+        "max_compares_day": 3,
+        "max_lease_ai_day": 5,
+        "max_voice_transcriptions_day": 25,
+        "max_evals_day": 3,
         "label":            "Free",
         "price_monthly":    0,
     },
@@ -23,6 +27,10 @@ TIER_LIMITS: dict[str, dict] = {
         "max_queries_day":  500,
         "max_embeds_day":   100,
         "max_summaries_day":50,
+        "max_compares_day": 50,
+        "max_lease_ai_day": 50,
+        "max_voice_transcriptions_day": 250,
+        "max_evals_day": 25,
         "label":            "Pro",
         "price_monthly":    20,
     },
@@ -32,6 +40,10 @@ TIER_LIMITS: dict[str, dict] = {
         "max_queries_day":  -1,      # unlimited
         "max_embeds_day":   500,
         "max_summaries_day":-1,      # unlimited
+        "max_compares_day": -1,      # unlimited
+        "max_lease_ai_day": -1,      # unlimited
+        "max_voice_transcriptions_day": -1,
+        "max_evals_day": -1,
         "label":            "Enterprise",
         "price_monthly":    100,
     },
@@ -60,7 +72,7 @@ async def get_user_limits(db, user_id: str) -> dict:
     return limits
 
 
-async def check_document_limit(db, user_id: str) -> None:
+async def check_document_limit(db, user_id: str, quantity: int = 1) -> None:
     """Raise 403 if user is at their document limit."""
     limits  = await get_user_limits(db, user_id)
     max_doc = limits["max_documents"]
@@ -71,7 +83,8 @@ async def check_document_limit(db, user_id: str) -> None:
         "SELECT COUNT(*) FROM documents WHERE user_id=$1 AND status!='deleted'",
         user_id,
     )
-    if count >= max_doc:
+    quantity = max(1, int(quantity or 1))
+    if count + quantity > max_doc:
         tier = limits["tier"]
         raise HTTPException(
             403,
@@ -80,23 +93,72 @@ async def check_document_limit(db, user_id: str) -> None:
         )
 
 
-async def check_daily_limit(db, user_id: str, event_type: str, limit_key: str) -> None:
+async def check_daily_limit(db, user_id: str, event_type: str, limit_key: str, quantity: int = 1) -> None:
     """Raise 429 if user has hit their daily quota for an event type."""
     limits = await get_user_limits(db, user_id)
     max_   = limits.get(limit_key, -1)
     if max_ == -1:
         return   # unlimited
+    quantity = max(1, int(quantity or 1))
 
     used = await db.fetchval(
         """SELECT COALESCE(SUM(quantity), 0) FROM usage_events
            WHERE user_id=$1 AND event_type=$2 AND DATE(created_at AT TIME ZONE 'UTC')=$3""",
         user_id, event_type, _today(),
     )
-    if used >= max_:
+    if int(used or 0) + quantity > max_:
         raise HTTPException(
             429,
             f"Daily {event_type} limit reached ({max_} on {limits['label']} tier). "
             f"Upgrade your plan or try again tomorrow.",
+        )
+
+
+async def check_and_log_daily_event(
+    db,
+    user_id: str,
+    event_type: str,
+    limit_key: str,
+    quantity: int = 1,
+    metadata: dict | None = None,
+) -> None:
+    """Atomically enforce a daily limit and reserve/log usage.
+
+    The user row lock prevents concurrent requests from all passing the same
+    pre-check and collectively exceeding the tier limit.
+    """
+    quantity = max(1, int(quantity or 1))
+    async with db.transaction():
+        row = await db.fetchrow(
+            "SELECT tier, custom_limits FROM users WHERE id=$1 FOR UPDATE",
+            user_id,
+        )
+        tier = (row["tier"] if row else None) or "free"
+        limits = dict(TIER_LIMITS.get(tier, TIER_LIMITS["free"]))
+        limits["tier"] = tier
+        overrides = row["custom_limits"] if row else None
+        if overrides:
+            parsed = overrides if isinstance(overrides, dict) else json.loads(overrides)
+            limits.update(parsed)
+
+        max_ = limits.get(limit_key, -1)
+        if max_ != -1:
+            used = await db.fetchval(
+                """SELECT COALESCE(SUM(quantity), 0) FROM usage_events
+                   WHERE user_id=$1 AND event_type=$2 AND DATE(created_at AT TIME ZONE 'UTC')=$3""",
+                user_id, event_type, _today(),
+            )
+            if int(used or 0) + quantity > max_:
+                raise HTTPException(
+                    429,
+                    f"Daily {event_type} limit reached ({max_} on {limits['label']} tier). "
+                    f"Upgrade your plan or try again tomorrow.",
+                )
+
+        await db.execute(
+            """INSERT INTO usage_events (user_id, event_type, quantity, metadata)
+               VALUES ($1, $2, $3, $4::jsonb)""",
+            user_id, event_type, quantity, json.dumps(metadata or {}),
         )
 
 

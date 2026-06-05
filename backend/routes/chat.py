@@ -9,7 +9,7 @@ from auth.dependencies import CurrentUser
 from database.connection import get_db, get_pool
 from services.llm import embed_query, chat_stream, rag_system
 from services.vectordb import find_similar, TOP_K, RERANK_FETCH_K
-from services.usage import check_daily_limit, log_event
+from services.usage import check_and_log_daily_event
 from services.reranker import rerank, RERANK_ENABLED
 from services.language import primary_language, response_language_instruction
 from services.pii import redact_text
@@ -96,10 +96,16 @@ async def chat_stream_endpoint(
         async def run():
             try:
                 question_for_model = redact_text(req.question, req.redact_pii).text
-                # ── Check daily query limit (fresh pool conn — db released by now) ──
+                # ── Atomically reserve daily query usage before expensive model calls ──
                 async with span("usage_limit", trace_id=trace_id, metadata={"event_type": "query"}):
                     async with get_pool().acquire() as _conn:
-                        await check_daily_limit(_conn, user_id, "query", "max_queries_day")
+                        await check_and_log_daily_event(
+                            _conn,
+                            user_id,
+                            "query",
+                            "max_queries_day",
+                            metadata={"doc_count": len(req.document_ids)},
+                        )
 
                 # ── Stage 1: Embed query ──────────────────────────────────
                 async with span("query_embedding", trace_id=trace_id, metadata={"input_hash": "sha256"}) as sp:
@@ -181,9 +187,6 @@ async def chat_stream_endpoint(
                         tool_request={"messages": messages, "sources": _chunk_trace(chunks, redact_pii=req.redact_pii)},
                         llm_response=redact_text("".join(output_tokens), req.redact_pii).text,
                     )
-                async with span("save_usage", trace_id=trace_id, metadata={"doc_count": len(req.document_ids), "chunks_used": len(chunks)}):
-                    async with get_pool().acquire() as _conn:
-                        await log_event(_conn, user_id, "query", metadata={"doc_count": len(req.document_ids), "chunks_used": len(chunks)})
                 await finish_trace(trace_id, "success")
                 await queue.put(("done", _sanitise(chunks, redact_pii=req.redact_pii)))
 

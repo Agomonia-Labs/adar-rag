@@ -17,7 +17,7 @@ from services.lease_intelligence import (
     build_lease_context,
     compare_lease_documents,
 )
-from services.usage import log_event
+from services.usage import check_and_log_daily_event, log_event
 import services.storage as gcs
 
 
@@ -134,6 +134,17 @@ async def run_agent_workflow(
         amendment = await _get_accessible_doc(db, body.amendment_document_id, user_id)
         if amendment["status"] not in ("chunked", "embedding", "embedded"):
             raise HTTPException(400, f"{amendment['original_name']} must be chunked before amendment comparison")
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "lease_ai",
+        "max_lease_ai_day",
+        metadata={
+            "action": "lease_agent_workflow",
+            "doc_id": doc_id,
+            "amendment_document_id": body.amendment_document_id,
+        },
+    )
 
     run = await db.fetchrow(
         """
@@ -241,6 +252,13 @@ async def extract_lease(
     doc = await _get_accessible_doc(db, doc_id, user_id)
     if doc["status"] not in ("chunked", "embedding", "embedded"):
         raise HTTPException(400, "Document must be chunked before lease extraction")
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "lease_ai",
+        "max_lease_ai_day",
+        metadata={"action": "lease_extract", "doc_id": doc_id},
+    )
 
     chunks = await _load_doc_chunks(db, doc, user_id)
     context = build_lease_context(doc["original_name"], chunks)
@@ -277,6 +295,18 @@ async def compare_leases(
     for doc in (base, amendment):
         if doc["status"] not in ("chunked", "embedding", "embedded"):
             raise HTTPException(400, f"{doc['original_name']} must be chunked before lease comparison")
+
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "lease_ai",
+        "max_lease_ai_day",
+        metadata={
+            "action": "lease_compare",
+            "base_document_id": body.base_document_id,
+            "amendment_document_id": body.amendment_document_id,
+        },
+    )
 
     base_context = build_lease_context(base["original_name"], await _load_doc_chunks(db, base, user_id), max_chars=16000)
     amendment_context = build_lease_context(

@@ -538,12 +538,12 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
         <div class="narration">
           <div class="slide-num">Monetise</div>
           <div class="slide-title">Stripe Billing — 3 Plans</div>
-          <div class="slide-sub">Full Stripe checkout integration with three usage tiers, a 3-day free trial on paid plans, and automatic plan activation on login. All limits are enforced in real time on every request.</div>
+          <div class="slide-sub">Full Stripe checkout integration with three usage tiers, a 3-day free trial on paid plans, and automatic plan activation on login. Strict quota enforcement covers documents, file size, chat, embedding, summaries, compares, lease AI, voice transcription, and evals.</div>
           <div class="feature-list">
-            <div class="feature-item"><span class="feature-icon">🆓</span><span>Free — 20 docs · 10 MB · 50 queries/day</span></div>
-            <div class="feature-item"><span class="feature-icon">🚀</span><span>Pro $20/mo — 500 docs · 500 MB · 500 queries/day</span></div>
-            <div class="feature-item"><span class="feature-icon">🏢</span><span>Enterprise $100/mo — Unlimited docs · 10 GB · Unlimited queries</span></div>
-            <div class="feature-item"><span class="feature-icon">🔄</span><span>Auto-sync on login — Stripe API checked every sign-in, tier updated instantly</span></div>
+            <div class="feature-item"><span class="feature-icon">🆓</span><span>Free — 20 docs · 10 MB files · 50 queries/day · 5 summaries/day · 3 compares/day</span></div>
+            <div class="feature-item"><span class="feature-icon">🚀</span><span>Pro $20/mo — 500 docs · 500 MB files · 500 queries/day · 50 summaries/day · 50 compares/day</span></div>
+            <div class="feature-item"><span class="feature-icon">🏢</span><span>Enterprise $100/mo — unlimited docs, queries, summaries, compares, lease AI, voice, and evals; 10 GB files</span></div>
+            <div class="feature-item"><span class="feature-icon">🔒</span><span>Atomic reservation prevents concurrent requests from bypassing daily limits</span></div>
           </div>
           <button class="btn-speak" onclick="speakSlide(6)">🔊 Play narration</button>
         </div>
@@ -551,7 +551,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">💳 Plans & Billing</div></div>
           <div class="mockup-body" style="display:flex;flex-direction:column;gap:7px">
             <div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(255,255,255,.1);border-radius:8px;padding:9px 11px;display:flex;justify-content:space-between;align-items:center">
-              <div><div style="font-size:11px;font-weight:700;color:#60a5fa;margin-bottom:4px">Free</div><div style="font-size:9.5px;color:#6b7280;line-height:1.6">20 docs · 10 MB · 50 queries/day</div></div>
+              <div><div style="font-size:11px;font-weight:700;color:#60a5fa;margin-bottom:4px">Free</div><div style="font-size:9.5px;color:#6b7280;line-height:1.6">20 docs · 10 MB files · 50 queries/day · 5 summaries</div></div>
               <div style="text-align:right"><div style="font-size:16px;font-weight:800;color:#f0fdf4">$0</div><div style="font-size:9px;padding:3px 8px;background:rgba(96,165,250,.1);color:#60a5fa;border-radius:4px;font-weight:700;margin-top:4px">✓ Active</div></div>
             </div>
             <div style="background:rgba(192,132,252,.05);border:1px solid rgba(192,132,252,.3);border-radius:8px;padding:9px 11px;position:relative">
@@ -560,7 +560,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
                 <div style="font-size:11px;font-weight:700;color:#c084fc">Pro</div>
                 <div style="font-size:16px;font-weight:800;color:#f0fdf4">$20<span style="font-size:9px;color:#6b7280">/mo</span></div>
               </div>
-              <div style="font-size:9.5px;color:#6b7280;line-height:1.6;margin-bottom:6px">500 docs · 500 MB · 500 queries/day</div>
+              <div style="font-size:9.5px;color:#6b7280;line-height:1.6;margin-bottom:6px">500 docs · 500 MB files · 500 queries · 50 summaries</div>
               <div style="background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.25);border-radius:4px;padding:3px 7px;text-align:center;font-size:9px;font-weight:700;color:#4ade80;margin-bottom:5px">🎁 3-day free trial</div>
               <div style="background:#c084fc;color:#000;border-radius:4px;padding:5px;text-align:center;font-size:9.5px;font-weight:700">Start 3-day free trial →</div>
             </div>
@@ -644,11 +644,12 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
         <div class="narration">
           <div class="slide-num">Infrastructure</div>
           <div class="slide-title">Production-Ready Stack</div>
-          <div class="slide-sub">Deployed on Google Cloud — Cloud Run for the backend, Firebase Hosting for the frontend, Cloud SQL with pgvector for semantic search, and GCS for document storage. Production migrations, health checks, tracing, and tiered usage enforcement are built in.</div>
+          <div class="slide-sub">Deployed on Google Cloud — Cloud Run for the backend, Firebase Hosting for the frontend, Cloud SQL with pgvector for semantic search, and GCS for document storage. Production migrations, health checks, tracing, and strict tiered usage enforcement are built in.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">☁</span><span>FastAPI on Cloud Run · React on Firebase Hosting · PostgreSQL + pgvector</span></div>
             <div class="feature-item"><span class="feature-icon">🔐</span><span>JWT auth · bcrypt passwords · rate limiting · IP audit logging</span></div>
-            <div class="feature-item"><span class="feature-icon">📊</span><span>Usage metering per user — queries, embeddings, summaries tracked daily</span></div>
+            <div class="feature-item"><span class="feature-icon">📊</span><span>Usage panel — documents, file size, queries, embedding chunks, summaries, compares, lease AI, voice, evals</span></div>
+            <div class="feature-item"><span class="feature-icon">🛑</span><span>Hard enforcement — document/file limits return 403/413; daily quota breaches return 429 before model work starts</span></div>
             <div class="feature-item"><span class="feature-icon">🧬</span><span>Production migration path — DB backup, backend-first deploy, trace table health check</span></div>
           </div>
           <button class="btn-speak" onclick="speakSlide(8)">🔊 Play narration</button>
@@ -670,7 +671,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <!-- Usage meters -->
             <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.07);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px">
               <div style="font-size:10px;font-weight:700;color:#f0fdf4;display:flex;justify-content:space-between">
-                <span>Daily Usage</span>
+                <span>Enforced Daily Usage</span>
                 <span style="font-size:9px;padding:1px 8px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;font-weight:600">Pro Plan</span>
               </div>
               <div>
@@ -678,12 +679,17 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
                 <div style="background:rgba(255,255,255,.06);border-radius:4px;height:5px"><div style="background:#4ade80;width:9.4%;height:100%;border-radius:4px"></div></div>
               </div>
               <div>
-                <div style="display:flex;justify-content:space-between;font-size:9.5px;color:#6b7280;margin-bottom:3px"><span>Embeddings</span><span style="color:#f0fdf4">23 / 100</span></div>
+                <div style="display:flex;justify-content:space-between;font-size:9.5px;color:#6b7280;margin-bottom:3px"><span>Embedding chunks</span><span style="color:#f0fdf4">23 / 100</span></div>
                 <div style="background:rgba(255,255,255,.06);border-radius:4px;height:5px"><div style="background:#60a5fa;width:23%;height:100%;border-radius:4px"></div></div>
               </div>
               <div>
-                <div style="display:flex;justify-content:space-between;font-size:9.5px;color:#6b7280;margin-bottom:3px"><span>Documents</span><span style="color:#f0fdf4">148 / 500</span></div>
-                <div style="background:rgba(255,255,255,.06);border-radius:4px;height:5px"><div style="background:#c084fc;width:29.6%;height:100%;border-radius:4px"></div></div>
+                <div style="display:flex;justify-content:space-between;font-size:9.5px;color:#6b7280;margin-bottom:3px"><span>Summaries</span><span style="color:#f0fdf4">12 / 50</span></div>
+                <div style="background:rgba(255,255,255,.06);border-radius:4px;height:5px"><div style="background:#fbbf24;width:24%;height:100%;border-radius:4px"></div></div>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;font-size:9px">
+                <div style="background:rgba(255,255,255,.04);border-radius:6px;padding:5px 6px;color:#9ca3af"><strong style="color:#38bdf8">8/50</strong><br/>Compares</div>
+                <div style="background:rgba(255,255,255,.04);border-radius:6px;padding:5px 6px;color:#9ca3af"><strong style="color:#fb7185">4/50</strong><br/>Lease AI</div>
+                <div style="background:rgba(255,255,255,.04);border-radius:6px;padding:5px 6px;color:#9ca3af"><strong style="color:#34d399">16/250</strong><br/>Voice</div>
               </div>
             </div>
           </div>
@@ -724,9 +730,9 @@ const SLIDES = [
   { text: "The architecture separates horizontal and vertical intelligence. The horizontal layer provides reusable RAG capabilities: ingestion, OCR, PII redaction, chunking, embeddings, hybrid search, reranking, citations, multilingual chat, summaries, comparisons, traces, audit, and governance. The vertical layer adds agentic AI for domain workflows. Lease management is the first example, with abstract, clause review, critical dates, amendment comparison, obligations, and approval. The same pattern can extend to healthcare, brokerage, legal, and other verticals." },
   { text: "As libraries grow, DocIntel keeps them navigable. Auto-classification labels invoices, leases, resumes, reports, policies, and more. Tags create project or client collections, while search, type filters, tag filters, and sorting keep hundreds of documents manageable." },
   { text: "Teams collaborate in workspaces with Owner, Editor, and Viewer roles. Uploads, tags, chat sessions, and summaries stay scoped to the selected workspace. Owners invite teammates, editors contribute documents, and viewers get read-only chat and search." },
-  { text: "Billing is handled by Stripe with Free, Pro, and Enterprise tiers. Usage limits cover documents, storage, queries, embeddings, summaries, and comparisons. Paid plans include a trial, and subscription state syncs on login." },
+  { text: "Billing is handled by Stripe with Free, Pro, and Enterprise tiers, but the important part is enforcement. The usage panel now shows every enforced quota: documents, file size, chat queries, embedding chunks, summaries, compares, lease AI actions, voice transcriptions, and eval cases. Quota is reserved atomically before expensive work starts, so concurrent requests cannot silently bypass the tier limit." },
   { text: "Security, privacy, audit, and traceability are built in. Email verification, password reset, audit logs, PII redaction, and question-level traces help teams understand both what users did and how each AI answer was produced." },
-  { text: "The stack is Google Cloud end to end: FastAPI on Cloud Run, React on Firebase Hosting, Cloud SQL Postgres with pgvector, and GCS for documents. Gemini powers classification, embeddings, reranking, transcription, chat, summaries, and comparison." },
+  { text: "The stack is Google Cloud end to end: FastAPI on Cloud Run, React on Firebase Hosting, Cloud SQL Postgres with pgvector, and GCS for documents. Gemini powers classification, embeddings, reranking, transcription, chat, summaries, comparison, evals, and vertical agent workflows, while strict usage enforcement protects cost and capacity." },
   { text: "That is আদর DocIntel: a horizontal RAG and governance platform with vertical agentic AI layers for lease management, healthcare, brokerage, and beyond. Teams can upload, redact, classify, embed, speak or type questions, summarize, compare, run domain agents, audit, trace, and deploy." }
 ];
 

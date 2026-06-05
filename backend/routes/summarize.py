@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 
 from auth.dependencies import CurrentUser
 from database.connection import get_db, get_pool
-from services.usage import check_daily_limit, log_event
+from services.usage import check_and_log_daily_event
 import services.storage as gcs
 from services.llm import chat_stream, summarize_system, mini_summarize_system
 from services.language import primary_language, response_language_instruction
@@ -52,14 +52,20 @@ async def summarize_document(
     current_user: CurrentUser,
     db=Depends(get_db),
 ):
-    row     = await _get_owned_chunked(doc_id, str(current_user["id"]), db)
+    row     = await _get_accessible_chunked(doc_id, str(current_user["id"]), db)
     user_id = str(current_user["id"])
-    await check_daily_limit(db, user_id, "summarize", "max_summaries_day")
-    await log_event(db, user_id, "summarize", metadata={"doc_id": doc_id, "summary_type": body.summary_type})
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "summarize",
+        "max_summaries_day",
+        metadata={"doc_id": doc_id, "summary_type": body.summary_type},
+    )
 
     async def generate():
         try:
-            meta   = await gcs.download_json(gcs.metadata_path(user_id, doc_id))
+            owner_id = str(row["user_id"])
+            meta   = await gcs.download_json(gcs.metadata_path(owner_id, doc_id))
             chunks = meta["chunks"]
             if body.chunk_indices:
                 chunks = [c for c in chunks if c["index"] in body.chunk_indices]
@@ -95,12 +101,20 @@ async def summarize_multiple_documents(
 
     user_id = str(current_user["id"])
     rows = await db.fetch(
-        """SELECT id, original_name, status, doc_language FROM documents
-           WHERE id = ANY($1::uuid[]) AND user_id = $2 AND status != 'deleted'""",
+        """SELECT d.id, d.user_id, d.original_name, d.status, d.doc_language
+           FROM documents d
+           WHERE d.id = ANY($1::uuid[])
+             AND d.status != 'deleted'
+             AND (
+               d.user_id = $2
+               OR EXISTS (
+                 SELECT 1 FROM workspace_members wm
+                 WHERE wm.workspace_id = d.workspace_id
+                   AND wm.user_id = $2
+               )
+             )""",
         body.document_ids, user_id,
     )
-    await check_daily_limit(db, user_id, "summarize", "max_summaries_day")
-    await log_event(db, user_id, "summarize", quantity=len(body.document_ids), metadata={"doc_ids": body.document_ids})
     found       = {str(r["id"]): r for r in rows}
     missing     = set(body.document_ids) - set(found)
     not_chunked = [str(r["id"]) for r in rows if r["status"] not in ("chunked","embedding","embedded")]
@@ -109,13 +123,22 @@ async def summarize_multiple_documents(
         raise HTTPException(403, f"Documents not found: {missing}")
     if not_chunked:
         raise HTTPException(400, f"Documents not yet chunked: {not_chunked}")
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "summarize",
+        "max_summaries_day",
+        quantity=len(body.document_ids),
+        metadata={"doc_ids": body.document_ids},
+    )
 
     async def generate():
         try:
             all_texts: list[str] = []
             for doc_id in body.document_ids:
                 row   = found[doc_id]
-                meta  = await gcs.download_json(gcs.metadata_path(user_id, doc_id))
+                owner_id = str(row["user_id"])
+                meta  = await gcs.download_json(gcs.metadata_path(owner_id, doc_id))
                 texts = await _load_chunk_texts(meta["chunks"])
                 all_texts.append(f"=== {row['original_name']} ===\n" + "\n\n".join(texts))
 
@@ -273,9 +296,19 @@ async def _load_chunk_texts(chunks: list[dict]) -> list[str]:
     return [await gcs.download_text(c["gcs_path"]) for c in chunks]
 
 
-async def _get_owned_chunked(doc_id: str, user_id: str, db) -> dict:
+async def _get_accessible_chunked(doc_id: str, user_id: str, db) -> dict:
     row = await db.fetchrow(
-        "SELECT * FROM documents WHERE id=$1 AND user_id=$2 AND status != 'deleted'",
+        """SELECT d.* FROM documents d
+           WHERE d.id=$1
+             AND d.status != 'deleted'
+             AND (
+               d.user_id=$2
+               OR EXISTS (
+                 SELECT 1 FROM workspace_members wm
+                 WHERE wm.workspace_id=d.workspace_id
+                   AND wm.user_id=$2
+               )
+             )""",
         doc_id, user_id,
     )
     if not row:

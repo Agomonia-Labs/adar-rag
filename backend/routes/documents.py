@@ -12,7 +12,7 @@ log = logging.getLogger('docintel.documents')
 
 from auth.dependencies import CurrentUser, get_current_user
 from database.connection import get_db
-from services.usage         import check_document_limit, check_daily_limit, log_event
+from services.usage         import check_and_log_daily_event, check_document_limit, log_event
 from services.audit         import audit, ip_from, ua_from
 from services.notifications import send_embed_complete
 from services.extractor import extract_text, detect_type, extract_tables_from_pdf, tables_to_text
@@ -45,7 +45,7 @@ async def upload_documents(
 ):
     # Enforce per-user tier document limit (replaces global MAX_FILES env var)
     user_id = str(current_user["id"])
-    await check_document_limit(db, user_id)
+    await check_document_limit(db, user_id, quantity=len(files))
 
     # Enforce per-file size limit from tier
     from services.usage import get_user_limits
@@ -73,8 +73,12 @@ async def upload_documents(
     created = []
     for upload in files:
         content = await upload.read()
-        if len(content) > MAX_FILE_MB * 1024 * 1024:
-            raise HTTPException(413, f"{upload.filename} exceeds {MAX_FILE_MB} MB")
+        if max_mb != -1 and len(content) > max_mb * 1024 * 1024:
+            raise HTTPException(
+                413,
+                f"File '{upload.filename}' exceeds your {max_mb} MB file size limit "
+                f"({limits.get('label','Free')} plan). Upgrade to upload larger files.",
+            )
 
         doc_id    = str(uuid4())
         user_id   = str(current_user["id"])
@@ -219,6 +223,15 @@ async def trigger_embedding(
 
     user_id      = str(current_user["id"])
     workspace_id = row.get("workspace_id")   # propagate workspace scope to chunks
+    chunk_count = int(row.get("chunk_count") or 1)
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "embedding",
+        "max_embeds_day",
+        quantity=chunk_count,
+        metadata={"doc_id": doc_id, "chunk_count": chunk_count},
+    )
     await db.execute("UPDATE documents SET status='embedding', updated_at=NOW() WHERE id=$1", doc_id)
     background_tasks.add_task(_embed_document, doc_id, user_id, workspace_id)
     return {"message": "Embedding started", "doc_id": doc_id}
@@ -433,11 +446,7 @@ async def _embed_document(doc_id: str, user_id: str, workspace_id: str | None = 
             await asyncio.sleep(0.08)   # rate limit buffer
 
         await _set_status("embedded")
-        # Log embedding event + notify user
         async with pool.acquire() as _c:
-            await log_event(_c, user_id, "embedding",
-                            quantity=len(chunks),
-                            metadata={"doc_id": doc_id, "chunk_count": len(chunks)})
             # Fetch user email + notification preference
             user_row = await _c.fetchrow(
                 "SELECT email, notify_on_embed FROM users WHERE id=$1", user_id
