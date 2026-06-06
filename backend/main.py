@@ -132,6 +132,7 @@ _ROUTERS = [
     ("routes.voice",          "voice_router",          "/api/voice",         ["voice"]),
     ("routes.traces",         "traces_router",         "/api/traces",        ["traces"]),
     ("routes.lease",          "lease_router",          "/api/lease",         ["lease"]),
+    ("routes.healthcare",     "healthcare_router",     "/api/healthcare",    ["healthcare"]),
 ]
 
 for _module, _attr, _prefix, _tags in _ROUTERS:

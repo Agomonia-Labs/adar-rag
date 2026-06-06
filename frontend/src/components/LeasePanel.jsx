@@ -273,6 +273,7 @@ function AgentWorkflowView({ run, abstract, approvalNotes, onNotes, onApprove, l
   const canApprove = run.status === 'pending_approval';
   const packet = run.result?.approved_abstract || run.result?.abstract || abstract || {};
   const obligations = run.obligations || run.result?.obligation_checklist?.obligations || [];
+  const evals = evaluateLeaseWorkflow(run, packet, obligations);
   return (
     <div style={s.body}>
       <section style={s.section}>
@@ -287,6 +288,11 @@ function AgentWorkflowView({ run, abstract, approvalNotes, onNotes, onApprove, l
             </div>
           ))}
         </div>
+      </section>
+
+      <section style={s.section}>
+        <h3 style={s.h3}>Evaluation Results</h3>
+        <EvalGrid items={evals} />
       </section>
 
       <section style={s.section}>
@@ -351,6 +357,73 @@ function AgentWorkflowView({ run, abstract, approvalNotes, onNotes, onApprove, l
   );
 }
 
+function evaluateLeaseWorkflow(run, packet, obligations) {
+  const steps = run.steps || [];
+  const completed = steps.filter(s => s.status === 'completed').length;
+  const fields = packet.fields || {};
+  const required = ['landlord','tenant','property_address','lease_start_date','lease_end_date','base_rent'];
+  const present = required.filter(k => fields[k]?.value).length;
+  const cited = collectLeafObjects(packet).filter(item => hasCitation(item.source)).length;
+  const citeEligible = collectLeafObjects(packet).filter(item => 'source' in item).length;
+  const confidences = collectLeafObjects(packet).map(item => Number(item.confidence)).filter(n => Number.isFinite(n) && n > 0);
+  const risks = packet.risk_flags || [];
+  return [
+    metric('Agent completion', steps.length ? completed / steps.length : 0, `${completed}/${steps.length || 0} steps completed`),
+    metric('Required fields', required.length ? present / required.length : 0, `${present}/${required.length} core lease fields found`),
+    metric('Citation coverage', citeEligible ? cited / citeEligible : 0, `${cited}/${citeEligible || 0} sourced items cite document chunks`),
+    metric('Confidence', confidences.length ? average(confidences) : 0, `${Math.round((confidences.length ? average(confidences) : 0) * 100)}% average extracted confidence`),
+    metric('Obligation coverage', obligations.length ? 1 : 0, `${obligations.length} obligation${obligations.length === 1 ? '' : 's'} generated`),
+    metric('Risk review', risks.length ? 1 : 0.5, risks.length ? `${risks.length} risk flag${risks.length === 1 ? '' : 's'} found` : 'No risk flags returned'),
+    metric('Approval readiness', run.status === 'pending_approval' || run.status === 'approved' ? 1 : 0, `Status: ${run.status}`),
+  ];
+}
+
+function EvalGrid({ items }) {
+  return (
+    <div style={s.evalGrid}>
+      {items.map(item => (
+        <div key={item.label} style={s.evalCard}>
+          <div style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'center'}}>
+            <strong>{item.label}</strong>
+            <span style={{...s.evalScore,color:scoreColor(item.score)}}>{Math.round(item.score * 100)}%</span>
+          </div>
+          <div style={s.evalBar}><span style={{...s.evalFill,width:`${Math.round(item.score * 100)}%`,background:scoreColor(item.score)}} /></div>
+          <small>{item.detail}</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function metric(label, score, detail) {
+  return { label, score: Math.max(0, Math.min(1, Number(score) || 0)), detail };
+}
+
+function collectLeafObjects(value) {
+  const found = [];
+  const walk = item => {
+    if (!item) return;
+    if (Array.isArray(item)) return item.forEach(walk);
+    if (typeof item !== 'object') return;
+    if ('source' in item || 'confidence' in item) found.push(item);
+    Object.values(item).forEach(walk);
+  };
+  walk(value);
+  return found;
+}
+
+function hasCitation(value) {
+  return typeof value === 'string' && /source\s+\d+/i.test(value);
+}
+
+function average(values) {
+  return values.reduce((sum, n) => sum + n, 0) / values.length;
+}
+
+function scoreColor(score) {
+  return score >= .8 ? '#4ade80' : score >= .55 ? '#fbbf24' : '#f87171';
+}
+
 function CompareEmpty() {
   return <div style={s.empty}>No lease comparison yet. Run comparison to identify changed terms, added obligations, date changes, risk flags, and citations.</div>;
 }
@@ -402,6 +475,11 @@ const s = {
   steps:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(210px,1fr))',gap:8,marginTop:10},
   step:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.03)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:4},
   stepStatus:{fontSize:10,textTransform:'uppercase',fontWeight:800,color:'#4ade80'},
+  evalGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:10},
+  evalCard:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.03)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:7},
+  evalScore:{fontSize:14,fontWeight:900},
+  evalBar:{height:5,borderRadius:20,background:'rgba(255,255,255,.08)',overflow:'hidden'},
+  evalFill:{display:'block',height:'100%',borderRadius:20},
   notes:{width:'100%',minHeight:54,marginTop:10,background:'var(--s3)',border:'1px solid var(--b2)',borderRadius:8,color:'var(--tx)',padding:8,resize:'vertical'},
   empty:{padding:28,textAlign:'center',color:'var(--muted2)'},
   emptySmall:{fontSize:12,color:'var(--muted2)'},

@@ -7,6 +7,7 @@ import ChunksViewer from './ChunksViewer.jsx';
 import SummaryPanel from './SummaryPanel.jsx';
 import ComparePanel from './ComparePanel.jsx';
 import LeasePanel from './LeasePanel.jsx';
+import HealthcarePanel from './HealthcarePanel.jsx';
 
 const MAX_FILES = parseInt(import.meta.env.VITE_MAX_UPLOAD_FILES || '500');
 
@@ -33,6 +34,8 @@ const DOC_TYPE_LABELS = {
   report:'Report', proposal:'Proposal', presentation:'Slides', memo:'Memo',
   resume:'Resume', cv:'CV', job_description:'JD', offer_letter:'Offer',
   medical_record:'Medical', prescription:'Rx', lab_report:'Lab', clinical_notes:'Clinical',
+  after_visit_summary:'After Visit', discharge_summary:'Discharge', referral:'Referral',
+  imaging_report:'Imaging', prior_authorization:'Prior Auth',
   research_paper:'Research', thesis:'Thesis', article:'Article',
   policy:'Policy', procedure:'Procedure', sop:'SOP', manual:'Manual',
   email:'Email', letter:'Letter', notice:'Notice', general:'Doc',
@@ -62,6 +65,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
   const [summary, setSummary] = useState(null);
   const [compare, setCompare] = useState(null);
   const [leasePanel, setLeasePanel] = useState(null);
+  const [healthcarePanel, setHealthcarePanel] = useState(null);
   const [selected,setSelected]= useState([]);
   const fileRef = useRef(null);
   const pollRef = useRef(null);
@@ -274,6 +278,12 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
             <option value="medical_record">Medical</option>
             <option value="prescription">Rx</option>
             <option value="lab_report">Lab</option>
+            <option value="clinical_notes">Clinical</option>
+            <option value="after_visit_summary">After Visit</option>
+            <option value="discharge_summary">Discharge</option>
+            <option value="referral">Referral</option>
+            <option value="imaging_report">Imaging</option>
+            <option value="prior_authorization">Prior Auth</option>
           </optgroup>
           <optgroup label="🟡 Research">
             <option value="research_paper">Research</option>
@@ -345,6 +355,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
               onViewSource={()=>handleView(doc.id)} onViewChunks={()=>setViewer(doc.id)}
               onSummarize={()=>setSummary({docId:doc.id,docName:doc.original_name})}
               onLease={()=>setLeasePanel({doc})}
+              onHealthcare={()=>setHealthcarePanel({doc})}
               onRetry={()=>handleRetry(doc.id)}
               onReclassify={()=>handleReclassify(doc.id)}
               onDelete={handleDelete}
@@ -361,18 +372,20 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
       }
       {summary && <SummaryPanel docId={summary.docId} docName={summary.docName} documentIds={summary.documentIds} docNames={summary.docNames} onClose={()=>setSummary(null)} />}
       {leasePanel && <LeasePanel doc={leasePanel.doc} compareDocs={leasePanel.compareDocs} onClose={()=>setLeasePanel(null)} />}
+      {healthcarePanel && <HealthcarePanel doc={healthcarePanel.doc} onClose={()=>setHealthcarePanel(null)} />}
     </div>
   );
 }
 
 function Stat({v,l,c}){ return <div style={{textAlign:'center',minWidth:50}}><div style={{fontSize:20,fontWeight:700,color:c}}>{v}</div><div style={{fontSize:9,color:'var(--muted2)',textTransform:'uppercase',letterSpacing:'.5px',marginTop:1}}>{l}</div></div>; }
 
-function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSummarize,onLease,onRetry,onReclassify,onDelete,allTags=[],onTagAssign,onTagRemove}){
+function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSummarize,onLease,onHealthcare,onRetry,onReclassify,onDelete,allTags=[],onTagAssign,onTagRemove}){
   const [conf,setConf]=useState(false);
   const cfg=STATUS[doc.status]||{strip:'#6b7280',bg:'rgba(107,114,128,.1)',color:'#6b7280',label:doc.status};
   const spin=['chunking','embedding','uploading'].includes(doc.status);
   const canSum=['chunked','embedding','embedded'].includes(doc.status);
   const canLease = ['lease','lease_amendment','lease_extension','contract','agreement','rent_roll','estoppel','appraisal','inspection_report','property_management_agreement','cam_reconciliation'].includes(doc.doc_type) || doc.doc_domain === 'legal';
+  const canHealthcare = ['medical_record','prescription','lab_report','clinical_notes','after_visit_summary','discharge_summary','referral','imaging_report','prior_authorization'].includes(doc.doc_type) || doc.doc_domain === 'medical';
   return (
     <div style={{...s.card,...(selected?s.cardSel:{})}}>
       <div style={s.cardInner}>
@@ -465,6 +478,7 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
         {canSum && <Btn onClick={onViewChunks}>📋 Chunks</Btn>}
         {canSum && <Btn onClick={onSummarize} accent>📝 Summary</Btn>}
         {canSum && canLease && <Btn onClick={onLease} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>🏢 Lease</Btn>}
+        {canSum && canHealthcare && <Btn onClick={onHealthcare} style={{color:'#f87171',borderColor:'rgba(248,113,113,.3)',background:'rgba(248,113,113,.08)'}}>⚕ Healthcare</Btn>}
         {doc.status==='error'    && <Btn onClick={onRetry} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>↻ Retry</Btn>}
         {doc.status==='chunked'  && <Btn onClick={onEmbed} primary>⚡ Embed</Btn>}
         {doc.status==='embedded' && <Btn onClick={onEmbed}>↩ Re-embed</Btn>}

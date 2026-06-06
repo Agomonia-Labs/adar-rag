@@ -118,6 +118,7 @@ export default function UsagePanel({ onClose, onUpgrade }) {
                 <Meter label="Summaries today"   used={events.summarize?.today||0}   max={limits.max_summaries_day} color='#fbbf24' />
                 <Meter label="Compares today"     used={events.compare?.today||0}     max={limits.max_compares_day} color='#38bdf8' />
                 <Meter label="Lease AI actions today" used={events.lease_ai?.today||0} max={limits.max_lease_ai_day} color='#fb7185' />
+                <Meter label="Healthcare AI actions today" used={events.healthcare_ai?.today||0} max={limits.max_healthcare_ai_day} color='#f87171' />
                 <Meter label="Voice transcriptions today" used={events.voice_transcription?.today||0} max={limits.max_voice_transcriptions_day} color='#34d399' />
                 <Meter label="Eval cases today"   used={events.eval?.today||0}        max={limits.max_evals_day} color='#a78bfa' />
               </div>
@@ -132,6 +133,7 @@ export default function UsagePanel({ onClose, onUpgrade }) {
                   ['Summaries/day', fmtLimit(limits.max_summaries_day)],
                   ['Compares/day', fmtLimit(limits.max_compares_day)],
                   ['Lease AI actions/day', fmtLimit(limits.max_lease_ai_day)],
+                  ['Healthcare AI actions/day', fmtLimit(limits.max_healthcare_ai_day)],
                   ['Voice transcriptions/day', fmtLimit(limits.max_voice_transcriptions_day)],
                   ['Eval cases/day', fmtLimit(limits.max_evals_day)],
                 ].map(([label, value]) => (
@@ -152,6 +154,7 @@ export default function UsagePanel({ onClose, onUpgrade }) {
                   ['📝 Summaries',     events.summarize?.total],
                   ['⇄ Comparisons',   events.compare?.total],
                   ['🏢 Lease AI',      events.lease_ai?.total],
+                  ['⚕ Healthcare AI',  events.healthcare_ai?.total],
                   ['🎙 Voice',         events.voice_transcription?.total],
                   ['📊 Eval cases',    events.eval?.total],
                 ].map(([label, val]) => (
