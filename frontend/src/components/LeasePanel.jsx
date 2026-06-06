@@ -2,7 +2,9 @@ import React, { useEffect, useState } from 'react';
 import {
   approveLeaseAgentRun,
   compareLeaseDocuments,
+  evaluateAgentWorkflow,
   extractLeaseAbstract,
+  fetchLatestAgentWorkflowEvaluation,
   fetchLeaseAbstract,
   fetchLeaseAgentRun,
   fetchLatestLeaseAgentWorkflow,
@@ -36,6 +38,7 @@ export default function LeasePanel({ doc, compareDocs = null, onClose }) {
   const [abstract, setAbstract] = useState(null);
   const [comparison, setComparison] = useState(null);
   const [agentRun, setAgentRun] = useState(null);
+  const [agentEvaluation, setAgentEvaluation] = useState(null);
   const [approvalNotes, setApprovalNotes] = useState('');
 
   useEffect(() => {
@@ -50,6 +53,7 @@ export default function LeasePanel({ doc, compareDocs = null, onClose }) {
         setAgentRun(data.agent_run);
         const approved = data.agent_run.result?.approved_abstract || data.agent_run.result?.abstract;
         if (approved) setAbstract(approved);
+        refreshEvaluation(data.agent_run.run_id, setAgentEvaluation);
       })
       .catch(() => {});
     return () => { alive = false; };
@@ -93,6 +97,7 @@ export default function LeasePanel({ doc, compareDocs = null, onClose }) {
       const approved = finalRun.result?.approved_abstract || finalRun.result?.abstract;
       if (approved) setAbstract(approved);
       if (finalRun.result?.amendment_comparison) setComparison(finalRun.result.amendment_comparison);
+      await refreshEvaluation(finalRun.run_id, setAgentEvaluation, true);
       if (finalRun.status === 'failed') {
         toast(finalRun.error_message || 'Agent workflow failed', 'error');
       } else {
@@ -115,6 +120,7 @@ export default function LeasePanel({ doc, compareDocs = null, onClose }) {
       });
       setAgentRun(data);
       setAbstract(data.result?.approved_abstract || data.result?.abstract || abstract);
+      await refreshEvaluation(data.run_id, setAgentEvaluation, true);
       toast('Approved abstract saved', 'success');
     } catch (e) {
       toast(e.message || 'Approval failed', 'error');
@@ -165,6 +171,7 @@ export default function LeasePanel({ doc, compareDocs = null, onClose }) {
             <AgentWorkflowView
               run={agentRun}
               abstract={abstract}
+              evaluation={agentEvaluation}
               approvalNotes={approvalNotes}
               onNotes={setApprovalNotes}
               onApprove={approveRun}
@@ -188,6 +195,22 @@ async function waitForAgentRun(runId, onUpdate) {
     if (!['running','pending'].includes(latest.status)) return latest;
   }
   return latest || await fetchLeaseAgentRun(runId);
+}
+
+async function refreshEvaluation(runId, onUpdate, forceCreate = false) {
+  if (!runId) return null;
+  try {
+    let evaluation = null;
+    if (!forceCreate) {
+      const latest = await fetchLatestAgentWorkflowEvaluation('lease', runId);
+      evaluation = latest.evaluation;
+    }
+    if (!evaluation && forceCreate) evaluation = await evaluateAgentWorkflow('lease', runId, { persist: true });
+    onUpdate?.(evaluation);
+    return evaluation;
+  } catch {
+    return null;
+  }
 }
 
 function AbstractView({ data }) {
@@ -269,11 +292,11 @@ function ComparisonView({ data }) {
   );
 }
 
-function AgentWorkflowView({ run, abstract, approvalNotes, onNotes, onApprove, loading }) {
+function AgentWorkflowView({ run, abstract, evaluation, approvalNotes, onNotes, onApprove, loading }) {
   const canApprove = run.status === 'pending_approval';
   const packet = run.result?.approved_abstract || run.result?.abstract || abstract || {};
   const obligations = run.obligations || run.result?.obligation_checklist?.obligations || [];
-  const evals = evaluateLeaseWorkflow(run, packet, obligations);
+  const evals = evaluation?.metrics || evaluateLeaseWorkflow(run, packet, obligations);
   return (
     <div style={s.body}>
       <section style={s.section}>
@@ -292,7 +315,19 @@ function AgentWorkflowView({ run, abstract, approvalNotes, onNotes, onApprove, l
 
       <section style={s.section}>
         <h3 style={s.h3}>Evaluation Results</h3>
+        {evaluation && (
+          <div style={s.meta}>
+            Overall: {Math.round((evaluation.overall_score || 0) * 100)}% · Gate: {evaluation.gate_status} · Evaluator: {evaluation.evaluator_version}
+          </div>
+        )}
         <EvalGrid items={evals} />
+        {evaluation?.recommendations?.length > 0 && (
+          <div style={s.recs}>
+            {evaluation.recommendations.map((rec, idx) => (
+              <div key={idx} style={s.rec}><strong>{rec.severity}</strong> · {rec.message}</div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section style={s.section}>
@@ -385,9 +420,9 @@ function EvalGrid({ items }) {
         <div key={item.label} style={s.evalCard}>
           <div style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'center'}}>
             <strong>{item.label}</strong>
-            <span style={{...s.evalScore,color:scoreColor(item.score)}}>{Math.round(item.score * 100)}%</span>
+            <span style={{...s.evalScore,color:scoreColor(item.score)}}>{Math.round((item.score || 0) * 100)}%</span>
           </div>
-          <div style={s.evalBar}><span style={{...s.evalFill,width:`${Math.round(item.score * 100)}%`,background:scoreColor(item.score)}} /></div>
+          <div style={s.evalBar}><span style={{...s.evalFill,width:`${Math.round((item.score || 0) * 100)}%`,background:scoreColor(item.score)}} /></div>
           <small>{item.detail}</small>
         </div>
       ))}
@@ -480,6 +515,8 @@ const s = {
   evalScore:{fontSize:14,fontWeight:900},
   evalBar:{height:5,borderRadius:20,background:'rgba(255,255,255,.08)',overflow:'hidden'},
   evalFill:{display:'block',height:'100%',borderRadius:20},
+  recs:{marginTop:10,display:'flex',flexDirection:'column',gap:6},
+  rec:{fontSize:12,color:'var(--tx2)',border:'1px solid rgba(251,191,36,.2)',background:'rgba(251,191,36,.06)',borderRadius:8,padding:'7px 9px'},
   notes:{width:'100%',minHeight:54,marginTop:10,background:'var(--s3)',border:'1px solid var(--b2)',borderRadius:8,color:'var(--tx)',padding:8,resize:'vertical'},
   empty:{padding:28,textAlign:'center',color:'var(--muted2)'},
   emptySmall:{fontSize:12,color:'var(--muted2)'},

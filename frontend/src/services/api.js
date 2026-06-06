@@ -369,6 +369,23 @@ export async function approveHealthcareAgentRun(runId, { approvedPacket = null, 
   }));
 }
 
+// ── Agent workflow evaluations ───────────────────────────────────────────────
+export async function evaluateAgentWorkflow(vertical, runId, { persist = true } = {}) {
+  return handleRes(await fetch(`${BASE}/agent-evals/${vertical}/runs/${runId}`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({ persist }),
+  }));
+}
+
+export async function fetchLatestAgentWorkflowEvaluation(vertical, runId) {
+  return handleRes(await fetch(`${BASE}/agent-evals/${vertical}/runs/${runId}/latest`, { headers: authHdr() }));
+}
+
+export async function fetchAgentWorkflowEvaluations(vertical, runId) {
+  return handleRes(await fetch(`${BASE}/agent-evals/${vertical}/runs/${runId}`, { headers: authHdr() }));
+}
+
 // ── Message feedback ────────────────────────────────────────────────────────
 export async function submitFeedback({ sessionId, messageId, rating, question, answer }) {
   return handleRes(await fetch(`${BASE}/feedback/`, {

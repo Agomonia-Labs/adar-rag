@@ -378,6 +378,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">↔</span><span>Horizontal layer — upload, OCR, chunking, embeddings, hybrid RAG, rerank, citations, PII redaction, multilingual UX, traces, audit, billing</span></div>
             <div class="feature-item"><span class="feature-icon">⚙</span><span>Vertical layer — JSON-configured orchestrator, domain agents, tools, approvals, saved structured outputs</span></div>
+            <div class="feature-item"><span class="feature-icon">📊</span><span>Production evaluation API — persisted scores, gate status, recommendations, and audit trail for each agent workflow run</span></div>
             <div class="feature-item"><span class="feature-icon">🏢</span><span>Lease management — abstract, clauses, critical dates, amendment comparison, obligation checklist</span></div>
             <div class="feature-item"><span class="feature-icon">🏥</span><span>Healthcare — intake packets, clinical records, prior auth, policy review, compliance evidence</span></div>
             <div class="feature-item"><span class="feature-icon">📈</span><span>Brokerage — KYC, account forms, disclosures, research packets, suitability review</span></div>
@@ -415,7 +416,13 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
               </div>
             </div>
             <div style="background:rgba(96,165,250,.06);border:0.5px solid rgba(96,165,250,.2);border-radius:8px;padding:8px 10px;font-size:10px;color:#60a5fa;display:flex;align-items:center;justify-content:space-between;gap:8px">
-              <span>JSON workflow</span><span>→</span><span>Domain agents</span><span>→</span><span>Approval + saved outputs</span>
+              <span>JSON workflow</span><span>→</span><span>Domain agents</span><span>→</span><span>Evaluation gate</span><span>→</span><span>Approval</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px">
+              <div style="background:rgba(74,222,128,.08);border:0.5px solid rgba(74,222,128,.2);border-radius:6px;padding:6px;text-align:center"><strong style="color:#4ade80;font-size:12px">92%</strong><br><span style="font-size:8.5px;color:#9ca3af">Overall</span></div>
+              <div style="background:rgba(74,222,128,.08);border:0.5px solid rgba(74,222,128,.2);border-radius:6px;padding:6px;text-align:center"><strong style="color:#4ade80;font-size:12px">Pass</strong><br><span style="font-size:8.5px;color:#9ca3af">Gate</span></div>
+              <div style="background:rgba(251,191,36,.08);border:0.5px solid rgba(251,191,36,.2);border-radius:6px;padding:6px;text-align:center"><strong style="color:#fbbf24;font-size:12px">Cites</strong><br><span style="font-size:8.5px;color:#9ca3af">Coverage</span></div>
+              <div style="background:rgba(96,165,250,.08);border:0.5px solid rgba(96,165,250,.2);border-radius:6px;padding:6px;text-align:center"><strong style="color:#60a5fa;font-size:12px">Audit</strong><br><span style="font-size:8.5px;color:#9ca3af">Saved</span></div>
             </div>
           </div>
         </div>
@@ -711,7 +718,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">🏢</div><div class="sum-card-title" style="color:#4ade80">Workspaces</div><ul class="sum-card-list"><li>Owner/Editor/Viewer</li><li>Invite by email</li><li>Scoped docs + chat</li><li>One-click switch</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">💳</div><div class="sum-card-title" style="color:#c084fc">Stripe Billing</div><ul class="sum-card-list"><li>Free / Pro / Enterprise</li><li>3-day free trial</li><li>Auto-sync on login</li><li>Cancel → auto-free</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(248,113,113,.12);color:#f87171">🔒</div><div class="sum-card-title" style="color:#f87171">PII Redaction</div><ul class="sum-card-list"><li>Upload-time masking</li><li>Chat privacy toggle</li><li>Summary + chunk privacy</li><li>OCR spacing aware</li></ul></div>
-          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">⚙</div><div class="sum-card-title" style="color:#60a5fa">Vertical Agents</div><ul class="sum-card-list"><li>Lease workflows</li><li>Healthcare ready</li><li>Brokerage ready</li><li>Human approval</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">⚙</div><div class="sum-card-title" style="color:#60a5fa">Vertical Agents</div><ul class="sum-card-list"><li>Lease + healthcare</li><li>Brokerage ready</li><li>Evaluation gates</li><li>Human approval</li></ul></div>
         </div>
         <button class="btn-speak" style="margin-top:1.5rem" onclick="speakSlide(9)">🔊 Play narration</button>
       </div>
@@ -727,13 +734,13 @@ const SLIDES = [
   { text: "আদর DocIntel is a self-service RAG platform for document intelligence. Upload files, ask questions, and get grounded answers with citations. It now classifies documents, detects language, and supports English, Spanish, Bengali, Hindi, and Arabic." },
   { text: "The upload pipeline is automatic. DocIntel extracts text, optionally redacts PII before chunking and embedding, classifies the document, stores the source in GCS, and prepares Gemini embeddings in pgvector. Redaction covers email, phone, SSN, card, date of birth, bank IDs, and IP addresses, including OCR-style spacing." },
   { text: "Chat works by typing or speaking. Spanish, Bengali, Hindi, Arabic, English, and document-language questions can auto-submit after speech. Web Speech runs where supported; Safari and Firefox use MediaRecorder with Gemini transcription. Privacy mode redacts PII from prompts, context, sources, and trace previews before model use." },
-  { text: "The architecture separates horizontal and vertical intelligence. The horizontal layer provides reusable RAG capabilities: ingestion, OCR, PII redaction, chunking, embeddings, hybrid search, reranking, citations, multilingual chat, summaries, comparisons, traces, audit, and governance. The vertical layer adds agentic AI for domain workflows. Lease management is the first example, with abstract, clause review, critical dates, amendment comparison, obligations, and approval. The same pattern can extend to healthcare, brokerage, legal, and other verticals." },
+  { text: "The architecture separates horizontal and vertical intelligence. The horizontal layer provides reusable RAG capabilities: ingestion, OCR, PII redaction, chunking, embeddings, hybrid search, reranking, citations, multilingual chat, summaries, comparisons, traces, audit, and governance. The vertical layer adds agentic AI for domain workflows. Lease management and healthcare use JSON configured agents, human approval, and now a backend evaluation API that stores overall score, gate status, metric scores, recommendations, and audit history for every workflow run." },
   { text: "As libraries grow, DocIntel keeps them navigable. Auto-classification labels invoices, leases, resumes, reports, policies, and more. Tags create project or client collections, while search, type filters, tag filters, and sorting keep hundreds of documents manageable." },
   { text: "Teams collaborate in workspaces with Owner, Editor, and Viewer roles. Uploads, tags, chat sessions, and summaries stay scoped to the selected workspace. Owners invite teammates, editors contribute documents, and viewers get read-only chat and search." },
   { text: "Billing is handled by Stripe with Free, Pro, and Enterprise tiers, but the important part is enforcement. The usage panel now shows every enforced quota: documents, file size, chat queries, embedding chunks, summaries, compares, lease AI actions, voice transcriptions, and eval cases. Quota is reserved atomically before expensive work starts, so concurrent requests cannot silently bypass the tier limit." },
   { text: "Security, privacy, audit, and traceability are built in. Email verification, password reset, audit logs, PII redaction, and question-level traces help teams understand both what users did and how each AI answer was produced." },
   { text: "The stack is Google Cloud end to end: FastAPI on Cloud Run, React on Firebase Hosting, Cloud SQL Postgres with pgvector, and GCS for documents. Gemini powers classification, embeddings, reranking, transcription, chat, summaries, comparison, evals, and vertical agent workflows, while strict usage enforcement protects cost and capacity." },
-  { text: "That is আদর DocIntel: a horizontal RAG and governance platform with vertical agentic AI layers for lease management, healthcare, brokerage, and beyond. Teams can upload, redact, classify, embed, speak or type questions, summarize, compare, run domain agents, audit, trace, and deploy." }
+  { text: "That is আদর DocIntel: a horizontal RAG and governance platform with vertical agentic AI layers for lease management, healthcare, brokerage, and beyond. Teams can upload, redact, classify, embed, speak or type questions, summarize, compare, run domain agents, evaluate workflow quality, audit, trace, and deploy." }
 ];
 
 

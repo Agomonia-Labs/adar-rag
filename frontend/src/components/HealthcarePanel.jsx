@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import {
   approveHealthcareAgentRun,
+  evaluateAgentWorkflow,
+  fetchLatestAgentWorkflowEvaluation,
   fetchHealthcareAgentRun,
   fetchLatestHealthcareAgentWorkflow,
   runHealthcareAgentWorkflow,
@@ -19,13 +21,18 @@ const CONTEXT_LABELS = {
 export default function HealthcarePanel({ doc, onClose }) {
   const [loading, setLoading] = useState(false);
   const [agentRun, setAgentRun] = useState(null);
+  const [agentEvaluation, setAgentEvaluation] = useState(null);
   const [approvalNotes, setApprovalNotes] = useState('');
 
   useEffect(() => {
     let alive = true;
     if (!doc?.id) return;
     fetchLatestHealthcareAgentWorkflow(doc.id)
-      .then(data => { if (alive && data.agent_run) setAgentRun(data.agent_run); })
+      .then(data => {
+        if (!alive || !data.agent_run) return;
+        setAgentRun(data.agent_run);
+        refreshEvaluation(data.agent_run.run_id, setAgentEvaluation);
+      })
       .catch(() => {});
     return () => { alive = false; };
   }, [doc?.id]);
@@ -40,6 +47,7 @@ export default function HealthcarePanel({ doc, onClose }) {
       if (finalRun.status === 'failed') {
         toast(finalRun.error_message || 'Healthcare agent workflow failed', 'error');
       } else {
+        await refreshEvaluation(finalRun.run_id, setAgentEvaluation, true);
         toast('Healthcare workflow completed; ready for human approval', 'success');
       }
     } catch (e) {
@@ -56,6 +64,7 @@ export default function HealthcarePanel({ doc, onClose }) {
       const packet = agentRun.result?.approved_packet || agentRun.result;
       const data = await approveHealthcareAgentRun(agentRun.run_id, { approvedPacket: packet, notes: approvalNotes });
       setAgentRun(data);
+      await refreshEvaluation(data.run_id, setAgentEvaluation, true);
       toast('Approved healthcare packet saved', 'success');
     } catch (e) {
       toast(e.message || 'Approval failed', 'error');
@@ -65,7 +74,7 @@ export default function HealthcarePanel({ doc, onClose }) {
   };
 
   const packet = agentRun?.result?.approved_packet || agentRun?.result || {};
-  const evals = agentRun ? evaluateHealthcareWorkflow(agentRun, packet) : [];
+  const evals = agentEvaluation?.metrics || (agentRun ? evaluateHealthcareWorkflow(agentRun, packet) : []);
 
   return (
     <div style={s.backdrop}>
@@ -104,7 +113,19 @@ export default function HealthcarePanel({ doc, onClose }) {
 
               <section style={s.section}>
                 <h3 style={s.h3}>Evaluation Results</h3>
+                {agentEvaluation && (
+                  <div style={s.meta}>
+                    Overall: {Math.round((agentEvaluation.overall_score || 0) * 100)}% · Gate: {agentEvaluation.gate_status} · Evaluator: {agentEvaluation.evaluator_version}
+                  </div>
+                )}
                 <EvalGrid items={evals} />
+                {agentEvaluation?.recommendations?.length > 0 && (
+                  <div style={s.recs}>
+                    {agentEvaluation.recommendations.map((rec, idx) => (
+                      <div key={idx} style={s.rec}><strong>{rec.severity}</strong> · {rec.message}</div>
+                    ))}
+                  </div>
+                )}
               </section>
 
               <section style={s.section}>
@@ -186,6 +207,22 @@ export default function HealthcarePanel({ doc, onClose }) {
   );
 }
 
+async function refreshEvaluation(runId, onUpdate, forceCreate = false) {
+  if (!runId) return null;
+  try {
+    let evaluation = null;
+    if (!forceCreate) {
+      const latest = await fetchLatestAgentWorkflowEvaluation('healthcare', runId);
+      evaluation = latest.evaluation;
+    }
+    if (!evaluation && forceCreate) evaluation = await evaluateAgentWorkflow('healthcare', runId, { persist: true });
+    onUpdate?.(evaluation);
+    return evaluation;
+  } catch {
+    return null;
+  }
+}
+
 function evaluateHealthcareWorkflow(run, packet) {
   const steps = run.steps || [];
   const completed = steps.filter(s => s.status === 'completed').length;
@@ -220,9 +257,9 @@ function EvalGrid({ items }) {
         <div key={item.label} style={s.evalCard}>
           <div style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'center'}}>
             <strong>{item.label}</strong>
-            <span style={{...s.evalScore,color:scoreColor(item.score)}}>{Math.round(item.score * 100)}%</span>
+            <span style={{...s.evalScore,color:scoreColor(item.score)}}>{Math.round((item.score || 0) * 100)}%</span>
           </div>
-          <div style={s.evalBar}><span style={{...s.evalFill,width:`${Math.round(item.score * 100)}%`,background:scoreColor(item.score)}} /></div>
+          <div style={s.evalBar}><span style={{...s.evalFill,width:`${Math.round((item.score || 0) * 100)}%`,background:scoreColor(item.score)}} /></div>
           <small>{item.detail}</small>
         </div>
       ))}
@@ -324,6 +361,8 @@ const s = {
   evalScore:{fontSize:14,fontWeight:900},
   evalBar:{height:5,borderRadius:20,background:'rgba(255,255,255,.08)',overflow:'hidden'},
   evalFill:{display:'block',height:'100%',borderRadius:20},
+  recs:{marginTop:10,display:'flex',flexDirection:'column',gap:6},
+  rec:{fontSize:12,color:'var(--tx2)',border:'1px solid rgba(251,191,36,.2)',background:'rgba(251,191,36,.06)',borderRadius:8,padding:'7px 9px'},
   notes:{width:'100%',minHeight:54,marginTop:10,background:'var(--s3)',border:'1px solid var(--b2)',borderRadius:8,color:'var(--tx)',padding:8,resize:'vertical'},
   empty:{padding:28,textAlign:'center',color:'var(--muted2)'},
   emptySmall:{fontSize:12,color:'var(--muted2)',marginTop:8},

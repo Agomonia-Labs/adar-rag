@@ -133,6 +133,7 @@ _ROUTERS = [
     ("routes.traces",         "traces_router",         "/api/traces",        ["traces"]),
     ("routes.lease",          "lease_router",          "/api/lease",         ["lease"]),
     ("routes.healthcare",     "healthcare_router",     "/api/healthcare",    ["healthcare"]),
+    ("routes.agent_evals",    "agent_evals_router",    "/api/agent-evals",   ["agent-evals"]),
 ]
 
 for _module, _attr, _prefix, _tags in _ROUTERS:
