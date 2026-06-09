@@ -353,12 +353,21 @@ export async function runHealthcareAgentWorkflow(docId) {
   }));
 }
 
+export async function runPriorAuthWorkflow(docId, policyDocumentIds = []) {
+  return handleRes(await fetch(`${LONG_BASE}/healthcare/${docId}/prior-auth-workflow`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({ policy_document_ids: policyDocumentIds }),
+  }));
+}
+
 export async function fetchHealthcareAgentRun(runId) {
   return handleRes(await fetch(`${BASE}/healthcare/agent-runs/${runId}`, { headers: authHdr() }));
 }
 
-export async function fetchLatestHealthcareAgentWorkflow(docId) {
-  return handleRes(await fetch(`${BASE}/healthcare/${docId}/agent-workflow/latest`, { headers: authHdr() }));
+export async function fetchLatestHealthcareAgentWorkflow(docId, workflowId = '') {
+  const qs = workflowId ? `?workflow_id=${encodeURIComponent(workflowId)}` : '';
+  return handleRes(await fetch(`${BASE}/healthcare/${docId}/agent-workflow/latest${qs}`, { headers: authHdr() }));
 }
 
 export async function approveHealthcareAgentRun(runId, { approvedPacket = null, notes = '' } = {}) {

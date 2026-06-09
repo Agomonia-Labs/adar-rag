@@ -8,7 +8,13 @@ from services.healthcare_intelligence import (
     extract_followups,
     extract_labs,
     flag_safety,
+    detect_prior_auth_gaps,
+    extract_prior_auth_policy_criteria,
+    extract_prior_auth_request,
+    generate_prior_auth_packet,
+    map_prior_auth_evidence,
     merge_healthcare_outputs,
+    merge_prior_auth_outputs,
     review_medications,
     review_phi_governance,
     summarize_clinical,
@@ -17,8 +23,9 @@ from services.healthcare_intelligence import (
 
 async def intake_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
     previous = _first_dict(agent.get("previous_output"), outputs.get("document_intake"))
+    document_context = _document_context(context)
     try:
-        result = await classify_intake(context["document_name"], context["document_context"])
+        result = await classify_intake(context["document_name"], document_context)
     except HealthcareIntelligenceError:
         if previous:
             result = previous
@@ -121,6 +128,87 @@ async def merge_outputs_tool(context: dict[str, Any], outputs: dict[str, Any], a
     return merge_healthcare_outputs(outputs)
 
 
+async def prior_auth_request_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
+    previous = _first_dict(agent.get("previous_output"), outputs.get("prior_auth_request"))
+    try:
+        intake = outputs.get("document_intake") or {}
+        result = await extract_prior_auth_request(
+            context["document_name"],
+            context["patient_context"],
+            intake,
+        )
+    except HealthcareIntelligenceError:
+        result = previous or {"summary": "Prior authorization request extraction failed.", "confidence": 0}
+    return _with_quality(result, _prior_auth_request_quality(result))
+
+
+async def policy_criteria_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
+    previous = _first_dict(agent.get("previous_output"), outputs.get("policy_criteria"))
+    try:
+        result = await extract_prior_auth_policy_criteria(context.get("policy_context") or "", outputs.get("prior_auth_request") or {})
+    except HealthcareIntelligenceError:
+        result = previous or {"summary": "Policy criteria extraction failed.", "criteria": [], "required_documentation": [], "confidence": 0}
+    if previous:
+        result = _merge_lists(previous, result, ("policy_documents_used", "criteria", "required_documentation"))
+    return _with_quality(result, _multi_list_quality(result, ("criteria", "required_documentation"), allow_empty=False))
+
+
+async def evidence_mapping_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
+    previous = _first_dict(agent.get("previous_output"), outputs.get("evidence_map"))
+    try:
+        result = await map_prior_auth_evidence(
+            context["patient_context"],
+            outputs.get("prior_auth_request") or {},
+            outputs.get("policy_criteria") or {},
+        )
+    except HealthcareIntelligenceError:
+        result = previous or {"summary": "Evidence mapping failed.", "criteria_matches": [], "supporting_evidence": [], "confidence": 0}
+    if previous:
+        result = _merge_lists(previous, result, ("criteria_matches", "supporting_evidence"))
+    return _with_quality(result, _multi_list_quality(result, ("criteria_matches", "supporting_evidence"), allow_empty=False))
+
+
+async def gap_detection_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
+    previous = _first_dict(agent.get("previous_output"), outputs.get("gap_detection"))
+    try:
+        result = await detect_prior_auth_gaps(
+            outputs.get("prior_auth_request") or {},
+            outputs.get("policy_criteria") or {},
+            outputs.get("evidence_map") or {},
+        )
+    except HealthcareIntelligenceError:
+        result = previous or {"summary": "Gap detection failed.", "missing_items": [], "submission_risks": [], "ready_for_submission": False, "confidence": 0}
+    if previous:
+        result = _merge_lists(previous, result, ("missing_items", "submission_risks"))
+    return _with_quality(result, _multi_list_quality(result, ("missing_items", "submission_risks"), allow_empty=True))
+
+
+async def prior_auth_packet_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
+    previous = _first_dict(agent.get("previous_output"), outputs.get("prior_auth_packet"))
+    try:
+        result = await generate_prior_auth_packet(
+            outputs.get("prior_auth_request") or {},
+            outputs.get("policy_criteria") or {},
+            outputs.get("evidence_map") or {},
+            outputs.get("gap_detection") or {},
+        )
+    except HealthcareIntelligenceError:
+        result = previous or {"packet_summary": "Prior authorization packet generation failed.", "criteria_checklist": [], "next_actions": [], "confidence": 0}
+    if previous:
+        result = _merge_lists(previous, result, ("criteria_checklist", "next_actions"))
+    return _with_quality(result, _prior_auth_packet_quality(result))
+
+
+async def merge_prior_auth_outputs_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
+    result = merge_prior_auth_outputs(outputs)
+    result["policy_documents"] = context.get("policy_documents") or []
+    result["patient_document"] = {
+        "document_id": context.get("document_id"),
+        "document_name": context.get("document_name"),
+    }
+    return result
+
+
 HEALTHCARE_AGENT_TOOLS = {
     "healthcare.classify_intake": intake_tool,
     "healthcare.summarize_clinical": clinical_summary_tool,
@@ -130,6 +218,12 @@ HEALTHCARE_AGENT_TOOLS = {
     "healthcare.flag_safety": risk_safety_tool,
     "healthcare.review_phi_governance": phi_governance_tool,
     "healthcare.merge_outputs": merge_outputs_tool,
+    "healthcare.prior_auth.extract_request": prior_auth_request_tool,
+    "healthcare.prior_auth.extract_policy_criteria": policy_criteria_tool,
+    "healthcare.prior_auth.map_evidence": evidence_mapping_tool,
+    "healthcare.prior_auth.detect_gaps": gap_detection_tool,
+    "healthcare.prior_auth.generate_packet": prior_auth_packet_tool,
+    "healthcare.prior_auth.merge_outputs": merge_prior_auth_outputs_tool,
 }
 
 
@@ -162,6 +256,27 @@ def _summary_quality(data: dict[str, Any]) -> dict[str, Any]:
         missing.append("summary")
     if not data.get("plan"):
         missing.append("plan")
+    return {"complete": not missing, "missing": missing, "confidence": data.get("confidence", 0)}
+
+
+def _prior_auth_request_quality(data: dict[str, Any]) -> dict[str, Any]:
+    missing = []
+    requested = data.get("requested_item") if isinstance(data.get("requested_item"), dict) else {}
+    if _empty_field(requested.get("value")):
+        missing.append("requested_item")
+    if not data.get("service_category") or data.get("service_category") == "unknown":
+        missing.append("service_category")
+    return {"complete": not missing, "missing": missing, "confidence": data.get("confidence", 0)}
+
+
+def _prior_auth_packet_quality(data: dict[str, Any]) -> dict[str, Any]:
+    missing = []
+    if not data.get("packet_summary"):
+        missing.append("packet_summary")
+    if not data.get("criteria_checklist"):
+        missing.append("criteria_checklist")
+    if not data.get("next_actions"):
+        missing.append("next_actions")
     return {"complete": not missing, "missing": missing, "confidence": data.get("confidence", 0)}
 
 
@@ -209,3 +324,7 @@ def _stable_key(value: Any) -> str:
             if value.get(key):
                 return f"{key}:{str(value[key]).strip().lower()}"
     return str(value).strip().lower()
+
+
+def _document_context(context: dict[str, Any]) -> str:
+    return context.get("document_context") or context.get("patient_context") or ""

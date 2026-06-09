@@ -1,0 +1,35 @@
+{
+  "version": "synthetic-payer-policy-guides-v1",
+  "purpose": "Synthetic prior authorization criteria guides for testing DocIntel healthcare agentic workflows. These are not payer contracts and must be replaced or overridden by real payer/plan policy documents before production use.",
+  "guides": [
+    {
+      "id": "sample_mri_lumbar_spine_prior_auth",
+      "title": "Sample Payer Policy Guide - MRI Lumbar Spine Prior Authorization",
+      "file": "sample_mri_lumbar_spine_prior_auth.md",
+      "service_category": "imaging",
+      "requested_service": "MRI lumbar spine without contrast",
+      "applies_to": ["baseline_synthetic", "training", "demo", "workflow_testing"]
+    },
+    {
+      "id": "sample_glp1_medication_prior_auth",
+      "title": "Sample Payer Policy Guide - GLP-1 Medication Prior Authorization",
+      "file": "sample_glp1_medication_prior_auth.md",
+      "service_category": "pharmacy",
+      "requested_service": "GLP-1 receptor agonist medication",
+      "applies_to": ["baseline_synthetic", "training", "demo", "workflow_testing"]
+    },
+    {
+      "id": "sample_physical_therapy_prior_auth",
+      "title": "Sample Payer Policy Guide - Physical Therapy Prior Authorization",
+      "file": "sample_physical_therapy_prior_auth.md",
+      "service_category": "rehabilitation",
+      "requested_service": "outpatient physical therapy",
+      "applies_to": ["baseline_synthetic", "training", "demo", "workflow_testing"]
+    }
+  ],
+  "selection_guidance": {
+    "mvp": "Use the closest synthetic guide by service category when no real payer policy is uploaded.",
+    "production": "Prefer exact payer, plan, state, benefit, service, date-effective policy, and delegated vendor criteria over synthetic baseline guides.",
+    "fallback": "If payer-specific criteria are missing, mark the prior authorization packet as needs_review and list missing payer policy evidence."
+  }
+}

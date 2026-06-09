@@ -20,6 +20,7 @@ from services.classifier import classify_document
 from services.chunker   import chunk_text
 from services.llm       import embed
 from services.pii       import redact_text
+from services.text_safety import sanitize_text_for_storage
 from services.vectordb  import store_chunk, delete_document_vectors
 import services.storage as gcs
 
@@ -298,6 +299,7 @@ async def _chunk_document(doc_id, user_id, file_path, filename, content_type, ft
                 text = text + tables_to_text(tables)
                 log.info(f"[{doc_id}] Extracted {len(tables)} tables from {filename}")
 
+        text = sanitize_text_for_storage(text)
         redaction = redact_text(text, enabled=redact_pii)
         text = redaction.text
         if redact_pii:
@@ -431,7 +433,7 @@ async def _embed_document(doc_id: str, user_id: str, workspace_id: str | None = 
         await delete_document_vectors(doc_id)
 
         for chunk_info in chunks:
-            content   = await gcs.download_text(chunk_info["gcs_path"])
+            content   = sanitize_text_for_storage(await gcs.download_text(chunk_info["gcs_path"]))
             embedding = await embed(content)
             await store_chunk(
                 document_id    = doc_id,

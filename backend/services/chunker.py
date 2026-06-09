@@ -3,6 +3,8 @@ from __future__ import annotations
 import os, re
 from dataclasses import dataclass, field
 
+from services.text_safety import sanitize_text_for_storage
+
 CHUNK_SIZE    = int(os.getenv("CHUNK_SIZE",    "350"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "60"))
 MIN_CHARS     = 30
@@ -48,8 +50,9 @@ def chunk_text(
     if not text or not text.strip():
         return []
 
-    # Normalise whitespace
-    cleaned = re.sub(r"[ \t]{2,}", " ", text.replace("\r\n", "\n")).strip()
+    # Normalise whitespace and remove database-invalid control characters.
+    cleaned = sanitize_text_for_storage(text).replace("\r\n", "\n")
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).strip()
     words   = cleaned.split()
     if not words:
         return []

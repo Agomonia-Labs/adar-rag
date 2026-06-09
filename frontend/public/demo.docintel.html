@@ -915,15 +915,16 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
         <div class="narration">
           <div class="slide-num">Architecture Positioning</div>
           <div class="slide-title">Horizontal RAG Platform + Vertical Agentic AI</div>
-          <div class="slide-sub">DocIntel separates the reusable platform from domain specialization. The horizontal layer delivers all capabilities needed for production RAG; the vertical layer adds agentic workflows for lease management, healthcare, brokerage, and future industries.</div>
+          <div class="slide-sub">DocIntel keeps the reusable self-service RAG foundation separate from specialized domain workflows. Healthcare users can ask cited questions across patient records and payer policy guides, then run clinical and prior authorization agents that turn scattered evidence into reviewable packets.</div>
           <div class="feature-list">
-            <div class="feature-item"><span class="feature-icon">↔</span><span>Horizontal RAG layer — ingestion, OCR, chunking, embeddings, hybrid search, rerank, citations, multilingual chat, summaries, comparison</span></div>
-            <div class="feature-item"><span class="feature-icon">🔒</span><span>Horizontal controls — PII redaction, auth, workspaces, usage limits, audit logs, traces, observability, governance, production deployment</span></div>
-            <div class="feature-item"><span class="feature-icon">⚙</span><span>Vertical agentic layer — JSON-configured orchestrator, domain agents, tool bindings, approval workflow, saved structured outputs</span></div>
-            <div class="feature-item"><span class="feature-icon">📊</span><span>Agent workflow evaluation API — persisted quality scores, gate status, recommendations, audit events, and run history</span></div>
-            <div class="feature-item"><span class="feature-icon">🏢</span><span>Lease management — abstract, clause review, critical dates, amendment comparison, obligation checklist</span></div>
-            <div class="feature-item"><span class="feature-icon">🏥</span><span>Healthcare — intake packets, medical records, prior authorization, policy review, compliance evidence</span></div>
-            <div class="feature-item"><span class="feature-icon">📈</span><span>Brokerage — KYC, account opening forms, disclosures, research packets, suitability and risk review</span></div>
+            <div class="feature-item"><span class="feature-icon">↔</span><span>Horizontal RAG — upload, OCR, chunking, embeddings, hybrid search, rerank, multilingual chat, summaries, comparison, citations</span></div>
+            <div class="feature-item"><span class="feature-icon">🔒</span><span>Horizontal controls — PII redaction, auth, workspaces, usage limits, traces, audit logs, observability, governance</span></div>
+            <div class="feature-item"><span class="feature-icon">🏥</span><span>Clinical agents — patient context, clinical summary, labs, medications, follow-ups, care gaps, administrative and governance flags</span></div>
+            <div class="feature-item"><span class="feature-icon">🧾</span><span>Prior authorization agents — payer criteria, evidence mapping, missing documentation, submission risks, and human-review packet</span></div>
+            <div class="feature-item"><span class="feature-icon">💬</span><span>Chat asks: does this meet prior auth criteria, what evidence supports it, what documentation is missing, and what next action is needed?</span></div>
+            <div class="feature-item"><span class="feature-icon">⚙</span><span>Workflow — JSON orchestrator runs subagents, saves structured outputs, evaluates quality, and supports human approval</span></div>
+            <div class="feature-item"><span class="feature-icon">👥</span><span>Beneficiaries — patients, caregivers, clinicians, small clinics, prior auth teams, billing/admin teams, and compliance reviewers</span></div>
+            <div class="feature-item"><span class="feature-icon">📈</span><span>The same architecture extends into lease management, brokerage, legal, biotech, finance, and other document-heavy domains</span></div>
           </div>
           <button class="btn-speak" onclick="speakSlide(15)">🔊 Play narration</button>
         </div>
@@ -939,7 +940,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
               </div>
               <div style="background:rgba(74,222,128,.06);border:0.5px solid rgba(74,222,128,.22);border-radius:8px;padding:8px 9px">
                 <div style="font-size:10px;font-weight:800;color:#4ade80;margin-bottom:5px">Healthcare</div>
-                <div style="font-size:9px;color:#9ca3af;line-height:1.55">Records<br/>Prior auth<br/>Compliance evidence</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.55">Clinical story<br/>Payer criteria<br/>Missing evidence</div>
               </div>
               <div style="background:rgba(251,191,36,.06);border:0.5px solid rgba(251,191,36,.22);border-radius:8px;padding:8px 9px">
                 <div style="font-size:10px;font-weight:800;color:#fbbf24;margin-bottom:5px">Brokerage</div>
@@ -977,12 +978,17 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
               </div>
               <div style="display:grid;grid-template-columns:98px 1fr 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(96,165,250,.04)">
                 <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Domain agents</div>
-                <div style="font-size:9px;color:#9ca3af">Extract, review, compare, generate checklist, route decisions</div>
+                <div style="font-size:9px;color:#9ca3af">Clinical packet plus prior auth packet, each with saved state, approval, and evaluation</div>
                 <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(96,165,250,.12);color:#60a5fa;border:1px solid rgba(96,165,250,.25)">Agentic</span></div>
+              </div>
+              <div style="display:grid;grid-template-columns:98px 1fr 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(251,191,36,.04)">
+                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Guided chat</div>
+                <div style="font-size:9px;color:#9ca3af">RAG retrieves cited patient and payer evidence, then uses saved workflow context</div>
+                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)">Grounded</span></div>
               </div>
               <div style="display:grid;grid-template-columns:98px 1fr 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(251,191,36,.05)">
                 <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Approval</div>
-                <div style="font-size:9px;color:#9ca3af">Human review saves abstracts, dates, obligations, or compliance findings</div>
+                <div style="font-size:9px;color:#9ca3af">Human review saves clinical findings, payer evidence, gaps, risks, and packets</div>
                 <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)">Governed</span></div>
               </div>
               <div style="display:grid;grid-template-columns:98px 1fr 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(74,222,128,.05)">
@@ -1917,7 +1923,7 @@ const SLIDES = [
   { text: "Chat history is persistent in PostgreSQL. Conversations auto-save after responses, sessions are titled from the first question, and the sidebar restores previous chats with questions, answers, feedback, and source citations intact." },
   { text: "Retrieval uses hybrid search. pgvector finds semantic matches, PostgreSQL full-text search catches exact names, invoice numbers, dates, and product codes, and Reciprocal Rank Fusion combines both lists so exact and conceptual matches work together." },
   { text: "Re-ranking improves the final context. Gemini reads each query and candidate chunk together, scores true relevance, and passes the top chunks into answer generation. If re-ranking fails, DocIntel falls back gracefully to retrieval order." },
-  { text: "This is where the product separates horizontal platform from vertical agentic AI. The horizontal layer is the reusable RAG foundation: ingestion, OCR, PII redaction, chunking, embeddings, hybrid search, reranking, citations, multilingual chat, summaries, comparisons, authentication, workspaces, usage controls, traces, audit logs, observability, and production deployment. The vertical layer adds domain intelligence through JSON-configured orchestrators, subagents, tools, approval workflows, saved structured outputs, and backend evaluation gates. Lease and healthcare workflows are evaluated for agent completion, required fields or patient context, citation coverage, confidence, safety or governance, recommendations, and approval readiness. The same architecture can support brokerage, legal, biotech, and other domain packages without rebuilding the RAG platform." },
+  { text: "This is where DocIntel separates horizontal self-service RAG from vertical agentic AI. The horizontal layer handles the reusable platform work: ingestion, OCR, PII redaction, chunking, embeddings, hybrid search, reranking, citations, multilingual chat, summaries, comparisons, authentication, workspaces, usage controls, traces, audit logs, observability, and governance. For healthcare, the clinical workflow organizes patient context, summaries, labs, medications, follow-ups, care gaps, and risk flags. The prior authorization workflow then reads payer policy criteria, maps each criterion to patient evidence, identifies missing documentation, flags submission risks, and builds a human-review packet. Chat can ask whether a request meets prior authorization criteria, what evidence supports it, what documentation is missing, and what next action is needed, using both cited RAG chunks and saved workflow context. This helps patients, caregivers, clinicians, small clinics, prior authorization teams, billing teams, and compliance reviewers work from the same grounded record." },
   { text: "Quality feedback is built into the loop. Users can rate answers with thumbs up or down, and the rating is saved with the question and answer context. Gemini also scores answer quality for relevance, specificity, and confidence." },
   { text: "Exports are one click. Chat sessions and summaries download as Markdown files directly from the browser, including full answers and source citation blocks, ready for Notion, Obsidian, Confluence, or a plain text review workflow." },
   { text: "Usage metering runs in real time and is now strict enforcement, not just reporting. The Usage panel shows plan tier, document count, upload file size, storage used, daily chat queries, embedding chunks, summaries, compares, lease AI actions, voice transcriptions, eval cases, and all-time activity. Quota is reserved atomically before expensive model work starts, so concurrent requests cannot bypass the tier limit." },

@@ -1,0 +1,69 @@
+{
+  "id": "healthcare_prior_auth_phase1",
+  "version": "healthcare-prior-auth-v1",
+  "domain": "healthcare_prior_authorization",
+  "description": "Config-driven prior authorization workflow that maps payer criteria to patient evidence and creates a human-review packet.",
+  "orchestrator": {
+    "id": "prior_auth_orchestrator",
+    "name": "Prior Authorization Orchestrator Agent",
+    "policy": {
+      "execution": "sequential",
+      "human_approval_required": true,
+      "persist_agent_steps": true,
+      "source_citations_required": true,
+      "clinical_guardrails": "administrative_assistance_only_no_medical_advice_no_coverage_guarantee",
+      "max_agent_attempts": 2
+    },
+    "subagents": [
+      {
+        "id": "document_intake",
+        "name": "Healthcare Document Intake Agent",
+        "tool": "healthcare.classify_intake",
+        "output_key": "document_intake",
+        "input_summary": "Classify patient document and extract patient/encounter context before prior authorization review.",
+        "max_attempts": 2
+      },
+      {
+        "id": "prior_auth_request",
+        "name": "Prior Authorization Request Agent",
+        "tool": "healthcare.prior_auth.extract_request",
+        "output_key": "prior_auth_request",
+        "input_summary": "Extract requested service, diagnosis, clinical rationale, and urgency from patient documents.",
+        "max_attempts": 2
+      },
+      {
+        "id": "policy_criteria",
+        "name": "Payer Policy Criteria Agent",
+        "tool": "healthcare.prior_auth.extract_policy_criteria",
+        "output_key": "policy_criteria",
+        "input_summary": "Extract payer medical necessity criteria and required documentation from policy guide documents.",
+        "max_attempts": 2
+      },
+      {
+        "id": "evidence_map",
+        "name": "Evidence Mapping Agent",
+        "tool": "healthcare.prior_auth.map_evidence",
+        "output_key": "evidence_map",
+        "input_summary": "Map each payer criterion to patient evidence with citations and status.",
+        "max_attempts": 2
+      },
+      {
+        "id": "gap_detection",
+        "name": "Gap Detection Agent",
+        "tool": "healthcare.prior_auth.detect_gaps",
+        "output_key": "gap_detection",
+        "input_summary": "Identify missing documents, incomplete fields, and denial/submission risks.",
+        "max_attempts": 2
+      },
+      {
+        "id": "prior_auth_packet",
+        "name": "Prior Authorization Packet Agent",
+        "tool": "healthcare.prior_auth.generate_packet",
+        "output_key": "prior_auth_packet",
+        "input_summary": "Create a human-review prior authorization packet with checklist, narrative, and next actions.",
+        "max_attempts": 2
+      }
+    ],
+    "result_tool": "healthcare.prior_auth.merge_outputs"
+  }
+}

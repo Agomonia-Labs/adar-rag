@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os, logging
 from database.connection import get_pool
+from services.text_safety import sanitize_text_for_storage
 
 log = logging.getLogger("docintel.vectordb")
 
@@ -31,6 +32,7 @@ async def store_chunk(
     chunk_metadata: dict,
 ) -> None:
     import json
+    safe_content = sanitize_text_for_storage(content)
     async with get_pool().acquire() as conn:
         await conn.execute(
             """
@@ -41,7 +43,7 @@ async def store_chunk(
                     to_tsvector('english', $6))
             """,
             document_id, user_id, workspace_id, chunk_index, chunk_total,
-            content, _vec(embedding), json.dumps(chunk_metadata),
+            safe_content, _vec(embedding), json.dumps(chunk_metadata),
         )
 
 

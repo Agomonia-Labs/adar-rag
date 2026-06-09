@@ -6,6 +6,7 @@ import {
   fetchHealthcareAgentRun,
   fetchLatestHealthcareAgentWorkflow,
   runHealthcareAgentWorkflow,
+  runPriorAuthWorkflow,
 } from '../services/api.js';
 import { toast } from './Toast.jsx';
 
@@ -18,36 +19,62 @@ const CONTEXT_LABELS = {
   encounter_type: 'Encounter type',
 };
 
+const WORKFLOWS = {
+  clinical: {
+    label: 'Clinical workflow',
+    workflowId: 'healthcare_phase1',
+    empty: 'No clinical healthcare workflow yet. Run agents to extract clinical/admin insights with governance guardrails.',
+  },
+  priorAuth: {
+    label: 'Prior auth workflow',
+    workflowId: 'healthcare_prior_auth_phase1',
+    empty: 'No prior authorization workflow yet. Upload/embed payer policy docs, then run this workflow to map criteria to patient evidence.',
+  },
+};
+
 export default function HealthcarePanel({ doc, onClose }) {
   const [loading, setLoading] = useState(false);
-  const [agentRun, setAgentRun] = useState(null);
-  const [agentEvaluation, setAgentEvaluation] = useState(null);
-  const [approvalNotes, setApprovalNotes] = useState('');
+  const [activeTab, setActiveTab] = useState('clinical');
+  const [runs, setRuns] = useState({ clinical: null, priorAuth: null });
+  const [evaluations, setEvaluations] = useState({ clinical: null, priorAuth: null });
+  const [approvalNotes, setApprovalNotes] = useState({ clinical: '', priorAuth: '' });
 
   useEffect(() => {
     let alive = true;
     if (!doc?.id) return;
-    fetchLatestHealthcareAgentWorkflow(doc.id)
-      .then(data => {
-        if (!alive || !data.agent_run) return;
-        setAgentRun(data.agent_run);
-        refreshEvaluation(data.agent_run.run_id, setAgentEvaluation);
-      })
-      .catch(() => {});
+    setRuns({ clinical: null, priorAuth: null });
+    setEvaluations({ clinical: null, priorAuth: null });
+    setApprovalNotes({ clinical: '', priorAuth: '' });
+    setActiveTab('clinical');
+    Object.entries(WORKFLOWS).forEach(([key, cfg]) => {
+      fetchLatestHealthcareAgentWorkflow(doc.id, cfg.workflowId)
+        .then(data => {
+          if (!alive || !data.agent_run) return;
+          setRuns(prev => ({ ...prev, [key]: data.agent_run }));
+          refreshEvaluation(data.agent_run.run_id, evaluation => {
+            if (alive) setEvaluations(prev => ({ ...prev, [key]: evaluation }));
+          });
+        })
+        .catch(() => {});
+    });
     return () => { alive = false; };
   }, [doc?.id]);
+
+  const updateRun = (key, value) => setRuns(prev => ({ ...prev, [key]: value }));
+  const updateEval = (key, value) => setEvaluations(prev => ({ ...prev, [key]: value }));
 
   const runWorkflow = async () => {
     setLoading(true);
     try {
       const data = await runHealthcareAgentWorkflow(doc.id);
-      setAgentRun(data);
+      setActiveTab('clinical');
+      updateRun('clinical', data);
       toast('Healthcare agent workflow started', 'info');
-      const finalRun = await waitForAgentRun(data.run_id, setAgentRun);
+      const finalRun = await waitForAgentRun(data.run_id, run => updateRun('clinical', run));
       if (finalRun.status === 'failed') {
         toast(finalRun.error_message || 'Healthcare agent workflow failed', 'error');
       } else {
-        await refreshEvaluation(finalRun.run_id, setAgentEvaluation, true);
+        await refreshEvaluation(finalRun.run_id, evaluation => updateEval('clinical', evaluation), true);
         toast('Healthcare workflow completed; ready for human approval', 'success');
       }
     } catch (e) {
@@ -57,15 +84,38 @@ export default function HealthcarePanel({ doc, onClose }) {
     }
   };
 
-  const approveRun = async () => {
+  const runPriorAuth = async () => {
+    setLoading(true);
+    try {
+      const data = await runPriorAuthWorkflow(doc.id);
+      setActiveTab('priorAuth');
+      updateRun('priorAuth', data);
+      updateEval('priorAuth', null);
+      toast('Prior authorization workflow started', 'info');
+      const finalRun = await waitForAgentRun(data.run_id, run => updateRun('priorAuth', run));
+      if (finalRun.status === 'failed') {
+        toast(finalRun.error_message || 'Prior authorization workflow failed', 'error');
+      } else {
+        await refreshEvaluation(finalRun.run_id, evaluation => updateEval('priorAuth', evaluation), true);
+        toast('Prior authorization packet completed; ready for human approval', 'success');
+      }
+    } catch (e) {
+      toast(e.message || 'Prior authorization workflow failed', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const approveRun = async (key) => {
+    const agentRun = runs[key];
     if (!agentRun?.run_id) return;
     setLoading(true);
     try {
       const packet = agentRun.result?.approved_packet || agentRun.result;
-      const data = await approveHealthcareAgentRun(agentRun.run_id, { approvedPacket: packet, notes: approvalNotes });
-      setAgentRun(data);
-      await refreshEvaluation(data.run_id, setAgentEvaluation, true);
-      toast('Approved healthcare packet saved', 'success');
+      const data = await approveHealthcareAgentRun(agentRun.run_id, { approvedPacket: packet, notes: approvalNotes[key] || '' });
+      updateRun(key, data);
+      await refreshEvaluation(data.run_id, evaluation => updateEval(key, evaluation), true);
+      toast(`Approved ${WORKFLOWS[key].label.toLowerCase()} packet saved`, 'success');
     } catch (e) {
       toast(e.message || 'Approval failed', 'error');
     } finally {
@@ -73,8 +123,11 @@ export default function HealthcarePanel({ doc, onClose }) {
     }
   };
 
+  const agentRun = runs[activeTab];
+  const agentEvaluation = evaluations[activeTab];
   const packet = agentRun?.result?.approved_packet || agentRun?.result || {};
   const evals = agentEvaluation?.metrics || (agentRun ? evaluateHealthcareWorkflow(agentRun, packet) : []);
+  const activeConfig = WORKFLOWS[activeTab];
 
   return (
     <div style={s.backdrop}>
@@ -88,20 +141,34 @@ export default function HealthcarePanel({ doc, onClose }) {
         </div>
 
         <div style={s.actions}>
-          <button style={s.primary} disabled={loading || !['chunked','embedding','embedded'].includes(doc?.status)} onClick={runWorkflow}>
-            {loading ? 'Running...' : agentRun ? 'Re-run healthcare workflow' : 'Run healthcare workflow'}
-          </button>
+          <div style={s.tabs}>
+            {Object.entries(WORKFLOWS).map(([key, cfg]) => (
+              <button key={key} style={activeTab === key ? s.tabActive : s.tab} onClick={() => setActiveTab(key)}>
+                {cfg.label}
+                {runs[key]?.status && <span style={s.tabStatus}>{runs[key].status}</span>}
+              </button>
+            ))}
+          </div>
+          {activeTab === 'clinical' ? (
+            <button style={s.primary} disabled={loading || !['chunked','embedding','embedded'].includes(doc?.status)} onClick={runWorkflow}>
+              {loading ? 'Running...' : runs.clinical ? 'Re-run clinical workflow' : 'Run clinical workflow'}
+            </button>
+          ) : (
+            <button style={s.secondary} disabled={loading || !['chunked','embedding','embedded'].includes(doc?.status)} onClick={runPriorAuth}>
+              {loading ? 'Running...' : runs.priorAuth ? 'Re-run prior auth workflow' : 'Run prior auth workflow'}
+            </button>
+          )}
           <span style={s.hint}>Assistive workflow only. Requires citations, PHI governance, and human approval.</span>
         </div>
 
         <div style={s.scroll}>
-          {!agentRun ? <div style={s.empty}>No healthcare workflow yet. Run agents to extract clinical/admin insights with governance guardrails.</div> : (
+          {!agentRun ? <div style={s.empty}>{activeConfig.empty}</div> : (
             <div style={s.body}>
               <section style={s.section}>
                 <h3 style={s.h3}>Agent Steps</h3>
                 <div style={s.steps}>
-                  {(agentRun.steps || []).map(step => (
-                    <div key={step.agent_name} style={s.step}>
+                  {(agentRun.steps || []).map((step, idx) => (
+                    <div key={`${step.agent_name}-${idx}`} style={s.step}>
                       <strong>{step.agent_name}</strong>
                       <span style={s.stepStatus}>{step.status}</span>
                       <small>{step.input_summary}</small>
@@ -132,78 +199,121 @@ export default function HealthcarePanel({ doc, onClose }) {
                 <div style={s.workflowHead}>
                   <div>
                     <h3 style={s.h3}>Summary</h3>
-                    <p style={s.summary}>{packet.clinical_summary?.summary || packet.document_intake?.summary || 'No summary returned yet.'}</p>
+                    <p style={s.summary}>{packet.prior_auth_packet?.packet_summary || packet.clinical_summary?.summary || packet.document_intake?.summary || 'No summary returned yet.'}</p>
                     <div style={s.meta}>Run: {agentRun.run_id} · Status: {agentRun.status} · Version: {agentRun.workflow_version}</div>
+                    {agentRun.approved_at && <div style={s.meta}>Approved: {new Date(agentRun.approved_at).toLocaleString()}</div>}
                     <div style={s.guardrail}>{packet.guardrail || 'Assistive clinical/admin document intelligence only. Not diagnosis, treatment, or medical advice.'}</div>
                   </div>
                   {agentRun.status === 'pending_approval' && (
-                    <button style={s.approve} disabled={loading} onClick={approveRun}>Save approved packet</button>
+                    <button style={s.approve} disabled={loading} onClick={() => approveRun(activeTab)}>Save approved packet</button>
                   )}
                 </div>
                 {agentRun.status === 'pending_approval' && (
-                  <textarea value={approvalNotes} onChange={e=>setApprovalNotes(e.target.value)} placeholder="Approval notes..." style={s.notes} />
+                  <textarea
+                    value={approvalNotes[activeTab] || ''}
+                    onChange={e=>setApprovalNotes(prev => ({ ...prev, [activeTab]: e.target.value }))}
+                    placeholder="Approval notes..."
+                    style={s.notes}
+                  />
                 )}
               </section>
 
-              <section style={s.section}>
-                <h3 style={s.h3}>Patient / Encounter Context</h3>
-                <div style={s.grid}>
-                  {Object.entries(CONTEXT_LABELS).map(([key,label]) => {
-                    const item = packet.patient_context?.[key] || {};
-                    return (
-                      <div key={key} style={s.field}>
-                        <strong>{label}</strong>
-                        <span>{item.value || 'Not found'}</span>
-                        <small>{item.source || 'not found'} · {Math.round((item.confidence || 0) * 100)}%</small>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-
-              <section style={s.section}>
-                <h3 style={s.h3}>Clinical Summary</h3>
-                <Rows rows={packet.clinical_summary?.diagnoses_or_assessments_mentioned || []} cols={['text','source','confidence']} title="Assessments mentioned" />
-                <Rows rows={packet.clinical_summary?.plan || []} cols={['item','source','confidence']} title="Plan" />
-                <Rows rows={packet.clinical_summary?.patient_instructions || []} cols={['instruction','source','confidence']} title="Patient instructions" />
-              </section>
-
-              <section style={s.section}>
-                <h3 style={s.h3}>Lab Results</h3>
-                <p style={s.summary}>{packet.lab_results?.summary || ''}</p>
-                <Rows rows={packet.lab_results?.lab_results || []} cols={['test_name','result_value','unit','reference_range','abnormal_flag','collection_date','source']} />
-              </section>
-
-              <section style={s.section}>
-                <h3 style={s.h3}>Medication Review</h3>
-                <Rows rows={packet.medication_review?.medications || []} cols={['name','dose','route','frequency','start_date','stop_date','prescriber','source']} title="Medications" />
-                <Rows rows={packet.medication_review?.review_flags || []} cols={['priority','finding','source','recommended_review']} title="Review flags" />
-              </section>
-
-              <section style={s.section}>
-                <h3 style={s.h3}>Follow-Ups / Care Gaps</h3>
-                <Rows rows={packet.care_gaps?.follow_ups || []} cols={['task','due_date','responsible_party','priority','source']} title="Follow-ups" />
-                <Rows rows={packet.care_gaps?.pending_items || []} cols={['item','priority','source']} title="Pending items" />
-                <Rows rows={packet.care_gaps?.care_gaps || []} cols={['gap','source','recommended_review']} title="Care gaps" />
-              </section>
-
-              <section style={s.section}>
-                <h3 style={s.h3}>Risk & Safety Flags</h3>
-                <Rows rows={packet.risk_safety?.risk_flags || []} cols={['risk_level','category','finding','source','recommended_review']} />
-              </section>
-
-              <section style={s.section}>
-                <h3 style={s.h3}>PHI / Governance</h3>
-                <p style={s.summary}>{packet.phi_governance?.summary || 'No governance summary returned.'}</p>
-                <div style={s.meta}>PHI categories: {(packet.phi_governance?.phi_categories || []).join(', ') || 'none listed'}</div>
-                <Rows rows={packet.phi_governance?.redaction_recommendations || []} cols={['field','recommendation','reason','source']} title="Redaction recommendations" />
-                <Rows rows={packet.phi_governance?.governance_notes || []} cols={['control','note']} title="Governance notes" />
-              </section>
+              {activeTab === 'priorAuth' ? (
+                <PriorAuthPacket packet={packet} />
+              ) : (
+                <ClinicalPacket packet={packet} />
+              )}
             </div>
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+function ClinicalPacket({ packet }) {
+  return (
+    <>
+      <PatientContext packet={packet} />
+
+      <section style={s.section}>
+        <h3 style={s.h3}>Clinical Summary</h3>
+        <Rows rows={packet.clinical_summary?.diagnoses_or_assessments_mentioned || []} cols={['text','source','confidence']} title="Assessments mentioned" />
+        <Rows rows={packet.clinical_summary?.plan || []} cols={['item','source','confidence']} title="Plan" />
+        <Rows rows={packet.clinical_summary?.patient_instructions || []} cols={['instruction','source','confidence']} title="Patient instructions" />
+      </section>
+
+      <section style={s.section}>
+        <h3 style={s.h3}>Lab Results</h3>
+        <p style={s.summary}>{packet.lab_results?.summary || ''}</p>
+        <Rows rows={packet.lab_results?.lab_results || []} cols={['test_name','result_value','unit','reference_range','abnormal_flag','collection_date','source']} />
+      </section>
+
+      <section style={s.section}>
+        <h3 style={s.h3}>Medication Review</h3>
+        <Rows rows={packet.medication_review?.medications || []} cols={['name','dose','route','frequency','start_date','stop_date','prescriber','source']} title="Medications" />
+        <Rows rows={packet.medication_review?.review_flags || []} cols={['priority','finding','source','recommended_review']} title="Review flags" />
+      </section>
+
+      <section style={s.section}>
+        <h3 style={s.h3}>Follow-Ups / Care Gaps</h3>
+        <Rows rows={packet.care_gaps?.follow_ups || []} cols={['task','due_date','responsible_party','priority','source']} title="Follow-ups" />
+        <Rows rows={packet.care_gaps?.pending_items || []} cols={['item','priority','source']} title="Pending items" />
+        <Rows rows={packet.care_gaps?.care_gaps || []} cols={['gap','source','recommended_review']} title="Care gaps" />
+      </section>
+
+      <section style={s.section}>
+        <h3 style={s.h3}>Risk & Safety Flags</h3>
+        <Rows rows={packet.risk_safety?.risk_flags || []} cols={['risk_level','category','finding','source','recommended_review']} />
+      </section>
+
+      <section style={s.section}>
+        <h3 style={s.h3}>PHI / Governance</h3>
+        <p style={s.summary}>{packet.phi_governance?.summary || 'No governance summary returned.'}</p>
+        <div style={s.meta}>PHI categories: {(packet.phi_governance?.phi_categories || []).join(', ') || 'none listed'}</div>
+        <Rows rows={packet.phi_governance?.redaction_recommendations || []} cols={['field','recommendation','reason','source']} title="Redaction recommendations" />
+        <Rows rows={packet.phi_governance?.governance_notes || []} cols={['control','note']} title="Governance notes" />
+      </section>
+    </>
+  );
+}
+
+function PriorAuthPacket({ packet }) {
+  return (
+    <>
+      <PatientContext packet={packet} />
+      <section style={s.section}>
+        <h3 style={s.h3}>Prior Authorization Packet</h3>
+        <p style={s.summary}>{packet.prior_auth_packet?.medical_necessity_narrative || packet.prior_auth_packet?.packet_summary || 'No prior authorization narrative returned.'}</p>
+        <div style={s.meta}>Decision: {packet.prior_auth_packet?.recommended_decision || 'needs review'}</div>
+        <Rows rows={packet.policy_documents || []} cols={['document_name','doc_type','document_id']} title="Policy documents used" />
+        <Rows rows={packet.policy_criteria?.criteria || []} cols={['criterion_id','criterion','required','category','source']} title="Payer criteria" />
+        <Rows rows={packet.evidence_map?.criteria_matches || []} cols={['criterion_id','status','patient_evidence','policy_source','patient_source','confidence']} title="Criteria evidence map" />
+        <Rows rows={packet.gap_detection?.missing_items || []} cols={['item','reason','priority','source']} title="Missing items" />
+        <Rows rows={packet.gap_detection?.submission_risks || []} cols={['risk','priority','recommended_action']} title="Submission risks" />
+        <Rows rows={packet.prior_auth_packet?.next_actions || []} cols={['action','owner','priority']} title="Next actions" />
+      </section>
+    </>
+  );
+}
+
+function PatientContext({ packet }) {
+  return (
+    <section style={s.section}>
+      <h3 style={s.h3}>Patient / Encounter Context</h3>
+      <div style={s.grid}>
+        {Object.entries(CONTEXT_LABELS).map(([key,label]) => {
+          const item = packet.patient_context?.[key] || {};
+          return (
+            <div key={key} style={s.field}>
+              <strong>{label}</strong>
+              <span>{item.value || 'Not found'}</span>
+              <small>{item.source || 'not found'} · {Math.round((item.confidence || 0) * 100)}%</small>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -335,7 +445,12 @@ const s = {
   title:{fontSize:18,margin:'4px 0 0',lineHeight:1.3},
   close:{background:'transparent',border:'1px solid var(--b2)',color:'var(--tx)',borderRadius:8,width:32,height:32,cursor:'pointer'},
   actions:{display:'flex',alignItems:'center',gap:12,padding:'12px 18px',borderBottom:'1px solid var(--b1)',background:'rgba(248,113,113,.04)',flexWrap:'wrap'},
+  tabs:{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center',width:'100%'},
+  tab:{display:'inline-flex',alignItems:'center',gap:8,background:'var(--s3)',border:'1px solid var(--b2)',color:'var(--tx2)',borderRadius:8,padding:'7px 10px',fontSize:12,fontWeight:800,cursor:'pointer'},
+  tabActive:{display:'inline-flex',alignItems:'center',gap:8,background:'rgba(248,113,113,.14)',border:'1px solid rgba(248,113,113,.36)',color:'#fecaca',borderRadius:8,padding:'7px 10px',fontSize:12,fontWeight:900,cursor:'pointer'},
+  tabStatus:{fontSize:10,textTransform:'uppercase',color:'#4ade80',background:'rgba(74,222,128,.1)',border:'1px solid rgba(74,222,128,.22)',borderRadius:20,padding:'1px 6px'},
   primary:{background:'#b91c1c',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:800,cursor:'pointer'},
+  secondary:{background:'#2563eb',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:800,cursor:'pointer'},
   approve:{background:'#2563eb',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:12,fontWeight:800,cursor:'pointer'},
   hint:{fontSize:12,color:'var(--muted2)'},
   scroll:{flex:1,minHeight:0,overflowY:'auto',display:'flex',flexDirection:'column'},

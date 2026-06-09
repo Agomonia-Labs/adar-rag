@@ -15,11 +15,162 @@ class WorkflowConfigError(RuntimeError):
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "config" / "agent_workflows"
 
+DEFAULT_WORKFLOW_CONFIGS: dict[str, dict[str, Any]] = {
+    "healthcare_phase1": {
+        "id": "healthcare_phase1",
+        "version": "healthcare-adk-v1",
+        "domain": "healthcare_clinical_document_intelligence",
+        "description": "Config-driven ADK-style workflow for lab reports, after-visit summaries, medication documents, care gaps, PHI review, and human approval.",
+        "orchestrator": {
+            "id": "healthcare_intelligence_orchestrator",
+            "name": "Healthcare Intelligence Orchestrator Agent",
+            "policy": {
+                "execution": "sequential",
+                "human_approval_required": True,
+                "persist_agent_steps": True,
+                "source_citations_required": True,
+                "clinical_guardrails": "assistive_summary_only_no_diagnosis_no_medical_advice",
+                "max_agent_attempts": 2,
+            },
+            "subagents": [
+                {
+                    "id": "document_intake",
+                    "name": "Healthcare Document Intake Agent",
+                    "tool": "healthcare.classify_intake",
+                    "output_key": "document_intake",
+                    "input_summary": "Classify clinical/admin document type and extract patient encounter context.",
+                    "max_attempts": 2,
+                },
+                {
+                    "id": "clinical_summary",
+                    "name": "Clinical Summary Agent",
+                    "tool": "healthcare.summarize_clinical",
+                    "output_key": "clinical_summary",
+                    "input_summary": "Summarize reason for visit, findings, assessment, plan, follow-ups, and citations.",
+                    "max_attempts": 2,
+                },
+                {
+                    "id": "lab_results",
+                    "name": "Lab Result Agent",
+                    "tool": "healthcare.extract_labs",
+                    "output_key": "lab_results",
+                    "input_summary": "Extract lab tests, values, units, reference ranges, abnormal flags, dates, and citations.",
+                    "max_attempts": 2,
+                },
+                {
+                    "id": "medication_review",
+                    "name": "Medication Review Agent",
+                    "tool": "healthcare.review_medications",
+                    "output_key": "medication_review",
+                    "input_summary": "Extract medications, dosage, route, frequency, start/stop dates, and review flags.",
+                    "max_attempts": 2,
+                },
+                {
+                    "id": "care_gaps",
+                    "name": "Care Gap and Follow-Up Agent",
+                    "tool": "healthcare.extract_followups",
+                    "output_key": "care_gaps",
+                    "input_summary": "Extract follow-ups, pending tests, referrals, screenings, care gaps, and patient instructions.",
+                    "max_attempts": 2,
+                },
+                {
+                    "id": "risk_safety",
+                    "name": "Risk and Safety Flag Agent",
+                    "tool": "healthcare.flag_safety",
+                    "output_key": "risk_safety",
+                    "input_summary": "Flag abnormal labs, urgent language, medication conflicts, missing follow-up, and human review needs.",
+                    "max_attempts": 2,
+                },
+                {
+                    "id": "phi_governance",
+                    "name": "PHI and Governance Agent",
+                    "tool": "healthcare.review_phi_governance",
+                    "output_key": "phi_governance",
+                    "input_summary": "Identify PHI/PII, redaction needs, audit requirements, approval gates, and governance notes.",
+                    "max_attempts": 2,
+                },
+            ],
+            "result_tool": "healthcare.merge_outputs",
+        },
+    },
+    "healthcare_prior_auth_phase1": {
+        "id": "healthcare_prior_auth_phase1",
+        "version": "healthcare-prior-auth-v1",
+        "domain": "healthcare_prior_authorization",
+        "description": "Config-driven prior authorization workflow that maps payer criteria to patient evidence and creates a human-review packet.",
+        "orchestrator": {
+            "id": "prior_auth_orchestrator",
+            "name": "Prior Authorization Orchestrator Agent",
+            "policy": {
+                "execution": "sequential",
+                "human_approval_required": True,
+                "persist_agent_steps": True,
+                "source_citations_required": True,
+                "clinical_guardrails": "administrative_assistance_only_no_medical_advice_no_coverage_guarantee",
+                "max_agent_attempts": 2,
+            },
+            "subagents": [
+                {
+                    "id": "document_intake",
+                    "name": "Healthcare Document Intake Agent",
+                    "tool": "healthcare.classify_intake",
+                    "output_key": "document_intake",
+                    "input_summary": "Classify patient document and extract patient/encounter context before prior authorization review.",
+                    "max_attempts": 2,
+                },
+                {
+                    "id": "prior_auth_request",
+                    "name": "Prior Authorization Request Agent",
+                    "tool": "healthcare.prior_auth.extract_request",
+                    "output_key": "prior_auth_request",
+                    "input_summary": "Extract requested service, diagnosis, clinical rationale, and urgency from patient documents.",
+                    "max_attempts": 2,
+                },
+                {
+                    "id": "policy_criteria",
+                    "name": "Payer Policy Criteria Agent",
+                    "tool": "healthcare.prior_auth.extract_policy_criteria",
+                    "output_key": "policy_criteria",
+                    "input_summary": "Extract payer medical necessity criteria and required documentation from policy guide documents.",
+                    "max_attempts": 2,
+                },
+                {
+                    "id": "evidence_map",
+                    "name": "Evidence Mapping Agent",
+                    "tool": "healthcare.prior_auth.map_evidence",
+                    "output_key": "evidence_map",
+                    "input_summary": "Map each payer criterion to patient evidence with citations and status.",
+                    "max_attempts": 2,
+                },
+                {
+                    "id": "gap_detection",
+                    "name": "Gap Detection Agent",
+                    "tool": "healthcare.prior_auth.detect_gaps",
+                    "output_key": "gap_detection",
+                    "input_summary": "Identify missing documents, incomplete fields, and denial/submission risks.",
+                    "max_attempts": 2,
+                },
+                {
+                    "id": "prior_auth_packet",
+                    "name": "Prior Authorization Packet Agent",
+                    "tool": "healthcare.prior_auth.generate_packet",
+                    "output_key": "prior_auth_packet",
+                    "input_summary": "Create a human-review prior authorization packet with checklist, narrative, and next actions.",
+                    "max_attempts": 2,
+                },
+            ],
+            "result_tool": "healthcare.prior_auth.merge_outputs",
+        },
+    },
+}
+
 
 def load_workflow_config(workflow_id: str) -> dict[str, Any]:
     safe_id = workflow_id.replace("/", "").replace("\\", "")
     path = CONFIG_DIR / f"{safe_id}.json"
     if not path.exists():
+        if safe_id in DEFAULT_WORKFLOW_CONFIGS:
+            return DEFAULT_WORKFLOW_CONFIGS[safe_id]
         raise WorkflowConfigError(f"Workflow config not found: {workflow_id}")
     try:
         return json.loads(path.read_text())

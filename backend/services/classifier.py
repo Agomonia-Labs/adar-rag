@@ -22,6 +22,8 @@ DOCUMENT_TYPES = [
     "resume", "cv", "job_description", "offer_letter", "performance_review",
     # Medical
     "medical_record", "prescription", "lab_report", "clinical_notes",
+    "after_visit_summary", "medication_list", "discharge_summary", "referral",
+    "imaging_report", "prior_authorization", "payer_policy", "medical_policy",
     # Academic / Research
     "research_paper", "thesis", "article", "journal",
     # Policy / Process
@@ -58,6 +60,14 @@ HEURISTIC_RULES = [
     ("medical_record", "medical", ("medical record", "patient", "diagnosis", "treatment plan")),
     ("prescription", "medical", ("prescription", "rx", "dosage", "take one")),
     ("lab_report", "medical", ("lab report", "test result", "reference range", "specimen")),
+    ("after_visit_summary", "medical", ("after visit summary", "visit summary", "patient instructions", "follow up")),
+    ("medication_list", "medical", ("medication list", "current medications", "active medications")),
+    ("discharge_summary", "medical", ("discharge summary", "discharge diagnosis", "hospital course")),
+    ("referral", "medical", ("referral", "referred to", "specialist", "consultation requested")),
+    ("imaging_report", "medical", ("radiology report", "imaging report", "x-ray", "mri", "ct scan", "impression")),
+    ("prior_authorization", "medical", ("prior authorization", "precertification", "pre-authorization", "authorization request")),
+    ("payer_policy", "medical", ("payer policy", "coverage policy", "medical necessity criteria", "required documentation", "common missing items")),
+    ("medical_policy", "medical", ("medical policy", "clinical policy bulletin", "coverage criteria", "decision guidance")),
     ("research_paper", "research", ("abstract", "introduction", "methodology", "references")),
     ("thesis", "research", ("thesis", "dissertation", "committee", "chapter")),
     ("policy", "operations", ("policy", "effective date", "scope", "compliance")),

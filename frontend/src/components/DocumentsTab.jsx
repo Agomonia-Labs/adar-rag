@@ -34,8 +34,10 @@ const DOC_TYPE_LABELS = {
   report:'Report', proposal:'Proposal', presentation:'Slides', memo:'Memo',
   resume:'Resume', cv:'CV', job_description:'JD', offer_letter:'Offer',
   medical_record:'Medical', prescription:'Rx', lab_report:'Lab', clinical_notes:'Clinical',
-  after_visit_summary:'After Visit', discharge_summary:'Discharge', referral:'Referral',
+  after_visit_summary:'After Visit', medication_list:'Med List',
+  discharge_summary:'Discharge', referral:'Referral',
   imaging_report:'Imaging', prior_authorization:'Prior Auth',
+  payer_policy:'Payer Policy', medical_policy:'Medical Policy',
   research_paper:'Research', thesis:'Thesis', article:'Article',
   policy:'Policy', procedure:'Procedure', sop:'SOP', manual:'Manual',
   email:'Email', letter:'Letter', notice:'Notice', general:'Doc',
@@ -280,10 +282,13 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
             <option value="lab_report">Lab</option>
             <option value="clinical_notes">Clinical</option>
             <option value="after_visit_summary">After Visit</option>
+            <option value="medication_list">Med List</option>
             <option value="discharge_summary">Discharge</option>
             <option value="referral">Referral</option>
             <option value="imaging_report">Imaging</option>
             <option value="prior_authorization">Prior Auth</option>
+            <option value="payer_policy">Payer Policy</option>
+            <option value="medical_policy">Medical Policy</option>
           </optgroup>
           <optgroup label="🟡 Research">
             <option value="research_paper">Research</option>
@@ -385,7 +390,7 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
   const spin=['chunking','embedding','uploading'].includes(doc.status);
   const canSum=['chunked','embedding','embedded'].includes(doc.status);
   const canLease = ['lease','lease_amendment','lease_extension','contract','agreement','rent_roll','estoppel','appraisal','inspection_report','property_management_agreement','cam_reconciliation'].includes(doc.doc_type) || doc.doc_domain === 'legal';
-  const canHealthcare = ['medical_record','prescription','lab_report','clinical_notes','after_visit_summary','discharge_summary','referral','imaging_report','prior_authorization'].includes(doc.doc_type) || doc.doc_domain === 'medical';
+  const canHealthcare = ['medical_record','prescription','lab_report','clinical_notes','after_visit_summary','medication_list','discharge_summary','referral','imaging_report','prior_authorization','payer_policy','medical_policy'].includes(doc.doc_type) || doc.doc_domain === 'medical';
   return (
     <div style={{...s.card,...(selected?s.cardSel:{})}}>
       <div style={s.cardInner}>

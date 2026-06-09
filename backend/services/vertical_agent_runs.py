@@ -58,13 +58,21 @@ async def get_accessible_vertical_run(db, run_id: str, user_id: str) -> dict[str
     return dict(row)
 
 
-async def latest_vertical_run(db, *, document_id: str, vertical: str, user_id: str) -> dict[str, Any] | None:
+async def latest_vertical_run(
+    db,
+    *,
+    document_id: str,
+    vertical: str,
+    user_id: str,
+    workflow_id: str | None = None,
+) -> dict[str, Any] | None:
     row = await db.fetchrow(
         """
         SELECT r.*
         FROM vertical_agent_runs r
         WHERE r.document_id=$1
           AND r.vertical=$2
+          AND ($4::text IS NULL OR r.workflow_id=$4)
           AND (
             r.user_id=$3
             OR EXISTS (
@@ -79,6 +87,7 @@ async def latest_vertical_run(db, *, document_id: str, vertical: str, user_id: s
         document_id,
         vertical,
         user_id,
+        workflow_id,
     )
     return dict(row) if row else None
 

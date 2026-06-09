@@ -39,7 +39,7 @@ async def classify_intake(document_name: str, context: str) -> dict[str, Any]:
 
 Return JSON in this exact shape:
 {{
-  "document_type": "lab_report|after_visit_summary|medication_list|discharge_summary|referral|imaging_report|prior_authorization|administrative|unknown",
+  "document_type": "lab_report|after_visit_summary|medication_list|discharge_summary|referral|imaging_report|prior_authorization|payer_policy|medical_policy|administrative|unknown",
   "summary": "1-2 sentence intake summary",
   "patient_context": {{
     "patient_name": {{"value": string|null, "source": "Source citation or not found", "confidence": 0.0-1.0}},
@@ -222,6 +222,217 @@ def merge_healthcare_outputs(outputs: dict[str, Any]) -> dict[str, Any]:
         **packet,
         "approved_packet": packet,
     }
+
+
+async def extract_prior_auth_request(
+    document_name: str,
+    patient_context: str,
+    intake: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    system = _clinical_system("Prior Authorization Request Agent")
+    user = f"""Extract the requested prior authorization service/medication and clinical request context.
+
+Return JSON in this exact shape:
+{{
+  "summary": "1-2 sentence request summary",
+  "requested_item": {{"value": string|null, "source": "Source citation or not found", "confidence": 0.0-1.0}},
+  "service_category": "imaging|pharmacy|therapy|procedure|referral|device|unknown",
+  "diagnoses": [{{"code": string|null, "description": string|null, "source": "Source citation", "confidence": 0.0-1.0}}],
+  "clinical_rationale": [{{"finding": "supporting rationale", "source": "Source citation", "confidence": 0.0-1.0}}],
+  "urgency": {{"value": "routine|urgent|unknown", "source": "Source citation or not found", "confidence": 0.0-1.0}},
+  "confidence": 0.0-1.0
+}}
+
+PATIENT DOCUMENT CONTEXT:
+INTAKE:
+{json.dumps(intake or {})[:6000]}
+
+DOCUMENT SOURCES:
+{patient_context}"""
+    data = await _complete_json(system, user)
+    return {
+        "summary": data.get("summary") or "",
+        "requested_item": _field(data.get("requested_item")),
+        "service_category": data.get("service_category") or "unknown",
+        "diagnoses": _list(data.get("diagnoses")),
+        "clinical_rationale": _list(data.get("clinical_rationale")),
+        "urgency": _field(data.get("urgency")),
+        "confidence": _float(data.get("confidence")),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+async def extract_prior_auth_policy_criteria(policy_context: str, request: dict[str, Any]) -> dict[str, Any]:
+    system = _clinical_system("Payer Policy Criteria Agent")
+    user = f"""Extract prior authorization policy criteria from payer policy/reference documents.
+
+Return JSON in this exact shape:
+{{
+  "summary": "1-2 sentence policy summary",
+  "policy_documents_used": [{{"title": "document or policy title", "source": "Source citation"}}],
+  "criteria": [
+    {{"criterion_id": "short stable id", "criterion": "approval criterion", "required": true, "source": "Source citation", "category": "diagnosis|lab|treatment_history|imaging|documentation|benefit|other"}}
+  ],
+  "required_documentation": [
+    {{"item": "required document or field", "source": "Source citation", "priority": "low|medium|high"}}
+  ],
+  "confidence": 0.0-1.0
+}}
+
+REQUEST:
+{json.dumps(request)[:7000]}
+
+PAYER POLICY CONTEXT:
+{policy_context or "No payer policy context provided."}"""
+    data = await _complete_json(system, user)
+    return {
+        "summary": data.get("summary") or "",
+        "policy_documents_used": _list(data.get("policy_documents_used")),
+        "criteria": _list(data.get("criteria")),
+        "required_documentation": _list(data.get("required_documentation")),
+        "confidence": _float(data.get("confidence")),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+async def map_prior_auth_evidence(
+    patient_context: str,
+    request: dict[str, Any],
+    policy_criteria: dict[str, Any],
+) -> dict[str, Any]:
+    system = _clinical_system("Prior Authorization Evidence Mapping Agent")
+    user = f"""Map payer criteria to patient evidence. Use only cited patient document context.
+
+Return JSON in this exact shape:
+{{
+  "summary": "1-2 sentence evidence summary",
+  "criteria_matches": [
+    {{"criterion_id": "id from policy criteria", "criterion": "criterion text", "status": "met|not_met|missing_evidence|needs_clarification", "patient_evidence": "evidence or null", "policy_source": "Source citation", "patient_source": "Source citation or not found", "confidence": 0.0-1.0}}
+  ],
+  "supporting_evidence": [
+    {{"evidence": "important patient fact", "source": "Source citation", "supports": "criterion id or request field", "confidence": 0.0-1.0}}
+  ],
+  "confidence": 0.0-1.0
+}}
+
+REQUEST:
+{json.dumps(request)[:7000]}
+
+POLICY CRITERIA:
+{json.dumps(policy_criteria)[:10000]}
+
+PATIENT DOCUMENT CONTEXT:
+{patient_context}"""
+    data = await _complete_json(system, user)
+    return {
+        "summary": data.get("summary") or "",
+        "criteria_matches": _list(data.get("criteria_matches")),
+        "supporting_evidence": _list(data.get("supporting_evidence")),
+        "confidence": _float(data.get("confidence")),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+async def detect_prior_auth_gaps(
+    request: dict[str, Any],
+    policy_criteria: dict[str, Any],
+    evidence_map: dict[str, Any],
+) -> dict[str, Any]:
+    system = _clinical_system("Prior Authorization Gap Detection Agent")
+    user = f"""Detect missing documentation and submission risks before prior authorization submission.
+
+Return JSON in this exact shape:
+{{
+  "summary": "1-2 sentence gap summary",
+  "missing_items": [
+    {{"item": "missing document/field/evidence", "reason": "why needed", "priority": "low|medium|high", "source": "policy source or derived from missing evidence"}}
+  ],
+  "submission_risks": [
+    {{"risk": "submission or denial risk", "priority": "low|medium|high", "recommended_action": "human action"}}
+  ],
+  "ready_for_submission": false,
+  "confidence": 0.0-1.0
+}}
+
+REQUEST:
+{json.dumps(request)[:7000]}
+
+POLICY CRITERIA:
+{json.dumps(policy_criteria)[:10000]}
+
+EVIDENCE MAP:
+{json.dumps(evidence_map)[:12000]}"""
+    data = await _complete_json(system, user)
+    return {
+        "summary": data.get("summary") or "",
+        "missing_items": _list(data.get("missing_items")),
+        "submission_risks": _list(data.get("submission_risks")),
+        "ready_for_submission": bool(data.get("ready_for_submission", False)),
+        "confidence": _float(data.get("confidence")),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+async def generate_prior_auth_packet(
+    request: dict[str, Any],
+    policy_criteria: dict[str, Any],
+    evidence_map: dict[str, Any],
+    gaps: dict[str, Any],
+) -> dict[str, Any]:
+    system = _clinical_system("Prior Authorization Packet Agent")
+    user = f"""Create a human-review prior authorization packet. Do not claim submission is approved.
+
+Return JSON in this exact shape:
+{{
+  "packet_summary": "concise packet summary",
+  "medical_necessity_narrative": "payer-facing narrative using only supported evidence",
+  "criteria_checklist": [
+    {{"criterion": "criterion", "status": "met|not_met|missing_evidence|needs_clarification", "evidence": "evidence or missing item", "source": "policy/patient source"}}
+  ],
+  "recommended_decision": "ready_for_human_review|needs_more_information|not_supported_by_available_docs",
+  "next_actions": [
+    {{"action": "human action", "owner": "provider|patient|care_team|billing|unknown", "priority": "low|medium|high"}}
+  ],
+  "confidence": 0.0-1.0
+}}
+
+REQUEST:
+{json.dumps(request)[:7000]}
+
+POLICY CRITERIA:
+{json.dumps(policy_criteria)[:10000]}
+
+EVIDENCE MAP:
+{json.dumps(evidence_map)[:12000]}
+
+GAPS:
+{json.dumps(gaps)[:9000]}"""
+    data = await _complete_json(system, user)
+    return {
+        "packet_summary": data.get("packet_summary") or "",
+        "medical_necessity_narrative": data.get("medical_necessity_narrative") or "",
+        "criteria_checklist": _list(data.get("criteria_checklist")),
+        "recommended_decision": data.get("recommended_decision") or "needs_more_information",
+        "next_actions": _list(data.get("next_actions")),
+        "confidence": _float(data.get("confidence")),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def merge_prior_auth_outputs(outputs: dict[str, Any]) -> dict[str, Any]:
+    packet = {
+        "document_intake": outputs.get("document_intake") or {},
+        "patient_context": (outputs.get("document_intake") or {}).get("patient_context") or {},
+        "prior_auth_request": outputs.get("prior_auth_request") or {},
+        "policy_criteria": outputs.get("policy_criteria") or {},
+        "evidence_map": outputs.get("evidence_map") or {},
+        "gap_detection": outputs.get("gap_detection") or {},
+        "prior_auth_packet": outputs.get("prior_auth_packet") or {},
+        "approved_for": "human_review_required",
+        "guardrail": "Prior authorization assistance only. Not medical advice, not a coverage guarantee, and not a payer submission without human approval.",
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+    return {**packet, "approved_packet": packet}
 
 
 def normalize_intake(data: dict[str, Any]) -> dict[str, Any]:

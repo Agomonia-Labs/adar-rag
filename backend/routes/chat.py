@@ -1,6 +1,6 @@
 # routes/chat.py — 3-stage RAG: Hybrid Retrieval → Gemini Re-rank → Generate
 from __future__ import annotations
-import json, asyncio
+import json, asyncio, logging
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -16,6 +16,7 @@ from services.pii import redact_text
 from services.tracing import start_trace, finish_trace, span, record_llm_event
 
 router = APIRouter()
+log = logging.getLogger("docintel.chat.route")
 
 # Fetch more candidates when re-ranking so the re-ranker has enough to work with
 _FETCH_K = RERANK_FETCH_K if RERANK_ENABLED else TOP_K
@@ -27,6 +28,7 @@ class ChatRequest(BaseModel):
     history:      list[dict] = []
     workspace_id: str | None = None
     redact_pii:   bool = False
+    agent_mode:   str = "auto"  # auto | off | force
 
 
 @router.post("/stream")
@@ -43,7 +45,9 @@ async def chat_stream_endpoint(
 
     user_id = str(current_user["id"])
     rows = await db.fetch(
-        """SELECT d.id, d.status, d.doc_language FROM documents d
+        """SELECT d.id, d.status, d.doc_language, d.doc_type, d.doc_domain,
+                  d.original_name, d.workspace_id
+           FROM documents d
            WHERE d.id = ANY($1::uuid[])
              AND d.status != 'deleted'
              AND (
@@ -66,6 +70,7 @@ async def chat_stream_endpoint(
     if not_embedded:
         raise HTTPException(400, f"Documents not yet embedded: {not_embedded}")
 
+    doc_rows = [dict(r) for r in rows]
     trace_id = await start_trace(
         "chat",
         trace_id=getattr(request.state, "trace_id", None),
@@ -82,6 +87,7 @@ async def chat_stream_endpoint(
             "response_language": response_lang,
             "rerank_enabled": RERANK_ENABLED,
             "redact_pii": req.redact_pii,
+            "agent_mode": req.agent_mode,
         },
     )
 
@@ -165,6 +171,43 @@ async def chat_stream_endpoint(
                 async with span("prompt_build", trace_id=trace_id, metadata={"chunk_count": len(chunks)}):
                     context = _build_context(chunks, redact_pii=req.redact_pii)
 
+                agentic_context = ""
+                agentic_meta: dict = {"enabled": req.agent_mode != "off"}
+                if req.agent_mode != "off":
+                    async with span("agentic_context", trace_id=trace_id, metadata={"mode": req.agent_mode}) as sp:
+                        try:
+                            async with get_pool().acquire() as _conn:
+                                agentic_context, agentic_meta = await _load_agentic_context(
+                                    _conn,
+                                    doc_rows,
+                                    question_for_model,
+                                    redact_pii=req.redact_pii,
+                                    force=req.agent_mode == "force",
+                                )
+                        except Exception as exc:
+                            log.warning("Chat agentic context lookup failed; falling back to RAG only: %s", exc)
+                            agentic_context = ""
+                            agentic_meta = {
+                                "enabled": True,
+                                "error": str(exc),
+                                "fallback": "rag_only",
+                            }
+                        await record_llm_event(
+                            trace_id=trace_id,
+                            span_id=sp,
+                            provider="postgres",
+                            model="agent_workflow_store",
+                            operation="agentic_context_lookup",
+                            user_prompt=question_for_model,
+                            tool_request={
+                                "document_ids": req.document_ids,
+                                "agent_mode": req.agent_mode,
+                            },
+                            tool_response=agentic_meta,
+                        )
+                    if agentic_context:
+                        context = f"{agentic_context}\n\n---\n\n{context}"
+
                 # ── Stage 5: Stream LLM answer ────────────────────────────
                 messages = [
                     {"role": m["role"], "content": redact_text(m["content"], req.redact_pii).text}
@@ -173,6 +216,17 @@ async def chat_stream_endpoint(
                 ] + [{"role": "user", "content": question_for_model}]
 
                 language_instruction = response_language_instruction(response_lang)
+                if agentic_context:
+                    language_instruction = (
+                        f"{language_instruction}\n\n"
+                        "AGENTIC WORKFLOW RULE:\n"
+                        "The retrieved context may include [Agentic Source N] blocks produced by the lease or healthcare "
+                        "agentic workflow. For domain-specific questions about lease parties, rent, obligations, critical "
+                        "dates, clause risks, healthcare labs, medications, visit summaries, follow-ups, or care gaps, use "
+                        "those agentic blocks first because they are structured review outputs. Cite them inline as "
+                        "[Agentic Source N]. Use [Source N] retrieved chunks to verify or fill details. If an agentic block "
+                        "is partial, say what is missing and answer from document chunks where possible."
+                    )
                 system_prompt = rag_system(context, language_instruction)
                 async with span("llm_generate", trace_id=trace_id, metadata={"provider": "gemini", "message_count": len(messages)}) as sp:
                     await chat_stream(messages, system_prompt, on_token)
@@ -212,6 +266,309 @@ async def chat_stream_endpoint(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-Trace-Id": trace_id},
     )
+
+
+LEASE_TERMS = {
+    "lease", "landlord", "tenant", "rent", "base rent", "security deposit",
+    "commencement", "expiration", "renewal", "amendment", "extension",
+    "premises", "obligation", "critical date", "clause", "termination",
+    "assignment", "sublease", "insurance", "maintenance", "cam",
+}
+
+HEALTHCARE_TERMS = {
+    "health", "healthcare", "clinical", "patient", "lab", "labs", "medication",
+    "medicine", "diagnosis", "visit", "after visit", "discharge", "follow up",
+    "follow-up", "care gap", "allergy", "vital", "provider", "doctor",
+    "referral", "prior authorization", "claim", "procedure", "test result",
+}
+
+
+async def _load_agentic_context(
+    db,
+    docs: list[dict],
+    question: str,
+    redact_pii: bool = False,
+    force: bool = False,
+) -> tuple[str, dict]:
+    targets = _agentic_targets(docs, question, force=force)
+    meta = {
+        "enabled": True,
+        "targets": targets,
+        "loaded": [],
+        "missing": [],
+    }
+    if not targets:
+        return "", meta
+
+    blocks: list[str] = []
+    source_index = 1
+    for doc in docs:
+        doc_id = str(doc.get("id"))
+        if "lease" in targets and _is_lease_doc(doc, question, force=force):
+            block = await _lease_agentic_block(db, doc_id, doc, source_index, redact_pii=redact_pii)
+            if block:
+                blocks.append(block)
+                source_index += 1
+                meta["loaded"].append({"document_id": doc_id, "vertical": "lease"})
+            else:
+                meta["missing"].append({"document_id": doc_id, "vertical": "lease"})
+
+        if "healthcare" in targets and _is_healthcare_doc(doc, question, force=force):
+            block = await _healthcare_agentic_block(db, doc_id, doc, source_index, redact_pii=redact_pii)
+            if block:
+                blocks.append(block)
+                source_index += 1
+                meta["loaded"].append({"document_id": doc_id, "vertical": "healthcare"})
+            else:
+                meta["missing"].append({"document_id": doc_id, "vertical": "healthcare"})
+
+    if not blocks:
+        return "", meta
+    return "\n\n---\n\n".join(blocks), meta
+
+
+def _agentic_targets(docs: list[dict], question: str, force: bool = False) -> list[str]:
+    targets: list[str] = []
+    if force or any(_is_lease_doc(doc, question, force=force) for doc in docs):
+        targets.append("lease")
+    if force or any(_is_healthcare_doc(doc, question, force=force) for doc in docs):
+        targets.append("healthcare")
+    return targets
+
+
+def _is_lease_doc(doc: dict, question: str, force: bool = False) -> bool:
+    if force:
+        return True
+    doc_type = (doc.get("doc_type") or "").lower()
+    doc_domain = (doc.get("doc_domain") or "").lower()
+    name = (doc.get("original_name") or "").lower()
+    q = question.lower()
+    metadata_match = "lease" in doc_type or doc_domain in {"real_estate", "real estate"} or "lease" in name
+    question_match = any(term in q for term in LEASE_TERMS)
+    return metadata_match or question_match
+
+
+def _is_healthcare_doc(doc: dict, question: str, force: bool = False) -> bool:
+    if force:
+        return True
+    doc_type = (doc.get("doc_type") or "").lower()
+    doc_domain = (doc.get("doc_domain") or "").lower()
+    name = (doc.get("original_name") or "").lower()
+    q = question.lower()
+    metadata_match = (
+        "health" in doc_type
+        or "clinical" in doc_type
+        or doc_domain in {"healthcare", "medical", "clinical"}
+        or any(term in name for term in ("lab", "visit", "medication", "clinical", "health"))
+    )
+    question_match = any(term in q for term in HEALTHCARE_TERMS)
+    return metadata_match or question_match
+
+
+async def _lease_agentic_block(db, doc_id: str, doc: dict, source_index: int, redact_pii: bool = False) -> str:
+    run = await db.fetchrow(
+        """
+        SELECT id, status, workflow_version, result_data, completed_at, updated_at
+        FROM lease_agent_runs
+        WHERE document_id=$1
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        doc_id,
+    )
+    payload: dict | None = None
+    metadata: dict = {"source": "lease_agent_workflow"}
+    if run:
+        payload = _json(run["result_data"]) or {}
+        metadata.update(
+            {
+                "run_id": str(run["id"]),
+                "status": run["status"],
+                "workflow_version": run["workflow_version"],
+                "completed_at": _iso(run["completed_at"]),
+                "updated_at": _iso(run["updated_at"]),
+            }
+        )
+        evaluation = await _latest_agent_eval(db, "lease", str(run["id"]))
+        if evaluation:
+            metadata["evaluation"] = evaluation
+
+    abstract = await db.fetchrow(
+        """
+        SELECT abstract_data, confidence, status, updated_at
+        FROM lease_abstracts
+        WHERE document_id=$1
+        ORDER BY updated_at DESC
+        LIMIT 1
+        """,
+        doc_id,
+    )
+    if abstract:
+        saved = _json(abstract["abstract_data"]) or {}
+        if payload:
+            payload = {
+                **payload,
+                "saved_lease_abstract": saved,
+            }
+        else:
+            payload = saved
+            metadata["source"] = "saved_lease_abstract"
+        metadata["saved_abstract"] = {
+            "status": abstract["status"],
+            "confidence": abstract["confidence"],
+            "updated_at": _iso(abstract["updated_at"]),
+        }
+
+    obligations = []
+    if run:
+        obligation_rows = await db.fetch(
+            """
+            SELECT title, party, category, priority, due_date, trigger, source, status, notes, approved
+            FROM lease_obligations
+            WHERE document_id=$1 AND run_id=$2
+            ORDER BY due_date NULLS LAST, priority, title
+            LIMIT 25
+            """,
+            doc_id,
+            str(run["id"]),
+        )
+        obligations = [_row_to_json(r) for r in obligation_rows]
+    if obligations:
+        payload = payload or {}
+        payload["saved_obligations"] = obligations
+
+    return _agentic_block("lease", doc, source_index, metadata, payload, redact_pii=redact_pii)
+
+
+async def _healthcare_agentic_block(db, doc_id: str, doc: dict, source_index: int, redact_pii: bool = False) -> str:
+    run = await db.fetchrow(
+        """
+        SELECT id, status, workflow_id, workflow_version, result_data, completed_at, updated_at
+        FROM vertical_agent_runs
+        WHERE document_id=$1
+          AND vertical='healthcare'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        doc_id,
+    )
+    if not run:
+        return ""
+    payload = _json(run["result_data"]) or {}
+    metadata = {
+        "source": "healthcare_agent_workflow",
+        "run_id": str(run["id"]),
+        "status": run["status"],
+        "workflow_id": run["workflow_id"],
+        "workflow_version": run["workflow_version"],
+        "completed_at": _iso(run["completed_at"]),
+        "updated_at": _iso(run["updated_at"]),
+    }
+    evaluation = await _latest_agent_eval(db, "healthcare", str(run["id"]))
+    if evaluation:
+        metadata["evaluation"] = evaluation
+    return _agentic_block("healthcare", doc, source_index, metadata, payload, redact_pii=redact_pii)
+
+
+async def _latest_agent_eval(db, vertical: str, run_id: str) -> dict | None:
+    row = await db.fetchrow(
+        """
+        SELECT overall_score, gate_status, recommendations, policy, created_at
+        FROM agent_workflow_evaluations
+        WHERE vertical=$1 AND run_id=$2
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        vertical,
+        run_id,
+    )
+    if not row:
+        return None
+    return {
+        "overall_score": row["overall_score"],
+        "gate_status": row["gate_status"],
+        "recommendations": _json(row["recommendations"]) or [],
+        "policy": _json(row["policy"]) or {},
+        "created_at": _iso(row["created_at"]),
+    }
+
+
+def _agentic_block(
+    vertical: str,
+    doc: dict,
+    source_index: int,
+    metadata: dict,
+    payload: dict | None,
+    redact_pii: bool = False,
+) -> str:
+    if not payload:
+        return ""
+    compact = _compact_json(_trim_agentic_payload(payload))
+    if redact_pii:
+        compact = redact_text(compact, True).text
+    return (
+        f"[Agentic Source {source_index}: {vertical} workflow | "
+        f"document \"{doc.get('original_name') or doc.get('id')}\" | metadata]\n"
+        f"{_compact_json(metadata, max_chars=1800)}\n\n"
+        f"[Agentic Source {source_index}: {vertical} structured findings]\n"
+        f"{compact}"
+    )
+
+
+def _trim_agentic_payload(payload: dict) -> dict:
+    keys = [
+        "summary",
+        "abstract",
+        "approved_abstract",
+        "saved_lease_abstract",
+        "critical_dates",
+        "obligation_checklist",
+        "saved_obligations",
+        "clause_flags",
+        "risk_flags",
+        "clinical_summary",
+        "lab_results",
+        "medications",
+        "care_gaps",
+        "follow_up_actions",
+        "patient_timeline",
+        "administrative_flags",
+        "prior_auth_request",
+        "policy_criteria",
+        "evidence_map",
+        "gap_detection",
+        "prior_auth_packet",
+        "policy_documents",
+        "approved_packet",
+        "agent_quality",
+        "confidence",
+    ]
+    trimmed = {key: payload[key] for key in keys if key in payload and payload[key] not in (None, "", [], {})}
+    return trimmed or payload
+
+
+def _compact_json(value, max_chars: int = 9000) -> str:
+    text = json.dumps(value, ensure_ascii=False, default=str, indent=2)
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "\n... [truncated agentic workflow context]"
+
+
+def _row_to_json(row) -> dict:
+    return {key: _iso(value) if hasattr(value, "isoformat") else value for key, value in dict(row).items()}
+
+
+def _iso(value):
+    return value.isoformat() if hasattr(value, "isoformat") else value
+
+
+def _json(value):
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
 
 
 def _chunk_trace(chunks: list[dict], redact_pii: bool = False) -> list[dict]:
