@@ -5,10 +5,16 @@ import logging
 import re
 from datetime import datetime
 from typing import Any
+import base64
+import os
+
+import httpx
 
 from services.llm import chat_stream
 
 log = logging.getLogger("docintel.healthcare")
+
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
 class HealthcareIntelligenceError(RuntimeError):
@@ -435,6 +441,246 @@ def merge_prior_auth_outputs(outputs: dict[str, Any]) -> dict[str, Any]:
     return {**packet, "approved_packet": packet}
 
 
+async def transcribe_clinical_audio(
+    audio_bytes: bytes,
+    content_type: str,
+    language: str = "",
+) -> dict[str, Any]:
+    google_ai_key = os.getenv("GOOGLE_AI_KEY", "").strip()
+    if not google_ai_key:
+        raise HealthcareIntelligenceError("GOOGLE_AI_KEY is not configured for clinical transcription")
+    model = os.getenv("GEMINI_AUDIO_MODEL", os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")).removeprefix("models/")
+    prompt = (
+        "Transcribe this healthcare visit conversation into plain text. "
+        "Preserve clinically relevant wording. Do not summarize. Do not diagnose. "
+        "If you can infer speaker turns, label them as Doctor, Patient, Caregiver, or Unknown. "
+        "If the audio is empty or unintelligible, return an empty string."
+    )
+    if language:
+        prompt += f" The expected spoken language locale is {language}."
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {"inline_data": {
+                    "mime_type": content_type,
+                    "data": base64.b64encode(audio_bytes).decode("ascii"),
+                }},
+            ],
+        }],
+        "generationConfig": {
+            "temperature": 0,
+            "maxOutputTokens": 4096,
+        },
+    }
+    url = f"{GEMINI_BASE}/{model}:generateContent"
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(url, params={"key": google_ai_key}, json=payload)
+    except httpx.HTTPError as exc:
+        raise HealthcareIntelligenceError(f"Clinical transcription service unavailable: {exc}") from exc
+    if not resp.is_success:
+        raise HealthcareIntelligenceError(f"Clinical transcription failed {resp.status_code}: {resp.text[:500]}")
+    body = resp.json()
+    parts = body.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    text = " ".join((p.get("text") or "").strip() for p in parts if p.get("text")).strip()
+    return {
+        "transcript_text": text,
+        "language": language or "unknown",
+        "audio_mime_type": content_type,
+        "audio_bytes": len(audio_bytes),
+        "model": model,
+        "usage": body.get("usageMetadata") or {},
+        "confidence": 0.85 if text else 0,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+async def extract_transcript_intake(
+    transcript_text: str,
+    document_name: str,
+    document_context: str = "",
+) -> dict[str, Any]:
+    system = _clinical_system("Clinical Conversation Intake Agent")
+    user = f"""Extract intake context from this doctor-patient conversation transcript.
+
+Return JSON in this exact shape:
+{{
+  "summary": "1-2 sentence encounter context",
+  "patient_context": {{
+    "patient_name": {{"value": "name or null", "source": "transcript or not found", "confidence": 0.0-1.0}},
+    "date_of_birth": {{"value": "date or null", "source": "transcript or not found", "confidence": 0.0-1.0}},
+    "encounter_date": {{"value": "date or null", "source": "transcript or document context or not found", "confidence": 0.0-1.0}},
+    "provider": {{"value": "provider or null", "source": "transcript or document context or not found", "confidence": 0.0-1.0}},
+    "facility": {{"value": "facility or null", "source": "transcript or document context or not found", "confidence": 0.0-1.0}},
+    "encounter_type": {{"value": "visit type or null", "source": "transcript or not found", "confidence": 0.0-1.0}}
+  }},
+  "speakers": [{{"speaker": "Doctor|Patient|Caregiver|Unknown", "description": "role clues"}}],
+  "language": "detected language",
+  "confidence": 0.0-1.0
+}}
+
+DOCUMENT NAME:
+{document_name}
+
+OPTIONAL EXISTING DOCUMENT CONTEXT:
+{document_context[:6000] or "None provided."}
+
+TRANSCRIPT:
+{transcript_text[:32000]}"""
+    data = await _complete_json(system, user)
+    return normalize_transcript_intake(data)
+
+
+async def generate_soap_note(
+    transcript_text: str,
+    intake: dict[str, Any],
+    document_context: str = "",
+) -> dict[str, Any]:
+    system = _clinical_system("SOAP Note Draft Agent")
+    user = f"""Create a clinician-review SOAP note draft from the transcript.
+Use only the transcript and optional existing document context. Do not add diagnosis or treatment not stated by the clinician.
+
+Return JSON in this exact shape:
+{{
+  "summary": "short clinician-facing visit summary",
+  "subjective": [{{"item": "patient-reported symptom/history", "source": "transcript", "confidence": 0.0-1.0}}],
+  "objective": [{{"item": "observed/measured/discussed objective fact", "source": "transcript or document context", "confidence": 0.0-1.0}}],
+  "assessment": [{{"item": "assessment explicitly discussed", "source": "transcript", "confidence": 0.0-1.0}}],
+  "plan": [{{"item": "plan explicitly discussed", "source": "transcript", "confidence": 0.0-1.0}}],
+  "medications_discussed": [{{"name": "medication", "discussion": "started|stopped|continued|changed|mentioned|unknown", "details": "dose/frequency if stated", "source": "transcript", "confidence": 0.0-1.0}}],
+  "orders_or_tests_discussed": [{{"item": "test/order/referral", "status": "ordered|recommended|discussed|unknown", "source": "transcript", "confidence": 0.0-1.0}}],
+  "human_review_notes": [{{"note": "uncertainty or item needing clinician review", "priority": "low|medium|high"}}],
+  "confidence": 0.0-1.0
+}}
+
+INTAKE:
+{json.dumps(intake)[:6000]}
+
+OPTIONAL EXISTING DOCUMENT CONTEXT:
+{document_context[:6000] or "None provided."}
+
+TRANSCRIPT:
+{transcript_text[:32000]}"""
+    data = await _complete_json(system, user)
+    return normalize_soap_note(data)
+
+
+async def generate_patient_friendly_summary(
+    transcript_text: str,
+    soap_note: dict[str, Any],
+    language: str = "",
+) -> dict[str, Any]:
+    system = _clinical_system("Patient-Friendly Summary Agent")
+    user = f"""Create a patient-friendly summary from the visit transcript and SOAP draft.
+Avoid new medical advice. Use simple language. If language is provided, write patient-facing fields in that language.
+
+Return JSON in this exact shape:
+{{
+  "summary": "plain-language summary",
+  "what_we_discussed": [{{"item": "topic", "source": "transcript", "confidence": 0.0-1.0}}],
+  "care_team_recommendations": [{{"item": "recommendation explicitly discussed", "source": "transcript", "confidence": 0.0-1.0}}],
+  "patient_questions": [{{"question": "patient question or concern", "source": "transcript", "confidence": 0.0-1.0}}],
+  "questions_to_ask_next": [{{"question": "safe follow-up question for care team", "reason": "why ask"}}],
+  "confidence": 0.0-1.0
+}}
+
+TARGET LANGUAGE:
+{language or "same as conversation"}
+
+SOAP DRAFT:
+{json.dumps(soap_note)[:10000]}
+
+TRANSCRIPT:
+{transcript_text[:26000]}"""
+    data = await _complete_json(system, user)
+    return normalize_patient_summary(data)
+
+
+async def extract_visit_followup_checklist(
+    transcript_text: str,
+    soap_note: dict[str, Any],
+) -> dict[str, Any]:
+    system = _clinical_system("Visit Follow-Up Checklist Agent")
+    user = f"""Extract follow-up actions from this healthcare visit transcript.
+Only include actions explicitly discussed or clearly stated as pending.
+
+Return JSON in this exact shape:
+{{
+  "summary": "1-2 sentence follow-up summary",
+  "follow_up_actions": [
+    {{"action": "task", "owner": "patient|provider|care_team|billing|unknown", "due_date": "date or null", "priority": "low|medium|high", "source": "transcript", "confidence": 0.0-1.0}}
+  ],
+  "open_questions": [
+    {{"question": "unresolved question", "owner": "patient|provider|care_team|unknown", "priority": "low|medium|high", "source": "transcript"}}
+  ],
+  "confidence": 0.0-1.0
+}}
+
+SOAP DRAFT:
+{json.dumps(soap_note)[:10000]}
+
+TRANSCRIPT:
+{transcript_text[:32000]}"""
+    data = await _complete_json(system, user)
+    return normalize_visit_followups(data)
+
+
+async def review_scribe_governance(
+    transcript_text: str,
+    intake: dict[str, Any],
+) -> dict[str, Any]:
+    system = _clinical_system("Clinical Scribe Governance Agent")
+    user = f"""Review governance, PHI, consent, uncertainty, and approval needs for this clinical transcription workflow.
+
+Return JSON in this exact shape:
+{{
+  "summary": "governance summary",
+  "consent_status": "recorded|not_recorded|unknown",
+  "phi_categories": ["category"],
+  "redaction_recommendations": [
+    {{"field": "field/category", "recommendation": "mask|restrict|review", "reason": "reason", "source": "transcript"}}
+  ],
+  "governance_notes": [
+    {{"control": "human_approval|audit|retention|access_control|clinical_review", "note": "specific note"}}
+  ],
+  "requires_clinician_review": true,
+  "confidence": 0.0-1.0
+}}
+
+INTAKE:
+{json.dumps(intake)[:6000]}
+
+TRANSCRIPT:
+{transcript_text[:24000]}"""
+    data = await _complete_json(system, user)
+    return normalize_scribe_governance(data)
+
+
+def merge_transcription_outputs(outputs: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
+    transcript = outputs.get("conversation_transcript") or {}
+    intake = outputs.get("conversation_intake") or {}
+    packet = {
+        "conversation_transcript": transcript,
+        "conversation_intake": intake,
+        "patient_context": intake.get("patient_context") or {},
+        "soap_note": outputs.get("soap_note") or {},
+        "patient_summary": outputs.get("patient_summary") or {},
+        "followup_checklist": outputs.get("followup_checklist") or {},
+        "scribe_governance": outputs.get("scribe_governance") or {},
+        "audio": {
+            "gcs_path": (context or {}).get("audio_gcs_path"),
+            "filename": (context or {}).get("audio_filename"),
+            "mime_type": (context or {}).get("audio_mime_type"),
+            "bytes": (context or {}).get("audio_size"),
+        },
+        "approved_for": "clinician_review_required",
+        "guardrail": "AI clinical scribe draft only. Requires clinician review and approval. Not diagnosis, treatment, or medical advice.",
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+    return {**packet, "approved_packet": packet}
+
+
 def normalize_intake(data: dict[str, Any]) -> dict[str, Any]:
     context = data.get("patient_context") if isinstance(data.get("patient_context"), dict) else {}
     return {
@@ -507,6 +753,70 @@ def normalize_phi_governance(data: dict[str, Any]) -> dict[str, Any]:
         "redaction_recommendations": _list(data.get("redaction_recommendations")),
         "governance_notes": _list(data.get("governance_notes")),
         "requires_human_approval": bool(data.get("requires_human_approval", True)),
+        "confidence": _float(data.get("confidence")),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def normalize_transcript_intake(data: dict[str, Any]) -> dict[str, Any]:
+    context = data.get("patient_context") if isinstance(data.get("patient_context"), dict) else {}
+    return {
+        "summary": data.get("summary") or "",
+        "patient_context": {key: _field(context.get(key)) for key in (
+            "patient_name", "date_of_birth", "encounter_date", "provider", "facility", "encounter_type"
+        )},
+        "speakers": _list(data.get("speakers")),
+        "language": data.get("language") or "unknown",
+        "confidence": _float(data.get("confidence")),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def normalize_soap_note(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "summary": data.get("summary") or "",
+        "subjective": _list(data.get("subjective")),
+        "objective": _list(data.get("objective")),
+        "assessment": _list(data.get("assessment")),
+        "plan": _list(data.get("plan")),
+        "medications_discussed": _list(data.get("medications_discussed")),
+        "orders_or_tests_discussed": _list(data.get("orders_or_tests_discussed")),
+        "human_review_notes": _list(data.get("human_review_notes")),
+        "confidence": _float(data.get("confidence")),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def normalize_patient_summary(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "summary": data.get("summary") or "",
+        "what_we_discussed": _list(data.get("what_we_discussed")),
+        "care_team_recommendations": _list(data.get("care_team_recommendations")),
+        "patient_questions": _list(data.get("patient_questions")),
+        "questions_to_ask_next": _list(data.get("questions_to_ask_next")),
+        "confidence": _float(data.get("confidence")),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def normalize_visit_followups(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "summary": data.get("summary") or "",
+        "follow_up_actions": _list(data.get("follow_up_actions")),
+        "open_questions": _list(data.get("open_questions")),
+        "confidence": _float(data.get("confidence")),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def normalize_scribe_governance(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "summary": data.get("summary") or "",
+        "consent_status": data.get("consent_status") or "unknown",
+        "phi_categories": _list(data.get("phi_categories")),
+        "redaction_recommendations": _list(data.get("redaction_recommendations")),
+        "governance_notes": _list(data.get("governance_notes")),
+        "requires_clinician_review": bool(data.get("requires_clinician_review", True)),
         "confidence": _float(data.get("confidence")),
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }

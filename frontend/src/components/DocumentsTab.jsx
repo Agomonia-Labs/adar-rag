@@ -58,7 +58,7 @@ const DOMAIN_ICONS = {
 const LANGUAGE_LABELS = { en:'English', es:'Español', bn:'বাংলা', hi:'हिन्दी', ar:'العربية' };
 const fmtSz = b => b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
 
-export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
+export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKey = 0 }) {
   const [docs,    setDocs]    = useState([]);
   const [loading, setLoading] = useState(true);
   const [drag,    setDrag]    = useState(false);
@@ -118,7 +118,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace }) {
       setDocs(p => { if(p.some(d=>['uploading','chunking','embedding'].includes(d.status))) loadDocs(); return p; });
     }, 3000);
     return () => clearInterval(pollRef.current);
-  }, [loadDocs, activeWorkspace?.id]);
+  }, [loadDocs, activeWorkspace?.id, refreshKey]);
 
   const handleFiles = useCallback(async files => {
     files = Array.from(files);

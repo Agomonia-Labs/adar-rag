@@ -361,6 +361,42 @@ export async function runPriorAuthWorkflow(docId, policyDocumentIds = []) {
   }));
 }
 
+export async function runHealthcareTranscriptionWorkflow(docId, audioBlob, { language = '', consentConfirmed = false, filename = 'clinical-conversation.webm' } = {}) {
+  const form = new FormData();
+  const ext = audioBlob.type.includes('mp4') ? 'mp4'
+    : audioBlob.type.includes('mpeg') || audioBlob.type.includes('mp3') ? 'mp3'
+    : audioBlob.type.includes('ogg') ? 'ogg'
+    : audioBlob.type.includes('wav') ? 'wav'
+    : 'webm';
+  form.append('audio', audioBlob, filename || `clinical-conversation.${ext}`);
+  form.append('consent_confirmed', consentConfirmed ? 'true' : 'false');
+  if (language) form.append('language', language);
+  return handleRes(await fetch(`${LONG_BASE}/healthcare/${docId}/transcription-workflow`, {
+    method:'POST',
+    headers: authHdr(),
+    body: form,
+  }));
+}
+
+export async function runNewVisitTranscriptionWorkflow(audioBlob, { language = '', consentConfirmed = false, filename = 'clinical-conversation.webm', visitTitle = '', workspaceId = null } = {}) {
+  const form = new FormData();
+  const ext = audioBlob.type.includes('mp4') ? 'mp4'
+    : audioBlob.type.includes('mpeg') || audioBlob.type.includes('mp3') ? 'mp3'
+    : audioBlob.type.includes('ogg') ? 'ogg'
+    : audioBlob.type.includes('wav') ? 'wav'
+    : 'webm';
+  form.append('audio', audioBlob, filename || `clinical-conversation.${ext}`);
+  form.append('consent_confirmed', consentConfirmed ? 'true' : 'false');
+  if (language) form.append('language', language);
+  if (visitTitle) form.append('visit_title', visitTitle);
+  if (workspaceId) form.append('workspace_id', workspaceId);
+  return handleRes(await fetch(`${LONG_BASE}/healthcare/transcription-workflow`, {
+    method:'POST',
+    headers: authHdr(),
+    body: form,
+  }));
+}
+
 export async function fetchHealthcareAgentRun(runId) {
   return handleRes(await fetch(`${BASE}/healthcare/agent-runs/${runId}`, { headers: authHdr() }));
 }

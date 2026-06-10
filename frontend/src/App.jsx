@@ -7,6 +7,7 @@ import WorkspacesTab    from './components/WorkspacesTab.jsx';
 import DocumentsTab    from './components/DocumentsTab.jsx';
 import ChatTab         from './components/ChatTab.jsx';
 import AdminDashboard  from './components/AdminDashboard.jsx';
+import HealthcarePanel from './components/HealthcarePanel.jsx';
 import { ToastContainer } from './components/Toast.jsx';
 import { getMe }       from './services/api.js';
 import { LANGUAGES, getLanguage, getStrings } from './i18n.js';
@@ -18,6 +19,9 @@ export default function App() {
   const [tab,          setTab]          = useState('documents');
   const [showUsage,        setShowUsage]        = useState(false);
   const [showBilling,      setShowBilling]      = useState(false);
+  const [showVerticals,    setShowVerticals]    = useState(false);
+  const [showNewVisit,     setShowNewVisit]     = useState(false);
+  const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0);
   const [activeWorkspace,  setActiveWorkspace]  = useState(null);
   const [uiLang,           setUiLang]           = useState(() => localStorage.getItem('ui_lang') || 'en');
   const lang = getLanguage(uiLang);
@@ -75,6 +79,7 @@ export default function App() {
   }
 
   const isAdmin = user.role==='admin';
+  const canCreateWorkspaceContent = !activeWorkspace?.my_role || activeWorkspace.my_role === 'editor' || activeWorkspace.my_role === 'owner';
   const TABS = [
     { key:'documents', icon:'📂', label:t.documents, show:true },
     { key:'chat',      icon:'💬', label:t.chat,      show:true, disabled:!embeddedDocs.length,
@@ -88,6 +93,17 @@ export default function App() {
       <ToastContainer />
       {showUsage && <UsagePanel onClose={() => setShowUsage(false)} onUpgrade={() => { setShowUsage(false); setShowBilling(true); }} />}
       {showBilling && <BillingPanel onClose={() => setShowBilling(false)} />}
+      {showNewVisit && (
+        <HealthcarePanel
+          newVisit
+          workspaceId={activeWorkspace?.id || null}
+          onCreated={() => {
+            setDocumentsRefreshKey(k => k + 1);
+            setTab('documents');
+          }}
+          onClose={() => setShowNewVisit(false)}
+        />
+      )}
       <div style={s.shell}>
         <header style={s.header}>
           <div style={s.brand}>
@@ -114,6 +130,44 @@ export default function App() {
           </nav>
 
           <div style={s.userArea}>
+            <div style={s.verticalWrap}>
+              <button
+                style={s.verticalBtn}
+                onClick={() => setShowVerticals(v => !v)}
+                title="Domain-specific workflows">
+                ◫ Verticals
+              </button>
+              {showVerticals && (
+                <div style={s.verticalMenu}>
+                  <div style={s.verticalGroup}>
+                    <div style={s.verticalGroupTitle}>Health Care</div>
+                    <button
+                      style={{...s.verticalItem, ...(!canCreateWorkspaceContent ? s.verticalItemDisabled : {})}}
+                      disabled={!canCreateWorkspaceContent}
+                      onClick={() => {
+                        if (!canCreateWorkspaceContent) return;
+                        setShowVerticals(false);
+                        setShowNewVisit(true);
+                      }}>
+                      <span>🎙</span>
+                      <span>New clinical visit</span>
+                    </button>
+                  </div>
+                  <div style={s.verticalGroup}>
+                    <div style={s.verticalGroupTitle}>Lease</div>
+                    <button
+                      style={s.verticalItem}
+                      onClick={() => {
+                        setShowVerticals(false);
+                        setTab('documents');
+                      }}>
+                      <span>🏢</span>
+                      <span>Open lease documents</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
             <div style={{ textAlign:'right' }}>
               <p style={{ fontSize:13, fontWeight:600, color:'var(--tx)' }}>{user.full_name||user.email}</p>
               <p style={{ fontSize:11, color:'var(--muted2)' }}>{user.email}</p>
@@ -165,7 +219,7 @@ export default function App() {
               onSwitchWorkspace={ws => { setActiveWorkspace(ws); setTab('documents'); }}
             />
           )}
-          {tab==='documents' && <div style={{ height:'100%', overflowY:'auto' }}><DocumentsTab onEmbedChange={setEmbeddedDocs} activeWorkspace={activeWorkspace} /></div>}
+          {tab==='documents' && <div style={{ height:'100%', overflowY:'auto' }}><DocumentsTab onEmbedChange={setEmbeddedDocs} activeWorkspace={activeWorkspace} refreshKey={documentsRefreshKey} /></div>}
           {tab==='chat'      && <ChatTab embeddedDocs={embeddedDocs} activeWorkspace={activeWorkspace} />}
           {tab==='admin' && isAdmin && <div style={{ height:'100%', overflowY:'auto' }}><AdminDashboard /></div>}
         </div>
@@ -189,6 +243,13 @@ const s = {
   tabActive: { background:'rgba(74,222,128,.12)', color:'#4ade80', fontWeight:700 },
   badge:     { fontSize:10, padding:'2px 7px', borderRadius:20, background:'#15803d', color:'#fff', fontWeight:700 },
   userArea:  { display:'flex', alignItems:'center', gap:12, flexShrink:0 },
+  verticalWrap:{ position:'relative', flexShrink:0 },
+  verticalBtn:{ fontSize:12, padding:'5px 12px', background:'rgba(74,222,128,.08)', color:'#4ade80', border:'1px solid rgba(74,222,128,.28)', borderRadius:'var(--r)', cursor:'pointer', fontWeight:700 },
+  verticalMenu:{ position:'absolute', top:'calc(100% + 8px)', right:0, width:230, background:'#0f1f0f', border:'1px solid rgba(74,222,128,.18)', borderRadius:8, boxShadow:'0 18px 48px rgba(0,0,0,.45)', padding:8, zIndex:80, display:'flex', flexDirection:'column', gap:8 },
+  verticalGroup:{ display:'flex', flexDirection:'column', gap:5 },
+  verticalGroupTitle:{ fontSize:10, color:'var(--muted2)', textTransform:'uppercase', letterSpacing:'.8px', fontWeight:800, padding:'2px 4px' },
+  verticalItem:{ display:'flex', alignItems:'center', gap:8, width:'100%', padding:'8px 9px', background:'var(--s2)', border:'1px solid var(--b2)', color:'var(--tx)', borderRadius:7, cursor:'pointer', fontSize:12, fontWeight:700, textAlign:'left' },
+  verticalItemDisabled:{ opacity:.45, cursor:'not-allowed' },
   langWrap:  { display:'flex', alignItems:'center', gap:5, padding:'4px 8px', border:'1px solid var(--b2)', borderRadius:'var(--r)', background:'var(--s2)' },
   langSelect:{ width:'auto', minWidth:78, padding:'2px 4px', border:'none', boxShadow:'none', background:'transparent', color:'var(--tx2)', fontSize:12, cursor:'pointer' },
   signOutBtn:{ padding:'6px 14px', fontSize:12, fontWeight:500, background:'transparent', border:'1px solid var(--b2)', color:'var(--muted2)', borderRadius:'var(--r)', cursor:'pointer', transition:'all .15s' },

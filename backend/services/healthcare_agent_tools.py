@@ -11,13 +11,20 @@ from services.healthcare_intelligence import (
     detect_prior_auth_gaps,
     extract_prior_auth_policy_criteria,
     extract_prior_auth_request,
+    extract_transcript_intake,
+    extract_visit_followup_checklist,
+    generate_patient_friendly_summary,
+    generate_soap_note,
     generate_prior_auth_packet,
     map_prior_auth_evidence,
     merge_healthcare_outputs,
     merge_prior_auth_outputs,
+    merge_transcription_outputs,
     review_medications,
     review_phi_governance,
+    review_scribe_governance,
     summarize_clinical,
+    transcribe_clinical_audio,
 )
 
 
@@ -49,7 +56,7 @@ async def clinical_summary_tool(context: dict[str, Any], outputs: dict[str, Any]
             raise
     if previous:
         result = _merge_lists(previous, result, ("diagnoses_or_assessments_mentioned", "plan", "patient_instructions", "human_review_notes"))
-    return _with_quality(result, _summary_quality(result))
+    return _with_quality(result, _patient_summary_quality(result))
 
 
 async def lab_results_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
@@ -209,6 +216,110 @@ async def merge_prior_auth_outputs_tool(context: dict[str, Any], outputs: dict[s
     return result
 
 
+async def transcription_audio_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
+    previous = _first_dict(agent.get("previous_output"), outputs.get("conversation_transcript"))
+    if previous and previous.get("transcript_text"):
+        return _with_quality(previous, {"complete": True, "missing": [], "confidence": previous.get("confidence", 0)})
+    audio_bytes = context.get("audio_bytes")
+    if not audio_bytes:
+        raise HealthcareIntelligenceError("No audio bytes were provided for clinical transcription")
+    result = await transcribe_clinical_audio(
+        audio_bytes,
+        context.get("audio_mime_type") or "application/octet-stream",
+        context.get("language") or "",
+    )
+    if not result.get("transcript_text"):
+        raise HealthcareIntelligenceError("Clinical transcription returned no text")
+    return _with_quality(result, {"complete": True, "missing": [], "confidence": result.get("confidence", 0)})
+
+
+async def transcription_intake_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
+    previous = _first_dict(agent.get("previous_output"), outputs.get("conversation_intake"))
+    transcript = _transcript_text(context, outputs)
+    try:
+        result = await extract_transcript_intake(
+            transcript,
+            context.get("document_name") or "Clinical conversation",
+            context.get("document_context") or "",
+        )
+    except HealthcareIntelligenceError:
+        if previous:
+            result = previous
+        else:
+            raise
+    return _with_quality(result, _intake_quality(result))
+
+
+async def soap_note_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
+    previous = _first_dict(agent.get("previous_output"), outputs.get("soap_note"))
+    try:
+        result = await generate_soap_note(
+            _transcript_text(context, outputs),
+            outputs.get("conversation_intake") or {},
+            context.get("document_context") or "",
+        )
+    except HealthcareIntelligenceError:
+        result = previous or {"summary": "SOAP note generation failed and requires clinician review.", "subjective": [], "objective": [], "assessment": [], "plan": [], "confidence": 0}
+    if previous:
+        result = _merge_lists(previous, result, ("subjective", "objective", "assessment", "plan", "medications_discussed", "orders_or_tests_discussed", "human_review_notes"))
+    return _with_quality(result, _multi_list_quality(result, ("subjective", "assessment", "plan"), allow_empty=False))
+
+
+async def patient_summary_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
+    previous = _first_dict(agent.get("previous_output"), outputs.get("patient_summary"))
+    try:
+        result = await generate_patient_friendly_summary(
+            _transcript_text(context, outputs),
+            outputs.get("soap_note") or {},
+            context.get("language") or "",
+        )
+    except HealthcareIntelligenceError:
+        result = previous or {"summary": "Patient summary generation failed and requires review.", "what_we_discussed": [], "care_team_recommendations": [], "patient_questions": [], "questions_to_ask_next": [], "confidence": 0}
+    if previous:
+        result = _merge_lists(previous, result, ("what_we_discussed", "care_team_recommendations", "patient_questions", "questions_to_ask_next"))
+    return _with_quality(result, _summary_quality(result))
+
+
+async def visit_followup_checklist_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
+    previous = _first_dict(agent.get("previous_output"), outputs.get("followup_checklist"))
+    try:
+        result = await extract_visit_followup_checklist(
+            _transcript_text(context, outputs),
+            outputs.get("soap_note") or {},
+        )
+    except HealthcareIntelligenceError:
+        result = previous or {"summary": "Follow-up checklist generation failed and requires review.", "follow_up_actions": [], "open_questions": [], "confidence": 0}
+    if previous:
+        result = _merge_lists(previous, result, ("follow_up_actions", "open_questions"))
+    return _with_quality(result, _multi_list_quality(result, ("follow_up_actions", "open_questions"), allow_empty=True))
+
+
+async def scribe_governance_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
+    previous = _first_dict(agent.get("previous_output"), outputs.get("scribe_governance"))
+    try:
+        result = await review_scribe_governance(
+            _transcript_text(context, outputs),
+            outputs.get("conversation_intake") or {},
+        )
+    except HealthcareIntelligenceError:
+        result = previous or {
+            "summary": "Scribe governance review failed and requires human review.",
+            "consent_status": "unknown",
+            "phi_categories": [],
+            "redaction_recommendations": [],
+            "governance_notes": [{"control": "clinical_review", "note": "Clinician review is required before use."}],
+            "requires_clinician_review": True,
+            "confidence": 0,
+        }
+    if previous:
+        result = _merge_lists(previous, result, ("phi_categories", "redaction_recommendations", "governance_notes"))
+    return _with_quality(result, _multi_list_quality(result, ("governance_notes",), allow_empty=False))
+
+
+async def merge_transcription_outputs_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
+    return merge_transcription_outputs(outputs, context)
+
+
 HEALTHCARE_AGENT_TOOLS = {
     "healthcare.classify_intake": intake_tool,
     "healthcare.summarize_clinical": clinical_summary_tool,
@@ -224,6 +335,13 @@ HEALTHCARE_AGENT_TOOLS = {
     "healthcare.prior_auth.detect_gaps": gap_detection_tool,
     "healthcare.prior_auth.generate_packet": prior_auth_packet_tool,
     "healthcare.prior_auth.merge_outputs": merge_prior_auth_outputs_tool,
+    "healthcare.transcription.transcribe_audio": transcription_audio_tool,
+    "healthcare.transcription.extract_intake": transcription_intake_tool,
+    "healthcare.transcription.generate_soap": soap_note_tool,
+    "healthcare.transcription.generate_patient_summary": patient_summary_tool,
+    "healthcare.transcription.extract_followup_checklist": visit_followup_checklist_tool,
+    "healthcare.transcription.review_governance": scribe_governance_tool,
+    "healthcare.transcription.merge_outputs": merge_transcription_outputs_tool,
 }
 
 
@@ -280,6 +398,15 @@ def _prior_auth_packet_quality(data: dict[str, Any]) -> dict[str, Any]:
     return {"complete": not missing, "missing": missing, "confidence": data.get("confidence", 0)}
 
 
+def _patient_summary_quality(data: dict[str, Any]) -> dict[str, Any]:
+    missing = []
+    if not data.get("summary"):
+        missing.append("summary")
+    if not data.get("what_we_discussed") and not data.get("care_team_recommendations"):
+        missing.append("patient_summary_items")
+    return {"complete": not missing, "missing": missing, "confidence": data.get("confidence", 0)}
+
+
 def _list_quality(data: dict[str, Any], key: str, allow_empty: bool = False) -> dict[str, Any]:
     items = data.get(key) if isinstance(data.get(key), list) else []
     missing = [] if items or allow_empty else [key]
@@ -320,7 +447,7 @@ def _merge_lists(previous: dict[str, Any], current: dict[str, Any], keys: tuple[
 
 def _stable_key(value: Any) -> str:
     if isinstance(value, dict):
-        for key in ("test_name", "name", "task", "item", "gap", "finding", "field", "control"):
+        for key in ("test_name", "name", "task", "item", "action", "question", "gap", "finding", "field", "control"):
             if value.get(key):
                 return f"{key}:{str(value[key]).strip().lower()}"
     return str(value).strip().lower()
@@ -328,3 +455,8 @@ def _stable_key(value: Any) -> str:
 
 def _document_context(context: dict[str, Any]) -> str:
     return context.get("document_context") or context.get("patient_context") or ""
+
+
+def _transcript_text(context: dict[str, Any], outputs: dict[str, Any]) -> str:
+    transcript = outputs.get("conversation_transcript") or {}
+    return transcript.get("transcript_text") or context.get("transcript_text") or ""

@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import uuid
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
 from auth.dependencies import CurrentUser
@@ -12,7 +15,11 @@ from services.adk_workflow import WorkflowConfigError, load_workflow_config, run
 from services.audit import audit, ip_from, ua_from
 from services.healthcare_agent_tools import HEALTHCARE_AGENT_TOOLS
 from services.healthcare_intelligence import HealthcareIntelligenceError, build_healthcare_context
+from services.chunker import chunk_text
+from services.llm import embed
+from services.text_safety import sanitize_text_for_storage
 from services.usage import check_and_log_daily_event, log_event
+from services.vectordb import delete_document_vectors, store_chunk
 from services.vertical_agent_runs import (
     approve_vertical_run,
     complete_vertical_run,
@@ -31,7 +38,18 @@ log = logging.getLogger("docintel.healthcare.route")
 
 HEALTHCARE_WORKFLOW_ID = "healthcare_phase1"
 PRIOR_AUTH_WORKFLOW_ID = "healthcare_prior_auth_phase1"
+TRANSCRIPTION_WORKFLOW_ID = "healthcare_transcription_phase1"
 HEALTHCARE_VERTICAL = "healthcare"
+MAX_CLINICAL_AUDIO_BYTES = int(os.getenv("CLINICAL_TRANSCRIPTION_MAX_MB", "25")) * 1024 * 1024
+SUPPORTED_CLINICAL_AUDIO_TYPES = {
+    "audio/webm",
+    "audio/mp4",
+    "audio/mpeg",
+    "audio/mp3",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/ogg",
+}
 
 
 class HealthcareApprovalRequest(BaseModel):
@@ -183,6 +201,227 @@ async def run_prior_auth_workflow(
         ua_from(request),
     )
     return await vertical_run_response(db, run)
+
+
+@router.post("/{doc_id}/transcription-workflow")
+async def run_healthcare_transcription_workflow(
+    doc_id: str,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    current_user: CurrentUser,
+    audio: UploadFile = File(...),
+    consent_confirmed: bool = Form(False),
+    language: str = Form(""),
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    if not consent_confirmed:
+        raise HTTPException(400, "Consent is required before recording or uploading a clinical conversation")
+    doc = await _get_accessible_doc(db, doc_id, user_id)
+    content_type = (audio.content_type or "application/octet-stream").split(";")[0].strip().lower()
+    if content_type not in SUPPORTED_CLINICAL_AUDIO_TYPES:
+        raise HTTPException(400, f"Unsupported audio format: {content_type}")
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(400, "No audio received")
+    if len(audio_bytes) > MAX_CLINICAL_AUDIO_BYTES:
+        raise HTTPException(413, f"Audio is too large. Max {MAX_CLINICAL_AUDIO_BYTES // 1024 // 1024} MB")
+
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "voice_transcription",
+        "max_voice_transcriptions_day",
+        metadata={"action": "healthcare_transcription", "doc_id": doc_id, "audio_bytes": len(audio_bytes), "language": language},
+    )
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "healthcare_ai",
+        "max_healthcare_ai_day",
+        metadata={"action": "healthcare_transcription_workflow", "doc_id": doc_id, "audio_bytes": len(audio_bytes), "language": language},
+    )
+
+    visit_id = str(uuid.uuid4())
+    filename = audio.filename or "clinical-conversation.webm"
+    safe_name = filename.replace("/", "_").replace("\\", "_")
+    audio_gcs_path = f"users/{user_id}/documents/{doc_id}/healthcare/transcriptions/{visit_id}/{safe_name}"
+    await gcs.upload_bytes(audio_gcs_path, audio_bytes, content_type)
+
+    config = load_workflow_config(TRANSCRIPTION_WORKFLOW_ID)
+    run = await create_vertical_run(
+        db,
+        workflow_id=TRANSCRIPTION_WORKFLOW_ID,
+        workflow_version=config.get("version") or "healthcare-transcription-v1",
+        vertical=HEALTHCARE_VERTICAL,
+        document_id=doc_id,
+        user_id=user_id,
+        workspace_id=doc.get("workspace_id"),
+        input_data={
+            "document_name": doc["original_name"],
+            "doc_type": doc.get("doc_type"),
+            "doc_domain": doc.get("doc_domain"),
+            "audio_filename": safe_name,
+            "audio_gcs_path": audio_gcs_path,
+            "audio_mime_type": content_type,
+            "audio_size": len(audio_bytes),
+            "language": language,
+            "consent_confirmed": True,
+            "visit_id": visit_id,
+        },
+    )
+    run_id = str(run["id"])
+    background_tasks.add_task(
+        _execute_transcription_workflow_background,
+        run_id,
+        doc_id,
+        user_id,
+        audio_bytes,
+        audio_gcs_path,
+        safe_name,
+        content_type,
+        len(audio_bytes),
+        language,
+        ip_from(request),
+        ua_from(request),
+    )
+    return await vertical_run_response(db, run)
+
+
+@router.post("/transcription-workflow")
+async def run_new_visit_transcription_workflow(
+    background_tasks: BackgroundTasks,
+    request: Request,
+    current_user: CurrentUser,
+    audio: UploadFile = File(...),
+    consent_confirmed: bool = Form(False),
+    language: str = Form(""),
+    visit_title: str = Form(""),
+    workspace_id: str | None = Form(None),
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    if not consent_confirmed:
+        raise HTTPException(400, "Consent is required before recording or uploading a clinical conversation")
+    if workspace_id:
+        from routes.workspaces import _require_role
+        await _require_role(db, workspace_id, user_id, "editor")
+
+    from services.usage import check_document_limit
+    await check_document_limit(db, user_id, quantity=1)
+
+    content_type = (audio.content_type or "application/octet-stream").split(";")[0].strip().lower()
+    if content_type not in SUPPORTED_CLINICAL_AUDIO_TYPES:
+        raise HTTPException(400, f"Unsupported audio format: {content_type}")
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(400, "No audio received")
+    if len(audio_bytes) > MAX_CLINICAL_AUDIO_BYTES:
+        raise HTTPException(413, f"Audio is too large. Max {MAX_CLINICAL_AUDIO_BYTES // 1024 // 1024} MB")
+
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "voice_transcription",
+        "max_voice_transcriptions_day",
+        metadata={"action": "healthcare_new_visit_transcription", "audio_bytes": len(audio_bytes), "language": language},
+    )
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "healthcare_ai",
+        "max_healthcare_ai_day",
+        metadata={"action": "healthcare_new_visit_transcription_workflow", "audio_bytes": len(audio_bytes), "language": language},
+    )
+
+    doc_id = str(uuid.uuid4())
+    visit_id = str(uuid.uuid4())
+    base_title = (visit_title or "").strip() or f"Clinical Visit Transcript {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+    transcript_filename = _safe_filename(base_title, suffix=".txt")
+    transcript_gcs_path = gcs.source_path(user_id, doc_id, transcript_filename)
+    audio_filename = audio.filename or "clinical-conversation.webm"
+    safe_audio_name = audio_filename.replace("/", "_").replace("\\", "_")
+    audio_gcs_path = f"users/{user_id}/documents/{doc_id}/healthcare/transcriptions/{visit_id}/{safe_audio_name}"
+    await gcs.upload_bytes(audio_gcs_path, audio_bytes, content_type)
+
+    await db.execute(
+        """
+        INSERT INTO documents
+          (id, user_id, workspace_id, filename, original_name, file_type, file_size,
+           gcs_source_path, gcs_chunks_dir, status, doc_type, doc_domain, doc_language, classified_at, doc_metadata)
+        VALUES ($1,$2,$3,$4,$5,'text',$6,$7,$8,'chunking','clinical_notes','medical',$9,NOW(),$10::jsonb)
+        """,
+        doc_id,
+        user_id,
+        workspace_id,
+        transcript_filename,
+        base_title,
+        len(audio_bytes),
+        transcript_gcs_path,
+        gcs.chunks_dir(user_id, doc_id),
+        _language_code(language),
+        json.dumps({
+            "source_kind": "healthcare_visit_transcription",
+            "audio_gcs_path": audio_gcs_path,
+            "audio_filename": safe_audio_name,
+            "audio_mime_type": content_type,
+            "consent_confirmed": True,
+            "visit_id": visit_id,
+        }),
+    )
+    await log_event(db, user_id, "upload", metadata={
+        "doc_id": doc_id,
+        "filename": transcript_filename,
+        "file_size": len(audio_bytes),
+        "file_type": "healthcare_visit_audio",
+        "source_kind": "healthcare_visit_transcription",
+    })
+
+    config = load_workflow_config(TRANSCRIPTION_WORKFLOW_ID)
+    run = await create_vertical_run(
+        db,
+        workflow_id=TRANSCRIPTION_WORKFLOW_ID,
+        workflow_version=config.get("version") or "healthcare-transcription-v1",
+        vertical=HEALTHCARE_VERTICAL,
+        document_id=doc_id,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        input_data={
+            "document_name": base_title,
+            "doc_type": "clinical_notes",
+            "doc_domain": "medical",
+            "audio_filename": safe_audio_name,
+            "audio_gcs_path": audio_gcs_path,
+            "audio_mime_type": content_type,
+            "audio_size": len(audio_bytes),
+            "language": language,
+            "consent_confirmed": True,
+            "visit_id": visit_id,
+            "new_visit": True,
+        },
+    )
+    run_id = str(run["id"])
+    background_tasks.add_task(
+        _execute_transcription_workflow_background,
+        run_id,
+        doc_id,
+        user_id,
+        audio_bytes,
+        audio_gcs_path,
+        safe_audio_name,
+        content_type,
+        len(audio_bytes),
+        language,
+        ip_from(request),
+        ua_from(request),
+        True,
+        transcript_gcs_path,
+        transcript_filename,
+        workspace_id,
+    )
+    response = await vertical_run_response(db, run)
+    response["created_document"] = {"doc_id": doc_id, "filename": transcript_filename, "original_name": base_title}
+    return response
 
 
 @router.post("/agent-runs/{run_id}/approve")
@@ -350,6 +589,106 @@ async def _execute_prior_auth_workflow_background(
             await fail_vertical_run(db, run_id, str(exc))
 
 
+async def _execute_transcription_workflow_background(
+    run_id: str,
+    doc_id: str,
+    user_id: str,
+    audio_bytes: bytes,
+    audio_gcs_path: str,
+    audio_filename: str,
+    audio_mime_type: str,
+    audio_size: int,
+    language: str,
+    ip_address: str | None,
+    user_agent: str | None,
+    new_visit: bool = False,
+    transcript_gcs_path: str | None = None,
+    transcript_filename: str | None = None,
+    workspace_id: str | None = None,
+) -> None:
+    pool = get_pool()
+    async with pool.acquire() as db:
+        try:
+            doc = await _get_accessible_doc(db, doc_id, user_id)
+            document_context = ""
+            if doc["status"] in ("chunked", "embedding", "embedded"):
+                try:
+                    document_context = build_healthcare_context(
+                        doc["original_name"],
+                        await _load_doc_chunks(db, doc, user_id),
+                        max_chars=12000,
+                    )
+                except Exception as exc:
+                    log.warning("Could not load optional healthcare document context for transcription run_id=%s: %s", run_id, exc)
+            workflow_context = {
+                "document_id": doc_id,
+                "document_name": doc["original_name"],
+                "document_context": document_context,
+                "doc_type": doc.get("doc_type"),
+                "doc_domain": doc.get("doc_domain"),
+                "audio_bytes": audio_bytes,
+                "audio_gcs_path": audio_gcs_path,
+                "audio_filename": audio_filename,
+                "audio_mime_type": audio_mime_type,
+                "audio_size": audio_size,
+                "language": language,
+                "consent_confirmed": True,
+            }
+            workflow = await run_multi_agent_workflow(
+                TRANSCRIPTION_WORKFLOW_ID,
+                workflow_context,
+                HEALTHCARE_AGENT_TOOLS,
+                lambda agent, agent_call: run_vertical_step(
+                    db,
+                    run_id,
+                    agent.get("name") or agent.get("id") or "Agent",
+                    agent.get("input_summary") or "",
+                    agent_call,
+                ),
+            )
+            await complete_vertical_run(db, run_id, workflow["result"], status="pending_approval")
+            if new_visit:
+                await _persist_new_visit_transcript_document(
+                    db,
+                    doc_id=doc_id,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    run_id=run_id,
+                    result=workflow["result"],
+                    transcript_gcs_path=transcript_gcs_path,
+                    transcript_filename=transcript_filename or doc["original_name"],
+                )
+            await log_event(db, user_id, "healthcare_agent_workflow", metadata={"doc_id": doc_id, "run_id": run_id, "workflow_id": TRANSCRIPTION_WORKFLOW_ID})
+            await audit(
+                db,
+                user_id=user_id,
+                action="healthcare_transcription_workflow",
+                resource_type="document",
+                resource_id=doc_id,
+                metadata={"run_id": run_id, "workflow_id": TRANSCRIPTION_WORKFLOW_ID, "audio_gcs_path": audio_gcs_path},
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        except (HealthcareIntelligenceError, WorkflowConfigError) as exc:
+            log.warning("Healthcare transcription workflow failed run_id=%s doc_id=%s: %s", run_id, doc_id, exc)
+            await fail_vertical_run(db, run_id, str(exc))
+            if new_visit:
+                await db.execute(
+                    "UPDATE documents SET status='error', error_message=$2, updated_at=NOW() WHERE id=$1",
+                    doc_id,
+                    str(exc)[:500],
+                )
+        except Exception as exc:
+            log.exception("Healthcare transcription workflow crashed run_id=%s doc_id=%s", run_id, doc_id)
+            await fail_vertical_run(db, run_id, str(exc))
+            if new_visit:
+                await db.execute(
+                    "UPDATE documents SET status='error', error_message=$2, updated_at=NOW() WHERE id=$1",
+                    doc_id,
+                    str(exc)[:500],
+                )
+
+
 async def _get_accessible_doc(db, doc_id: str, user_id: str) -> dict:
     row = await db.fetchrow(
         """SELECT d.* FROM documents d
@@ -437,3 +776,124 @@ def _json(value):
     if isinstance(value, str):
         return json.loads(value)
     return value
+
+
+async def _persist_new_visit_transcript_document(
+    db,
+    *,
+    doc_id: str,
+    user_id: str,
+    workspace_id: str | None,
+    run_id: str,
+    result: dict,
+    transcript_gcs_path: str | None,
+    transcript_filename: str,
+) -> None:
+    transcript = ((result or {}).get("conversation_transcript") or {}).get("transcript_text") or ""
+    if not transcript.strip():
+        raise HealthcareIntelligenceError("Clinical transcription did not produce transcript text to chunk/embed")
+    packet = (result or {}).get("approved_packet") or result or {}
+    soap = packet.get("soap_note") or {}
+    patient_summary = packet.get("patient_summary") or {}
+    followups = packet.get("followup_checklist") or {}
+    text = sanitize_text_for_storage(
+        "\n\n".join([
+            f"CLINICAL VISIT TRANSCRIPT DOCUMENT\nRun ID: {run_id}",
+            "TRANSCRIPT:\n" + transcript,
+            "SOAP NOTE DRAFT:\n" + json.dumps(soap, ensure_ascii=False, indent=2),
+            "PATIENT-FRIENDLY SUMMARY:\n" + json.dumps(patient_summary, ensure_ascii=False, indent=2),
+            "FOLLOW-UP CHECKLIST:\n" + json.dumps(followups, ensure_ascii=False, indent=2),
+        ])
+    )
+    transcript_gcs_path = transcript_gcs_path or gcs.source_path(user_id, doc_id, transcript_filename)
+    await gcs.upload_text(transcript_gcs_path, text)
+    doc_meta = {
+        "document_id": doc_id,
+        "user_id": user_id,
+        "filename": transcript_filename,
+        "file_type": "text",
+        "source_kind": "healthcare_visit_transcription",
+        "workflow_id": TRANSCRIPTION_WORKFLOW_ID,
+        "run_id": run_id,
+    }
+    chunks = chunk_text(text, doc_meta=doc_meta)
+    if not chunks:
+        raise HealthcareIntelligenceError("Clinical transcript produced no chunks")
+    for chunk in chunks:
+        await gcs.upload_text(gcs.chunk_path(user_id, doc_id, chunk.index), chunk.text)
+    now = datetime.now(timezone.utc).isoformat()
+    meta_obj = {
+        "document": {
+            "id": doc_id,
+            "user_id": user_id,
+            "filename": transcript_filename,
+            "file_type": "text",
+            "total_chunks": len(chunks),
+            "created_at": now,
+            "source_kind": "healthcare_visit_transcription",
+            "workflow_id": TRANSCRIPTION_WORKFLOW_ID,
+            "run_id": run_id,
+        },
+        "chunks": [
+            {
+                "index": c.index,
+                "word_count": c.word_count,
+                "char_count": c.char_count,
+                "gcs_path": gcs.chunk_path(user_id, doc_id, c.index),
+                "source_kind": "healthcare_visit_transcription",
+                "run_id": run_id,
+            }
+            for c in chunks
+        ],
+    }
+    await gcs.upload_json(gcs.metadata_path(user_id, doc_id), meta_obj)
+    await db.execute(
+        """
+        UPDATE documents
+           SET status='embedding',
+               chunk_count=$2,
+               file_size=$3,
+               gcs_source_path=$4,
+               doc_metadata = COALESCE(doc_metadata, '{}'::jsonb) || $5::jsonb,
+               updated_at=NOW()
+         WHERE id=$1
+        """,
+        doc_id,
+        len(chunks),
+        len(text.encode("utf-8")),
+        transcript_gcs_path,
+        json.dumps({"transcript_document": {"run_id": run_id, "chunk_count": len(chunks), "embedded_from_scribe": True}}),
+    )
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "embedding",
+        "max_embeds_day",
+        quantity=len(chunks),
+        metadata={"doc_id": doc_id, "chunk_count": len(chunks), "source_kind": "healthcare_visit_transcription"},
+    )
+    await delete_document_vectors(doc_id)
+    for chunk in chunks:
+        content = sanitize_text_for_storage(await gcs.download_text(gcs.chunk_path(user_id, doc_id, chunk.index)))
+        await store_chunk(
+            document_id=doc_id,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            chunk_index=chunk.index,
+            chunk_total=len(chunks),
+            content=content,
+            embedding=await embed(content),
+            chunk_metadata=chunk.to_metadata(),
+        )
+    await db.execute("UPDATE documents SET status='embedded', updated_at=NOW() WHERE id=$1", doc_id)
+
+
+def _safe_filename(value: str, suffix: str = ".txt") -> str:
+    safe = "".join(ch if ch.isalnum() or ch in ("-", "_", " ") else "_" for ch in value).strip()
+    safe = "_".join(safe.split())[:80] or "clinical_visit_transcript"
+    return safe if safe.endswith(suffix) else safe + suffix
+
+
+def _language_code(locale: str) -> str:
+    lang = (locale or "en").split("-")[0].lower()
+    return lang if lang in {"en", "es", "bn", "hi", "ar"} else "en"

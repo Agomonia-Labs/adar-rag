@@ -1,6 +1,6 @@
 # routes/chat.py — 3-stage RAG: Hybrid Retrieval → Gemini Re-rank → Generate
 from __future__ import annotations
-import json, asyncio, logging
+import json, asyncio, logging, re
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -222,7 +222,8 @@ async def chat_stream_endpoint(
                         "AGENTIC WORKFLOW RULE:\n"
                         "The retrieved context may include [Agentic Source N] blocks produced by the lease or healthcare "
                         "agentic workflow. For domain-specific questions about lease parties, rent, obligations, critical "
-                        "dates, clause risks, healthcare labs, medications, visit summaries, follow-ups, or care gaps, use "
+                        "dates, clause risks, healthcare labs, medications, visit summaries, doctor-patient conversations, "
+                        "SOAP notes, follow-ups, prior authorization evidence, or care gaps, use "
                         "those agentic blocks first because they are structured review outputs. Cite them inline as "
                         "[Agentic Source N]. Use [Source N] retrieved chunks to verify or fill details. If an agentic block "
                         "is partial, say what is missing and answer from document chunks where possible."
@@ -308,7 +309,7 @@ async def _load_agentic_context(
             block = await _lease_agentic_block(db, doc_id, doc, source_index, redact_pii=redact_pii)
             if block:
                 blocks.append(block)
-                source_index += 1
+                source_index += _count_agentic_sources(block)
                 meta["loaded"].append({"document_id": doc_id, "vertical": "lease"})
             else:
                 meta["missing"].append({"document_id": doc_id, "vertical": "lease"})
@@ -317,7 +318,7 @@ async def _load_agentic_context(
             block = await _healthcare_agentic_block(db, doc_id, doc, source_index, redact_pii=redact_pii)
             if block:
                 blocks.append(block)
-                source_index += 1
+                source_index += _count_agentic_sources(block)
                 meta["loaded"].append({"document_id": doc_id, "vertical": "healthcare"})
             else:
                 meta["missing"].append({"document_id": doc_id, "vertical": "healthcare"})
@@ -325,6 +326,10 @@ async def _load_agentic_context(
     if not blocks:
         return "", meta
     return "\n\n---\n\n".join(blocks), meta
+
+
+def _count_agentic_sources(block: str) -> int:
+    return max(1, len(set(re.findall(r"\[Agentic Source\s+(\d+):", block or ""))))
 
 
 def _agentic_targets(docs: list[dict], question: str, force: bool = False) -> list[str]:
@@ -441,33 +446,48 @@ async def _lease_agentic_block(db, doc_id: str, doc: dict, source_index: int, re
 
 
 async def _healthcare_agentic_block(db, doc_id: str, doc: dict, source_index: int, redact_pii: bool = False) -> str:
-    run = await db.fetchrow(
+    runs = await db.fetch(
         """
-        SELECT id, status, workflow_id, workflow_version, result_data, completed_at, updated_at
+        SELECT DISTINCT ON (workflow_id)
+               id, status, workflow_id, workflow_version, result_data, completed_at, updated_at, created_at
         FROM vertical_agent_runs
         WHERE document_id=$1
           AND vertical='healthcare'
-        ORDER BY created_at DESC
-        LIMIT 1
+          AND workflow_id = ANY($2::text[])
+        ORDER BY workflow_id, created_at DESC
         """,
         doc_id,
+        ["healthcare_phase1", "healthcare_prior_auth_phase1", "healthcare_transcription_phase1"],
     )
-    if not run:
+    if not runs:
         return ""
-    payload = _json(run["result_data"]) or {}
-    metadata = {
-        "source": "healthcare_agent_workflow",
-        "run_id": str(run["id"]),
-        "status": run["status"],
-        "workflow_id": run["workflow_id"],
-        "workflow_version": run["workflow_version"],
-        "completed_at": _iso(run["completed_at"]),
-        "updated_at": _iso(run["updated_at"]),
-    }
-    evaluation = await _latest_agent_eval(db, "healthcare", str(run["id"]))
-    if evaluation:
-        metadata["evaluation"] = evaluation
-    return _agentic_block("healthcare", doc, source_index, metadata, payload, redact_pii=redact_pii)
+    blocks = []
+    for offset, run in enumerate(sorted(runs, key=lambda r: _healthcare_workflow_order(r["workflow_id"]))):
+        payload = _json(run["result_data"]) or {}
+        metadata = {
+            "source": "healthcare_agent_workflow",
+            "run_id": str(run["id"]),
+            "status": run["status"],
+            "workflow_id": run["workflow_id"],
+            "workflow_version": run["workflow_version"],
+            "completed_at": _iso(run["completed_at"]),
+            "updated_at": _iso(run["updated_at"]),
+        }
+        evaluation = await _latest_agent_eval(db, "healthcare", str(run["id"]))
+        if evaluation:
+            metadata["evaluation"] = evaluation
+        block = _agentic_block("healthcare", doc, source_index + offset, metadata, payload, redact_pii=redact_pii)
+        if block:
+            blocks.append(block)
+    return "\n\n---\n\n".join(blocks)
+
+
+def _healthcare_workflow_order(workflow_id: str) -> int:
+    return {
+        "healthcare_phase1": 1,
+        "healthcare_transcription_phase1": 2,
+        "healthcare_prior_auth_phase1": 3,
+    }.get(workflow_id or "", 99)
 
 
 async def _latest_agent_eval(db, vertical: str, run_id: str) -> dict | None:
@@ -539,6 +559,12 @@ def _trim_agentic_payload(payload: dict) -> dict:
         "gap_detection",
         "prior_auth_packet",
         "policy_documents",
+        "conversation_transcript",
+        "conversation_intake",
+        "soap_note",
+        "patient_summary",
+        "followup_checklist",
+        "scribe_governance",
         "approved_packet",
         "agent_quality",
         "confidence",

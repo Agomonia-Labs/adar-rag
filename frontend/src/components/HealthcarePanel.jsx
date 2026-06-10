@@ -6,6 +6,8 @@ import {
   fetchHealthcareAgentRun,
   fetchLatestHealthcareAgentWorkflow,
   runHealthcareAgentWorkflow,
+  runHealthcareTranscriptionWorkflow,
+  runNewVisitTranscriptionWorkflow,
   runPriorAuthWorkflow,
 } from '../services/api.js';
 import { toast } from './Toast.jsx';
@@ -30,22 +32,62 @@ const WORKFLOWS = {
     workflowId: 'healthcare_prior_auth_phase1',
     empty: 'No prior authorization workflow yet. Upload/embed payer policy docs, then run this workflow to map criteria to patient evidence.',
   },
+  scribe: {
+    label: 'Clinical scribe',
+    workflowId: 'healthcare_transcription_phase1',
+    empty: 'No clinical scribe workflow yet. Record or upload a doctor-patient conversation to draft a SOAP note, patient summary, and follow-up checklist.',
+  },
 };
 
-export default function HealthcarePanel({ doc, onClose }) {
+function supportedAudioMimeType() {
+  if (!window.MediaRecorder?.isTypeSupported) return '';
+  return [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/ogg;codecs=opus',
+  ].find(type => window.MediaRecorder.isTypeSupported(type)) || '';
+}
+
+function stopMediaTracks(ref) {
+  ref?.current?.getTracks?.().forEach(track => track.stop());
+  if (ref) ref.current = null;
+}
+
+export default function HealthcarePanel({ doc, onClose, newVisit = false, workspaceId = null, onCreated }) {
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('clinical');
-  const [runs, setRuns] = useState({ clinical: null, priorAuth: null });
-  const [evaluations, setEvaluations] = useState({ clinical: null, priorAuth: null });
-  const [approvalNotes, setApprovalNotes] = useState({ clinical: '', priorAuth: '' });
+  const [activeTab, setActiveTab] = useState(newVisit ? 'scribe' : 'clinical');
+  const [runs, setRuns] = useState({ clinical: null, priorAuth: null, scribe: null });
+  const [evaluations, setEvaluations] = useState({ clinical: null, priorAuth: null, scribe: null });
+  const [approvalNotes, setApprovalNotes] = useState({ clinical: '', priorAuth: '', scribe: '' });
+  const [consentConfirmed, setConsentConfirmed] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recordedAudio, setRecordedAudio] = useState(null);
+  const [audioFile, setAudioFile] = useState(null);
+  const [scribeLanguage, setScribeLanguage] = useState('en-US');
+  const [visitTitle, setVisitTitle] = useState('');
+  const [recordingStatus, setRecordingStatus] = useState('');
+  const recorderRef = React.useRef(null);
+  const streamRef = React.useRef(null);
+  const chunksRef = React.useRef([]);
+  const audioInputRef = React.useRef(null);
 
   useEffect(() => {
     let alive = true;
-    if (!doc?.id) return;
-    setRuns({ clinical: null, priorAuth: null });
-    setEvaluations({ clinical: null, priorAuth: null });
-    setApprovalNotes({ clinical: '', priorAuth: '' });
-    setActiveTab('clinical');
+    if (!doc?.id) {
+      setRuns({ clinical: null, priorAuth: null, scribe: null });
+      setEvaluations({ clinical: null, priorAuth: null, scribe: null });
+      setApprovalNotes({ clinical: '', priorAuth: '', scribe: '' });
+      setActiveTab('scribe');
+      return () => {
+        alive = false;
+        stopMediaTracks(streamRef);
+      };
+    }
+    setRuns({ clinical: null, priorAuth: null, scribe: null });
+    setEvaluations({ clinical: null, priorAuth: null, scribe: null });
+    setApprovalNotes({ clinical: '', priorAuth: '', scribe: '' });
+    setActiveTab(newVisit ? 'scribe' : 'clinical');
     Object.entries(WORKFLOWS).forEach(([key, cfg]) => {
       fetchLatestHealthcareAgentWorkflow(doc.id, cfg.workflowId)
         .then(data => {
@@ -57,13 +99,17 @@ export default function HealthcarePanel({ doc, onClose }) {
         })
         .catch(() => {});
     });
-    return () => { alive = false; };
-  }, [doc?.id]);
+    return () => {
+      alive = false;
+      stopMediaTracks(streamRef);
+    };
+  }, [doc?.id, newVisit]);
 
   const updateRun = (key, value) => setRuns(prev => ({ ...prev, [key]: value }));
   const updateEval = (key, value) => setEvaluations(prev => ({ ...prev, [key]: value }));
 
   const runWorkflow = async () => {
+    if (!doc?.id) return;
     setLoading(true);
     try {
       const data = await runHealthcareAgentWorkflow(doc.id);
@@ -85,6 +131,7 @@ export default function HealthcarePanel({ doc, onClose }) {
   };
 
   const runPriorAuth = async () => {
+    if (!doc?.id) return;
     setLoading(true);
     try {
       const data = await runPriorAuthWorkflow(doc.id);
@@ -101,6 +148,106 @@ export default function HealthcarePanel({ doc, onClose }) {
       }
     } catch (e) {
       toast(e.message || 'Prior authorization workflow failed', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startRecording = async () => {
+    if (!consentConfirmed) {
+      toast('Confirm consent before recording a clinical conversation', 'error');
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      toast('This browser cannot record microphone audio here. Use Chrome, Edge, or Safari over HTTPS/localhost.', 'error');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = supportedAudioMimeType();
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      chunksRef.current = [];
+      streamRef.current = stream;
+      recorderRef.current = recorder;
+      recorder.ondataavailable = event => {
+        if (event.data?.size) chunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || mimeType || 'audio/webm' });
+        chunksRef.current = [];
+        setRecordedAudio(blob);
+        setAudioFile(null);
+        setRecording(false);
+        setRecordingStatus(`Recorded ${(blob.size / 1024 / 1024).toFixed(2)} MB conversation audio.`);
+        stopMediaTracks(streamRef);
+      };
+      recorder.start();
+      setRecordedAudio(null);
+      setAudioFile(null);
+      setRecording(true);
+      setRecordingStatus('Recording clinical conversation...');
+    } catch (e) {
+      stopMediaTracks(streamRef);
+      setRecording(false);
+      setRecordingStatus('');
+      toast(e.message || 'Could not start microphone recording', 'error');
+    }
+  };
+
+  const stopRecording = () => {
+    if (recorderRef.current?.state === 'recording') {
+      recorderRef.current.stop();
+    }
+  };
+
+  const handleAudioSelected = (file) => {
+    setAudioFile(file || null);
+    setRecordedAudio(null);
+    setRecordingStatus(file ? `Ready to upload: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB). Click Run clinical scribe to upload and process.` : '');
+  };
+
+  const runScribe = async () => {
+    const audio = audioFile || recordedAudio;
+    if (!audio) {
+      toast('Record or upload conversation audio first', 'error');
+      return;
+    }
+    if (!consentConfirmed) {
+      toast('Confirm consent before running clinical transcription', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = doc?.id
+        ? await runHealthcareTranscriptionWorkflow(doc.id, audio, {
+            language: scribeLanguage,
+            consentConfirmed,
+            filename: audioFile?.name || 'clinical-conversation.webm',
+          })
+        : await runNewVisitTranscriptionWorkflow(audio, {
+            language: scribeLanguage,
+            consentConfirmed,
+            filename: audioFile?.name || 'clinical-conversation.webm',
+            visitTitle,
+            workspaceId,
+          });
+      setActiveTab('scribe');
+      updateRun('scribe', data);
+      updateEval('scribe', null);
+      if (data.created_document) {
+        toast(`New visit transcript document created: ${data.created_document.original_name}`, 'success');
+        onCreated?.(data.created_document);
+      }
+      toast('Clinical scribe workflow started', 'info');
+      const finalRun = await waitForAgentRun(data.run_id, run => updateRun('scribe', run));
+      if (finalRun.status === 'failed') {
+        toast(finalRun.error_message || 'Clinical scribe workflow failed', 'error');
+      } else {
+        await refreshEvaluation(finalRun.run_id, evaluation => updateEval('scribe', evaluation), true);
+        toast('Clinical scribe draft completed; ready for clinician approval', 'success');
+      }
+    } catch (e) {
+      toast(e.message || 'Clinical scribe workflow failed', 'error');
     } finally {
       setLoading(false);
     }
@@ -135,14 +282,14 @@ export default function HealthcarePanel({ doc, onClose }) {
         <div style={s.head}>
           <div>
             <div style={s.kicker}>Healthcare / Clinical Document Intelligence</div>
-            <h2 style={s.title}>Healthcare workflow: {doc?.original_name}</h2>
+            <h2 style={s.title}>{doc?.id ? `Healthcare workflow: ${doc.original_name}` : 'New clinical visit transcription'}</h2>
           </div>
           <button style={s.close} onClick={onClose}>x</button>
         </div>
 
         <div style={s.actions}>
           <div style={s.tabs}>
-            {Object.entries(WORKFLOWS).map(([key, cfg]) => (
+            {Object.entries(WORKFLOWS).filter(([key]) => doc?.id || key === 'scribe').map(([key, cfg]) => (
               <button key={key} style={activeTab === key ? s.tabActive : s.tab} onClick={() => setActiveTab(key)}>
                 {cfg.label}
                 {runs[key]?.status && <span style={s.tabStatus}>{runs[key].status}</span>}
@@ -153,13 +300,77 @@ export default function HealthcarePanel({ doc, onClose }) {
             <button style={s.primary} disabled={loading || !['chunked','embedding','embedded'].includes(doc?.status)} onClick={runWorkflow}>
               {loading ? 'Running...' : runs.clinical ? 'Re-run clinical workflow' : 'Run clinical workflow'}
             </button>
-          ) : (
+          ) : activeTab === 'priorAuth' ? (
             <button style={s.secondary} disabled={loading || !['chunked','embedding','embedded'].includes(doc?.status)} onClick={runPriorAuth}>
               {loading ? 'Running...' : runs.priorAuth ? 'Re-run prior auth workflow' : 'Run prior auth workflow'}
             </button>
+          ) : (
+            <button style={s.scribeButton} disabled={loading || recording || !(audioFile || recordedAudio) || !consentConfirmed} onClick={runScribe}>
+              {loading ? 'Running...' : runs.scribe ? 'Re-run clinical scribe' : 'Run clinical scribe'}
+            </button>
           )}
-          <span style={s.hint}>Assistive workflow only. Requires citations, PHI governance, and human approval.</span>
+          <span style={s.hint}>{doc?.id ? 'Assistive workflow only. Requires citations, PHI governance, and human approval.' : 'Brand-new visit mode creates a transcript document, embeds it, and saves the scribe packet for later chat.'}</span>
         </div>
+
+        {activeTab === 'scribe' && (
+          <div style={s.scribeTools}>
+            <label style={s.checkLabel}>
+              <input type="checkbox" checked={consentConfirmed} onChange={e=>setConsentConfirmed(e.target.checked)} />
+              Consent confirmed for recording/uploading this clinical conversation
+            </label>
+            <select value={scribeLanguage} onChange={e=>setScribeLanguage(e.target.value)} style={s.select}>
+              <option value="en-US">English</option>
+              <option value="es-US">Spanish</option>
+              <option value="bn-BD">Bangla</option>
+              <option value="hi-IN">Hindi</option>
+              <option value="ar">Arabic</option>
+            </select>
+            {!doc?.id && (
+              <input
+                value={visitTitle}
+                onChange={e=>setVisitTitle(e.target.value)}
+                placeholder="Visit title, e.g. New patient visit - June 2026"
+                style={s.visitInput}
+              />
+            )}
+            {!recording ? (
+              <button style={s.smallBtn} disabled={loading || !consentConfirmed} onClick={startRecording}>Record visit</button>
+            ) : (
+              <button style={s.stopBtn} onClick={stopRecording}>Stop recording</button>
+            )}
+            <input
+              ref={audioInputRef}
+              type="file"
+              accept="audio/*,.mp3,.wav,.m4a,.mp4,.webm,.ogg"
+              style={{display:'none'}}
+              onChange={e => {
+                handleAudioSelected(e.target.files?.[0] || null);
+                e.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              style={s.fileBtn}
+              disabled={loading || recording}
+              onClick={() => audioInputRef.current?.click()}>
+              Choose audio file
+            </button>
+            {(audioFile || recordedAudio) && (
+              <button
+                type="button"
+                style={s.clearBtn}
+                disabled={loading || recording}
+                onClick={() => {
+                  setAudioFile(null);
+                  setRecordedAudio(null);
+                  setRecordingStatus('');
+                }}>
+                Clear audio
+              </button>
+            )}
+            {(recordingStatus || audioFile || recordedAudio) && <span style={s.recordingStatus}>{recordingStatus || 'Audio ready. Click Run clinical scribe to upload and process.'}</span>}
+          </div>
+        )}
 
         <div style={s.scroll}>
           {!agentRun ? <div style={s.empty}>{activeConfig.empty}</div> : (
@@ -220,6 +431,8 @@ export default function HealthcarePanel({ doc, onClose }) {
 
               {activeTab === 'priorAuth' ? (
                 <PriorAuthPacket packet={packet} />
+              ) : activeTab === 'scribe' ? (
+                <ClinicalScribePacket packet={packet} />
               ) : (
                 <ClinicalPacket packet={packet} />
               )}
@@ -292,6 +505,57 @@ function PriorAuthPacket({ packet }) {
         <Rows rows={packet.gap_detection?.missing_items || []} cols={['item','reason','priority','source']} title="Missing items" />
         <Rows rows={packet.gap_detection?.submission_risks || []} cols={['risk','priority','recommended_action']} title="Submission risks" />
         <Rows rows={packet.prior_auth_packet?.next_actions || []} cols={['action','owner','priority']} title="Next actions" />
+      </section>
+    </>
+  );
+}
+
+function ClinicalScribePacket({ packet }) {
+  const transcript = packet.conversation_transcript?.transcript_text || '';
+  return (
+    <>
+      <PatientContext packet={packet} />
+
+      <section style={s.section}>
+        <h3 style={s.h3}>SOAP Note Draft</h3>
+        <p style={s.summary}>{packet.soap_note?.summary || 'No SOAP note summary returned yet.'}</p>
+        <Rows rows={packet.soap_note?.subjective || []} cols={['item','source','confidence']} title="Subjective" />
+        <Rows rows={packet.soap_note?.objective || []} cols={['item','source','confidence']} title="Objective" />
+        <Rows rows={packet.soap_note?.assessment || []} cols={['item','source','confidence']} title="Assessment" />
+        <Rows rows={packet.soap_note?.plan || []} cols={['item','source','confidence']} title="Plan" />
+        <Rows rows={packet.soap_note?.medications_discussed || []} cols={['name','discussion','details','source','confidence']} title="Medications discussed" />
+        <Rows rows={packet.soap_note?.orders_or_tests_discussed || []} cols={['item','status','source','confidence']} title="Orders / tests discussed" />
+        <Rows rows={packet.soap_note?.human_review_notes || []} cols={['note','priority']} title="Clinician review notes" />
+      </section>
+
+      <section style={s.section}>
+        <h3 style={s.h3}>Patient-Friendly Summary</h3>
+        <p style={s.summary}>{packet.patient_summary?.summary || 'No patient summary returned yet.'}</p>
+        <Rows rows={packet.patient_summary?.what_we_discussed || []} cols={['item','source','confidence']} title="What was discussed" />
+        <Rows rows={packet.patient_summary?.care_team_recommendations || []} cols={['item','source','confidence']} title="Care team recommendations" />
+        <Rows rows={packet.patient_summary?.patient_questions || []} cols={['question','source','confidence']} title="Patient questions" />
+        <Rows rows={packet.patient_summary?.questions_to_ask_next || []} cols={['question','reason']} title="Questions to ask next" />
+      </section>
+
+      <section style={s.section}>
+        <h3 style={s.h3}>Follow-Up Checklist</h3>
+        <p style={s.summary}>{packet.followup_checklist?.summary || ''}</p>
+        <Rows rows={packet.followup_checklist?.follow_up_actions || []} cols={['action','owner','due_date','priority','source','confidence']} title="Follow-up actions" />
+        <Rows rows={packet.followup_checklist?.open_questions || []} cols={['question','owner','priority','source']} title="Open questions" />
+      </section>
+
+      <section style={s.section}>
+        <h3 style={s.h3}>Scribe Governance</h3>
+        <p style={s.summary}>{packet.scribe_governance?.summary || 'No governance summary returned.'}</p>
+        <div style={s.meta}>Consent: {packet.scribe_governance?.consent_status || 'unknown'} · Clinician review required: {packet.scribe_governance?.requires_clinician_review === false ? 'No' : 'Yes'}</div>
+        <div style={s.meta}>PHI categories: {(packet.scribe_governance?.phi_categories || []).join(', ') || 'none listed'}</div>
+        <Rows rows={packet.scribe_governance?.redaction_recommendations || []} cols={['field','recommendation','reason','source']} title="Redaction recommendations" />
+        <Rows rows={packet.scribe_governance?.governance_notes || []} cols={['control','note']} title="Governance notes" />
+      </section>
+
+      <section style={s.section}>
+        <h3 style={s.h3}>Transcript</h3>
+        <div style={s.transcript}>{transcript || 'No transcript returned yet.'}</div>
       </section>
     </>
   );
@@ -451,8 +715,18 @@ const s = {
   tabStatus:{fontSize:10,textTransform:'uppercase',color:'#4ade80',background:'rgba(74,222,128,.1)',border:'1px solid rgba(74,222,128,.22)',borderRadius:20,padding:'1px 6px'},
   primary:{background:'#b91c1c',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:800,cursor:'pointer'},
   secondary:{background:'#2563eb',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:800,cursor:'pointer'},
+  scribeButton:{background:'#047857',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:800,cursor:'pointer'},
   approve:{background:'#2563eb',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:12,fontWeight:800,cursor:'pointer'},
   hint:{fontSize:12,color:'var(--muted2)'},
+  scribeTools:{display:'flex',alignItems:'center',gap:10,padding:'10px 18px',borderBottom:'1px solid var(--b1)',background:'rgba(4,120,87,.07)',flexWrap:'wrap'},
+  checkLabel:{display:'inline-flex',alignItems:'center',gap:8,fontSize:12,color:'var(--tx2)',fontWeight:700},
+  select:{background:'var(--s3)',border:'1px solid var(--b2)',borderRadius:8,color:'var(--tx)',padding:'7px 9px',fontSize:12},
+  visitInput:{minWidth:260,flex:'1 1 260px',background:'var(--s3)',border:'1px solid var(--b2)',borderRadius:8,color:'var(--tx)',padding:'7px 9px',fontSize:12},
+  smallBtn:{background:'#047857',color:'#fff',border:'none',borderRadius:8,padding:'7px 11px',fontSize:12,fontWeight:800,cursor:'pointer'},
+  stopBtn:{background:'#b91c1c',color:'#fff',border:'none',borderRadius:8,padding:'7px 11px',fontSize:12,fontWeight:800,cursor:'pointer'},
+  fileBtn:{background:'var(--s3)',border:'1px solid var(--b2)',borderRadius:8,color:'var(--tx)',padding:'7px 11px',fontSize:12,fontWeight:800,cursor:'pointer'},
+  clearBtn:{background:'transparent',border:'1px solid rgba(248,113,113,.3)',borderRadius:8,color:'#f87171',padding:'7px 11px',fontSize:12,fontWeight:800,cursor:'pointer'},
+  recordingStatus:{fontSize:12,color:'#a7f3d0'},
   scroll:{flex:1,minHeight:0,overflowY:'auto',display:'flex',flexDirection:'column'},
   body:{padding:18,display:'flex',flexDirection:'column',gap:16},
   section:{border:'1px solid var(--b1)',background:'var(--s2)',borderRadius:8,padding:14},
@@ -479,6 +753,7 @@ const s = {
   recs:{marginTop:10,display:'flex',flexDirection:'column',gap:6},
   rec:{fontSize:12,color:'var(--tx2)',border:'1px solid rgba(251,191,36,.2)',background:'rgba(251,191,36,.06)',borderRadius:8,padding:'7px 9px'},
   notes:{width:'100%',minHeight:54,marginTop:10,background:'var(--s3)',border:'1px solid var(--b2)',borderRadius:8,color:'var(--tx)',padding:8,resize:'vertical'},
+  transcript:{whiteSpace:'pre-wrap',fontSize:12,lineHeight:1.6,color:'var(--tx2)',background:'rgba(0,0,0,.18)',border:'1px solid var(--b2)',borderRadius:8,padding:12,maxHeight:260,overflowY:'auto'},
   empty:{padding:28,textAlign:'center',color:'var(--muted2)'},
   emptySmall:{fontSize:12,color:'var(--muted2)',marginTop:8},
 };
