@@ -166,6 +166,13 @@ export default function LeasePanel({ doc, compareDocs = null, onClose }) {
           </div>
         )}
 
+        {!compareDocs && !agentRun && (
+          <div style={s.workflowNotice}>
+            <strong>No saved lease agent workflow found yet.</strong>
+            <span>Click <b>Run agent workflow</b> to create the lease abstract, critical dates, obligations, clause flags, risk flags, evaluation, and approval packet for this document.</span>
+          </div>
+        )}
+
         <div style={s.scroll}>
           {agentRun ? (
             <AgentWorkflowView
@@ -493,6 +500,7 @@ const s = {
   secondary:{background:'rgba(251,191,36,.1)',color:'#fbbf24',border:'1px solid rgba(251,191,36,.3)',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:800,cursor:'pointer'},
   approve:{background:'#2563eb',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:12,fontWeight:800,cursor:'pointer'},
   hint:{fontSize:12,color:'var(--muted2)'},
+  workflowNotice:{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',padding:'9px 18px',borderBottom:'1px solid rgba(251,191,36,.18)',background:'rgba(251,191,36,.07)',color:'#fbbf24',fontSize:12,lineHeight:1.45},
   scroll:{flex:1,minHeight:0,overflowY:'auto',display:'flex',flexDirection:'column'},
   body:{padding:18,display:'flex',flexDirection:'column',gap:16},
   bodyCompact:{padding:'14px 18px 0',display:'flex',flexDirection:'column',gap:12},

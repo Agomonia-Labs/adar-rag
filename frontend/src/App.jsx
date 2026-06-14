@@ -21,6 +21,7 @@ export default function App() {
   const [showBilling,      setShowBilling]      = useState(false);
   const [showVerticals,    setShowVerticals]    = useState(false);
   const [showNewVisit,     setShowNewVisit]     = useState(false);
+  const [openLeasePickerKey, setOpenLeasePickerKey] = useState(0);
   const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0);
   const [activeWorkspace,  setActiveWorkspace]  = useState(null);
   const [uiLang,           setUiLang]           = useState(() => localStorage.getItem('ui_lang') || 'en');
@@ -160,6 +161,7 @@ export default function App() {
                       onClick={() => {
                         setShowVerticals(false);
                         setTab('documents');
+                        setOpenLeasePickerKey(k => k + 1);
                       }}>
                       <span>🏢</span>
                       <span>Open lease documents</span>
@@ -219,7 +221,7 @@ export default function App() {
               onSwitchWorkspace={ws => { setActiveWorkspace(ws); setTab('documents'); }}
             />
           )}
-          {tab==='documents' && <div style={{ height:'100%', overflowY:'auto' }}><DocumentsTab onEmbedChange={setEmbeddedDocs} activeWorkspace={activeWorkspace} refreshKey={documentsRefreshKey} /></div>}
+          {tab==='documents' && <div style={{ height:'100%', overflowY:'auto' }}><DocumentsTab onEmbedChange={setEmbeddedDocs} activeWorkspace={activeWorkspace} refreshKey={documentsRefreshKey} openLeasePickerKey={openLeasePickerKey} /></div>}
           {tab==='chat'      && <ChatTab embeddedDocs={embeddedDocs} activeWorkspace={activeWorkspace} />}
           {tab==='admin' && isAdmin && <div style={{ height:'100%', overflowY:'auto' }}><AdminDashboard /></div>}
         </div>

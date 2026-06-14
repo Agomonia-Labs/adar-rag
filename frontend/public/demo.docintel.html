@@ -177,6 +177,35 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
 .final-stack{display:flex;gap:12px;justify-content:center;font-size:9.5px;color:#6b7280;flex-wrap:wrap}
 .final-summary .btn-speak{margin-top:8px!important;padding:5px 12px!important;font-size:10.5px!important}
 @media (max-width:900px){.final-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.final-grid .sum-card-list li{font-size:8px}}
+@media (max-width:720px){
+  html,body,#app{height:100dvh;min-height:100dvh}
+  .topbar{padding:7px 10px;gap:8px}
+  .tb-brand{min-width:0;gap:5px}
+  .tb-leaf{font-size:16px}.tb-bangla{font-size:15px}.tb-en,.tb-mid{display:none}
+  .tb-right{gap:5px}.btn-icon{padding:5px 8px;font-size:10.5px;border-radius:7px}.slide-counter{font-size:10px}
+  .nav-arrows{gap:5px}.nav-btn{width:30px;height:30px;border-radius:8px;font-size:13px}
+  .progress-bar{height:2px}
+  .slides{overflow:hidden}
+  .slide{justify-content:flex-start;align-items:stretch;padding:10px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .slide-inner,.slide-inner.full{display:flex!important;flex-direction:column!important;gap:8px;max-width:none!important;width:100%;text-align:left}
+  .narration{gap:7px}.slide-num{font-size:9px;letter-spacing:1.4px}.slide-title{font-size:clamp(19px,6vw,22px);line-height:1.15}
+  .slide-sub{font-size:10.8px;line-height:1.36}.feature-list{gap:4px;margin-top:0;max-height:25dvh;overflow:auto;padding-right:2px}.feature-item{font-size:10.2px;line-height:1.28;gap:7px}
+  .feature-icon{font-size:13px}.btn-speak{padding:5px 10px;font-size:10.5px;margin-top:2px;border-radius:16px}
+  .mockup{width:100%;border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.38)}
+  .mockup-bar{padding:6px 8px;gap:5px}.mockup-dot{width:7px;height:7px}.mockup-url{font-size:9px;padding:3px 6px}
+  .mockup-body{padding:8px!important;min-height:0;max-height:34dvh;overflow:auto}
+  .mock-header{margin-bottom:8px;padding-bottom:7px}.mock-tabs{display:none}.mock-card-name{max-width:160px}
+  .mock-bubble-user,.mock-bubble-ai{max-width:92%;font-size:9.5px}.mock-table{font-size:8.2px}.mock-table th,.mock-table td{padding:3px 4px}
+  .mock-admin-stats{grid-template-columns:repeat(2,1fr)}.mock-stats{gap:6px}
+  .sum-card{padding:8px;border-radius:8px;gap:5px}.sum-card-icon{width:26px;height:26px;font-size:14px}.sum-card-title{font-size:10.5px}.sum-card-list li{font-size:8.8px;line-height:1.22}
+  .final-summary{padding:10px!important;text-align:center!important}.final-summary .slide-title{font-size:20px!important}.final-summary .slide-sub{font-size:10.5px!important}
+  .final-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;max-height:48dvh;overflow:auto}.final-grid .sum-card{padding:5px}.final-grid .sum-card-icon{width:20px;height:20px;font-size:11px}.final-grid .sum-card-title{font-size:8.6px}.final-grid .sum-card-list li{font-size:7.2px}
+  .final-links a{font-size:10px!important;padding:5px 10px!important}.final-stack{font-size:8px;gap:6px}
+}
+@media (max-height:520px) and (max-width:900px){
+  .slide{padding:8px}.slide-inner{gap:8px}.slide-title{font-size:18px}.slide-sub{font-size:10.5px}.feature-item{font-size:10px}
+  .mockup-body{max-height:36dvh}.btn-speak{display:none}.final-grid{max-height:50dvh}
+}
 </style>
 </head>
 <body>
@@ -913,88 +942,87 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
     <div class="slide" data-idx="15">
       <div class="slide-inner">
         <div class="narration">
-          <div class="slide-num">Architecture Positioning</div>
-          <div class="slide-title">Horizontal RAG Platform + Vertical Agentic AI</div>
-          <div class="slide-sub">DocIntel keeps the reusable self-service RAG foundation separate from specialized domain workflows. Healthcare users can record multilingual visits, generate clinical-scribe packets, ask cited questions across records and payer guides, and run prior authorization agents from the same grounded workspace.</div>
+          <div class="slide-num">Healthcare Vertical</div>
+          <div class="slide-title">Healthcare Product Features</div>
+          <div class="slide-sub">DocIntel turns healthcare conversations, clinical documents, lab reports, medication lists, prior history, and payer policy guides into searchable, governed, Agentic AI workflows for patients, caregivers, providers, care teams, billing teams, and compliance reviewers.</div>
           <div class="feature-list">
-            <div class="feature-item"><span class="feature-icon">↔</span><span>Horizontal RAG — upload, OCR, chunking, embeddings, hybrid search, rerank, 5-language voice/chat, summaries, comparison, citations</span></div>
-            <div class="feature-item"><span class="feature-icon">🔒</span><span>Horizontal controls — PII redaction, auth, workspaces, usage limits, traces, audit logs, observability, governance</span></div>
-            <div class="feature-item"><span class="feature-icon">🎙</span><span>Clinical scribe — record or upload visit audio in English, Spanish, Bangla, Hindi, or Arabic, then create transcript, SOAP draft, patient summary, and follow-up checklist</span></div>
-            <div class="feature-item"><span class="feature-icon">🏥</span><span>Clinical agents — patient context, clinical summary, labs, medications, follow-ups, care gaps, administrative and governance flags</span></div>
-            <div class="feature-item"><span class="feature-icon">🧾</span><span>Prior authorization agents — payer criteria, evidence mapping, missing documentation, submission risks, and human-review packet</span></div>
-            <div class="feature-item"><span class="feature-icon">💬</span><span>Chat asks: does this meet prior auth criteria, what evidence supports it, what documentation is missing, and what next action is needed?</span></div>
-            <div class="feature-item"><span class="feature-icon">⚙</span><span>Workflow — JSON orchestrator runs subagents, saves structured outputs, evaluates quality, and supports human approval</span></div>
-            <div class="feature-item"><span class="feature-icon">👥</span><span>Beneficiaries — patients, caregivers, clinicians, small clinics, prior auth teams, billing/admin teams, and compliance reviewers</span></div>
+            <div class="feature-item"><span class="feature-icon">🎙</span><span>Clinical scribe — consent-based visit audio, 5-language transcription, SOAP note draft, patient summary, and follow-up checklist</span></div>
+            <div class="feature-item"><span class="feature-icon">🏥</span><span>Clinical document intelligence — after-visit summaries, clinical notes, lab reports, medication lists, prior history, and care gaps</span></div>
+            <div class="feature-item"><span class="feature-icon">🧾</span><span>Prior authorization readiness — payer criteria, evidence mapping, missing documents, submission risks, and review packet</span></div>
+            <div class="feature-item"><span class="feature-icon">💬</span><span>Patient and team chat — ask what happened, what changed, what evidence exists, what is missing, and what action is next</span></div>
+            <div class="feature-item"><span class="feature-icon">🔎</span><span>Grounded RAG — cited answers across transcripts, clinical records, payer policy guides, and approved workflow outputs</span></div>
+            <div class="feature-item"><span class="feature-icon">🔐</span><span>Governance — PHI/PII redaction, role-based workspaces, traces, audit logs, evaluation scores, and human approval</span></div>
           </div>
           <button class="btn-speak" onclick="speakSlide(15)">🔊 Play narration</button>
         </div>
         <div class="mockup">
-          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">Layered Intelligence Architecture</div></div>
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">Healthcare Vertical — Product Feature Map</div></div>
           <div class="mockup-body" style="display:flex;flex-direction:column;gap:8px;padding:10px">
 
-            <!-- Vertical cards -->
-            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:7px">
-              <div style="background:rgba(96,165,250,.06);border:0.5px solid rgba(96,165,250,.22);border-radius:8px;padding:8px 9px">
-                <div style="font-size:10px;font-weight:800;color:#60a5fa;margin-bottom:5px">Lease Management</div>
-                <div style="font-size:9px;color:#9ca3af;line-height:1.55">Abstracts<br/>Clause review<br/>Dates + obligations</div>
+            <!-- Healthcare product features -->
+            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:7px">
+              <div style="background:rgba(74,222,128,.06);border:0.5px solid rgba(74,222,128,.22);border-radius:8px;padding:8px 9px">
+                <div style="font-size:10px;font-weight:800;color:#4ade80;margin-bottom:5px">Clinical Scribe</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.55">Visit audio<br/>Transcript<br/>SOAP + summary</div>
               </div>
               <div style="background:rgba(74,222,128,.06);border:0.5px solid rgba(74,222,128,.22);border-radius:8px;padding:8px 9px">
-                <div style="font-size:10px;font-weight:800;color:#4ade80;margin-bottom:5px">Healthcare</div>
-                <div style="font-size:9px;color:#9ca3af;line-height:1.55">Clinical scribe<br/>Patient story<br/>Prior auth</div>
+                <div style="font-size:10px;font-weight:800;color:#4ade80;margin-bottom:5px">Patient Record RAG</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.55">AVS + labs<br/>Meds + history<br/>Cited answers</div>
               </div>
               <div style="background:rgba(251,191,36,.06);border:0.5px solid rgba(251,191,36,.22);border-radius:8px;padding:8px 9px">
-                <div style="font-size:10px;font-weight:800;color:#fbbf24;margin-bottom:5px">Brokerage</div>
-                <div style="font-size:9px;color:#9ca3af;line-height:1.55">KYC<br/>Disclosures<br/>Suitability review</div>
+                <div style="font-size:10px;font-weight:800;color:#fbbf24;margin-bottom:5px">Prior Authorization</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.55">Payer criteria<br/>Evidence map<br/>Missing docs</div>
+              </div>
+              <div style="background:rgba(96,165,250,.06);border:0.5px solid rgba(96,165,250,.22);border-radius:8px;padding:8px 9px">
+                <div style="font-size:10px;font-weight:800;color:#60a5fa;margin-bottom:5px">Governance</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.55">PHI flags<br/>Traceability<br/>Human approval</div>
               </div>
             </div>
 
             <!-- Horizontal platform band -->
             <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.08);border-radius:8px;padding:9px 10px">
-              <div style="font-size:10px;font-weight:800;color:#f0fdf4;margin-bottom:6px">Horizontal RAG + Governance Platform</div>
+              <div style="font-size:10px;font-weight:800;color:#f0fdf4;margin-bottom:6px">Healthcare Workflow Inputs</div>
               <div style="display:flex;flex-wrap:wrap;gap:4px">
-                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Upload</span>
-                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">OCR</span>
-                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">PII</span>
-                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Embeddings</span>
-                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Hybrid RAG</span>
-                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Rerank</span>
-                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Citations</span>
-                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">5-language voice</span>
-                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Traces</span>
-                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Audit</span>
-                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Billing</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Patient-doctor audio</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">After-visit summary</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Clinical notes</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Lab reports</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Medication lists</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Prior history</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Payer policies</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">5 languages</span>
               </div>
             </div>
 
-            <!-- Agent pattern table -->
+            <!-- Healthcare feature table -->
             <div style="background:rgba(255,255,255,.02);border-radius:8px;border:0.5px solid rgba(255,255,255,.08);overflow:hidden">
-              <div style="display:grid;grid-template-columns:98px 1fr 80px;gap:4px;padding:5px 8px;background:rgba(255,255,255,.04);font-size:8.5px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.3px">
-                <div>Pattern</div><div>Purpose</div><div>Control</div>
+              <div style="display:grid;grid-template-columns:94px 1fr 78px;gap:4px;padding:5px 8px;background:rgba(255,255,255,.04);font-size:8.5px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.3px">
+                <div>Feature</div><div>Output</div><div>User</div>
               </div>
-              <div style="display:grid;grid-template-columns:98px 1fr 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(74,222,128,.04)">
-                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">JSON config</div>
-                <div style="font-size:9px;color:#9ca3af">Orchestrator, subagents, tools, output contract per vertical</div>
-                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.2)">Reusable</span></div>
+              <div style="display:grid;grid-template-columns:94px 1fr 78px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(74,222,128,.04)">
+                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Scribe</div>
+                <div style="font-size:9px;color:#9ca3af">Transcript, SOAP note, patient summary, follow-ups</div>
+                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.2)">Care team</span></div>
               </div>
-              <div style="display:grid;grid-template-columns:98px 1fr 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(96,165,250,.04)">
-                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Domain agents</div>
-                <div style="font-size:9px;color:#9ca3af">Clinical scribe, clinical packet, and prior auth packet with saved state, approval, and evaluation</div>
-                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(96,165,250,.12);color:#60a5fa;border:1px solid rgba(96,165,250,.25)">Agentic</span></div>
+              <div style="display:grid;grid-template-columns:94px 1fr 78px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(96,165,250,.04)">
+                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Clinical AI</div>
+                <div style="font-size:9px;color:#9ca3af">Patient context, labs, meds, risks, care gaps</div>
+                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(96,165,250,.12);color:#60a5fa;border:1px solid rgba(96,165,250,.25)">Provider</span></div>
               </div>
-              <div style="display:grid;grid-template-columns:98px 1fr 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(251,191,36,.04)">
-                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Guided chat</div>
-                <div style="font-size:9px;color:#9ca3af">RAG retrieves cited visit transcripts, patient records, and payer evidence, then uses saved workflow context</div>
-                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)">Grounded</span></div>
+              <div style="display:grid;grid-template-columns:94px 1fr 78px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(251,191,36,.04)">
+                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Prior auth</div>
+                <div style="font-size:9px;color:#9ca3af">Criteria match, evidence gaps, packet readiness</div>
+                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)">Billing</span></div>
               </div>
-              <div style="display:grid;grid-template-columns:98px 1fr 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(251,191,36,.05)">
-                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Approval</div>
-                <div style="font-size:9px;color:#9ca3af">Human review saves clinical findings, payer evidence, gaps, risks, and packets</div>
-                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)">Governed</span></div>
+              <div style="display:grid;grid-template-columns:94px 1fr 78px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(251,191,36,.05)">
+                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Chat</div>
+                <div style="font-size:9px;color:#9ca3af">Cited answers from visits, records, policies, packets</div>
+                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)">Patient</span></div>
               </div>
-              <div style="display:grid;grid-template-columns:98px 1fr 80px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(74,222,128,.05)">
-                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Evaluation</div>
-                <div style="font-size:9px;color:#9ca3af">Backend scores completion, citations, confidence, safety, governance, and approval readiness</div>
-                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.25)">Audited</span></div>
+              <div style="display:grid;grid-template-columns:94px 1fr 78px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(74,222,128,.05)">
+                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Audit</div>
+                <div style="font-size:9px;color:#9ca3af">Trace, quality score, PHI flags, approval history</div>
+                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(74,222,128,.12);color:#4ade80;border:1px solid rgba(74,222,128,.25)">Admin</span></div>
               </div>
             </div>
 
@@ -1923,7 +1951,7 @@ const SLIDES = [
   { text: "Chat history is persistent in PostgreSQL. Conversations auto-save after responses, sessions are titled from the first question, and the sidebar restores previous chats with questions, answers, feedback, and source citations intact." },
   { text: "Retrieval uses hybrid search. pgvector finds semantic matches, PostgreSQL full-text search catches exact names, invoice numbers, dates, and product codes, and Reciprocal Rank Fusion combines both lists so exact and conceptual matches work together." },
   { text: "Re-ranking improves the final context. Gemini reads each query and candidate chunk together, scores true relevance, and passes the top chunks into answer generation. If re-ranking fails, DocIntel falls back gracefully to retrieval order." },
-  { text: "This is where DocIntel separates horizontal self-service RAG from vertical agentic AI. The horizontal layer handles reusable platform work: ingestion, OCR, PII redaction, chunking, embeddings, hybrid search, reranking, citations, five-language voice and chat, summaries, comparisons, authentication, workspaces, usage controls, traces, audit logs, observability, and governance. For healthcare, the clinical scribe workflow records or uploads a patient-doctor conversation in English, Spanish, Bangla, Hindi, or Arabic, confirms consent, generates a transcript, creates a SOAP note draft, writes a patient-friendly summary, extracts follow-up actions, checks PHI and quality flags, and saves the result as a searchable clinical document. The clinical workflow then organizes patient context, labs, medications, follow-ups, care gaps, and risk flags. The prior authorization workflow reads payer policy criteria, maps each criterion to patient evidence, identifies missing documentation, flags submission risks, and builds a human-review packet. Chat can answer questions across visit transcripts, after-visit summaries, labs, medications, prior history, clinical notes, and payer guides. This helps patients understand visits, caregivers track instructions, providers and small clinics reduce documentation effort, care coordinators see the patient story, prior authorization and billing teams find evidence faster, and compliance teams review traceability and governance." },
+  { text: "DocIntel's healthcare vertical brings clinical scribe, clinical document intelligence, prior authorization readiness, patient and team chat, grounded RAG, and governance into one self-service product experience. A user can confirm consent, record or upload a patient-doctor conversation in English, Spanish, Bangla, Hindi, or Arabic, generate a transcript, create a SOAP note draft, write a patient-friendly summary, extract follow-up actions, and save the visit as a searchable clinical document. The same workspace can include after-visit summaries, clinical notes, lab reports, medication lists, prior history, and payer policy guides. Clinical agents organize patient context, labs, medications, care gaps, and risks, while prior authorization agents map payer criteria to supporting evidence, missing documentation, submission risks, and packet readiness. Patients understand what happened, caregivers track instructions, providers and small clinics reduce documentation work, care coordinators see the patient story, billing teams find evidence faster, and compliance teams review traces, PHI flags, quality scores, and approval history." },
   { text: "Quality feedback is built into the loop. Users can rate answers with thumbs up or down, and the rating is saved with the question and answer context. Gemini also scores answer quality for relevance, specificity, and confidence." },
   { text: "Exports are one click. Chat sessions and summaries download as Markdown files directly from the browser, including full answers and source citation blocks, ready for Notion, Obsidian, Confluence, or a plain text review workflow." },
   { text: "Usage metering runs in real time and is now strict enforcement, not just reporting. The Usage panel shows plan tier, document count, upload file size, storage used, daily chat queries, embedding chunks, summaries, compares, lease AI actions, voice transcriptions, eval cases, and all-time activity. Quota is reserved atomically before expensive model work starts, so concurrent requests cannot bypass the tier limit." },

@@ -1,7 +1,7 @@
 // src/components/DocumentsTab.jsx
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { uploadDocuments, listDocuments, listWorkspaceDocuments, getViewUrl, triggerEmbed, deleteDocument, retryDocument,
-         listTags, createTag, deleteTag, assignTag, removeTagAssignment, reclassifyDocument } from '../services/api.js';
+         listTags, createTag, deleteTag, assignTag, removeTagAssignment, reclassifyDocument, fetchLatestLeaseAgentWorkflow } from '../services/api.js';
 import { toast } from './Toast.jsx';
 import ChunksViewer from './ChunksViewer.jsx';
 import SummaryPanel from './SummaryPanel.jsx';
@@ -57,8 +57,9 @@ const DOMAIN_ICONS = {
 };
 const LANGUAGE_LABELS = { en:'English', es:'Español', bn:'বাংলা', hi:'हिन्दी', ar:'العربية' };
 const fmtSz = b => b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
+const LEASE_DOC_TYPES = new Set(['lease', 'lease_amendment', 'lease_extension']);
 
-export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKey = 0 }) {
+export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKey = 0, openLeasePickerKey = 0 }) {
   const [docs,    setDocs]    = useState([]);
   const [loading, setLoading] = useState(true);
   const [drag,    setDrag]    = useState(false);
@@ -67,6 +68,9 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
   const [summary, setSummary] = useState(null);
   const [compare, setCompare] = useState(null);
   const [leasePanel, setLeasePanel] = useState(null);
+  const [showLeasePicker, setShowLeasePicker] = useState(false);
+  const [leaseWorkflowStatus, setLeaseWorkflowStatus] = useState({});
+  const [leaseStatusLoading, setLeaseStatusLoading] = useState(false);
   const [healthcarePanel, setHealthcarePanel] = useState(null);
   const [selected,setSelected]= useState([]);
   const fileRef = useRef(null);
@@ -119,6 +123,29 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
     }, 3000);
     return () => clearInterval(pollRef.current);
   }, [loadDocs, activeWorkspace?.id, refreshKey]);
+
+  useEffect(() => {
+    if (openLeasePickerKey > 0) setShowLeasePicker(true);
+  }, [openLeasePickerKey]);
+
+  const leaseDocs = docs.filter(isLeaseDocument);
+
+  useEffect(() => {
+    let alive = true;
+    if (!showLeasePicker || !leaseDocs.length) return;
+    setLeaseStatusLoading(true);
+    Promise.all(leaseDocs.map(async doc => {
+      try {
+        const data = await fetchLatestLeaseAgentWorkflow(doc.id);
+        return [doc.id, data.agent_run || null];
+      } catch {
+        return [doc.id, null];
+      }
+    }))
+      .then(entries => { if (alive) setLeaseWorkflowStatus(Object.fromEntries(entries)); })
+      .finally(() => { if (alive) setLeaseStatusLoading(false); });
+    return () => { alive = false; };
+  }, [showLeasePicker, docs]);
 
   const handleFiles = useCallback(async files => {
     files = Array.from(files);
@@ -377,7 +404,78 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
       }
       {summary && <SummaryPanel docId={summary.docId} docName={summary.docName} documentIds={summary.documentIds} docNames={summary.docNames} onClose={()=>setSummary(null)} />}
       {leasePanel && <LeasePanel doc={leasePanel.doc} compareDocs={leasePanel.compareDocs} onClose={()=>setLeasePanel(null)} />}
+      {showLeasePicker && (
+        <LeaseDocumentPicker
+          docs={leaseDocs}
+          loading={loading}
+          statusLoading={leaseStatusLoading}
+          workflowStatus={leaseWorkflowStatus}
+          onOpen={doc => {
+            setShowLeasePicker(false);
+            setLeasePanel({doc});
+          }}
+          onClose={() => setShowLeasePicker(false)}
+        />
+      )}
       {healthcarePanel && <HealthcarePanel doc={healthcarePanel.doc} onClose={()=>setHealthcarePanel(null)} />}
+    </div>
+  );
+}
+
+function isLeaseDocument(doc) {
+  return LEASE_DOC_TYPES.has(doc.doc_type);
+}
+
+function LeaseDocumentPicker({ docs, loading, statusLoading, workflowStatus, onOpen, onClose }) {
+  return (
+    <div style={s.modalBackdrop}>
+      <div style={s.leasePicker}>
+        <div style={s.leasePickerHead}>
+          <div>
+            <div style={s.leaseKicker}>Real Estate / Lease Management</div>
+            <h2 style={s.leasePickerTitle}>Open lease documents</h2>
+            <p style={s.leasePickerSub}>Select a document classified as Lease, Lease Amendment, or Lease Extension. Existing agentic workflow results open automatically; otherwise the Lease panel will ask you to run the workflow.</p>
+          </div>
+          <button style={s.closeBtn} onClick={onClose}>✕</button>
+        </div>
+
+        {loading ? (
+          <div style={s.leasePickerEmpty}>Loading lease documents…</div>
+        ) : docs.length === 0 ? (
+          <div style={s.leasePickerEmpty}>
+            <div style={{fontSize:32,opacity:.35,marginBottom:8}}>🏢</div>
+            <div style={{fontWeight:700,color:'var(--tx)',marginBottom:4}}>No classified lease documents found</div>
+            <div style={{fontSize:12,color:'var(--muted2)',lineHeight:1.5}}>Upload or re-classify documents as Lease, Lease Amendment, or Lease Extension, then open this menu again.</div>
+          </div>
+        ) : (
+          <div style={s.leasePickerList}>
+            {docs.map(doc => {
+              const run = workflowStatus[doc.id];
+              const hasWorkflow = Boolean(run);
+              const label = DOC_TYPE_LABELS[doc.doc_type] || doc.doc_type;
+              return (
+                <button key={doc.id} style={s.leaseRow} onClick={() => onOpen(doc)}>
+                  <div style={s.leaseRowIcon}>🏢</div>
+                  <div style={{minWidth:0,flex:1}}>
+                    <div style={s.leaseRowName}>{doc.original_name}</div>
+                    <div style={s.leaseRowMeta}>
+                      <span>{label}</span>
+                      <span>{doc.status}</span>
+                      {doc.chunk_count ? <span>{doc.chunk_count} chunks</span> : null}
+                    </div>
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:5}}>
+                    <span style={{...s.workflowBadge, ...(hasWorkflow ? s.workflowReady : s.workflowMissing)}}>
+                      {statusLoading ? 'Checking…' : hasWorkflow ? `${run.status || 'saved'} workflow` : 'Run workflow'}
+                    </span>
+                    <span style={s.leaseOpenHint}>{hasWorkflow ? 'Open result' : 'Open panel'}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -530,4 +628,21 @@ const s={
   conf:    {display:'flex',alignItems:'center',gap:8,marginTop:6,padding:'5px 8px',background:'rgba(248,113,113,.08)',borderRadius:6,border:'1px solid rgba(248,113,113,.2)',flexWrap:'wrap'},
   confY:   {padding:'2px 10px',fontSize:11.5,fontWeight:700,background:'#dc2626',color:'#fff',border:'none',borderRadius:5,cursor:'pointer'},
   confN:   {padding:'2px 10px',fontSize:11.5,background:'transparent',border:'1px solid var(--b2)',color:'var(--muted2)',borderRadius:5,cursor:'pointer'},
+  modalBackdrop:{position:'fixed',inset:0,background:'rgba(0,0,0,.62)',backdropFilter:'blur(8px)',zIndex:60,display:'flex',alignItems:'center',justifyContent:'center',padding:18},
+  leasePicker:{width:'min(680px, 96vw)',maxHeight:'86vh',background:'var(--s1)',border:'1px solid var(--b1)',borderRadius:'var(--rl)',boxShadow:'0 24px 80px rgba(0,0,0,.55)',display:'flex',flexDirection:'column',overflow:'hidden'},
+  leasePickerHead:{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:16,padding:'18px 20px',borderBottom:'1px solid var(--b1)',background:'linear-gradient(180deg, rgba(251,191,36,.08), transparent)'},
+  leaseKicker:{fontSize:11,fontWeight:800,color:'#fbbf24',textTransform:'uppercase',letterSpacing:'.8px',marginBottom:4},
+  leasePickerTitle:{fontSize:20,fontWeight:800,color:'var(--tx)',margin:0},
+  leasePickerSub:{fontSize:12.5,color:'var(--muted2)',lineHeight:1.5,marginTop:6,maxWidth:540},
+  closeBtn:{background:'transparent',border:'1px solid var(--b2)',color:'var(--muted2)',borderRadius:'var(--r)',width:32,height:32,cursor:'pointer',fontSize:14,flexShrink:0},
+  leasePickerList:{padding:12,overflowY:'auto',display:'flex',flexDirection:'column',gap:8},
+  leasePickerEmpty:{padding:'42px 28px',textAlign:'center',color:'var(--muted2)',fontSize:13},
+  leaseRow:{display:'flex',alignItems:'center',gap:12,width:'100%',textAlign:'left',background:'var(--s2)',border:'1px solid var(--b1)',borderRadius:'var(--r)',padding:'12px 14px',cursor:'pointer',transition:'all .15s'},
+  leaseRowIcon:{width:34,height:34,borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(251,191,36,.1)',border:'1px solid rgba(251,191,36,.24)',fontSize:17,flexShrink:0},
+  leaseRowName:{fontSize:13,fontWeight:700,color:'var(--tx)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'},
+  leaseRowMeta:{display:'flex',gap:8,flexWrap:'wrap',fontSize:11,color:'var(--muted2)',marginTop:4},
+  workflowBadge:{fontSize:10.5,fontWeight:800,borderRadius:20,padding:'2px 8px',whiteSpace:'nowrap',border:'1px solid transparent'},
+  workflowReady:{background:'rgba(74,222,128,.1)',color:'#4ade80',borderColor:'rgba(74,222,128,.25)'},
+  workflowMissing:{background:'rgba(251,191,36,.1)',color:'#fbbf24',borderColor:'rgba(251,191,36,.25)'},
+  leaseOpenHint:{fontSize:10,color:'var(--muted2)',whiteSpace:'nowrap'},
 };

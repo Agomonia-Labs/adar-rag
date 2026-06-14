@@ -161,6 +161,35 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
 .sum-card-list{list-style:none;display:flex;flex-direction:column;gap:3px}
 .sum-card-list li{font-size:10.5px;color:#9ca3af;padding-left:12px;position:relative}
 .sum-card-list li::before{content:"→";position:absolute;left:0;color:rgba(255,255,255,.2);font-size:9px}
+@media (max-width:720px){
+  html,body,#app{height:100dvh;min-height:100dvh}
+  .topbar{padding:7px 10px;gap:8px}
+  .tb-brand{min-width:0;gap:5px}
+  .tb-leaf{font-size:16px}.tb-bangla{font-size:15px}.tb-en,.tb-mid{display:none}
+  .tb-right{gap:5px}.btn-icon{padding:5px 8px;font-size:10.5px;border-radius:7px}.slide-counter{font-size:10px}
+  .nav-arrows{gap:5px}.nav-btn{width:30px;height:30px;border-radius:8px;font-size:13px}
+  .progress-bar{height:2px}
+  .slides{overflow:hidden}
+  .slide{justify-content:flex-start;align-items:stretch;padding:10px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .slide-inner,.slide-inner.full{display:flex!important;flex-direction:column!important;gap:10px;max-width:none!important;width:100%;text-align:left}
+  .narration{gap:7px}.slide-num{font-size:9px;letter-spacing:1.4px}.slide-title{font-size:clamp(19px,6vw,22px);line-height:1.15}
+  .slide-sub{font-size:11.2px;line-height:1.42}.feature-list{gap:5px;margin-top:0}.feature-item{font-size:10.8px;line-height:1.35;gap:7px}
+  .feature-icon{font-size:13px}.btn-speak{padding:5px 10px;font-size:10.5px;margin-top:2px;border-radius:16px}
+  .mockup{width:100%;border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.38)}
+  .mockup-bar{padding:6px 8px;gap:5px}.mockup-dot{width:7px;height:7px}.mockup-url{font-size:9px;padding:3px 6px}
+  .mockup-body{padding:9px!important;min-height:0;max-height:42dvh;overflow:auto}
+  .mock-header{margin-bottom:8px;padding-bottom:7px}.mock-tabs{display:none}.mock-card-name{max-width:160px}
+  .mock-bubble-user,.mock-bubble-ai{max-width:92%;font-size:9.5px}.mock-table{font-size:8.2px}.mock-table th,.mock-table td{padding:3px 4px}
+  .mock-admin-stats{grid-template-columns:repeat(2,1fr)}.mock-stats{gap:6px}
+  .sum-card{padding:8px;border-radius:8px;gap:5px}.sum-card-icon{width:26px;height:26px;font-size:14px}.sum-card-title{font-size:10.5px}.sum-card-list li{font-size:8.8px;line-height:1.22}
+  .slide-inner[style*="flex-direction:column"]{text-align:center!important}
+  .slide-inner[style*="flex-direction:column"]>div[style*="grid-template-columns:repeat(4"]{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:6px!important;max-height:60dvh;overflow:auto}
+}
+@media (max-height:520px) and (max-width:900px){
+  .slide{padding:8px}.slide-inner{gap:8px}.slide-title{font-size:18px}.slide-sub{font-size:10.5px}.feature-item{font-size:10px}
+  .mockup-body{max-height:36dvh}.btn-speak{display:none}
+  .slide-inner[style*="flex-direction:column"]>div[style*="grid-template-columns:repeat(4"]{max-height:50dvh}
+}
 </style>
 </head>
 <body>
