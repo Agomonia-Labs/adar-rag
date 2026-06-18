@@ -644,3 +644,83 @@ export async function reclassifyDocument(docId) {
     method: 'POST', headers: authHdr(),
   }));
 }
+
+// ── Restaurant vertical ──────────────────────────────────────────────────────
+export async function runRestaurantScribeWorkflow(audioBlob, {
+  language = '',
+  authorizedConfirmed = false,
+  intakeTitle = '',
+  workspaceId = null,
+  filename = 'restaurant-menu-intake.webm',
+  audioSegments = null,
+} = {}) {
+  const form = new FormData();
+  const segments = Array.isArray(audioSegments) && audioSegments.length ? audioSegments : [{ blob: audioBlob, filename }];
+  segments.forEach((segment, index) => {
+    const blob = segment.blob || segment;
+    const name = segment.filename || `restaurant-menu-segment-${String(index + 1).padStart(3, '0')}.webm`;
+    form.append('audio', blob, name);
+  });
+  form.append('language', language || '');
+  form.append('authorized_confirmed', authorizedConfirmed ? 'true' : 'false');
+  form.append('intake_title', intakeTitle || '');
+  if (workspaceId) form.append('workspace_id', workspaceId);
+  return handleRes(await fetch(`${BASE}/restaurant/scribe-workflow`, {
+    method: 'POST',
+    headers: authHdr(),
+    body: form,
+  }));
+}
+
+export async function fetchRestaurantAgentRun(runId) {
+  return handleRes(await fetch(`${BASE}/restaurant/agent-runs/${runId}`, { headers: authHdr() }));
+}
+
+export async function approveRestaurantAgentRun(runId, approvedPacket, notes = '') {
+  return handleRes(await fetch(`${BASE}/restaurant/agent-runs/${runId}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({ approved_packet: approvedPacket, notes }),
+  }));
+}
+
+export async function listRestaurants(workspaceId = null) {
+  const q = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : '';
+  return handleRes(await fetch(`${BASE}/restaurant/restaurants${q}`, { headers: authHdr() }));
+}
+
+export async function fetchRestaurant(restaurantId) {
+  return handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}`, { headers: authHdr() }));
+}
+
+export async function updateRestaurant(restaurantId, restaurantProfile, menuItems = []) {
+  return handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({ restaurant_profile: restaurantProfile, menu_items: menuItems }),
+  }));
+}
+
+export async function deleteRestaurant(restaurantId) {
+  return handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}`, {
+    method: 'DELETE',
+    headers: authHdr(),
+  }));
+}
+
+export async function searchRestaurantMenu({ query = '', cuisineType = '', dietaryTag = '', maxPrice = '', workspaceId = null } = {}) {
+  const params = new URLSearchParams();
+  if (query) params.set('query', query);
+  if (cuisineType) params.set('cuisine_type', cuisineType);
+  if (dietaryTag) params.set('dietary_tag', dietaryTag);
+  if (maxPrice) params.set('max_price', maxPrice);
+  if (workspaceId) params.set('workspace_id', workspaceId);
+  return handleRes(await fetch(`${BASE}/restaurant/menu/search?${params.toString()}`, { headers: authHdr() }));
+}
+
+export async function compareRestaurantMenu({ query, cuisineType = '', workspaceId = null }) {
+  const params = new URLSearchParams({ query });
+  if (cuisineType) params.set('cuisine_type', cuisineType);
+  if (workspaceId) params.set('workspace_id', workspaceId);
+  return handleRes(await fetch(`${BASE}/restaurant/menu/compare?${params.toString()}`, { headers: authHdr() }));
+}

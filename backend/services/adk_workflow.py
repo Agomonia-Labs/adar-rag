@@ -231,6 +231,67 @@ DEFAULT_WORKFLOW_CONFIGS: dict[str, dict[str, Any]] = {
             "result_tool": "healthcare.transcription.merge_outputs",
         },
     },
+    "restaurant_menu_scribe_phase1": {
+        "id": "restaurant_menu_scribe_phase1",
+        "version": "restaurant-menu-scribe-v1",
+        "domain": "restaurant_menu_intelligence",
+        "description": "Config-driven restaurant scribe workflow for owner voice intake, restaurant profile extraction, menu extraction, quality review, and human approval.",
+        "orchestrator": {
+            "id": "restaurant_scribe_orchestrator",
+            "name": "Restaurant Menu Scribe Orchestrator Agent",
+            "policy": {
+                "execution": "sequential",
+                "human_approval_required": True,
+                "persist_agent_steps": True,
+                "source_citations_required": False,
+                "business_guardrails": "owner_review_required_before_publish_or_menu_comparison",
+                "max_agent_attempts": 2,
+            },
+            "subagents": [
+                {
+                    "id": "conversation_transcript",
+                    "name": "Restaurant Conversation Transcription Agent",
+                    "tool": "restaurant.transcribe_audio",
+                    "output_key": "conversation_transcript",
+                    "input_summary": "Transcribe restaurant owner audio into source text for profile and menu extraction.",
+                    "max_attempts": 1,
+                },
+                {
+                    "id": "restaurant_profile",
+                    "name": "Restaurant Profile Agent",
+                    "tool": "restaurant.extract_profile",
+                    "output_key": "restaurant_profile",
+                    "input_summary": "Extract restaurant name, description, cuisine, address, contact details, hours, and service options.",
+                    "max_attempts": 2,
+                },
+                {
+                    "id": "menu_items",
+                    "name": "Menu Extraction Agent",
+                    "tool": "restaurant.extract_menu",
+                    "output_key": "menu_items",
+                    "input_summary": "Extract menu categories, item names, prices, quantity or serving size, descriptions, and dietary details.",
+                    "max_attempts": 2,
+                },
+                {
+                    "id": "normalized_menu",
+                    "name": "Menu Normalization Agent",
+                    "tool": "restaurant.normalize_menu",
+                    "output_key": "normalized_menu",
+                    "input_summary": "Normalize price, currency, category, availability, and comparable menu fields for cross-restaurant lookup.",
+                    "max_attempts": 2,
+                },
+                {
+                    "id": "quality_review",
+                    "name": "Restaurant Quality Review Agent",
+                    "tool": "restaurant.review_quality",
+                    "output_key": "quality_review",
+                    "input_summary": "Find missing business profile fields, menu gaps, ambiguous prices, and owner-review notes.",
+                    "max_attempts": 2,
+                },
+            ],
+            "result_tool": "restaurant.merge_outputs",
+        },
+    },
 }
 
 

@@ -8,6 +8,7 @@ import DocumentsTab    from './components/DocumentsTab.jsx';
 import ChatTab         from './components/ChatTab.jsx';
 import AdminDashboard  from './components/AdminDashboard.jsx';
 import HealthcarePanel from './components/HealthcarePanel.jsx';
+import RestaurantPanel from './components/RestaurantPanel.jsx';
 import { ToastContainer } from './components/Toast.jsx';
 import { getMe }       from './services/api.js';
 import { LANGUAGES, getLanguage, getStrings } from './i18n.js';
@@ -21,6 +22,7 @@ export default function App() {
   const [showBilling,      setShowBilling]      = useState(false);
   const [showVerticals,    setShowVerticals]    = useState(false);
   const [showNewVisit,     setShowNewVisit]     = useState(false);
+  const [showRestaurantPanel, setShowRestaurantPanel] = useState(false);
   const [openLeasePickerKey, setOpenLeasePickerKey] = useState(0);
   const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0);
   const [activeWorkspace,  setActiveWorkspace]  = useState(null);
@@ -105,6 +107,12 @@ export default function App() {
           onClose={() => setShowNewVisit(false)}
         />
       )}
+      {showRestaurantPanel && (
+        <RestaurantPanel
+          workspaceId={activeWorkspace?.id || null}
+          onClose={() => setShowRestaurantPanel(false)}
+        />
+      )}
       <div style={s.shell}>
         <header style={s.header}>
           <div style={s.brand}>
@@ -165,6 +173,20 @@ export default function App() {
                       }}>
                       <span>🏢</span>
                       <span>Open lease documents</span>
+                    </button>
+                  </div>
+                  <div style={s.verticalGroup}>
+                    <div style={s.verticalGroupTitle}>Restaurant</div>
+                    <button
+                      style={{...s.verticalItem, ...(!canCreateWorkspaceContent ? s.verticalItemDisabled : {})}}
+                      disabled={!canCreateWorkspaceContent}
+                      onClick={() => {
+                        if (!canCreateWorkspaceContent) return;
+                        setShowVerticals(false);
+                        setShowRestaurantPanel(true);
+                      }}>
+                      <span>🍽</span>
+                      <span>Restaurant menu scribe</span>
                     </button>
                   </div>
                 </div>

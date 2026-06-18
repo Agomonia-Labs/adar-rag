@@ -478,6 +478,54 @@ CREATE TABLE IF NOT EXISTS vertical_agent_steps (
 CREATE INDEX IF NOT EXISTS idx_vertical_agent_steps_run   ON vertical_agent_steps(run_id);
 CREATE INDEX IF NOT EXISTS idx_vertical_agent_steps_agent ON vertical_agent_steps(agent_name);
 
+CREATE TABLE IF NOT EXISTS restaurants (
+    id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id         UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id    UUID        REFERENCES workspaces(id) ON DELETE SET NULL,
+    source_run_id   UUID        REFERENCES vertical_agent_runs(id) ON DELETE SET NULL,
+    name            TEXT        NOT NULL,
+    description     TEXT        NOT NULL DEFAULT '',
+    cuisine_type    TEXT        NOT NULL DEFAULT '',
+    address         TEXT        NOT NULL DEFAULT '',
+    phone           TEXT        NOT NULL DEFAULT '',
+    email           TEXT        NOT NULL DEFAULT '',
+    website         TEXT        NOT NULL DEFAULT '',
+    hours           JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    service_options JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    payment_options JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    metadata        JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_restaurants_user      ON restaurants(user_id);
+CREATE INDEX IF NOT EXISTS idx_restaurants_workspace ON restaurants(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_restaurants_name      ON restaurants(LOWER(name));
+
+CREATE TABLE IF NOT EXISTS restaurant_menu_items (
+    id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    restaurant_id  UUID        NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+    user_id        UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id   UUID        REFERENCES workspaces(id) ON DELETE SET NULL,
+    category       TEXT        NOT NULL DEFAULT '',
+    item_name      TEXT        NOT NULL,
+    price          NUMERIC(10,2),
+    currency       TEXT        NOT NULL DEFAULT 'USD',
+    quantity       TEXT        NOT NULL DEFAULT '',
+    description    TEXT        NOT NULL DEFAULT '',
+    ingredients    JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    dietary_tags   JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    spice_level    TEXT        NOT NULL DEFAULT '',
+    availability   TEXT        NOT NULL DEFAULT 'available',
+    options        JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    metadata       JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_menu_restaurant ON restaurant_menu_items(restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_menu_user       ON restaurant_menu_items(user_id);
+CREATE INDEX IF NOT EXISTS idx_menu_workspace  ON restaurant_menu_items(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_menu_name       ON restaurant_menu_items(LOWER(item_name));
+
 """
 
 
