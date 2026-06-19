@@ -13,17 +13,18 @@ Built by [Agomonia Labs](https://agomoniai.com) on the **ADAR** platform — pur
 ## Table of Contents
 
 1. [What it does](#what-it-does)
-2. [Architecture](#architecture)
-3. [Design decisions](#design-decisions)
-4. [Data pipeline](#data-pipeline)
-5. [Database schema](#database-schema)
-6. [GCS folder structure](#gcs-folder-structure)
-7. [API reference](#api-reference)
-8. [File structure](#file-structure)
-9. [Local development](#local-development)
-10. [GCP production deployment](#gcp-production-deployment)
-11. [Configuration reference](#configuration-reference)
-12. [Security checklist](#security-checklist)
+2. [Vertical agentic workflows](#vertical-agentic-workflows)
+3. [Architecture](#architecture)
+4. [Design decisions](#design-decisions)
+5. [Data pipeline](#data-pipeline)
+6. [Database schema](#database-schema)
+7. [GCS folder structure](#gcs-folder-structure)
+8. [API reference](#api-reference)
+9. [File structure](#file-structure)
+10. [Local development](#local-development)
+11. [GCP production deployment](#gcp-production-deployment)
+12. [Configuration reference](#configuration-reference)
+13. [Security checklist](#security-checklist)
 
 ---
 
@@ -42,6 +43,58 @@ Built by [Agomonia Labs](https://agomoniai.com) on the **ADAR** platform — pur
 | **Chat** | User | Question embedded → pgvector cosine similarity → Gemini streams grounded answer + citations |
 | **Summarize** | User | 5 summary types, direct or map-reduce, streaming output — no embedding required |
 | **Admin** | Admin user | Full user/document management across the entire platform |
+
+---
+
+## Vertical agentic workflows
+
+DocIntel separates the reusable horizontal document-intelligence layer from domain-specific vertical workflows.
+
+| Layer | Capabilities |
+|-------|--------------|
+| **Horizontal RAG platform** | Upload, OCR, extraction, PII redaction, language detection, chunking, embeddings, hybrid search, rerank, citations, chat, summaries, compares, traces, audit, workspaces, usage metering |
+| **Lease intelligence** | Lease abstraction, critical dates, obligations, clause flags, risk flags, amendment comparison, human approval, approved packet persistence |
+| **Healthcare intelligence** | Clinical document intelligence, clinical scribe, SOAP note draft, patient summary, follow-up checklist, prior authorization readiness, PHI/governance review |
+| **Restaurant intelligence** | Restaurant owner scribe intake, long audio segmentation, full transcript persistence, menu/profile extraction, deterministic menu item parsing, edit/approve/save, menu search and price comparison |
+
+### Restaurant menu scribe workflow
+
+The restaurant vertical is designed for real owner/operator conversations, including long menu walkthroughs.
+
+1. The browser records restaurant/menu intake audio in complete standalone segments.
+2. Each segment is uploaded to GCS and transcribed independently.
+3. Segment transcripts are merged into one full transcript with segment labels.
+4. The full transcript is saved and shown to the user for review.
+5. The agent workflow runs on transcript text, not directly on audio.
+6. Profile extraction identifies restaurant name, description, cuisine, address, phone, website, hours, service options, and payment options.
+7. Menu extraction uses both LLM transcript-window extraction and deterministic item-price pattern parsing.
+8. Deterministic normalization preserves every extracted row so long menus are not silently shortened by a later LLM call.
+9. The owner reviews and edits restaurant profile and menu rows before approval.
+10. Approved restaurants and menu items are saved to relational tables for search, comparison, and future recommendation workflows.
+
+Key restaurant APIs:
+
+| API | Purpose |
+|-----|---------|
+| `POST /api/restaurant/scribe-workflow` | Record/upload one or more audio segments and start the restaurant workflow |
+| `GET /api/restaurant/agent-runs/{run_id}` | Poll agent status, transcript, steps, and extracted packet |
+| `POST /api/restaurant/agent-runs/{run_id}/approve` | Save approved restaurant profile and menu items |
+| `GET /api/restaurant/restaurants` | List saved restaurants |
+| `GET /api/restaurant/restaurants/{restaurant_id}` | Open restaurant, menu items, and source transcript |
+| `PUT /api/restaurant/restaurants/{restaurant_id}` | Edit saved restaurant profile and menu |
+| `DELETE /api/restaurant/restaurants/{restaurant_id}` | Delete restaurant and menu rows |
+| `GET /api/restaurant/menu/search` | Search menu items across restaurants |
+| `GET /api/restaurant/menu/compare` | Compare item prices across participating restaurants |
+
+Restaurant tuning:
+
+| Environment variable | Default | Purpose |
+|----------------------|---------|---------|
+| `RESTAURANT_SCRIBE_MAX_MB` | `25` | Max total uploaded/recorded restaurant audio size |
+| `RESTAURANT_TRANSCRIPTION_MAX_OUTPUT_TOKENS` | `8192` | Gemini output limit per segment transcription |
+| `RESTAURANT_TRANSCRIPT_WINDOW_CHARS` | `16000` | Transcript window size for agent extraction |
+| `RESTAURANT_TRANSCRIPT_WINDOW_OVERLAP` | `1200` | Overlap between transcript windows |
+| `RESTAURANT_TRANSCRIPT_MAX_WINDOWS` | `12` | Max transcript windows processed per workflow |
 
 ---
 
