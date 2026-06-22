@@ -2,6 +2,9 @@ import React, { useEffect, useState } from 'react';
 import {
   approveHealthcareAgentRun,
   evaluateAgentWorkflow,
+  fetchHealthcarePersonas,
+  fetchHealthcareRunAccessContext,
+  fetchHealthcareRunChangeHistory,
   fetchLatestAgentWorkflowEvaluation,
   fetchHealthcareAgentRun,
   fetchLatestHealthcareAgentWorkflow,
@@ -9,6 +12,7 @@ import {
   runHealthcareTranscriptionWorkflow,
   runNewVisitTranscriptionWorkflow,
   runPriorAuthWorkflow,
+  saveHealthcareReviewDraft,
 } from '../services/api.js';
 import { toast } from './Toast.jsx';
 
@@ -58,8 +62,13 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState(newVisit ? 'scribe' : 'clinical');
   const [runs, setRuns] = useState({ clinical: null, priorAuth: null, scribe: null });
+  const [editedPackets, setEditedPackets] = useState({ clinical: null, priorAuth: null, scribe: null });
   const [evaluations, setEvaluations] = useState({ clinical: null, priorAuth: null, scribe: null });
   const [approvalNotes, setApprovalNotes] = useState({ clinical: '', priorAuth: '', scribe: '' });
+  const [personaCatalog, setPersonaCatalog] = useState([]);
+  const [accessContexts, setAccessContexts] = useState({ clinical: null, priorAuth: null, scribe: null });
+  const [selectedPersonas, setSelectedPersonas] = useState({ clinical: '', priorAuth: '', scribe: '' });
+  const [changeHistories, setChangeHistories] = useState({ clinical: [], priorAuth: [], scribe: [] });
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordedAudio, setRecordedAudio] = useState(null);
@@ -74,10 +83,22 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
 
   useEffect(() => {
     let alive = true;
+    fetchHealthcarePersonas()
+      .then(data => { if (alive) setPersonaCatalog(data.personas || []); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
     if (!doc?.id) {
       setRuns({ clinical: null, priorAuth: null, scribe: null });
+      setEditedPackets({ clinical: null, priorAuth: null, scribe: null });
       setEvaluations({ clinical: null, priorAuth: null, scribe: null });
       setApprovalNotes({ clinical: '', priorAuth: '', scribe: '' });
+      setAccessContexts({ clinical: null, priorAuth: null, scribe: null });
+      setSelectedPersonas({ clinical: '', priorAuth: '', scribe: '' });
+      setChangeHistories({ clinical: [], priorAuth: [], scribe: [] });
       setActiveTab('scribe');
       return () => {
         alive = false;
@@ -85,14 +106,21 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
       };
     }
     setRuns({ clinical: null, priorAuth: null, scribe: null });
+    setEditedPackets({ clinical: null, priorAuth: null, scribe: null });
     setEvaluations({ clinical: null, priorAuth: null, scribe: null });
     setApprovalNotes({ clinical: '', priorAuth: '', scribe: '' });
+    setAccessContexts({ clinical: null, priorAuth: null, scribe: null });
+    setSelectedPersonas({ clinical: '', priorAuth: '', scribe: '' });
+    setChangeHistories({ clinical: [], priorAuth: [], scribe: [] });
     setActiveTab(newVisit ? 'scribe' : 'clinical');
     Object.entries(WORKFLOWS).forEach(([key, cfg]) => {
       fetchLatestHealthcareAgentWorkflow(doc.id, cfg.workflowId)
         .then(data => {
           if (!alive || !data.agent_run) return;
           setRuns(prev => ({ ...prev, [key]: data.agent_run }));
+          hydrateEditedPacket(key, data.agent_run);
+          refreshAccessContext(key, data.agent_run.run_id, alive);
+          refreshChangeHistory(key, data.agent_run.run_id, alive);
           refreshEvaluation(data.agent_run.run_id, evaluation => {
             if (alive) setEvaluations(prev => ({ ...prev, [key]: evaluation }));
           });
@@ -105,8 +133,25 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
     };
   }, [doc?.id, newVisit]);
 
-  const updateRun = (key, value) => setRuns(prev => ({ ...prev, [key]: value }));
+  const hydrateEditedPacket = (key, value) => {
+    const packet = packetFromRun(value);
+    if (!packet) return;
+    setEditedPackets(prev => ({ ...prev, [key]: deepClone(packet) }));
+  };
+
+  const updateRun = (key, value) => {
+    setRuns(prev => ({ ...prev, [key]: value }));
+    hydrateEditedPacket(key, value);
+    refreshAccessContext(key, value?.run_id);
+    refreshChangeHistory(key, value?.run_id);
+  };
   const updateEval = (key, value) => setEvaluations(prev => ({ ...prev, [key]: value }));
+  const updatePacket = (path, value) => {
+    setEditedPackets(prev => ({
+      ...prev,
+      [activeTab]: setDeep(prev[activeTab] || packetFromRun(runs[activeTab]) || {}, path, value),
+    }));
+  };
 
   const runWorkflow = async () => {
     if (!doc?.id) return;
@@ -258,10 +303,15 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
     if (!agentRun?.run_id) return;
     setLoading(true);
     try {
-      const packet = agentRun.result?.approved_packet || agentRun.result;
-      const data = await approveHealthcareAgentRun(agentRun.run_id, { approvedPacket: packet, notes: approvalNotes[key] || '' });
+      const packet = editedPackets[key] || agentRun.result?.approved_packet || agentRun.result;
+      const data = await approveHealthcareAgentRun(agentRun.run_id, {
+        approvedPacket: packet,
+        notes: approvalNotes[key] || '',
+        persona: selectedPersonas[key] || accessContexts[key]?.default_persona || '',
+      });
       updateRun(key, data);
       await refreshEvaluation(data.run_id, evaluation => updateEval(key, evaluation), true);
+      await refreshChangeHistory(key, data.run_id);
       toast(`Approved ${WORKFLOWS[key].label.toLowerCase()} packet saved`, 'success');
     } catch (e) {
       toast(e.message || 'Approval failed', 'error');
@@ -270,11 +320,58 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
     }
   };
 
+  const saveReviewDraft = async (key) => {
+    const agentRun = runs[key];
+    if (!agentRun?.run_id) return;
+    setLoading(true);
+    try {
+      const data = await saveHealthcareReviewDraft(agentRun.run_id, {
+        reviewPacket: editedPackets[key] || packetFromRun(agentRun) || {},
+        notes: approvalNotes[key] || '',
+        persona: selectedPersonas[key] || accessContexts[key]?.default_persona || '',
+      });
+      updateRun(key, data);
+      await refreshChangeHistory(key, data.run_id);
+      toast('Healthcare review draft saved with field-level history', 'success');
+    } catch (e) {
+      toast(e.message || 'Could not save review draft', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  async function refreshAccessContext(key, runId, alive = true) {
+    if (!runId) return null;
+    try {
+      const data = await fetchHealthcareRunAccessContext(runId);
+      if (!alive) return data;
+      setAccessContexts(prev => ({ ...prev, [key]: data }));
+      setSelectedPersonas(prev => ({ ...prev, [key]: prev[key] || data.default_persona || data.personas?.[0] || '' }));
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  async function refreshChangeHistory(key, runId, alive = true) {
+    if (!runId) return null;
+    try {
+      const data = await fetchHealthcareRunChangeHistory(runId);
+      if (!alive) return data;
+      setChangeHistories(prev => ({ ...prev, [key]: data.changes || [] }));
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
   const agentRun = runs[activeTab];
   const agentEvaluation = evaluations[activeTab];
-  const packet = agentRun?.result?.approved_packet || agentRun?.result || {};
+  const packet = editedPackets[activeTab] || agentRun?.result?.approved_packet || agentRun?.result || {};
   const evals = agentEvaluation?.metrics || (agentRun ? evaluateHealthcareWorkflow(agentRun, packet) : []);
   const activeConfig = WORKFLOWS[activeTab];
+  const accessContext = accessContexts[activeTab];
+  const selectedPersona = selectedPersonas[activeTab] || accessContext?.default_persona || '';
 
   return (
     <div style={s.backdrop}>
@@ -409,16 +506,25 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
               <section style={s.section}>
                 <div style={s.workflowHead}>
                   <div>
-                    <h3 style={s.h3}>Summary</h3>
+                    <h3 style={s.h3}>Healthcare Review Workbench</h3>
                     <p style={s.summary}>{packet.prior_auth_packet?.packet_summary || packet.clinical_summary?.summary || packet.document_intake?.summary || 'No summary returned yet.'}</p>
                     <div style={s.meta}>Run: {agentRun.run_id} · Status: {agentRun.status} · Version: {agentRun.workflow_version}</div>
                     {agentRun.approved_at && <div style={s.meta}>Approved: {new Date(agentRun.approved_at).toLocaleString()}</div>}
                     <div style={s.guardrail}>{packet.guardrail || 'Assistive clinical/admin document intelligence only. Not diagnosis, treatment, or medical advice.'}</div>
                   </div>
                   {agentRun.status === 'pending_approval' && (
-                    <button style={s.approve} disabled={loading} onClick={() => approveRun(activeTab)}>Save approved packet</button>
+                    <div style={s.reviewActions}>
+                      <button style={s.secondarySmall} disabled={loading} onClick={() => saveReviewDraft(activeTab)}>Save review draft</button>
+                      <button style={s.approve} disabled={loading} onClick={() => approveRun(activeTab)}>Approve packet</button>
+                    </div>
                   )}
                 </div>
+                <ReviewerControls
+                  accessContext={accessContext}
+                  personaCatalog={personaCatalog}
+                  selectedPersona={selectedPersona}
+                  onPersonaChange={value => setSelectedPersonas(prev => ({ ...prev, [activeTab]: value }))}
+                />
                 {agentRun.status === 'pending_approval' && (
                   <textarea
                     value={approvalNotes[activeTab] || ''}
@@ -429,12 +535,15 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
                 )}
               </section>
 
+              <WorkbenchOverview activeTab={activeTab} packet={packet} run={agentRun} evaluation={agentEvaluation} />
+              <ChangeHistory changes={changeHistories[activeTab] || []} />
+
               {activeTab === 'priorAuth' ? (
-                <PriorAuthPacket packet={packet} />
+                <PriorAuthPacket packet={packet} onPatch={updatePacket} />
               ) : activeTab === 'scribe' ? (
-                <ClinicalScribePacket packet={packet} />
+                <ClinicalScribePacket packet={packet} onPatch={updatePacket} />
               ) : (
-                <ClinicalPacket packet={packet} />
+                <ClinicalPacket packet={packet} onPatch={updatePacket} />
               )}
             </div>
           )}
@@ -444,113 +553,114 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
   );
 }
 
-function ClinicalPacket({ packet }) {
+function ClinicalPacket({ packet, onPatch }) {
   return (
     <>
-      <PatientContext packet={packet} />
+      <PatientContext packet={packet} onPatch={onPatch} />
 
       <section style={s.section}>
         <h3 style={s.h3}>Clinical Summary</h3>
-        <Rows rows={packet.clinical_summary?.diagnoses_or_assessments_mentioned || []} cols={['text','source','confidence']} title="Assessments mentioned" />
-        <Rows rows={packet.clinical_summary?.plan || []} cols={['item','source','confidence']} title="Plan" />
-        <Rows rows={packet.clinical_summary?.patient_instructions || []} cols={['instruction','source','confidence']} title="Patient instructions" />
+        <EditableText value={packet.clinical_summary?.summary || ''} onChange={value => onPatch(['clinical_summary','summary'], value)} placeholder="Clinical summary..." />
+        <Rows rows={packet.clinical_summary?.diagnoses_or_assessments_mentioned || []} cols={['text','source','confidence']} title="Assessments mentioned" editable onChange={rows => onPatch(['clinical_summary','diagnoses_or_assessments_mentioned'], rows)} />
+        <Rows rows={packet.clinical_summary?.plan || []} cols={['item','source','confidence']} title="Plan" editable onChange={rows => onPatch(['clinical_summary','plan'], rows)} />
+        <Rows rows={packet.clinical_summary?.patient_instructions || []} cols={['instruction','source','confidence']} title="Patient instructions" editable onChange={rows => onPatch(['clinical_summary','patient_instructions'], rows)} />
       </section>
 
       <section style={s.section}>
         <h3 style={s.h3}>Lab Results</h3>
-        <p style={s.summary}>{packet.lab_results?.summary || ''}</p>
-        <Rows rows={packet.lab_results?.lab_results || []} cols={['test_name','result_value','unit','reference_range','abnormal_flag','collection_date','source']} />
+        <EditableText value={packet.lab_results?.summary || ''} onChange={value => onPatch(['lab_results','summary'], value)} placeholder="Lab summary..." />
+        <Rows rows={packet.lab_results?.lab_results || []} cols={['test_name','result_value','unit','reference_range','abnormal_flag','collection_date','source']} editable onChange={rows => onPatch(['lab_results','lab_results'], rows)} />
       </section>
 
       <section style={s.section}>
         <h3 style={s.h3}>Medication Review</h3>
-        <Rows rows={packet.medication_review?.medications || []} cols={['name','dose','route','frequency','start_date','stop_date','prescriber','source']} title="Medications" />
-        <Rows rows={packet.medication_review?.review_flags || []} cols={['priority','finding','source','recommended_review']} title="Review flags" />
+        <Rows rows={packet.medication_review?.medications || []} cols={['name','dose','route','frequency','start_date','stop_date','prescriber','source']} title="Medications" editable onChange={rows => onPatch(['medication_review','medications'], rows)} />
+        <Rows rows={packet.medication_review?.review_flags || []} cols={['priority','finding','source','recommended_review']} title="Review flags" editable onChange={rows => onPatch(['medication_review','review_flags'], rows)} />
       </section>
 
       <section style={s.section}>
         <h3 style={s.h3}>Follow-Ups / Care Gaps</h3>
-        <Rows rows={packet.care_gaps?.follow_ups || []} cols={['task','due_date','responsible_party','priority','source']} title="Follow-ups" />
-        <Rows rows={packet.care_gaps?.pending_items || []} cols={['item','priority','source']} title="Pending items" />
-        <Rows rows={packet.care_gaps?.care_gaps || []} cols={['gap','source','recommended_review']} title="Care gaps" />
+        <Rows rows={packet.care_gaps?.follow_ups || []} cols={['task','due_date','responsible_party','priority','source']} title="Follow-ups" editable onChange={rows => onPatch(['care_gaps','follow_ups'], rows)} />
+        <Rows rows={packet.care_gaps?.pending_items || []} cols={['item','priority','source']} title="Pending items" editable onChange={rows => onPatch(['care_gaps','pending_items'], rows)} />
+        <Rows rows={packet.care_gaps?.care_gaps || []} cols={['gap','source','recommended_review']} title="Care gaps" editable onChange={rows => onPatch(['care_gaps','care_gaps'], rows)} />
       </section>
 
       <section style={s.section}>
         <h3 style={s.h3}>Risk & Safety Flags</h3>
-        <Rows rows={packet.risk_safety?.risk_flags || []} cols={['risk_level','category','finding','source','recommended_review']} />
+        <Rows rows={packet.risk_safety?.risk_flags || []} cols={['risk_level','category','finding','source','recommended_review']} editable onChange={rows => onPatch(['risk_safety','risk_flags'], rows)} />
       </section>
 
       <section style={s.section}>
         <h3 style={s.h3}>PHI / Governance</h3>
-        <p style={s.summary}>{packet.phi_governance?.summary || 'No governance summary returned.'}</p>
+        <EditableText value={packet.phi_governance?.summary || ''} onChange={value => onPatch(['phi_governance','summary'], value)} placeholder="Governance summary..." />
         <div style={s.meta}>PHI categories: {(packet.phi_governance?.phi_categories || []).join(', ') || 'none listed'}</div>
-        <Rows rows={packet.phi_governance?.redaction_recommendations || []} cols={['field','recommendation','reason','source']} title="Redaction recommendations" />
-        <Rows rows={packet.phi_governance?.governance_notes || []} cols={['control','note']} title="Governance notes" />
+        <Rows rows={packet.phi_governance?.redaction_recommendations || []} cols={['field','recommendation','reason','source']} title="Redaction recommendations" editable onChange={rows => onPatch(['phi_governance','redaction_recommendations'], rows)} />
+        <Rows rows={packet.phi_governance?.governance_notes || []} cols={['control','note']} title="Governance notes" editable onChange={rows => onPatch(['phi_governance','governance_notes'], rows)} />
       </section>
     </>
   );
 }
 
-function PriorAuthPacket({ packet }) {
+function PriorAuthPacket({ packet, onPatch }) {
   return (
     <>
-      <PatientContext packet={packet} />
+      <PatientContext packet={packet} onPatch={onPatch} />
       <section style={s.section}>
         <h3 style={s.h3}>Prior Authorization Packet</h3>
-        <p style={s.summary}>{packet.prior_auth_packet?.medical_necessity_narrative || packet.prior_auth_packet?.packet_summary || 'No prior authorization narrative returned.'}</p>
+        <EditableText value={packet.prior_auth_packet?.medical_necessity_narrative || packet.prior_auth_packet?.packet_summary || ''} onChange={value => onPatch(['prior_auth_packet','medical_necessity_narrative'], value)} placeholder="Prior authorization narrative..." />
         <div style={s.meta}>Decision: {packet.prior_auth_packet?.recommended_decision || 'needs review'}</div>
         <Rows rows={packet.policy_documents || []} cols={['document_name','doc_type','document_id']} title="Policy documents used" />
-        <Rows rows={packet.policy_criteria?.criteria || []} cols={['criterion_id','criterion','required','category','source']} title="Payer criteria" />
-        <Rows rows={packet.evidence_map?.criteria_matches || []} cols={['criterion_id','status','patient_evidence','policy_source','patient_source','confidence']} title="Criteria evidence map" />
-        <Rows rows={packet.gap_detection?.missing_items || []} cols={['item','reason','priority','source']} title="Missing items" />
-        <Rows rows={packet.gap_detection?.submission_risks || []} cols={['risk','priority','recommended_action']} title="Submission risks" />
-        <Rows rows={packet.prior_auth_packet?.next_actions || []} cols={['action','owner','priority']} title="Next actions" />
+        <Rows rows={packet.policy_criteria?.criteria || []} cols={['criterion_id','criterion','required','category','source']} title="Payer criteria" editable onChange={rows => onPatch(['policy_criteria','criteria'], rows)} />
+        <Rows rows={packet.evidence_map?.criteria_matches || []} cols={['criterion_id','status','patient_evidence','policy_source','patient_source','confidence']} title="Criteria evidence map" editable onChange={rows => onPatch(['evidence_map','criteria_matches'], rows)} />
+        <Rows rows={packet.gap_detection?.missing_items || []} cols={['item','reason','priority','source']} title="Missing items" editable onChange={rows => onPatch(['gap_detection','missing_items'], rows)} />
+        <Rows rows={packet.gap_detection?.submission_risks || []} cols={['risk','priority','recommended_action']} title="Submission risks" editable onChange={rows => onPatch(['gap_detection','submission_risks'], rows)} />
+        <Rows rows={packet.prior_auth_packet?.next_actions || []} cols={['action','owner','priority']} title="Next actions" editable onChange={rows => onPatch(['prior_auth_packet','next_actions'], rows)} />
       </section>
     </>
   );
 }
 
-function ClinicalScribePacket({ packet }) {
+function ClinicalScribePacket({ packet, onPatch }) {
   const transcript = packet.conversation_transcript?.transcript_text || '';
   return (
     <>
-      <PatientContext packet={packet} />
+      <PatientContext packet={packet} onPatch={onPatch} />
 
       <section style={s.section}>
         <h3 style={s.h3}>SOAP Note Draft</h3>
-        <p style={s.summary}>{packet.soap_note?.summary || 'No SOAP note summary returned yet.'}</p>
-        <Rows rows={packet.soap_note?.subjective || []} cols={['item','source','confidence']} title="Subjective" />
-        <Rows rows={packet.soap_note?.objective || []} cols={['item','source','confidence']} title="Objective" />
-        <Rows rows={packet.soap_note?.assessment || []} cols={['item','source','confidence']} title="Assessment" />
-        <Rows rows={packet.soap_note?.plan || []} cols={['item','source','confidence']} title="Plan" />
-        <Rows rows={packet.soap_note?.medications_discussed || []} cols={['name','discussion','details','source','confidence']} title="Medications discussed" />
-        <Rows rows={packet.soap_note?.orders_or_tests_discussed || []} cols={['item','status','source','confidence']} title="Orders / tests discussed" />
-        <Rows rows={packet.soap_note?.human_review_notes || []} cols={['note','priority']} title="Clinician review notes" />
+        <EditableText value={packet.soap_note?.summary || ''} onChange={value => onPatch(['soap_note','summary'], value)} placeholder="SOAP note summary..." />
+        <Rows rows={packet.soap_note?.subjective || []} cols={['item','source','confidence']} title="Subjective" editable onChange={rows => onPatch(['soap_note','subjective'], rows)} />
+        <Rows rows={packet.soap_note?.objective || []} cols={['item','source','confidence']} title="Objective" editable onChange={rows => onPatch(['soap_note','objective'], rows)} />
+        <Rows rows={packet.soap_note?.assessment || []} cols={['item','source','confidence']} title="Assessment" editable onChange={rows => onPatch(['soap_note','assessment'], rows)} />
+        <Rows rows={packet.soap_note?.plan || []} cols={['item','source','confidence']} title="Plan" editable onChange={rows => onPatch(['soap_note','plan'], rows)} />
+        <Rows rows={packet.soap_note?.medications_discussed || []} cols={['name','discussion','details','source','confidence']} title="Medications discussed" editable onChange={rows => onPatch(['soap_note','medications_discussed'], rows)} />
+        <Rows rows={packet.soap_note?.orders_or_tests_discussed || []} cols={['item','status','source','confidence']} title="Orders / tests discussed" editable onChange={rows => onPatch(['soap_note','orders_or_tests_discussed'], rows)} />
+        <Rows rows={packet.soap_note?.human_review_notes || []} cols={['note','priority']} title="Clinician review notes" editable onChange={rows => onPatch(['soap_note','human_review_notes'], rows)} />
       </section>
 
       <section style={s.section}>
         <h3 style={s.h3}>Patient-Friendly Summary</h3>
-        <p style={s.summary}>{packet.patient_summary?.summary || 'No patient summary returned yet.'}</p>
-        <Rows rows={packet.patient_summary?.what_we_discussed || []} cols={['item','source','confidence']} title="What was discussed" />
-        <Rows rows={packet.patient_summary?.care_team_recommendations || []} cols={['item','source','confidence']} title="Care team recommendations" />
-        <Rows rows={packet.patient_summary?.patient_questions || []} cols={['question','source','confidence']} title="Patient questions" />
-        <Rows rows={packet.patient_summary?.questions_to_ask_next || []} cols={['question','reason']} title="Questions to ask next" />
+        <EditableText value={packet.patient_summary?.summary || ''} onChange={value => onPatch(['patient_summary','summary'], value)} placeholder="Patient-friendly summary..." />
+        <Rows rows={packet.patient_summary?.what_we_discussed || []} cols={['item','source','confidence']} title="What was discussed" editable onChange={rows => onPatch(['patient_summary','what_we_discussed'], rows)} />
+        <Rows rows={packet.patient_summary?.care_team_recommendations || []} cols={['item','source','confidence']} title="Care team recommendations" editable onChange={rows => onPatch(['patient_summary','care_team_recommendations'], rows)} />
+        <Rows rows={packet.patient_summary?.patient_questions || []} cols={['question','source','confidence']} title="Patient questions" editable onChange={rows => onPatch(['patient_summary','patient_questions'], rows)} />
+        <Rows rows={packet.patient_summary?.questions_to_ask_next || []} cols={['question','reason']} title="Questions to ask next" editable onChange={rows => onPatch(['patient_summary','questions_to_ask_next'], rows)} />
       </section>
 
       <section style={s.section}>
         <h3 style={s.h3}>Follow-Up Checklist</h3>
-        <p style={s.summary}>{packet.followup_checklist?.summary || ''}</p>
-        <Rows rows={packet.followup_checklist?.follow_up_actions || []} cols={['action','owner','due_date','priority','source','confidence']} title="Follow-up actions" />
-        <Rows rows={packet.followup_checklist?.open_questions || []} cols={['question','owner','priority','source']} title="Open questions" />
+        <EditableText value={packet.followup_checklist?.summary || ''} onChange={value => onPatch(['followup_checklist','summary'], value)} placeholder="Follow-up checklist summary..." />
+        <Rows rows={packet.followup_checklist?.follow_up_actions || []} cols={['action','owner','due_date','priority','source','confidence']} title="Follow-up actions" editable onChange={rows => onPatch(['followup_checklist','follow_up_actions'], rows)} />
+        <Rows rows={packet.followup_checklist?.open_questions || []} cols={['question','owner','priority','source']} title="Open questions" editable onChange={rows => onPatch(['followup_checklist','open_questions'], rows)} />
       </section>
 
       <section style={s.section}>
         <h3 style={s.h3}>Scribe Governance</h3>
-        <p style={s.summary}>{packet.scribe_governance?.summary || 'No governance summary returned.'}</p>
+        <EditableText value={packet.scribe_governance?.summary || ''} onChange={value => onPatch(['scribe_governance','summary'], value)} placeholder="Scribe governance summary..." />
         <div style={s.meta}>Consent: {packet.scribe_governance?.consent_status || 'unknown'} · Clinician review required: {packet.scribe_governance?.requires_clinician_review === false ? 'No' : 'Yes'}</div>
         <div style={s.meta}>PHI categories: {(packet.scribe_governance?.phi_categories || []).join(', ') || 'none listed'}</div>
-        <Rows rows={packet.scribe_governance?.redaction_recommendations || []} cols={['field','recommendation','reason','source']} title="Redaction recommendations" />
-        <Rows rows={packet.scribe_governance?.governance_notes || []} cols={['control','note']} title="Governance notes" />
+        <Rows rows={packet.scribe_governance?.redaction_recommendations || []} cols={['field','recommendation','reason','source']} title="Redaction recommendations" editable onChange={rows => onPatch(['scribe_governance','redaction_recommendations'], rows)} />
+        <Rows rows={packet.scribe_governance?.governance_notes || []} cols={['control','note']} title="Governance notes" editable onChange={rows => onPatch(['scribe_governance','governance_notes'], rows)} />
       </section>
 
       <section style={s.section}>
@@ -561,7 +671,7 @@ function ClinicalScribePacket({ packet }) {
   );
 }
 
-function PatientContext({ packet }) {
+function PatientContext({ packet, onPatch }) {
   return (
     <section style={s.section}>
       <h3 style={s.h3}>Patient / Encounter Context</h3>
@@ -571,7 +681,14 @@ function PatientContext({ packet }) {
           return (
             <div key={key} style={s.field}>
               <strong>{label}</strong>
-              <span>{item.value || 'Not found'}</span>
+              {onPatch ? (
+                <input
+                  value={item.value || ''}
+                  onChange={e => onPatch(['patient_context', key, 'value'], e.target.value)}
+                  placeholder="Not found"
+                  style={s.inlineInput}
+                />
+              ) : <span>{item.value || 'Not found'}</span>}
               <small>{item.source || 'not found'} · {Math.round((item.confidence || 0) * 100)}%</small>
             </div>
           );
@@ -670,6 +787,117 @@ function scoreColor(score) {
   return score >= .8 ? '#4ade80' : score >= .55 ? '#fbbf24' : '#f87171';
 }
 
+function WorkbenchOverview({ activeTab, packet, run, evaluation }) {
+  const readiness = buildReadiness(activeTab, packet, run, evaluation);
+  const sources = collectSources(packet).slice(0, 16);
+  const transcript = packet.conversation_transcript?.transcript_text || '';
+  return (
+    <section style={s.workbench}>
+      <div style={s.workbenchPane}>
+        <h3 style={s.h3}>Readiness</h3>
+        <div style={s.readinessGrid}>
+          {readiness.map(item => (
+            <div key={item.label} style={s.readinessCard}>
+              <strong>{item.label}</strong>
+              <span style={{color:item.color}}>{item.value}</span>
+              <small>{item.detail}</small>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={s.workbenchPane}>
+        <h3 style={s.h3}>Source Review</h3>
+        {transcript ? (
+          <div style={s.sourceBox}>{transcript}</div>
+        ) : sources.length ? (
+          <div style={s.sourceList}>
+            {sources.map((source, idx) => <span key={`${source}-${idx}`} style={s.sourceChip}>{source}</span>)}
+          </div>
+        ) : (
+          <div style={s.emptySmall}>No transcript or source labels found yet.</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ReviewerControls({ accessContext, personaCatalog, selectedPersona, onPersonaChange }) {
+  const available = accessContext?.personas?.length ? accessContext.personas : [selectedPersona].filter(Boolean);
+  const persona = personaCatalog.find(item => item.id === selectedPersona) || accessContext?.persona_scopes?.[selectedPersona] || {};
+  return (
+    <div style={s.reviewerBox}>
+      <div style={s.reviewerField}>
+        <strong>Reviewer persona</strong>
+        <select value={selectedPersona || ''} onChange={e => onPersonaChange(e.target.value)} style={s.select}>
+          {available.map(id => {
+            const item = personaCatalog.find(p => p.id === id) || { label: id };
+            return <option key={id} value={id}>{item.label || id}</option>;
+          })}
+        </select>
+      </div>
+      <div style={s.reviewerScope}>
+        <strong>Scope</strong>
+        <span>{persona.scope || 'Workspace persona controls what this reviewer can edit and approve.'}</span>
+        <small>Workspace role: {accessContext?.workspace_role || 'loading'} · Approval: {persona.can_approve ? 'allowed' : 'not allowed'}</small>
+      </div>
+    </div>
+  );
+}
+
+function ChangeHistory({ changes }) {
+  return (
+    <section style={s.section}>
+      <h3 style={s.h3}>Field-Level Change History</h3>
+      {!changes.length ? <div style={s.emptySmall}>No human edits saved yet. Save a review draft or approve an edited packet to create history.</div> : (
+        <div style={s.historyList}>
+          {changes.slice(0, 40).map(change => (
+            <div key={change.id} style={s.historyItem}>
+              <div style={s.historyTop}>
+                <strong>{change.field_path}</strong>
+                <span>{change.persona}</span>
+              </div>
+              <small>{change.user_name || change.user_email || 'Unknown user'} · {change.workspace_role || 'role unknown'} · {new Date(change.created_at).toLocaleString()} · {change.action_type}</small>
+              <div style={s.historyValues}>
+                <div><b>Old</b><pre>{formatChangeValue(change.old_value)}</pre></div>
+                <div><b>New</b><pre>{formatChangeValue(change.new_value)}</pre></div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function buildReadiness(activeTab, packet, run, evaluation) {
+  const context = packet.patient_context || {};
+  const contextCount = ['patient_name','encounter_date','provider','encounter_type'].filter(k => context[k]?.value).length;
+  const riskCount = (packet.risk_safety?.risk_flags || packet.gap_detection?.submission_risks || []).length;
+  const followupCount = (packet.care_gaps?.follow_ups || packet.followup_checklist?.follow_up_actions || []).length;
+  const governanceCount =
+    (packet.phi_governance?.governance_notes || packet.scribe_governance?.governance_notes || []).length +
+    (packet.phi_governance?.redaction_recommendations || packet.scribe_governance?.redaction_recommendations || []).length;
+  const overall = evaluation?.overall_score;
+  const label = activeTab === 'priorAuth' ? 'Prior-auth readiness' : activeTab === 'scribe' ? 'Scribe readiness' : 'Clinical readiness';
+  return [
+    readinessItem(label, run?.status === 'pending_approval' || run?.status === 'approved', `Status: ${run?.status || 'unknown'}`),
+    readinessItem('Patient context', contextCount >= 3, `${contextCount}/4 core fields present`),
+    readinessItem('Follow-up coverage', followupCount > 0, `${followupCount} action${followupCount === 1 ? '' : 's'} found`),
+    readinessItem('Risk review', riskCount > 0, riskCount ? `${riskCount} flag${riskCount === 1 ? '' : 's'} for human review` : 'No risk flags returned'),
+    readinessItem('Governance', governanceCount > 0, `${governanceCount} PHI/governance item${governanceCount === 1 ? '' : 's'}`),
+    {
+      label: 'Evaluation',
+      value: overall == null ? 'Pending' : `${Math.round(overall * 100)}%`,
+      detail: evaluation?.gate_status || 'Run evaluation after workflow completion',
+      color: overall == null ? '#fbbf24' : scoreColor(overall),
+    },
+  ];
+}
+
+function readinessItem(label, ok, detail) {
+  return { label, value: ok ? 'Ready' : 'Review', detail, color: ok ? '#4ade80' : '#fbbf24' };
+}
+
 async function waitForAgentRun(runId, onUpdate) {
   let latest = null;
   for (let i = 0; i < 90; i += 1) {
@@ -681,17 +909,46 @@ async function waitForAgentRun(runId, onUpdate) {
   return latest || await fetchHealthcareAgentRun(runId);
 }
 
-function Rows({ rows, cols, title }) {
+function Rows({ rows, cols, title, editable = false, onChange = null }) {
+  const updateCell = (index, col, value) => {
+    const next = rows.map((row, i) => i === index ? { ...row, [col]: normalizeCellValue(col, value) } : row);
+    onChange?.(next);
+  };
+  const deleteRow = index => onChange?.(rows.filter((_, i) => i !== index));
+  const addRow = () => onChange?.([...rows, Object.fromEntries(cols.map(col => [col, '']))]);
   return (
     <div style={{marginTop:title ? 12 : 0}}>
-      {title && <div style={s.tableTitle}>{title}</div>}
-      {!rows.length ? <div style={s.emptySmall}>None found.</div> : (
+      {title && (
+        <div style={s.tableHead}>
+          <div style={s.tableTitle}>{title}</div>
+          {editable && <button type="button" style={s.rowBtn} onClick={addRow}>Add row</button>}
+        </div>
+      )}
+      {!rows.length ? (
+        <div style={s.emptySmall}>
+          None found. {editable && <button type="button" style={s.linkBtn} onClick={addRow}>Add one</button>}
+        </div>
+      ) : (
         <div style={s.tableWrap}>
           <table style={s.table}>
-            <thead><tr>{cols.map(c => <th key={c} style={s.th}>{c.replaceAll('_',' ')}</th>)}</tr></thead>
+            <thead><tr>{cols.map(c => <th key={c} style={s.th}>{c.replaceAll('_',' ')}</th>)}{editable && <th style={s.th}>review</th>}</tr></thead>
             <tbody>
               {rows.map((row,i) => (
-                <tr key={i}>{cols.map(c => <td key={c} style={s.td}>{String(row[c] ?? '')}</td>)}</tr>
+                <tr key={i}>
+                  {cols.map(c => (
+                    <td key={c} style={s.td}>
+                      {editable ? (
+                        <textarea
+                          value={String(row[c] ?? '')}
+                          onChange={e => updateCell(i, c, e.target.value)}
+                          style={s.cellInput}
+                          rows={String(row[c] ?? '').length > 80 ? 3 : 1}
+                        />
+                      ) : String(row[c] ?? '')}
+                    </td>
+                  ))}
+                  {editable && <td style={s.td}><button type="button" style={s.deleteBtn} onClick={() => deleteRow(i)}>Remove</button></td>}
+                </tr>
               ))}
             </tbody>
           </table>
@@ -699,6 +956,71 @@ function Rows({ rows, cols, title }) {
       )}
     </div>
   );
+}
+
+function EditableText({ value, onChange, placeholder }) {
+  return (
+    <textarea
+      value={value || ''}
+      onChange={e => onChange(e.target.value)}
+      placeholder={placeholder}
+      style={s.textEdit}
+      rows={3}
+    />
+  );
+}
+
+function packetFromRun(run) {
+  return run?.result?.review_packet || run?.result?.approved_packet || run?.result || null;
+}
+
+function deepClone(value) {
+  if (!value) return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function setDeep(source, path, value) {
+  const next = deepClone(source) || {};
+  let cursor = next;
+  path.forEach((key, index) => {
+    if (index === path.length - 1) {
+      cursor[key] = value;
+      return;
+    }
+    if (!cursor[key] || typeof cursor[key] !== 'object') cursor[key] = {};
+    cursor = cursor[key];
+  });
+  return next;
+}
+
+function normalizeCellValue(col, value) {
+  if (col === 'confidence') {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : value;
+  }
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return value;
+}
+
+function collectSources(packet) {
+  const found = new Set();
+  collectLeafObjects(packet).forEach(item => {
+    if (item.source) found.add(String(item.source));
+    if (item.patient_source) found.add(String(item.patient_source));
+    if (item.policy_source) found.add(String(item.policy_source));
+  });
+  return Array.from(found).filter(Boolean);
+}
+
+function formatChangeValue(value) {
+  if (value == null || value === '') return '(empty)';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 const s = {
@@ -717,6 +1039,8 @@ const s = {
   secondary:{background:'#2563eb',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:800,cursor:'pointer'},
   scribeButton:{background:'#047857',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:800,cursor:'pointer'},
   approve:{background:'#2563eb',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:12,fontWeight:800,cursor:'pointer'},
+  secondarySmall:{background:'var(--s3)',color:'var(--tx)',border:'1px solid var(--b2)',borderRadius:8,padding:'8px 12px',fontSize:12,fontWeight:800,cursor:'pointer'},
+  reviewActions:{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'},
   hint:{fontSize:12,color:'var(--muted2)'},
   scribeTools:{display:'flex',alignItems:'center',gap:10,padding:'10px 18px',borderBottom:'1px solid var(--b1)',background:'rgba(4,120,87,.07)',flexWrap:'wrap'},
   checkLabel:{display:'inline-flex',alignItems:'center',gap:8,fontSize:12,color:'var(--tx2)',fontWeight:700},
@@ -730,13 +1054,30 @@ const s = {
   scroll:{flex:1,minHeight:0,overflowY:'auto',display:'flex',flexDirection:'column'},
   body:{padding:18,display:'flex',flexDirection:'column',gap:16},
   section:{border:'1px solid var(--b1)',background:'var(--s2)',borderRadius:8,padding:14},
+  workbench:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:14,border:'1px solid rgba(14,165,233,.24)',background:'rgba(14,165,233,.06)',borderRadius:8,padding:14},
+  workbenchPane:{minWidth:0},
+  readinessGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8},
+  readinessCard:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.04)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:5,minHeight:84},
+  sourceBox:{whiteSpace:'pre-wrap',fontSize:12,lineHeight:1.55,color:'var(--tx2)',background:'rgba(0,0,0,.18)',border:'1px solid var(--b2)',borderRadius:8,padding:10,maxHeight:260,overflowY:'auto'},
+  sourceList:{display:'flex',gap:7,flexWrap:'wrap',maxHeight:260,overflowY:'auto'},
+  sourceChip:{fontSize:11,color:'#bae6fd',border:'1px solid rgba(125,211,252,.24)',background:'rgba(14,165,233,.08)',borderRadius:20,padding:'5px 8px'},
   h3:{fontSize:14,margin:'0 0 10px'},
   summary:{fontSize:13,lineHeight:1.65,color:'var(--tx)'},
   meta:{fontSize:11,color:'var(--muted2)',marginTop:8},
   guardrail:{fontSize:11,color:'#fbbf24',marginTop:8},
+  reviewerBox:{display:'grid',gridTemplateColumns:'minmax(180px,240px) minmax(0,1fr)',gap:12,marginTop:12,border:'1px solid rgba(125,211,252,.18)',background:'rgba(14,165,233,.05)',borderRadius:8,padding:10},
+  reviewerField:{display:'flex',flexDirection:'column',gap:6,fontSize:12},
+  reviewerScope:{display:'flex',flexDirection:'column',gap:5,fontSize:12,color:'var(--tx2)'},
   grid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:10},
   field:{border:'1px solid var(--b1)',borderRadius:8,padding:10,background:'rgba(255,255,255,.03)',display:'flex',flexDirection:'column',gap:5},
+  inlineInput:{background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:6,color:'var(--tx)',padding:'7px 8px',fontSize:13,width:'100%'},
+  textEdit:{width:'100%',minHeight:78,background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:8,color:'var(--tx)',padding:10,fontSize:13,lineHeight:1.55,resize:'vertical'},
+  tableHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,margin:'0 0 6px'},
   tableTitle:{fontSize:12,fontWeight:800,color:'var(--tx)',margin:'0 0 6px'},
+  rowBtn:{background:'var(--s3)',border:'1px solid var(--b2)',color:'var(--tx)',borderRadius:7,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'},
+  linkBtn:{background:'transparent',border:'none',color:'#7dd3fc',fontSize:12,fontWeight:800,cursor:'pointer',padding:0},
+  deleteBtn:{background:'transparent',border:'1px solid rgba(248,113,113,.28)',color:'#fca5a5',borderRadius:7,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'},
+  cellInput:{width:'100%',minWidth:120,background:'rgba(0,0,0,.12)',border:'1px solid transparent',borderRadius:6,color:'var(--tx2)',fontSize:12,lineHeight:1.4,padding:6,resize:'vertical'},
   tableWrap:{overflowX:'auto',border:'1px solid var(--b2)',borderRadius:8,background:'rgba(0,0,0,.16)'},
   table:{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:760},
   th:{textAlign:'left',textTransform:'capitalize',fontSize:11,fontWeight:800,color:'var(--tx)',background:'rgba(255,255,255,.06)',borderRight:'1px solid var(--b2)',borderBottom:'1px solid var(--b2)',padding:'8px 10px',verticalAlign:'top',whiteSpace:'nowrap'},
@@ -752,6 +1093,10 @@ const s = {
   evalFill:{display:'block',height:'100%',borderRadius:20},
   recs:{marginTop:10,display:'flex',flexDirection:'column',gap:6},
   rec:{fontSize:12,color:'var(--tx2)',border:'1px solid rgba(251,191,36,.2)',background:'rgba(251,191,36,.06)',borderRadius:8,padding:'7px 9px'},
+  historyList:{display:'flex',flexDirection:'column',gap:8},
+  historyItem:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.03)',borderRadius:8,padding:10},
+  historyTop:{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',fontSize:12},
+  historyValues:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:8,marginTop:8},
   notes:{width:'100%',minHeight:54,marginTop:10,background:'var(--s3)',border:'1px solid var(--b2)',borderRadius:8,color:'var(--tx)',padding:8,resize:'vertical'},
   transcript:{whiteSpace:'pre-wrap',fontSize:12,lineHeight:1.6,color:'var(--tx2)',background:'rgba(0,0,0,.18)',border:'1px solid var(--b2)',borderRadius:8,padding:12,maxHeight:260,overflowY:'auto'},
   empty:{padding:28,textAlign:'center',color:'var(--muted2)'},

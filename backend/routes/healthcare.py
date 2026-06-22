@@ -14,6 +14,17 @@ from database.connection import get_db, get_pool
 from services.adk_workflow import WorkflowConfigError, load_workflow_config, run_multi_agent_workflow
 from services.audit import audit, ip_from, ua_from
 from services.healthcare_agent_tools import HEALTHCARE_AGENT_TOOLS
+from services.healthcare_workflow_audit import (
+    assigned_personas,
+    can_persona_approve,
+    diff_packets,
+    get_workspace_role,
+    persona_catalog,
+    persona_config,
+    record_field_changes,
+    resolve_persona,
+    unauthorized_changes,
+)
 from services.healthcare_intelligence import HealthcareIntelligenceError, build_healthcare_context
 from services.chunker import chunk_text
 from services.llm import embed
@@ -52,13 +63,150 @@ SUPPORTED_CLINICAL_AUDIO_TYPES = {
 }
 
 
+@router.get("/personas")
+async def get_healthcare_personas(current_user: CurrentUser):
+    return {"vertical": HEALTHCARE_VERTICAL, "personas": persona_catalog()}
+
+
+@router.get("/agent-runs/{run_id}/access-context")
+async def get_healthcare_run_access_context(run_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    user_id = str(current_user["id"])
+    run = await get_accessible_vertical_run(db, run_id, user_id)
+    if run.get("vertical") != HEALTHCARE_VERTICAL:
+        raise HTTPException(404, "Healthcare agent run not found")
+    workspace_role = await get_workspace_role(
+        db,
+        str(run["workspace_id"]) if run.get("workspace_id") else None,
+        user_id,
+        str(run["user_id"]) if run.get("user_id") else None,
+    )
+    assigned = await assigned_personas(db, str(run["workspace_id"]) if run.get("workspace_id") else None, user_id)
+    default_persona = resolve_persona(assigned[0] if assigned else None, workspace_role)
+    personas = sorted(set(assigned or [default_persona]))
+    return {
+        "run_id": run_id,
+        "workspace_id": str(run["workspace_id"]) if run.get("workspace_id") else None,
+        "workspace_role": workspace_role,
+        "personas": personas,
+        "default_persona": default_persona,
+        "persona_scopes": {persona: persona_config(persona) for persona in personas},
+    }
+
+
+@router.get("/agent-runs/{run_id}/change-history")
+async def get_healthcare_run_change_history(run_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    user_id = str(current_user["id"])
+    run = await get_accessible_vertical_run(db, run_id, user_id)
+    if run.get("vertical") != HEALTHCARE_VERTICAL:
+        raise HTTPException(404, "Healthcare agent run not found")
+    rows = await db.fetch(
+        """
+        SELECT c.id, c.action_type, c.field_path, c.old_value, c.new_value,
+               c.workspace_role, c.persona, c.created_at,
+               u.email AS user_email, u.full_name AS user_name
+        FROM vertical_agent_field_changes c
+        LEFT JOIN users u ON u.id = c.user_id
+        WHERE c.run_id=$1
+        ORDER BY c.created_at DESC, c.id DESC
+        LIMIT 500
+        """,
+        run_id,
+    )
+    return {
+        "run_id": run_id,
+        "changes": [
+            {
+                "id": str(row["id"]),
+                "action_type": row["action_type"],
+                "field_path": row["field_path"],
+                "old_value": _json(row["old_value"]),
+                "new_value": _json(row["new_value"]),
+                "workspace_role": row["workspace_role"],
+                "persona": row["persona"],
+                "user_email": row["user_email"],
+                "user_name": row["user_name"] or "",
+                "created_at": row["created_at"].isoformat(),
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.post("/workspaces/{workspace_id}/personas")
+async def set_healthcare_workspace_personas(
+    workspace_id: str,
+    body: WorkspacePersonaRequest,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    from routes.workspaces import _require_role
+
+    user_id = str(current_user["id"])
+    await _require_role(db, workspace_id, user_id, "owner")
+    member = await db.fetchrow(
+        "SELECT 1 FROM workspace_members WHERE workspace_id=$1 AND user_id=$2",
+        workspace_id,
+        body.user_id,
+    )
+    if not member:
+        raise HTTPException(404, "Workspace member not found")
+    valid = {item["id"] for item in persona_catalog()}
+    personas = sorted(set(body.personas))
+    unknown = [persona for persona in personas if persona not in valid]
+    if unknown:
+        raise HTTPException(400, f"Unknown healthcare persona(s): {', '.join(unknown)}")
+    await db.execute(
+        "DELETE FROM workspace_member_personas WHERE workspace_id=$1 AND user_id=$2 AND vertical=$3",
+        workspace_id,
+        body.user_id,
+        HEALTHCARE_VERTICAL,
+    )
+    for persona in personas:
+        await db.execute(
+            """
+            INSERT INTO workspace_member_personas (workspace_id, user_id, vertical, persona, assigned_by)
+            VALUES ($1,$2,$3,$4,$5)
+            ON CONFLICT DO NOTHING
+            """,
+            workspace_id,
+            body.user_id,
+            HEALTHCARE_VERTICAL,
+            persona,
+            user_id,
+        )
+    await audit(
+        db,
+        user_id=user_id,
+        action="healthcare_personas_assign",
+        resource_type="workspace",
+        resource_id=workspace_id,
+        metadata={"target_user_id": body.user_id, "personas": personas},
+        ip_address=ip_from(request),
+        user_agent=ua_from(request),
+    )
+    return {"ok": True, "workspace_id": workspace_id, "user_id": body.user_id, "personas": personas}
+
+
 class HealthcareApprovalRequest(BaseModel):
     approved_packet: dict | None = None
     notes: str | None = None
+    persona: str | None = None
+
+
+class HealthcareReviewDraftRequest(BaseModel):
+    review_packet: dict
+    notes: str | None = None
+    persona: str | None = None
 
 
 class PriorAuthWorkflowRequest(BaseModel):
     policy_document_ids: list[str] = []
+
+
+class WorkspacePersonaRequest(BaseModel):
+    user_id: str
+    personas: list[str]
 
 
 @router.get("/agent-runs/{run_id}")
@@ -424,6 +572,85 @@ async def run_new_visit_transcription_workflow(
     return response
 
 
+@router.patch("/agent-runs/{run_id}/review-draft")
+async def save_healthcare_review_draft(
+    run_id: str,
+    body: HealthcareReviewDraftRequest,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    run = await get_accessible_vertical_run(db, run_id, user_id)
+    if run.get("vertical") != HEALTHCARE_VERTICAL:
+        raise HTTPException(404, "Healthcare agent run not found")
+    if run.get("status") not in ("pending_approval", "approved"):
+        raise HTTPException(400, f"Run is not ready for review edits: {run.get('status')}")
+
+    workspace_id = str(run["workspace_id"]) if run.get("workspace_id") else None
+    workspace_role = await get_workspace_role(
+        db,
+        workspace_id,
+        user_id,
+        str(run["user_id"]) if run.get("user_id") else None,
+    )
+    assigned = await assigned_personas(db, workspace_id, user_id)
+    requested_persona = resolve_persona(body.persona or (assigned[0] if assigned else None), workspace_role)
+    if assigned and requested_persona not in assigned:
+        raise HTTPException(403, f"Persona {requested_persona} is not assigned to this workspace member")
+    if workspace_role not in ("owner", "editor"):
+        raise HTTPException(403, "Requires owner or editor role to save healthcare review edits")
+
+    result_data = _json(run.get("result_data")) or {}
+    current_packet = result_data.get("review_packet") or result_data.get("approved_packet") or result_data
+    changes = diff_packets(current_packet, body.review_packet)
+    blocked = unauthorized_changes(requested_persona, changes)
+    if blocked:
+        raise HTTPException(
+            403,
+            f"Persona {requested_persona} cannot edit these fields: {', '.join(blocked[:8])}",
+        )
+    if changes:
+        await record_field_changes(
+            db,
+            run=run,
+            user_id=user_id,
+            workspace_role=workspace_role,
+            persona=requested_persona,
+            action_type="healthcare_packet_field_update",
+            changes=changes,
+        )
+    await db.execute(
+        """
+        UPDATE vertical_agent_runs
+        SET result_data=jsonb_set(COALESCE(result_data, '{}'::jsonb), '{review_packet}', $2::jsonb, true),
+            approval_notes=COALESCE($3, approval_notes),
+            updated_at=NOW()
+        WHERE id=$1
+        """,
+        run_id,
+        json.dumps(body.review_packet),
+        body.notes,
+    )
+    await audit(
+        db,
+        user_id=user_id,
+        action="healthcare_review_draft_save",
+        resource_type="agent_run",
+        resource_id=run_id,
+        metadata={
+            "document_id": str(run["document_id"]),
+            "workspace_role": workspace_role,
+            "persona": requested_persona,
+            "field_change_count": len(changes),
+        },
+        ip_address=ip_from(request),
+        user_agent=ua_from(request),
+    )
+    fresh = await get_accessible_vertical_run(db, run_id, user_id)
+    return await vertical_run_response(db, fresh)
+
+
 @router.post("/agent-runs/{run_id}/approve")
 async def approve_healthcare_agent_run(
     run_id: str,
@@ -438,10 +665,43 @@ async def approve_healthcare_agent_run(
         raise HTTPException(404, "Healthcare agent run not found")
 
     result_data = _json(run.get("result_data")) or {}
-    approved_packet = body.approved_packet or result_data.get("approved_packet")
+    approved_packet = body.approved_packet or result_data.get("review_packet") or result_data.get("approved_packet")
     if not approved_packet:
         raise HTTPException(400, "No healthcare packet available to approve")
 
+    workspace_id = str(run["workspace_id"]) if run.get("workspace_id") else None
+    workspace_role = await get_workspace_role(
+        db,
+        workspace_id,
+        user_id,
+        str(run["user_id"]) if run.get("user_id") else None,
+    )
+    assigned = await assigned_personas(db, workspace_id, user_id)
+    requested_persona = resolve_persona(body.persona or (assigned[0] if assigned else None), workspace_role)
+    if assigned and requested_persona not in assigned:
+        raise HTTPException(403, f"Persona {requested_persona} is not assigned to this workspace member")
+    owner_personal_doc = not workspace_id and str(run["user_id"]) == user_id
+    if not can_persona_approve(requested_persona, workspace_role, owner_personal_doc=owner_personal_doc):
+        raise HTTPException(403, f"Persona {requested_persona} cannot approve healthcare packets")
+
+    draft_packet = result_data.get("review_packet") or result_data.get("approved_packet") or result_data
+    changes = diff_packets(draft_packet, approved_packet)
+    blocked = unauthorized_changes(requested_persona, changes)
+    if blocked:
+        raise HTTPException(
+            403,
+            f"Persona {requested_persona} cannot edit these fields: {', '.join(blocked[:8])}",
+        )
+    if changes:
+        await record_field_changes(
+            db,
+            run=run,
+            user_id=user_id,
+            workspace_role=workspace_role,
+            persona=requested_persona,
+            action_type="healthcare_packet_approve",
+            changes=changes,
+        )
     await approve_vertical_run(
         db,
         run_id=run_id,
@@ -455,7 +715,12 @@ async def approve_healthcare_agent_run(
         action="healthcare_agent_approve",
         resource_type="document",
         resource_id=str(run["document_id"]),
-        metadata={"run_id": run_id},
+        metadata={
+            "run_id": run_id,
+            "workspace_role": workspace_role,
+            "persona": requested_persona,
+            "field_change_count": len(changes),
+        },
         ip_address=ip_from(request),
         user_agent=ua_from(request),
     )

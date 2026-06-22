@@ -406,11 +406,31 @@ export async function fetchLatestHealthcareAgentWorkflow(docId, workflowId = '')
   return handleRes(await fetch(`${BASE}/healthcare/${docId}/agent-workflow/latest${qs}`, { headers: authHdr() }));
 }
 
-export async function approveHealthcareAgentRun(runId, { approvedPacket = null, notes = '' } = {}) {
+export async function approveHealthcareAgentRun(runId, { approvedPacket = null, notes = '', persona = '' } = {}) {
   return handleRes(await fetch(`${BASE}/healthcare/agent-runs/${runId}/approve`, {
     method:'POST',
     headers:{'Content-Type':'application/json', ...authHdr()},
-    body:JSON.stringify({ approved_packet: approvedPacket, notes }),
+    body:JSON.stringify({ approved_packet: approvedPacket, notes, persona }),
+  }));
+}
+
+export async function fetchHealthcarePersonas() {
+  return handleRes(await fetch(`${BASE}/healthcare/personas`, { headers: authHdr() }));
+}
+
+export async function fetchHealthcareRunAccessContext(runId) {
+  return handleRes(await fetch(`${BASE}/healthcare/agent-runs/${runId}/access-context`, { headers: authHdr() }));
+}
+
+export async function fetchHealthcareRunChangeHistory(runId) {
+  return handleRes(await fetch(`${BASE}/healthcare/agent-runs/${runId}/change-history`, { headers: authHdr() }));
+}
+
+export async function saveHealthcareReviewDraft(runId, { reviewPacket, notes = '', persona = '' } = {}) {
+  return handleRes(await fetch(`${BASE}/healthcare/agent-runs/${runId}/review-draft`, {
+    method:'PATCH',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({ review_packet: reviewPacket, notes, persona }),
   }));
 }
 
