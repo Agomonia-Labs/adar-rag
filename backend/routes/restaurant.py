@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
@@ -230,15 +231,21 @@ async def approve_restaurant_agent_run(
     run = await get_accessible_vertical_run(db, run_id, user_id)
     if run.get("vertical") != RESTAURANT_VERTICAL:
         raise HTTPException(404, "Restaurant agent run not found")
+    workspace_id = str(run["workspace_id"]) if run.get("workspace_id") else None
+    workflow_owner_id = str(run["user_id"])
+    if workspace_id:
+        from routes.workspaces import _require_role
+        await _require_role(db, workspace_id, user_id, "editor")
     result_data = _json(run.get("result_data")) or {}
     approved_packet = body.approved_packet or result_data.get("approved_packet")
     if not approved_packet:
         raise HTTPException(400, "No restaurant/menu packet available to approve")
 
-    restaurant_id = await _save_restaurant_packet(db, user_id, run.get("workspace_id"), run_id, approved_packet)
+    restaurant_owner_id = workflow_owner_id if workspace_id else user_id
+    restaurant_id = await _save_restaurant_packet(db, restaurant_owner_id, workspace_id, run_id, approved_packet)
     approved_packet = {**approved_packet, "restaurant_id": restaurant_id}
     await approve_vertical_run(db, run_id=run_id, user_id=user_id, approved_packet=approved_packet, notes=body.notes)
-    await _persist_approved_restaurant_document(db, str(run["document_id"]), user_id, run.get("workspace_id"), approved_packet)
+    await _persist_approved_restaurant_document(db, str(run["document_id"]), workflow_owner_id, workspace_id, approved_packet)
     await audit(
         db,
         user_id=user_id,
@@ -565,6 +572,9 @@ async def _execute_restaurant_workflow_background(
 
 
 async def _save_restaurant_packet(db, user_id: str, workspace_id: str | None, run_id: str, packet: dict[str, Any]) -> str:
+    user_id = _id_text(user_id)
+    workspace_id = _id_text(workspace_id)
+    run_id = _id_text(run_id)
     profile = packet.get("restaurant_profile") or {}
     menu_items = packet.get("menu_items") if isinstance(packet.get("menu_items"), list) else []
     name = str(profile.get("name") or "Unnamed Restaurant").strip()
@@ -573,7 +583,7 @@ async def _save_restaurant_packet(db, user_id: str, workspace_id: str | None, ru
         """
         SELECT id FROM restaurants
         WHERE user_id=$1
-          AND COALESCE(workspace_id::text, '')=COALESCE($2::text, '')
+          AND workspace_id IS NOT DISTINCT FROM $2::uuid
           AND LOWER(name)=LOWER($3)
           AND LOWER(address)=LOWER($4)
         LIMIT 1
@@ -671,6 +681,9 @@ async def _persist_workflow_transcript(
     transcript_filename: str,
     status: str,
 ) -> None:
+    doc_id = _id_text(doc_id)
+    user_id = _id_text(user_id)
+    workspace_id = _id_text(workspace_id)
     transcript = ((result.get("conversation_transcript") or {}).get("transcript_text") or "").strip()
     text = transcript or "Restaurant menu scribe transcript was empty."
     await gcs.upload_text(transcript_gcs_path, text)
@@ -691,6 +704,9 @@ async def _persist_workflow_transcript(
 
 
 async def _persist_approved_restaurant_document(db, doc_id: str, user_id: str, workspace_id: str | None, packet: dict[str, Any]) -> None:
+    doc_id = _id_text(doc_id)
+    user_id = _id_text(user_id)
+    workspace_id = _id_text(workspace_id)
     profile = packet.get("restaurant_profile") or {}
     lines = [
         f"Restaurant: {profile.get('name') or 'Unnamed Restaurant'}",
@@ -845,11 +861,19 @@ def _menu_search_row(row) -> dict[str, Any]:
 
 
 def _clean(value: Any) -> Any:
+    if isinstance(value, UUID):
+        return str(value)
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, datetime):
         return value.isoformat()
     return value
+
+
+def _id_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
 
 
 def _json(value: Any) -> dict[str, Any]:
