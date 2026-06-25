@@ -626,6 +626,57 @@ TRANSCRIPT:
     return normalize_visit_followups(data)
 
 
+async def generate_after_visit_summary(
+    transcript_text: str,
+    intake: dict[str, Any],
+    soap_note: dict[str, Any],
+    patient_summary: dict[str, Any],
+    followup_checklist: dict[str, Any],
+    language: str = "",
+) -> dict[str, Any]:
+    system = _clinical_system("After Visit Summary Agent")
+    user = f"""Create a clinician-review after visit summary for the patient from this visit transcript and intermediate clinical outputs.
+Use patient-friendly language, but do not add new medical advice. Include only items supported by the transcript or provided intermediate outputs.
+
+Return JSON in this exact shape:
+{{
+  "summary": "brief patient-facing after visit summary",
+  "visit_reason": "why the patient came in",
+  "today_we_discussed": [{{"item": "topic discussed", "source": "transcript or SOAP", "confidence": 0.0-1.0}}],
+  "clinician_impression": "clinician-reviewed impression or review required",
+  "medication_instructions": [{{"item": "medication instruction or OTC discussion", "source": "transcript or SOAP", "confidence": 0.0-1.0}}],
+  "tests_and_orders": [{{"item": "lab, urine test, imaging, procedure, referral, or order", "status": "ordered|recommended|discussed|pending|unknown", "source": "transcript or SOAP", "confidence": 0.0-1.0}}],
+  "referrals": [{{"item": "referral or specialty follow-up", "source": "transcript or SOAP", "confidence": 0.0-1.0}}],
+  "follow_up_plan": [{{"action": "follow-up step", "owner": "patient|provider|care_team|billing|unknown", "due_date": "date or null", "source": "transcript or checklist", "confidence": 0.0-1.0}}],
+  "warning_signs": [{{"sign": "urgent warning sign discussed", "recommended_action": "what patient was told to do", "source": "transcript", "confidence": 0.0-1.0}}],
+  "preventive_care_reminders": [{{"item": "screening, immunization, annual checkup, routine lab reminder", "source": "transcript", "confidence": 0.0-1.0}}],
+  "facility_coordination": [{{"item": "facility, lab, imaging, scheduling, or hospital coordination item", "source": "transcript", "confidence": 0.0-1.0}}],
+  "patient_questions": [{{"question": "question or concern from the patient", "source": "transcript", "confidence": 0.0-1.0}}],
+  "review_required": true,
+  "confidence": 0.0-1.0
+}}
+
+TARGET LANGUAGE:
+{language or "same as conversation"}
+
+INTAKE:
+{json.dumps(intake)[:7000]}
+
+SOAP DRAFT:
+{json.dumps(soap_note)[:10000]}
+
+PATIENT SUMMARY:
+{json.dumps(patient_summary)[:8000]}
+
+FOLLOW-UP CHECKLIST:
+{json.dumps(followup_checklist)[:8000]}
+
+TRANSCRIPT:
+{transcript_text[:30000]}"""
+    data = await _complete_json(system, user)
+    return normalize_after_visit_summary(data)
+
+
 async def review_scribe_governance(
     transcript_text: str,
     intake: dict[str, Any],
@@ -667,6 +718,7 @@ def merge_transcription_outputs(outputs: dict[str, Any], context: dict[str, Any]
         "soap_note": outputs.get("soap_note") or {},
         "patient_summary": outputs.get("patient_summary") or {},
         "followup_checklist": outputs.get("followup_checklist") or {},
+        "after_visit_summary": outputs.get("after_visit_summary") or {},
         "scribe_governance": outputs.get("scribe_governance") or {},
         "audio": {
             "gcs_path": (context or {}).get("audio_gcs_path"),
@@ -804,6 +856,26 @@ def normalize_visit_followups(data: dict[str, Any]) -> dict[str, Any]:
         "summary": data.get("summary") or "",
         "follow_up_actions": _list(data.get("follow_up_actions")),
         "open_questions": _list(data.get("open_questions")),
+        "confidence": _float(data.get("confidence")),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def normalize_after_visit_summary(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "summary": data.get("summary") or "",
+        "visit_reason": data.get("visit_reason") or "",
+        "today_we_discussed": _list(data.get("today_we_discussed")),
+        "clinician_impression": data.get("clinician_impression") or "",
+        "medication_instructions": _list(data.get("medication_instructions")),
+        "tests_and_orders": _list(data.get("tests_and_orders")),
+        "referrals": _list(data.get("referrals")),
+        "follow_up_plan": _list(data.get("follow_up_plan")),
+        "warning_signs": _list(data.get("warning_signs")),
+        "preventive_care_reminders": _list(data.get("preventive_care_reminders")),
+        "facility_coordination": _list(data.get("facility_coordination")),
+        "patient_questions": _list(data.get("patient_questions")),
+        "review_required": bool(data.get("review_required", True)),
         "confidence": _float(data.get("confidence")),
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }

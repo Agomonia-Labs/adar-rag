@@ -56,6 +56,14 @@
         "max_attempts": 2
       },
       {
+        "id": "after_visit_summary",
+        "name": "After Visit Summary Agent",
+        "tool": "healthcare.transcription.generate_after_visit_summary",
+        "output_key": "after_visit_summary",
+        "input_summary": "Generate a patient-facing after visit summary with tests, referrals, warnings, preventive reminders, facility coordination, and follow-up plan.",
+        "max_attempts": 2
+      },
+      {
         "id": "scribe_governance",
         "name": "Clinical Scribe Governance Agent",
         "tool": "healthcare.transcription.review_governance",

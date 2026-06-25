@@ -397,6 +397,14 @@ export async function runNewVisitTranscriptionWorkflow(audioBlob, { language = '
   }));
 }
 
+export async function rerunHealthcareTranscriptionWorkflow(runId) {
+  return handleRes(await fetch(`${LONG_BASE}/healthcare/agent-runs/${runId}/transcription-rerun`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({}),
+  }));
+}
+
 export async function fetchHealthcareAgentRun(runId) {
   return handleRes(await fetch(`${BASE}/healthcare/agent-runs/${runId}`, { headers: authHdr() }));
 }
@@ -431,6 +439,14 @@ export async function saveHealthcareReviewDraft(runId, { reviewPacket, notes = '
     method:'PATCH',
     headers:{'Content-Type':'application/json', ...authHdr()},
     body:JSON.stringify({ review_packet: reviewPacket, notes, persona }),
+  }));
+}
+
+export async function generateAfterVisitSummaryPdf(runId) {
+  return handleRes(await fetch(`${LONG_BASE}/healthcare/agent-runs/${runId}/after-visit-summary/pdf`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({}),
   }));
 }
 

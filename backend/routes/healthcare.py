@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import textwrap
 import uuid
+from io import BytesIO
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -25,7 +27,7 @@ from services.healthcare_workflow_audit import (
     resolve_persona,
     unauthorized_changes,
 )
-from services.healthcare_intelligence import HealthcareIntelligenceError, build_healthcare_context
+from services.healthcare_intelligence import HealthcareIntelligenceError, build_healthcare_context, generate_after_visit_summary
 from services.chunker import chunk_text
 from services.llm import embed
 from services.text_safety import sanitize_text_for_storage
@@ -129,6 +131,113 @@ async def get_healthcare_run_change_history(run_id: str, current_user: CurrentUs
             }
             for row in rows
         ],
+    }
+
+
+@router.post("/agent-runs/{run_id}/after-visit-summary/pdf")
+async def generate_after_visit_summary_pdf_artifact(
+    run_id: str,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    run = await get_accessible_vertical_run(db, run_id, user_id)
+    if run.get("vertical") != HEALTHCARE_VERTICAL or run.get("workflow_id") != TRANSCRIPTION_WORKFLOW_ID:
+        raise HTTPException(404, "Clinical scribe run not found")
+    if run.get("status") not in ("pending_approval", "approved"):
+        raise HTTPException(400, f"Run is not ready for AVS generation: {run.get('status')}")
+
+    workspace_id = str(run["workspace_id"]) if run.get("workspace_id") else None
+    workspace_role = await get_workspace_role(
+        db,
+        workspace_id,
+        user_id,
+        str(run["user_id"]) if run.get("user_id") else None,
+    )
+    if workspace_role not in ("owner", "editor"):
+        raise HTTPException(403, "Requires owner or editor role to generate an after visit summary PDF")
+
+    result = _json(run.get("result_data")) or {}
+    packet = result.get("review_packet") or result.get("approved_packet") or result
+    packet = await _ensure_after_visit_summary_for_run(db, run_id, run, result, packet)
+    avs = packet.get("after_visit_summary") or {}
+    if not avs or not (avs.get("summary") or avs.get("visit_reason") or avs.get("follow_up_plan")):
+        raise HTTPException(400, "No after visit summary is available. Run the clinical scribe workflow first.")
+
+    doc_id = str(uuid.uuid4())
+    owner_id = user_id
+    title = _avs_title(packet, run_id)
+    filename = _safe_filename(title, suffix=".pdf")
+    source_path = gcs.source_path(owner_id, doc_id, filename)
+    avs_text = _format_after_visit_summary_text(packet, run_id)
+    pdf_bytes = _render_after_visit_summary_pdf(title, avs_text)
+
+    await gcs.upload_bytes(source_path, pdf_bytes, "application/pdf")
+    await db.execute(
+        """
+        INSERT INTO documents
+          (id, user_id, workspace_id, filename, original_name, file_type, file_size,
+           gcs_source_path, gcs_chunks_dir, status, doc_type, doc_domain, doc_language, classified_at, doc_metadata)
+        VALUES ($1,$2,$3,$4,$5,'pdf',$6,$7,$8,'chunking','after_visit_summary','medical',$9,NOW(),$10::jsonb)
+        """,
+        doc_id,
+        owner_id,
+        workspace_id,
+        filename,
+        title,
+        len(pdf_bytes),
+        source_path,
+        gcs.chunks_dir(owner_id, doc_id),
+        _language_code(((packet.get("conversation_transcript") or {}).get("language") or "")),
+        json.dumps({
+            "source_kind": "healthcare_after_visit_summary_pdf",
+            "source_run_id": run_id,
+            "source_document_id": str(run["document_id"]),
+            "generated_from": "clinical_scribe_after_visit_summary",
+        }),
+    )
+    await log_event(db, owner_id, "upload", metadata={
+        "doc_id": doc_id,
+        "filename": filename,
+        "file_size": len(pdf_bytes),
+        "file_type": "healthcare_after_visit_summary_pdf",
+        "source_kind": "healthcare_after_visit_summary_pdf",
+        "run_id": run_id,
+    })
+    await _persist_after_visit_summary_document(
+        db,
+        doc_id=doc_id,
+        user_id=owner_id,
+        workspace_id=workspace_id,
+        run_id=run_id,
+        source_document_id=str(run["document_id"]),
+        filename=filename,
+        title=title,
+        source_path=source_path,
+        text=avs_text,
+    )
+    await audit(
+        db,
+        user_id=user_id,
+        action="healthcare_after_visit_summary_pdf_generate",
+        resource_type="document",
+        resource_id=doc_id,
+        metadata={"run_id": run_id, "source_document_id": str(run["document_id"]), "workspace_role": workspace_role},
+        ip_address=ip_from(request),
+        user_agent=ua_from(request),
+    )
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "document": {
+            "doc_id": doc_id,
+            "filename": filename,
+            "original_name": title,
+            "file_type": "pdf",
+            "status": "embedded",
+            "gcs_source_path": source_path,
+        },
     }
 
 
@@ -570,6 +679,90 @@ async def run_new_visit_transcription_workflow(
     response = await vertical_run_response(db, run)
     response["created_document"] = {"doc_id": doc_id, "filename": transcript_filename, "original_name": base_title}
     return response
+
+
+@router.post("/agent-runs/{run_id}/transcription-rerun")
+async def rerun_healthcare_transcription_workflow(
+    run_id: str,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    previous = await get_accessible_vertical_run(db, run_id, user_id)
+    if previous.get("vertical") != HEALTHCARE_VERTICAL or previous.get("workflow_id") != TRANSCRIPTION_WORKFLOW_ID:
+        raise HTTPException(404, "Clinical scribe run not found")
+    doc = await _get_accessible_doc(db, str(previous["document_id"]), user_id)
+    workspace_id = str(previous["workspace_id"]) if previous.get("workspace_id") else None
+    workspace_role = await get_workspace_role(db, workspace_id, user_id, str(previous["user_id"]))
+    if workspace_id and workspace_role not in ("owner", "editor"):
+        raise HTTPException(403, "Requires owner or editor role to re-run clinical scribe")
+
+    input_data = _json(previous.get("input_data")) or {}
+    doc_metadata = _json(doc.get("doc_metadata")) or {}
+    audio_gcs_path = input_data.get("audio_gcs_path") or (doc_metadata.get("audio_gcs_path") if isinstance(doc_metadata, dict) else None)
+    if not audio_gcs_path:
+        raise HTTPException(400, "This clinical scribe run does not have saved audio. Please upload or record audio again.")
+    audio_bytes = await gcs.download_bytes(audio_gcs_path)
+    if not audio_bytes:
+        raise HTTPException(400, "Saved audio is empty or unavailable. Please upload or record audio again.")
+    content_type = input_data.get("audio_mime_type") or "application/octet-stream"
+    language = input_data.get("language") or ""
+    safe_audio_name = input_data.get("audio_filename") or "clinical-conversation.webm"
+    is_new_visit = bool(input_data.get("new_visit"))
+
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "voice_transcription",
+        "max_voice_transcriptions_day",
+        metadata={"action": "healthcare_transcription_rerun", "source_run_id": run_id, "audio_bytes": len(audio_bytes), "language": language},
+    )
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "healthcare_ai",
+        "max_healthcare_ai_day",
+        metadata={"action": "healthcare_transcription_workflow_rerun", "source_run_id": run_id, "audio_bytes": len(audio_bytes), "language": language},
+    )
+
+    config = load_workflow_config(TRANSCRIPTION_WORKFLOW_ID)
+    new_run = await create_vertical_run(
+        db,
+        workflow_id=TRANSCRIPTION_WORKFLOW_ID,
+        workflow_version=config.get("version") or "healthcare-transcription-v1",
+        vertical=HEALTHCARE_VERTICAL,
+        document_id=str(previous["document_id"]),
+        user_id=str(previous["user_id"]),
+        workspace_id=previous.get("workspace_id"),
+        input_data={
+            **input_data,
+            "audio_size": len(audio_bytes),
+            "rerun_from_run_id": run_id,
+            "rerun_requested_by": user_id,
+        },
+    )
+    new_run_id = str(new_run["id"])
+    background_tasks.add_task(
+        _execute_transcription_workflow_background,
+        new_run_id,
+        str(previous["document_id"]),
+        str(previous["user_id"]),
+        audio_bytes,
+        audio_gcs_path,
+        safe_audio_name,
+        content_type,
+        len(audio_bytes),
+        language,
+        ip_from(request),
+        ua_from(request),
+        is_new_visit,
+        str(doc["gcs_source_path"]) if is_new_visit else None,
+        str(doc["filename"]) if is_new_visit else "",
+        workspace_id,
+    )
+    return await vertical_run_response(db, new_run)
 
 
 @router.patch("/agent-runs/{run_id}/review-draft")
@@ -1043,6 +1236,63 @@ def _json(value):
     return value
 
 
+async def _ensure_after_visit_summary_for_run(db, run_id: str, run: dict, result: dict, packet: dict) -> dict:
+    avs = packet.get("after_visit_summary") if isinstance(packet, dict) else None
+    if isinstance(avs, dict) and (avs.get("summary") or avs.get("visit_reason") or avs.get("follow_up_plan")):
+        return packet
+
+    transcript = packet.get("conversation_transcript") or {}
+    transcript_text = transcript.get("transcript_text") or ""
+    soap_note = packet.get("soap_note") or {}
+    patient_summary = packet.get("patient_summary") or {}
+    followup_checklist = packet.get("followup_checklist") or {}
+    intake = packet.get("conversation_intake") or {}
+    if not any((transcript_text, soap_note, patient_summary, followup_checklist)):
+        return packet
+
+    input_data = _json(run.get("input_data")) or {}
+    language = transcript.get("language") or input_data.get("language") or ""
+    try:
+        generated_avs = await generate_after_visit_summary(
+            transcript_text,
+            intake,
+            soap_note,
+            patient_summary,
+            followup_checklist,
+            language,
+        )
+    except HealthcareIntelligenceError as exc:
+        log.warning("Could not backfill after visit summary for run_id=%s: %s", run_id, exc)
+        return packet
+    if not generated_avs:
+        return packet
+
+    updated_result = dict(result or {})
+    updated_packet = dict(packet or {})
+    updated_packet["after_visit_summary"] = generated_avs
+
+    if isinstance(updated_result.get("review_packet"), dict):
+        updated_result["review_packet"] = {**updated_result["review_packet"], "after_visit_summary": generated_avs}
+    if isinstance(updated_result.get("approved_packet"), dict):
+        updated_result["approved_packet"] = {**updated_result["approved_packet"], "after_visit_summary": generated_avs}
+    if not isinstance(updated_result.get("review_packet"), dict) and not isinstance(updated_result.get("approved_packet"), dict):
+        updated_result = {**updated_result, "after_visit_summary": generated_avs}
+        if isinstance(updated_result.get("approved_packet"), dict):
+            updated_result["approved_packet"] = {**updated_result["approved_packet"], "after_visit_summary": generated_avs}
+
+    await db.execute(
+        """
+        UPDATE vertical_agent_runs
+        SET result_data=$2::jsonb,
+            updated_at=NOW()
+        WHERE id=$1
+        """,
+        run_id,
+        json.dumps(updated_result),
+    )
+    return updated_packet
+
+
 async def _persist_new_visit_transcript_document(
     db,
     *,
@@ -1151,6 +1401,516 @@ async def _persist_new_visit_transcript_document(
             chunk_metadata=chunk.to_metadata(),
         )
     await db.execute("UPDATE documents SET status='embedded', updated_at=NOW() WHERE id=$1", doc_id)
+
+
+async def _persist_after_visit_summary_document(
+    db,
+    *,
+    doc_id: str,
+    user_id: str,
+    workspace_id: str | None,
+    run_id: str,
+    source_document_id: str,
+    filename: str,
+    title: str,
+    source_path: str,
+    text: str,
+) -> None:
+    clean_text = sanitize_text_for_storage(text)
+    doc_meta = {
+        "document_id": doc_id,
+        "user_id": user_id,
+        "filename": filename,
+        "file_type": "pdf",
+        "source_kind": "healthcare_after_visit_summary_pdf",
+        "workflow_id": TRANSCRIPTION_WORKFLOW_ID,
+        "run_id": run_id,
+        "source_document_id": source_document_id,
+        "title": title,
+    }
+    chunks = chunk_text(clean_text, doc_meta=doc_meta)
+    if not chunks:
+        raise HealthcareIntelligenceError("After visit summary produced no chunks")
+    for chunk in chunks:
+        await gcs.upload_text(gcs.chunk_path(user_id, doc_id, chunk.index), chunk.text)
+    now = datetime.now(timezone.utc).isoformat()
+    meta_obj = {
+        "document": {
+            "id": doc_id,
+            "user_id": user_id,
+            "filename": filename,
+            "file_type": "pdf",
+            "total_chunks": len(chunks),
+            "created_at": now,
+            "source_kind": "healthcare_after_visit_summary_pdf",
+            "workflow_id": TRANSCRIPTION_WORKFLOW_ID,
+            "run_id": run_id,
+            "source_document_id": source_document_id,
+        },
+        "chunks": [
+            {
+                "index": c.index,
+                "word_count": c.word_count,
+                "char_count": c.char_count,
+                "gcs_path": gcs.chunk_path(user_id, doc_id, c.index),
+                "source_kind": "healthcare_after_visit_summary_pdf",
+                "run_id": run_id,
+                "source_document_id": source_document_id,
+            }
+            for c in chunks
+        ],
+    }
+    await gcs.upload_json(gcs.metadata_path(user_id, doc_id), meta_obj)
+    await db.execute(
+        """
+        UPDATE documents
+           SET status='embedding',
+               chunk_count=$2,
+               doc_metadata = COALESCE(doc_metadata, '{}'::jsonb) || $3::jsonb,
+               updated_at=NOW()
+         WHERE id=$1
+        """,
+        doc_id,
+        len(chunks),
+        json.dumps({"after_visit_summary_artifact": {"run_id": run_id, "chunk_count": len(chunks), "source_path": source_path}}),
+    )
+    await check_and_log_daily_event(
+        db,
+        user_id,
+        "embedding",
+        "max_embeds_day",
+        quantity=len(chunks),
+        metadata={"doc_id": doc_id, "chunk_count": len(chunks), "source_kind": "healthcare_after_visit_summary_pdf"},
+    )
+    await delete_document_vectors(doc_id)
+    for chunk in chunks:
+        content = sanitize_text_for_storage(await gcs.download_text(gcs.chunk_path(user_id, doc_id, chunk.index)))
+        await store_chunk(
+            document_id=doc_id,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            chunk_index=chunk.index,
+            chunk_total=len(chunks),
+            content=content,
+            embedding=await embed(content),
+            chunk_metadata=chunk.to_metadata(),
+        )
+    await db.execute("UPDATE documents SET status='embedded', updated_at=NOW() WHERE id=$1", doc_id)
+
+
+def _avs_title(packet: dict, run_id: str) -> str:
+    context = packet.get("patient_context") or {}
+    name = ((context.get("patient_name") or {}).get("value") or "Patient").strip()
+    date = ((context.get("encounter_date") or {}).get("value") or datetime.now(timezone.utc).strftime("%Y-%m-%d")).strip()
+    return f"After Visit Summary - {name} - {date} - {run_id[:8]}"
+
+
+def _format_after_visit_summary_text(packet: dict, run_id: str) -> str:
+    avs = packet.get("after_visit_summary") or {}
+    context = packet.get("patient_context") or {}
+    lines = [
+        "AFTER VISIT SUMMARY",
+        f"Generated from clinical scribe run: {run_id}",
+        "",
+        "Patient / Encounter",
+        f"Patient: {_field_value(context, 'patient_name')}",
+        f"DOB: {_field_value(context, 'date_of_birth')}",
+        f"Encounter date: {_field_value(context, 'encounter_date')}",
+        f"Provider: {_field_value(context, 'provider')}",
+        f"Facility: {_field_value(context, 'facility')}",
+        f"Encounter type: {_field_value(context, 'encounter_type')}",
+        "",
+        "Summary",
+        avs.get("summary") or "Not provided.",
+        "",
+        "Visit Reason",
+        avs.get("visit_reason") or "Not provided.",
+        "",
+        "Clinician Impression",
+        avs.get("clinician_impression") or "Review required.",
+    ]
+    sections = [
+        ("Today We Discussed", avs.get("today_we_discussed"), "item"),
+        ("Medication Instructions", avs.get("medication_instructions"), "item"),
+        ("Tests and Orders", avs.get("tests_and_orders"), "item"),
+        ("Referrals", avs.get("referrals"), "item"),
+        ("Follow-Up Plan", avs.get("follow_up_plan"), "action"),
+        ("Warning Signs", avs.get("warning_signs"), "sign"),
+        ("Preventive Care Reminders", avs.get("preventive_care_reminders"), "item"),
+        ("Facility Coordination", avs.get("facility_coordination"), "item"),
+        ("Patient Questions", avs.get("patient_questions"), "question"),
+    ]
+    for title, items, key in sections:
+        lines.extend(["", title])
+        if not items:
+            lines.append("- None listed.")
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                lines.append(f"- {item}")
+                continue
+            value = item.get(key) or item.get("item") or item.get("action") or item.get("question") or item.get("sign") or ""
+            extra = []
+            if item.get("owner"):
+                extra.append(f"owner: {item['owner']}")
+            if item.get("due_date"):
+                extra.append(f"due: {item['due_date']}")
+            if item.get("status"):
+                extra.append(f"status: {item['status']}")
+            if item.get("recommended_action"):
+                extra.append(f"action: {item['recommended_action']}")
+            if item.get("source"):
+                extra.append(f"source: {item['source']}")
+            suffix = f" ({'; '.join(extra)})" if extra else ""
+            lines.append(f"- {value}{suffix}")
+    lines.extend([
+        "",
+        "Review Notice",
+        "This after visit summary is generated by DocIntel Clinical Scribe and requires clinician review. It is not diagnosis, treatment, or medical advice.",
+    ])
+    return sanitize_text_for_storage("\n".join(lines))
+
+
+def _render_after_visit_summary_pdf(title: str, text: str) -> bytes:
+    try:
+        from reportlab.lib.pagesizes import LETTER
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer
+
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=LETTER, rightMargin=46, leftMargin=46, topMargin=42, bottomMargin=48)
+        styles = _avs_pdf_styles(getSampleStyleSheet())
+        story = _avs_pdf_header(title, styles)
+
+        section_titles = {
+            "AFTER VISIT SUMMARY", "Patient / Encounter", "Summary", "Visit Reason", "Clinician Impression",
+            "Today We Discussed", "Medication Instructions", "Tests and Orders", "Referrals", "Follow-Up Plan",
+            "Warning Signs", "Preventive Care Reminders", "Facility Coordination", "Patient Questions",
+            "Review Notice",
+        }
+        pending_heading = None
+        for line in text.splitlines():
+            clean = line.strip()
+            if not clean:
+                story.append(Spacer(1, 8))
+                continue
+            if clean == "AFTER VISIT SUMMARY":
+                continue
+            if clean.startswith("Generated from clinical scribe run:"):
+                story.append(Paragraph(_xml_escape(clean), styles["Meta"]))
+                story.append(Spacer(1, 10))
+            elif clean in section_titles:
+                pending_heading = Paragraph(_xml_escape(clean), styles["SectionHeading"])
+            elif clean.startswith("- "):
+                bullet = Paragraph(_xml_escape(clean[2:]), styles["BulletBody"])
+                if pending_heading:
+                    story.append(KeepTogether([pending_heading, Spacer(1, 5), bullet]))
+                    pending_heading = None
+                else:
+                    story.append(bullet)
+            else:
+                paragraph_style = styles["NoticeBody"] if pending_heading and pending_heading.getPlainText() == "Review Notice" else styles["Body"]
+                para = Paragraph(_xml_escape(clean), paragraph_style)
+                if pending_heading:
+                    story.append(KeepTogether([pending_heading, Spacer(1, 5), para]))
+                    pending_heading = None
+                else:
+                    story.append(para)
+        doc.build(story, onFirstPage=_avs_pdf_footer, onLaterPages=_avs_pdf_footer)
+        return buffer.getvalue()
+    except Exception:
+        return _render_minimal_pdf(title, text)
+
+
+def _avs_pdf_styles(base_styles):
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.styles import ParagraphStyle
+
+    bengali_font = _register_bengali_pdf_font()
+    base_styles.add(ParagraphStyle(
+        name="BrandBangla",
+        parent=base_styles["Normal"],
+        fontName=bengali_font,
+        fontSize=18,
+        leading=20,
+        textColor=colors.HexColor("#4ade80"),
+    ))
+    base_styles.add(ParagraphStyle(
+        name="BrandEnglish",
+        parent=base_styles["Normal"],
+        fontName="Helvetica",
+        fontSize=12,
+        leading=14,
+        textColor=colors.HexColor("#6b7280"),
+    ))
+    base_styles.add(ParagraphStyle(
+        name="BrandTag",
+        parent=base_styles["Normal"],
+        fontName="Helvetica",
+        fontSize=8.5,
+        leading=11,
+        textColor=colors.HexColor("#15803d"),
+    ))
+    base_styles.add(ParagraphStyle(
+        name="DocTitle",
+        parent=base_styles["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=17,
+        leading=21,
+        textColor=colors.HexColor("#064e3b"),
+        alignment=TA_CENTER,
+        spaceAfter=10,
+    ))
+    base_styles.add(ParagraphStyle(
+        name="HeaderTitle",
+        parent=base_styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=17,
+        leading=21,
+        textColor=colors.HexColor("#064e3b"),
+    ))
+    base_styles.add(ParagraphStyle(
+        name="HeaderSubtitle",
+        parent=base_styles["Normal"],
+        fontName="Helvetica",
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor("#15803d"),
+    ))
+    base_styles.add(ParagraphStyle(
+        name="Meta",
+        parent=base_styles["Normal"],
+        fontName="Helvetica",
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor("#6b7280"),
+        alignment=TA_CENTER,
+    ))
+    base_styles.add(ParagraphStyle(
+        name="SectionHeading",
+        parent=base_styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=11.5,
+        leading=14,
+        textColor=colors.HexColor("#065f46"),
+        borderColor=colors.HexColor("#a7f3d0"),
+        borderWidth=0,
+        borderPadding=0,
+        spaceBefore=8,
+        spaceAfter=5,
+        keepWithNext=True,
+    ))
+    base_styles.add(ParagraphStyle(
+        name="Body",
+        parent=base_styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=9.5,
+        leading=14,
+        textColor=colors.HexColor("#1f2937"),
+        spaceAfter=4,
+    ))
+    base_styles.add(ParagraphStyle(
+        name="BulletBody",
+        parent=base_styles["Body"],
+        leftIndent=14,
+        firstLineIndent=-8,
+        bulletIndent=0,
+        bulletFontName="Helvetica-Bold",
+        bulletFontSize=8,
+        bulletText="-",
+    ))
+    base_styles.add(ParagraphStyle(
+        name="NoticeBody",
+        parent=base_styles["Body"],
+        fontSize=9,
+        leading=13,
+        textColor=colors.HexColor("#7f1d1d"),
+        backColor=colors.HexColor("#fef2f2"),
+        borderColor=colors.HexColor("#fecaca"),
+        borderWidth=0.6,
+        borderPadding=7,
+        spaceBefore=3,
+    ))
+    return base_styles
+
+
+def _register_bengali_pdf_font() -> str:
+    try:
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+
+        font_name = "AdarBengali"
+        if font_name in pdfmetrics.getRegisteredFontNames():
+            return font_name
+        candidates = [
+            os.getenv("ADAR_BENGALI_FONT_PATH", ""),
+            "/System/Library/PrivateFrameworks/FontServices.framework/Versions/A/Resources/Fonts/Subsets/NovemberBanglaTraditional.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansBengali-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansBengaliUI-Regular.ttf",
+            "/usr/share/fonts/truetype/lohit-bengali/Lohit-Bengali.ttf",
+        ]
+        for path in candidates:
+            if path and os.path.exists(path):
+                pdfmetrics.registerFont(TTFont(font_name, path))
+                return font_name
+    except Exception:
+        pass
+    return "Helvetica-Bold"
+
+
+def _avs_pdf_header(title: str, styles) -> list:
+    from reportlab.lib import colors
+    from reportlab.graphics.shapes import Circle, Drawing, Line
+    from reportlab.platypus import HRFlowable, Image, Paragraph, Spacer, Table
+
+    logo_path = _adar_docintel_logo_path()
+    if logo_path:
+        brand = Image(logo_path, width=210, height=46)
+    else:
+        leaf = Drawing(24, 24)
+        leaf.add(Circle(9, 14, 6, fillColor=colors.HexColor("#4ade80"), strokeColor=colors.HexColor("#15803d"), strokeWidth=0.6))
+        leaf.add(Circle(15, 10, 6, fillColor=colors.HexColor("#22c55e"), strokeColor=colors.HexColor("#15803d"), strokeWidth=0.6))
+        leaf.add(Line(7, 6, 18, 18, strokeColor=colors.HexColor("#166534"), strokeWidth=1))
+        brand_text = [
+            Paragraph(
+                f'<font name="{styles["BrandBangla"].fontName}" color="#4ade80" size="18"><b>আদর</b></font> '
+                '<font name="Helvetica" color="#6b7280" size="12">DocIntel</font>',
+                styles["BrandEnglish"],
+            ),
+            Paragraph("Document Intelligence | Clinical Scribe", styles["BrandTag"]),
+        ]
+        brand = Table(
+            [[leaf, brand_text]],
+            colWidths=[34, 410],
+            style=[
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (0, 0), 0),
+                ("RIGHTPADDING", (0, 0), (0, 0), 8),
+                ("TOPPADDING", (0, 0), (0, 0), 2),
+                ("BOTTOMPADDING", (0, 0), (0, 0), 2),
+                ("LEFTPADDING", (1, 0), (1, 0), 2),
+                ("RIGHTPADDING", (1, 0), (1, 0), 0),
+            ],
+        )
+    header = Table(
+        [[
+            brand,
+            [
+                Paragraph("After Visit Summary", styles["HeaderTitle"]),
+                Paragraph("Patient-ready clinical scribe PDF artifact", styles["HeaderSubtitle"]),
+            ],
+        ]],
+        colWidths=[230, 260],
+        style=[
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f0fdf4")),
+            ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#bbf7d0")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (0, 0), 10),
+            ("RIGHTPADDING", (0, 0), (0, 0), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 9),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+            ("LEFTPADDING", (1, 0), (1, 0), 14),
+            ("RIGHTPADDING", (1, 0), (1, 0), 12),
+        ],
+    )
+    return [
+        header,
+        Spacer(1, 10),
+        HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#d1fae5"), spaceAfter=14),
+        Paragraph(_xml_escape(title), styles["DocTitle"]),
+    ]
+
+
+def _adar_docintel_logo_path() -> str | None:
+    assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
+    for filename in ("adar_docintel_logo_light.png", "adar_docintel_logo.png"):
+        path = os.path.join(assets_dir, filename)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _avs_pdf_footer(canvas, doc):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import LETTER
+
+    canvas.saveState()
+    canvas.setStrokeColor(colors.HexColor("#d1d5db"))
+    canvas.setLineWidth(0.4)
+    canvas.line(doc.leftMargin, 34, LETTER[0] - doc.rightMargin, 34)
+    canvas.setFont("Helvetica", 7.5)
+    canvas.setFillColor(colors.HexColor("#6b7280"))
+    canvas.drawString(doc.leftMargin, 22, "Generated by Adar DocIntel Clinical Scribe. Clinician review required before patient use.")
+    canvas.drawRightString(LETTER[0] - doc.rightMargin, 22, f"Page {doc.page}")
+    canvas.restoreState()
+
+
+def _render_minimal_pdf(title: str, text: str) -> bytes:
+    lines = [title, ""] + text.splitlines()
+    pages = []
+    current = []
+    for line in lines:
+        wrapped = textwrap.wrap(line, width=86) or [""]
+        for part in wrapped:
+            current.append(part)
+            if len(current) >= 48:
+                pages.append(current)
+                current = []
+    if current:
+        pages.append(current)
+
+    objects = ["<< /Type /Catalog /Pages 2 0 R >>"]
+    kids = []
+    next_id = 3
+    font_id = None
+    for page_lines in pages:
+        page_id = next_id
+        content_id = next_id + 1
+        kids.append(f"{page_id} 0 R")
+        content = ["BT", "/F1 11 Tf", "50 750 Td", "14 TL"]
+        for idx, line in enumerate(page_lines):
+            if idx:
+                content.append("T*")
+            content.append(f"({_pdf_escape(line)}) Tj")
+        content.append("ET")
+        stream = "\n".join(content).encode("latin-1", errors="replace")
+        objects.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {content_id + 1} 0 R >> >> /Contents {content_id} 0 R >>")
+        objects.append(f"<< /Length {len(stream)} >>\nstream\n{stream.decode('latin-1')}\nendstream")
+        font_id = content_id + 1
+        objects.append("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+        next_id += 3
+    objects.insert(1, f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {len(kids)} >>")
+    return _assemble_pdf(objects)
+
+
+def _assemble_pdf(objects: list[str]) -> bytes:
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for idx, obj in enumerate(objects, 1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{idx} 0 obj\n{obj}\nendobj\n".encode("latin-1", errors="replace"))
+    xref = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects)+1}\n0000000000 65535 f \n".encode())
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode())
+    pdf.extend(f"trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
+    return bytes(pdf)
+
+
+def _field_value(context: dict, key: str) -> str:
+    value = context.get(key) if isinstance(context, dict) else None
+    if isinstance(value, dict):
+        return str(value.get("value") or "Not found")
+    return str(value or "Not found")
+
+
+def _xml_escape(value: str) -> str:
+    return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _pdf_escape(value: str) -> str:
+    return str(value).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
 def _safe_filename(value: str, suffix: str = ".txt") -> str:

@@ -8,6 +8,8 @@ import {
   fetchLatestAgentWorkflowEvaluation,
   fetchHealthcareAgentRun,
   fetchLatestHealthcareAgentWorkflow,
+  generateAfterVisitSummaryPdf,
+  rerunHealthcareTranscriptionWorkflow,
   runHealthcareAgentWorkflow,
   runHealthcareTranscriptionWorkflow,
   runNewVisitTranscriptionWorkflow,
@@ -253,29 +255,32 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
 
   const runScribe = async () => {
     const audio = audioFile || recordedAudio;
-    if (!audio) {
+    const existingRunId = runs.scribe?.run_id;
+    if (!audio && !existingRunId) {
       toast('Record or upload conversation audio first', 'error');
       return;
     }
-    if (!consentConfirmed) {
+    if (audio && !consentConfirmed) {
       toast('Confirm consent before running clinical transcription', 'error');
       return;
     }
     setLoading(true);
     try {
-      const data = doc?.id
-        ? await runHealthcareTranscriptionWorkflow(doc.id, audio, {
-            language: scribeLanguage,
-            consentConfirmed,
-            filename: audioFile?.name || 'clinical-conversation.webm',
-          })
-        : await runNewVisitTranscriptionWorkflow(audio, {
-            language: scribeLanguage,
-            consentConfirmed,
-            filename: audioFile?.name || 'clinical-conversation.webm',
-            visitTitle,
-            workspaceId,
-          });
+      const data = audio
+        ? (doc?.id
+            ? await runHealthcareTranscriptionWorkflow(doc.id, audio, {
+                language: scribeLanguage,
+                consentConfirmed,
+                filename: audioFile?.name || 'clinical-conversation.webm',
+              })
+            : await runNewVisitTranscriptionWorkflow(audio, {
+                language: scribeLanguage,
+                consentConfirmed,
+                filename: audioFile?.name || 'clinical-conversation.webm',
+                visitTitle,
+                workspaceId,
+              }))
+        : await rerunHealthcareTranscriptionWorkflow(existingRunId);
       setActiveTab('scribe');
       updateRun('scribe', data);
       updateEval('scribe', null);
@@ -340,6 +345,32 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
     }
   };
 
+  const generateAvsPdf = async () => {
+    const key = 'scribe';
+    const agentRun = runs[key];
+    if (!agentRun?.run_id) return;
+    setLoading(true);
+    try {
+      const reviewPacket = editedPackets[key] || packetFromRun(agentRun) || {};
+      const draft = await saveHealthcareReviewDraft(agentRun.run_id, {
+        reviewPacket,
+        notes: approvalNotes[key] || '',
+        persona: selectedPersonas[key] || accessContexts[key]?.default_persona || '',
+      });
+      updateRun(key, draft);
+      await refreshChangeHistory(key, draft.run_id);
+      const data = await generateAfterVisitSummaryPdf(agentRun.run_id);
+      if (data.document) {
+        onCreated?.(data.document);
+      }
+      toast('After Visit Summary PDF generated, saved, chunked, and embedded', 'success');
+    } catch (e) {
+      toast(e.message || 'Could not generate After Visit Summary PDF', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   async function refreshAccessContext(key, runId, alive = true) {
     if (!runId) return null;
     try {
@@ -372,6 +403,7 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
   const activeConfig = WORKFLOWS[activeTab];
   const accessContext = accessContexts[activeTab];
   const selectedPersona = selectedPersonas[activeTab] || accessContext?.default_persona || '';
+  const summaryText = workflowSummary(activeTab, packet);
 
   return (
     <div style={s.backdrop}>
@@ -402,7 +434,7 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
               {loading ? 'Running...' : runs.priorAuth ? 'Re-run prior auth workflow' : 'Run prior auth workflow'}
             </button>
           ) : (
-            <button style={s.scribeButton} disabled={loading || recording || !(audioFile || recordedAudio) || !consentConfirmed} onClick={runScribe}>
+            <button style={s.scribeButton} disabled={loading || recording || (!(audioFile || recordedAudio) && !runs.scribe) || ((audioFile || recordedAudio) && !consentConfirmed)} onClick={runScribe}>
               {loading ? 'Running...' : runs.scribe ? 'Re-run clinical scribe' : 'Run clinical scribe'}
             </button>
           )}
@@ -507,7 +539,7 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
                 <div style={s.workflowHead}>
                   <div>
                     <h3 style={s.h3}>Healthcare Review Workbench</h3>
-                    <p style={s.summary}>{packet.prior_auth_packet?.packet_summary || packet.clinical_summary?.summary || packet.document_intake?.summary || 'No summary returned yet.'}</p>
+                    <p style={s.summary}>{summaryText}</p>
                     <div style={s.meta}>Run: {agentRun.run_id} · Status: {agentRun.status} · Version: {agentRun.workflow_version}</div>
                     {agentRun.approved_at && <div style={s.meta}>Approved: {new Date(agentRun.approved_at).toLocaleString()}</div>}
                     <div style={s.guardrail}>{packet.guardrail || 'Assistive clinical/admin document intelligence only. Not diagnosis, treatment, or medical advice.'}</div>
@@ -541,7 +573,7 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
               {activeTab === 'priorAuth' ? (
                 <PriorAuthPacket packet={packet} onPatch={updatePacket} />
               ) : activeTab === 'scribe' ? (
-                <ClinicalScribePacket packet={packet} onPatch={updatePacket} />
+                <ClinicalScribePacket packet={packet} onPatch={updatePacket} onGenerateAvsPdf={generateAvsPdf} loading={loading} />
               ) : (
                 <ClinicalPacket packet={packet} onPatch={updatePacket} />
               )}
@@ -620,7 +652,7 @@ function PriorAuthPacket({ packet, onPatch }) {
   );
 }
 
-function ClinicalScribePacket({ packet, onPatch }) {
+function ClinicalScribePacket({ packet, onPatch, onGenerateAvsPdf, loading }) {
   const transcript = packet.conversation_transcript?.transcript_text || '';
   return (
     <>
@@ -648,6 +680,42 @@ function ClinicalScribePacket({ packet, onPatch }) {
       </section>
 
       <section style={s.section}>
+        <div style={s.sectionHead}>
+          <h3 style={s.h3}>After Visit Summary</h3>
+          <button
+            type="button"
+            style={s.pdfBtn}
+            disabled={loading || !packet.after_visit_summary}
+            onClick={onGenerateAvsPdf}>
+            Generate AVS PDF
+          </button>
+        </div>
+        {!packet.after_visit_summary && (
+          <div style={s.notice}>After Visit Summary is available for new clinical scribe runs. Re-run clinical scribe to generate it for this existing visit.</div>
+        )}
+        <EditableText value={packet.after_visit_summary?.summary || ''} onChange={value => onPatch(['after_visit_summary','summary'], value)} placeholder="After visit summary..." />
+        <div style={s.avsGrid}>
+          <label style={s.avsLabel}>
+            Visit reason
+            <input value={packet.after_visit_summary?.visit_reason || ''} onChange={e => onPatch(['after_visit_summary','visit_reason'], e.target.value)} style={s.inlineInput} />
+          </label>
+          <label style={s.avsLabel}>
+            Clinician impression
+            <input value={packet.after_visit_summary?.clinician_impression || ''} onChange={e => onPatch(['after_visit_summary','clinician_impression'], e.target.value)} style={s.inlineInput} />
+          </label>
+        </div>
+        <Rows rows={packet.after_visit_summary?.today_we_discussed || []} cols={['item','source','confidence']} title="Today we discussed" editable onChange={rows => onPatch(['after_visit_summary','today_we_discussed'], rows)} />
+        <Rows rows={packet.after_visit_summary?.medication_instructions || []} cols={['item','source','confidence']} title="Medication instructions" editable onChange={rows => onPatch(['after_visit_summary','medication_instructions'], rows)} />
+        <Rows rows={packet.after_visit_summary?.tests_and_orders || []} cols={['item','status','source','confidence']} title="Tests and orders" editable onChange={rows => onPatch(['after_visit_summary','tests_and_orders'], rows)} />
+        <Rows rows={packet.after_visit_summary?.referrals || []} cols={['item','source','confidence']} title="Referrals" editable onChange={rows => onPatch(['after_visit_summary','referrals'], rows)} />
+        <Rows rows={packet.after_visit_summary?.follow_up_plan || []} cols={['action','owner','due_date','source','confidence']} title="Follow-up plan" editable onChange={rows => onPatch(['after_visit_summary','follow_up_plan'], rows)} />
+        <Rows rows={packet.after_visit_summary?.warning_signs || []} cols={['sign','recommended_action','source','confidence']} title="Warning signs" editable onChange={rows => onPatch(['after_visit_summary','warning_signs'], rows)} />
+        <Rows rows={packet.after_visit_summary?.preventive_care_reminders || []} cols={['item','source','confidence']} title="Preventive care reminders" editable onChange={rows => onPatch(['after_visit_summary','preventive_care_reminders'], rows)} />
+        <Rows rows={packet.after_visit_summary?.facility_coordination || []} cols={['item','source','confidence']} title="Facility coordination" editable onChange={rows => onPatch(['after_visit_summary','facility_coordination'], rows)} />
+        <Rows rows={packet.after_visit_summary?.patient_questions || []} cols={['question','source','confidence']} title="Patient questions" editable onChange={rows => onPatch(['after_visit_summary','patient_questions'], rows)} />
+      </section>
+
+      <section style={s.section}>
         <h3 style={s.h3}>Follow-Up Checklist</h3>
         <EditableText value={packet.followup_checklist?.summary || ''} onChange={value => onPatch(['followup_checklist','summary'], value)} placeholder="Follow-up checklist summary..." />
         <Rows rows={packet.followup_checklist?.follow_up_actions || []} cols={['action','owner','due_date','priority','source','confidence']} title="Follow-up actions" editable onChange={rows => onPatch(['followup_checklist','follow_up_actions'], rows)} />
@@ -669,6 +737,25 @@ function ClinicalScribePacket({ packet, onPatch }) {
       </section>
     </>
   );
+}
+
+function workflowSummary(activeTab, packet) {
+  if (activeTab === 'scribe') {
+    return packet.after_visit_summary?.summary
+      || packet.patient_summary?.summary
+      || packet.soap_note?.summary
+      || packet.conversation_intake?.summary
+      || 'No clinical scribe summary returned yet. Re-run clinical scribe if this is an older run without After Visit Summary output.';
+  }
+  if (activeTab === 'priorAuth') {
+    return packet.prior_auth_packet?.packet_summary
+      || packet.prior_auth_packet?.medical_necessity_narrative
+      || packet.prior_auth_request?.summary
+      || 'No prior authorization summary returned yet.';
+  }
+  return packet.clinical_summary?.summary
+    || packet.document_intake?.summary
+    || 'No summary returned yet.';
 }
 
 function PatientContext({ packet, onPatch }) {
@@ -1054,6 +1141,8 @@ const s = {
   scroll:{flex:1,minHeight:0,overflowY:'auto',display:'flex',flexDirection:'column'},
   body:{padding:18,display:'flex',flexDirection:'column',gap:16},
   section:{border:'1px solid var(--b1)',background:'var(--s2)',borderRadius:8,padding:14},
+  sectionHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,marginBottom:10,flexWrap:'wrap'},
+  pdfBtn:{background:'#0e7490',color:'#fff',border:'none',borderRadius:8,padding:'7px 11px',fontSize:12,fontWeight:900,cursor:'pointer'},
   workbench:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:14,border:'1px solid rgba(14,165,233,.24)',background:'rgba(14,165,233,.06)',borderRadius:8,padding:14},
   workbenchPane:{minWidth:0},
   readinessGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8},
@@ -1072,6 +1161,8 @@ const s = {
   field:{border:'1px solid var(--b1)',borderRadius:8,padding:10,background:'rgba(255,255,255,.03)',display:'flex',flexDirection:'column',gap:5},
   inlineInput:{background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:6,color:'var(--tx)',padding:'7px 8px',fontSize:13,width:'100%'},
   textEdit:{width:'100%',minHeight:78,background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:8,color:'var(--tx)',padding:10,fontSize:13,lineHeight:1.55,resize:'vertical'},
+  avsGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))',gap:10,marginTop:10},
+  avsLabel:{display:'flex',flexDirection:'column',gap:6,fontSize:12,fontWeight:800,color:'var(--tx2)'},
   tableHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,margin:'0 0 6px'},
   tableTitle:{fontSize:12,fontWeight:800,color:'var(--tx)',margin:'0 0 6px'},
   rowBtn:{background:'var(--s3)',border:'1px solid var(--b2)',color:'var(--tx)',borderRadius:7,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'},
@@ -1093,6 +1184,7 @@ const s = {
   evalFill:{display:'block',height:'100%',borderRadius:20},
   recs:{marginTop:10,display:'flex',flexDirection:'column',gap:6},
   rec:{fontSize:12,color:'var(--tx2)',border:'1px solid rgba(251,191,36,.2)',background:'rgba(251,191,36,.06)',borderRadius:8,padding:'7px 9px'},
+  notice:{fontSize:12,color:'#fbbf24',border:'1px solid rgba(251,191,36,.24)',background:'rgba(251,191,36,.07)',borderRadius:8,padding:10,marginBottom:10},
   historyList:{display:'flex',flexDirection:'column',gap:8},
   historyItem:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.03)',borderRadius:8,padding:10},
   historyTop:{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',fontSize:12},

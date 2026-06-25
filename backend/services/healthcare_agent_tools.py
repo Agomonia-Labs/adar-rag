@@ -13,6 +13,7 @@ from services.healthcare_intelligence import (
     extract_prior_auth_request,
     extract_transcript_intake,
     extract_visit_followup_checklist,
+    generate_after_visit_summary,
     generate_patient_friendly_summary,
     generate_soap_note,
     generate_prior_auth_packet,
@@ -294,6 +295,48 @@ async def visit_followup_checklist_tool(context: dict[str, Any], outputs: dict[s
     return _with_quality(result, _multi_list_quality(result, ("follow_up_actions", "open_questions"), allow_empty=True))
 
 
+async def after_visit_summary_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
+    previous = _first_dict(agent.get("previous_output"), outputs.get("after_visit_summary"))
+    try:
+        result = await generate_after_visit_summary(
+            _transcript_text(context, outputs),
+            outputs.get("conversation_intake") or {},
+            outputs.get("soap_note") or {},
+            outputs.get("patient_summary") or {},
+            outputs.get("followup_checklist") or {},
+            context.get("language") or "",
+        )
+    except HealthcareIntelligenceError:
+        result = previous or {
+            "summary": "After visit summary generation failed and requires review.",
+            "visit_reason": "",
+            "today_we_discussed": [],
+            "medication_instructions": [],
+            "tests_and_orders": [],
+            "referrals": [],
+            "follow_up_plan": [],
+            "warning_signs": [],
+            "preventive_care_reminders": [],
+            "facility_coordination": [],
+            "patient_questions": [],
+            "review_required": True,
+            "confidence": 0,
+        }
+    if previous:
+        result = _merge_lists(previous, result, (
+            "today_we_discussed",
+            "medication_instructions",
+            "tests_and_orders",
+            "referrals",
+            "follow_up_plan",
+            "warning_signs",
+            "preventive_care_reminders",
+            "facility_coordination",
+            "patient_questions",
+        ))
+    return _with_quality(result, _multi_list_quality(result, ("today_we_discussed", "follow_up_plan", "tests_and_orders"), allow_empty=False))
+
+
 async def scribe_governance_tool(context: dict[str, Any], outputs: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
     previous = _first_dict(agent.get("previous_output"), outputs.get("scribe_governance"))
     try:
@@ -340,6 +383,7 @@ HEALTHCARE_AGENT_TOOLS = {
     "healthcare.transcription.generate_soap": soap_note_tool,
     "healthcare.transcription.generate_patient_summary": patient_summary_tool,
     "healthcare.transcription.extract_followup_checklist": visit_followup_checklist_tool,
+    "healthcare.transcription.generate_after_visit_summary": after_visit_summary_tool,
     "healthcare.transcription.review_governance": scribe_governance_tool,
     "healthcare.transcription.merge_outputs": merge_transcription_outputs_tool,
 }
