@@ -9,12 +9,13 @@ const PLANS = [
     price:  '$0',
     period: '',
     color:  '#60a5fa',
+    badge:  'Launch access',
     features: [
-      '20 documents total',
-      '10 MB max file size',
-      '50 chat queries / day',
-      '10 embeddings / day',
-      '5 summaries / day',
+      'Enterprise-equivalent access through Aug 31, 2026',
+      'Unlimited documents during launch access',
+      '10 GB max file size during launch access',
+      'Unlimited chat queries during launch access',
+      'Clinical scribe and agentic workflows included',
     ],
   },
   {
@@ -152,6 +153,15 @@ export default function BillingPanel({ onClose }) {
 
           {!loading && (
             <>
+              <div style={{ background:'rgba(251,191,36,.1)', border:'1px solid rgba(251,191,36,.25)', borderRadius:'var(--rl)', padding:'14px 16px', marginBottom:12 }}>
+                <p style={{ fontSize:13, fontWeight:800, color:'#fbbf24', marginBottom:4 }}>
+                  🎁 Limited-time launch offer
+                </p>
+                <p style={{ fontSize:12, color:'var(--muted2)', lineHeight:1.5 }}>
+                  Free subscriptions include enterprise-equivalent capabilities until August 31, 2026. Your account remains on the Free tier, but usage limits are lifted to enterprise-equivalent launch access during this period.
+                </p>
+              </div>
+
               {/* Plan cards */}
               <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
                 {PLANS.map(plan => {

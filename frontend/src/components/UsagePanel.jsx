@@ -58,6 +58,8 @@ export default function UsagePanel({ onClose, onUpgrade }) {
   }, []);
 
   const tier   = usage?.tier || 'free';
+  const effectiveTier = usage?.effective_tier || tier;
+  const promo = usage?.promotion || {};
   const tc     = TIER_COLORS[tier] || TIER_COLORS.free;
   const limits = usage?.limits || {};
   const events = usage?.events || {};
@@ -73,7 +75,7 @@ export default function UsagePanel({ onClose, onUpgrade }) {
           <div>
             <p style={{ fontWeight:700, fontSize:15, color:'var(--tx)', marginBottom:4 }}>Usage & Limits</p>
             <span style={{ fontSize:11.5, padding:'2px 10px', borderRadius:20, background:tc.bg, color:tc.color, fontWeight:700, border:`1px solid ${tc.color}40` }}>
-              {tc.label} Plan
+              {promo.active ? 'Free Launch Access' : `${tc.label} Plan`}
             </span>
           </div>
           <div style={{ display:'flex', gap:6 }}>
@@ -93,6 +95,17 @@ export default function UsagePanel({ onClose, onUpgrade }) {
 
           {usage && (
             <>
+              {promo.active && (
+                <div style={{ background:'rgba(251,191,36,.1)', border:'1px solid rgba(251,191,36,.25)', borderRadius:'var(--r)', padding:'12px 14px', marginBottom:'1rem' }}>
+                  <p style={{ fontSize:13, fontWeight:800, color:'#fbbf24', marginBottom:4 }}>
+                    🎁 Free enterprise-equivalent access
+                  </p>
+                  <p style={{ fontSize:12, color:'var(--muted2)', lineHeight:1.5 }}>
+                    {promo.message || 'Free subscription includes enterprise-equivalent limits for a limited time.'}
+                  </p>
+                </div>
+              )}
+
               {/* Stat cards */}
               <div style={s.statsGrid}>
                 <StatCard icon="📂" label="Documents" value={usage.document_count} sub={limits.max_documents === -1 ? 'unlimited' : `of ${limits.max_documents}`} />
@@ -111,7 +124,9 @@ export default function UsagePanel({ onClose, onUpgrade }) {
 
               {/* Limit meters */}
               <div style={{ background:'var(--s2)', borderRadius:'var(--r)', padding:'1rem', marginBottom:'1rem', border:'1px solid var(--b1)' }}>
-                <p style={{ fontSize:12, fontWeight:700, color:'var(--muted)', marginBottom:12, textTransform:'uppercase', letterSpacing:'.5px' }}>Enforced Plan Limits</p>
+                <p style={{ fontSize:12, fontWeight:700, color:'var(--muted)', marginBottom:12, textTransform:'uppercase', letterSpacing:'.5px' }}>
+                  {effectiveTier === 'enterprise' && tier === 'free' ? 'Enforced Launch Limits' : 'Enforced Plan Limits'}
+                </p>
                 <Meter label="Documents"         used={usage.document_count}        max={limits.max_documents}    />
                 <Meter label="Queries today"     used={events.query?.today||0}       max={limits.max_queries_day} color='#60a5fa' />
                 <Meter label="Embedding chunks today" used={events.embedding?.today||0} max={limits.max_embeds_day} color='#c084fc' />
@@ -166,7 +181,7 @@ export default function UsagePanel({ onClose, onUpgrade }) {
               </div>
 
               {/* Upgrade prompt for free users */}
-              {tier !== 'enterprise' && (
+              {tier !== 'enterprise' && !promo.active && (
                 <div style={{ marginTop:'1rem', background:'rgba(192,132,252,.08)', border:'1px solid rgba(192,132,252,.2)', borderRadius:'var(--r)', padding:'12px 14px', textAlign:'center' }}>
                   <p style={{ fontSize:13, color:'#c084fc', fontWeight:600, marginBottom:4 }}>
                     {tier === 'free' ? 'Upgrade to Pro' : 'Upgrade to Enterprise'}

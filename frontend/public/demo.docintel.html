@@ -1275,9 +1275,9 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
         <div class="narration">
           <div class="slide-num">Billing</div>
           <div class="slide-title">Tiered Limits & Plan Management</div>
-          <div class="slide-sub">Three plans — Free, Pro, and Enterprise — with limits enforced per user in the database. Admins upgrade any account instantly, and JSONB overrides can tune individual quotas without redeploying.</div>
+          <div class="slide-sub">Three plans — Free, Pro, and Enterprise — with limits enforced per user in the database. During launch, Free subscriptions receive enterprise-equivalent limits through August 31, 2026 while admins can still upgrade accounts or tune JSONB quota overrides.</div>
           <div class="feature-list">
-            <div class="feature-item"><span class="feature-icon">🆓</span><span>Free: 20 docs, 10 MB files, 50 queries/day, 10 embedding chunks/day, 5 summaries/day, 3 compares/day</span></div>
+            <div class="feature-item"><span class="feature-icon">🎁</span><span>Launch access: Free subscription gets enterprise-equivalent capabilities through August 31, 2026</span></div>
             <div class="feature-item"><span class="feature-icon">⚡</span><span>Pro: 500 docs, 500 MB files, 500 queries/day, 100 embedding chunks/day, 50 summaries/day, 50 compares/day</span></div>
             <div class="feature-item"><span class="feature-icon">🏢</span><span>Enterprise: unlimited docs, queries, summaries, compares, lease AI, voice, and evals; 10 GB files</span></div>
             <div class="feature-item"><span class="feature-icon">⚙</span><span>Admins change any user's tier with a dropdown in the Users table — takes effect immediately</span></div>
@@ -1293,8 +1293,8 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <!-- Tier comparison -->
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px">
               <div style="background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.2);border-radius:8px;padding:8px;text-align:center">
-                <div style="font-size:10.5px;font-weight:700;color:#60a5fa;margin-bottom:4px">FREE</div>
-                <div style="font-size:9px;color:#9ca3af;line-height:1.7">20 docs<br>10 MB<br>50 q/day<br>5 summaries</div>
+                <div style="font-size:10.5px;font-weight:700;color:#60a5fa;margin-bottom:4px">FREE LAUNCH</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.7">Enterprise access<br>Until Aug 31, 2026<br>10 GB files<br>Workflow access</div>
               </div>
               <div style="background:rgba(192,132,252,.08);border:1px solid rgba(192,132,252,.2);border-radius:8px;padding:8px;text-align:center;position:relative">
                 <div style="font-size:9px;background:#c084fc;color:#fff;border-radius:10px;padding:1px 5px;position:absolute;top:-7px;left:50%;transform:translateX(-50%);white-space:nowrap;font-weight:700">POPULAR</div>
@@ -1337,7 +1337,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <!-- Limit exceeded examples -->
             <div style="display:flex;flex-direction:column;gap:5px">
               <div style="background:rgba(248,113,113,.06);border:0.5px solid rgba(248,113,113,.2);border-radius:6px;padding:7px 10px;font-size:9.5px;color:#f87171">
-                <strong>HTTP 403</strong> — Document limit reached (20 docs on Free tier). Upgrade to upload more.
+                <strong>After launch</strong> — standard Free quotas return clear HTTP 403/429 messages before AI capacity is consumed.
               </div>
               <div style="background:rgba(251,191,36,.06);border:0.5px solid rgba(251,191,36,.2);border-radius:6px;padding:7px 10px;font-size:9.5px;color:#fbbf24">
                 <strong>HTTP 429</strong> — Daily query limit reached (50 on Free tier). Try again tomorrow.
@@ -1717,9 +1717,9 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
         <div class="narration">
           <div class="slide-num">Monetisation</div>
           <div class="slide-title">Stripe Billing — 3 Plans</div>
-          <div class="slide-sub">Full Stripe Checkout integration with three tiers, a 3-day free trial on paid plans, and automatic plan activation on login — backed by the same strict quota enforcement shown in the Usage panel.</div>
+          <div class="slide-sub">Full Stripe Checkout integration with three tiers, automatic plan activation on login, and a limited-time Free launch subscription with enterprise-equivalent capabilities through August 31, 2026 — backed by the same strict quota enforcement shown in the Usage panel.</div>
           <div class="feature-list">
-            <div class="feature-item"><span class="feature-icon">🆓</span><span>Free — 20 docs · 10 MB files · 50 queries/day · 5 summaries/day · 3 compares/day</span></div>
+            <div class="feature-item"><span class="feature-icon">🎁</span><span>Free launch access — enterprise-equivalent capabilities until August 31, 2026</span></div>
             <div class="feature-item"><span class="feature-icon">🚀</span><span>Pro ($20/mo) — 500 docs · 500 MB files · 500 queries/day · 50 summaries/day · 50 compares/day</span></div>
             <div class="feature-item"><span class="feature-icon">🏢</span><span>Enterprise ($100/mo) — unlimited docs, queries, summaries, compares, lease AI, voice, and evals; 10 GB files</span></div>
             <div class="feature-item"><span class="feature-icon">🎁</span><span>3-day free trial on Pro & Enterprise — card collected, no charge until day 4</span></div>
@@ -1735,11 +1735,11 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <!-- Free plan -->
             <div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(255,255,255,.08);border-radius:8px;padding:10px 12px">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-                <span style="font-size:12px;font-weight:700;color:#60a5fa">Free</span>
+                <span style="font-size:12px;font-weight:700;color:#60a5fa">Free Launch</span>
                 <span style="font-size:16px;font-weight:800;color:#f0fdf4">$0</span>
               </div>
               <ul style="margin:0;padding-left:14px;font-size:10px;color:#6b7280;line-height:1.8">
-                <li>20 documents · 10 MB files</li><li>50 queries · 5 summaries · 3 compares/day</li>
+                <li>Enterprise-equivalent until Aug 31, 2026</li><li>10 GB files · workflows included</li>
               </ul>
               <div style="margin-top:8px;text-align:center;font-size:10px;font-weight:700;color:#60a5fa;padding:4px;background:rgba(96,165,250,.1);border-radius:4px">✓ Active</div>
             </div>
@@ -1919,7 +1919,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">🏢</div><div class="sum-card-title" style="color:#4ade80">Team Workspaces</div><ul class="sum-card-list"><li>Owner / Editor / Viewer roles</li><li>Invite teammates by email</li><li>Workspace-scoped docs + chat</li><li>Switch context in one click</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">📧</div><div class="sum-card-title" style="color:#60a5fa">Email Verification</div><ul class="sum-card-list"><li>Verify before first login</li><li>24-hour token via Gmail SMTP</li><li>Resend button available</li><li>Admin auto-verified</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">🧭</div><div class="sum-card-title" style="color:#fbbf24">Traceability</div><ul class="sum-card-list"><li>Question-level traces</li><li>Spans + LLM events</li><li>Retrieved chunk inspection</li><li>Admin trace viewer</li></ul></div>
-          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">💳</div><div class="sum-card-title" style="color:#c084fc">Stripe Billing</div><ul class="sum-card-list"><li>Free / Pro $20 / Enterprise $100</li><li>3-day free trial on paid plans</li><li>Auto-sync tier on every login</li><li>Cancel → auto-downgrade to Free</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">💳</div><div class="sum-card-title" style="color:#c084fc">Stripe Billing</div><ul class="sum-card-list"><li>Free launch access through Aug 31, 2026</li><li>Pro $20 / Enterprise $100</li><li>Auto-sync tier on every login</li><li>Cancel → auto-downgrade to Free</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">📊</div><div class="sum-card-title" style="color:#4ade80">Inline Eval</div><ul class="sum-card-list"><li>Auto-scores every chat answer</li><li>🎯 Relevance · 🔍 Specificity · ⚖️ Confidence</li><li>Grades 1–5 with judge reasoning</li><li>On-demand for summaries & compare</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">↻</div><div class="sum-card-title" style="color:#fbbf24">Doc Recovery</div><ul class="sum-card-list"><li>Retry button on error docs</li><li>Re-downloads from GCS</li><li>Re-runs full chunk → embed</li><li>No delete + re-upload needed</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">🏷</div><div class="sum-card-title" style="color:#4ade80">Document Tags</div><ul class="sum-card-list"><li>Colour-coded tag collections</li><li>Assign/remove per document</li><li>Search · filter · sort bar</li><li>Stored in PostgreSQL per user</li></ul></div>
@@ -1967,8 +1967,8 @@ const SLIDES = [
   { text: "DocIntel's vertical layer brings domain-specific agentic workflows on top of the same horizontal RAG and governance foundation. In healthcare, users can confirm consent, record or upload a patient-doctor conversation in English, Spanish, Bangla, Hindi, or Arabic, generate a transcript, create a SOAP note draft, write a patient-friendly summary, extract follow-up actions, generate an After Visit Summary, and save the visit as a searchable clinical document. The After Visit Summary can become a patient-ready PDF artifact that is saved to Google Cloud Storage, chunked, embedded, and available for future chat. The Healthcare Review Workbench adds RBAC personas, editable packet sections, approval workflow, audit trail, and field-level change history so teams know who changed what. Clinical agents organize patient context, labs, medications, care gaps, and risks, while prior authorization agents map payer criteria to supporting evidence, missing documentation, submission risks, and packet readiness. In lease management, agents extract abstracts, critical dates, obligations, clause flags, risk flags, and amendment comparisons. In the restaurant vertical, owners can record long menu conversations as audio segments, save the full transcript, run extraction on transcript text, combine LLM extraction with deterministic item-price parsing, edit and approve restaurant profile and menu rows, and compare menu prices across participating restaurants. The result is a governed self-service product for patients, caregivers, clinicians, lease teams, restaurant owners, operations teams, billing teams, and compliance reviewers." },
   { text: "Quality feedback is built into the loop. Users can rate answers with thumbs up or down, and the rating is saved with the question and answer context. Gemini also scores answer quality for relevance, specificity, and confidence." },
   { text: "Exports are one click. Chat sessions and summaries download as Markdown files directly from the browser, including full answers and source citation blocks, ready for Notion, Obsidian, Confluence, or a plain text review workflow." },
-  { text: "Usage metering runs in real time and is now strict enforcement, not just reporting. The Usage panel shows plan tier, document count, upload file size, storage used, daily chat queries, embedding chunks, summaries, compares, lease AI actions, voice transcriptions, eval cases, and all-time activity. Quota is reserved atomically before expensive model work starts, so concurrent requests cannot bypass the tier limit." },
-  { text: "Billing uses Stripe with Free, Pro, and Enterprise tiers. Free supports lightweight evaluation, Pro scales to 500 documents, 500 megabyte files, 500 daily queries, 50 daily summaries, 50 compares, lease AI, voice, and eval workflows, and Enterprise removes most daily caps with 10 gigabyte file support. Plan state syncs on login from the Stripe API." },
+  { text: "Usage metering runs in real time and is now strict enforcement, not just reporting. The Usage panel shows plan tier, document count, upload file size, storage used, daily chat queries, embedding chunks, summaries, compares, lease AI actions, voice transcriptions, eval cases, and all-time activity. During launch, Free subscriptions get enterprise-equivalent limits through August 31, 2026. Quota is reserved atomically before expensive model work starts, so concurrent requests cannot bypass the tier limit." },
+  { text: "Billing uses Stripe with Free, Pro, and Enterprise tiers. For a limited launch period, the Free subscription includes enterprise-equivalent capabilities through August 31, 2026. Pro remains available at 20 dollars per month, and Enterprise remains the long-term paid tier for unlimited documents, unlimited daily workflows, and 10 gigabyte file support. Plan state syncs on login from the Stripe API." },
   { text: "Team workspaces turn DocIntel into a shared environment. Owners manage members, editors upload and embed, and viewers chat and search read-only. Documents, tags, summaries, and chat sessions stay scoped to the selected workspace." },
   { text: "Email verification is required before first login. Verification links last 24 hours, resend is available, and the first deployment user is auto-verified so an administrator can bootstrap the system cleanly." },
   { text: "Privacy, audit, and traceability work together. Teams cannot trust a document AI system by looking only at the final answer. In legal, financial, policy, and multilingual workflows, admins need to know which chunks were retrieved, how they were ranked, what prompt was sent, what tools ran, whether PII privacy mode was enabled, what the model returned, and where a failure happened. DocIntel assigns every chat or voice question an X-Trace-Id, stores the overall flow in trace flows, records each step in trace spans, stores LLM and tool events, and lets admins inspect the complete path from user input to cited answer." },

@@ -1,10 +1,12 @@
 # services/usage.py — usage metering + tiered limit enforcement
 from __future__ import annotations
 import json, logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from fastapi import HTTPException
 
 log = logging.getLogger("docintel.usage")
+
+FREE_ENTERPRISE_PROMO_END = date(2026, 8, 31)
 
 # ── Tier definitions ───────────────────────────────────────────────────────────
 TIER_LIMITS: dict[str, dict] = {
@@ -56,6 +58,48 @@ def _today():
     return datetime.now(timezone.utc).date()  # date object — asyncpg requires this, not a string
 
 
+def _free_enterprise_promo_active(today: date | None = None) -> bool:
+    return (today or _today()) <= FREE_ENTERPRISE_PROMO_END
+
+
+def _limits_for_tier(tier: str) -> dict:
+    limits = dict(TIER_LIMITS.get(tier, TIER_LIMITS["free"]))
+    limits["tier"] = tier
+    limits["effective_tier"] = tier
+    return limits
+
+
+def _apply_free_enterprise_promo(limits: dict, tier: str) -> dict:
+    if tier != "free" or not _free_enterprise_promo_active():
+        return limits
+
+    promo_date = FREE_ENTERPRISE_PROMO_END.strftime("%B")
+    promo_date = f"{promo_date} {FREE_ENTERPRISE_PROMO_END.day}, {FREE_ENTERPRISE_PROMO_END.year}"
+    promoted = dict(TIER_LIMITS["enterprise"])
+    promoted.update({
+        "tier": "free",
+        "effective_tier": "enterprise",
+        "label": "Free Launch Access",
+        "base_tier": "free",
+        "base_label": TIER_LIMITS["free"]["label"],
+        "promotion_active": True,
+        "promotion_name": "Free enterprise-equivalent launch access",
+        "promotion_ends_on": FREE_ENTERPRISE_PROMO_END.isoformat(),
+        "promotion_message": (
+            "Free subscription includes enterprise-equivalent limits through "
+            f"{promo_date}."
+        ),
+    })
+    return promoted
+
+
+def _merge_custom_limits(limits: dict, overrides) -> dict:
+    if overrides:
+        parsed = overrides if isinstance(overrides, dict) else json.loads(overrides)
+        limits.update(parsed)
+    return limits
+
+
 # ── Limit helpers ──────────────────────────────────────────────────────────────
 
 async def get_user_limits(db, user_id: str) -> dict:
@@ -64,13 +108,10 @@ async def get_user_limits(db, user_id: str) -> dict:
         "SELECT tier, custom_limits FROM users WHERE id=$1", user_id
     )
     tier   = (row["tier"] if row else None) or "free"
-    limits = dict(TIER_LIMITS.get(tier, TIER_LIMITS["free"]))
-    limits["tier"] = tier
+    limits = _apply_free_enterprise_promo(_limits_for_tier(tier), tier)
 
     overrides = row["custom_limits"] if row else None
-    if overrides:
-        parsed = overrides if isinstance(overrides, dict) else json.loads(overrides)
-        limits.update(parsed)
+    _merge_custom_limits(limits, overrides)
 
     return limits
 
@@ -137,12 +178,9 @@ async def check_and_log_daily_event(
             user_id,
         )
         tier = (row["tier"] if row else None) or "free"
-        limits = dict(TIER_LIMITS.get(tier, TIER_LIMITS["free"]))
-        limits["tier"] = tier
+        limits = _apply_free_enterprise_promo(_limits_for_tier(tier), tier)
         overrides = row["custom_limits"] if row else None
-        if overrides:
-            parsed = overrides if isinstance(overrides, dict) else json.loads(overrides)
-            limits.update(parsed)
+        _merge_custom_limits(limits, overrides)
 
         max_ = limits.get(limit_key, -1)
         if max_ != -1:
@@ -228,7 +266,14 @@ async def get_my_usage(db, user_id: str) -> dict:
 
     return {
         "tier":           limits["tier"],
+        "effective_tier": limits.get("effective_tier", limits["tier"]),
         "tier_label":     limits.get("label", limits["tier"].title()),
+        "promotion": {
+            "active": bool(limits.get("promotion_active")),
+            "name": limits.get("promotion_name"),
+            "ends_on": limits.get("promotion_ends_on"),
+            "message": limits.get("promotion_message"),
+        },
         "limits":         limits,
         "document_count": int(doc_count),
         "storage_bytes":  int(storage or 0),
