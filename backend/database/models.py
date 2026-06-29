@@ -564,6 +564,84 @@ CREATE INDEX IF NOT EXISTS idx_menu_user       ON restaurant_menu_items(user_id)
 CREATE INDEX IF NOT EXISTS idx_menu_workspace  ON restaurant_menu_items(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_menu_name       ON restaurant_menu_items(LOWER(item_name));
 
+CREATE TABLE IF NOT EXISTS restaurant_orders (
+    id                   UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    restaurant_id        UUID        NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+    customer_user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id         UUID        REFERENCES workspaces(id) ON DELETE SET NULL,
+    status               TEXT        NOT NULL DEFAULT 'draft',
+    fulfillment_type     TEXT        NOT NULL DEFAULT 'carryout',
+    customer_name        TEXT        NOT NULL DEFAULT '',
+    customer_phone       TEXT        NOT NULL DEFAULT '',
+    customer_email       TEXT        NOT NULL DEFAULT '',
+    pickup_time_request  TEXT        NOT NULL DEFAULT '',
+    special_instructions TEXT        NOT NULL DEFAULT '',
+    subtotal             NUMERIC(10,2) NOT NULL DEFAULT 0,
+    currency             TEXT        NOT NULL DEFAULT 'USD',
+    metadata             JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    submitted_at         TIMESTAMPTZ,
+    accepted_at          TIMESTAMPTZ,
+    confirmed_at         TIMESTAMPTZ,
+    ready_at             TIMESTAMPTZ,
+    completed_at         TIMESTAMPTZ,
+    cancelled_at         TIMESTAMPTZ,
+    rejected_at          TIMESTAMPTZ,
+    created_at           TIMESTAMPTZ DEFAULT NOW(),
+    updated_at           TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_restaurant_orders_restaurant ON restaurant_orders(restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_orders_customer   ON restaurant_orders(customer_user_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_orders_workspace  ON restaurant_orders(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_orders_status     ON restaurant_orders(status);
+CREATE INDEX IF NOT EXISTS idx_restaurant_orders_created    ON restaurant_orders(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS restaurant_order_items (
+    id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id       UUID        NOT NULL REFERENCES restaurant_orders(id) ON DELETE CASCADE,
+    menu_item_id   UUID        REFERENCES restaurant_menu_items(id) ON DELETE SET NULL,
+    item_name      TEXT        NOT NULL,
+    category       TEXT        NOT NULL DEFAULT '',
+    quantity       INTEGER     NOT NULL DEFAULT 1,
+    unit_price     NUMERIC(10,2),
+    line_total     NUMERIC(10,2) NOT NULL DEFAULT 0,
+    currency       TEXT        NOT NULL DEFAULT 'USD',
+    instructions   TEXT        NOT NULL DEFAULT '',
+    metadata       JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    created_at     TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_restaurant_order_items_order ON restaurant_order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_order_items_menu  ON restaurant_order_items(menu_item_id);
+
+CREATE TABLE IF NOT EXISTS restaurant_order_events (
+    id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id    UUID        NOT NULL REFERENCES restaurant_orders(id) ON DELETE CASCADE,
+    actor_id    UUID        REFERENCES users(id) ON DELETE SET NULL,
+    event_type  TEXT        NOT NULL,
+    from_status TEXT,
+    to_status   TEXT,
+    notes       TEXT        NOT NULL DEFAULT '',
+    metadata    JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_restaurant_order_events_order   ON restaurant_order_events(order_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_order_events_created ON restaurant_order_events(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS restaurant_notifications (
+    id            UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    restaurant_id UUID        NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+    order_id      UUID        NOT NULL REFERENCES restaurant_orders(id) ON DELETE CASCADE,
+    user_id       UUID        REFERENCES users(id) ON DELETE CASCADE,
+    channel       TEXT        NOT NULL DEFAULT 'in_app',
+    status        TEXT        NOT NULL DEFAULT 'unread',
+    message       TEXT        NOT NULL DEFAULT '',
+    metadata      JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    read_at       TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_restaurant_notifications_order ON restaurant_notifications(order_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_notifications_user  ON restaurant_notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_notifications_status ON restaurant_notifications(status);
+
 """
 
 

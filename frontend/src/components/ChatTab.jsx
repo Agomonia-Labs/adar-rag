@@ -2,7 +2,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { streamChat, listSessions, createSession, getSession,
          saveSessionMessages, deleteSession, submitFeedback,
-         getSessionFeedback, transcribeVoice } from '../services/api.js';
+         getSessionFeedback, transcribeVoice,
+         createRestaurantOrderDraft, submitRestaurantOrder } from '../services/api.js';
 import MarkdownRenderer from './MarkdownRenderer.jsx';
 import EvalBadges from './EvalBadges.jsx';
 
@@ -17,6 +18,7 @@ const normalizeMsg = (m, i) => ({
   role:    m.role    || 'user',
   content: typeof m.content === 'string' ? m.content : '',
   sources: Array.isArray(m.sources) ? m.sources : null,
+  actions: m.actions && typeof m.actions === 'object' ? m.actions : null,
 });
 
 const getSpeechLocale = () => {
@@ -101,6 +103,17 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
   const [saving,        setSaving]        = useState(false);
   const [sessionFeedback, setSessionFeedback] = useState({});  // {messageId: 1|-1}
   const [redactPii, setRedactPii] = useState(() => localStorage.getItem('redact_pii_chat') === '1');
+  const [restaurantCart, setRestaurantCart] = useState({ restaurant_id: null, restaurant_name: '', items: [] });
+  const [restaurantCustomer, setRestaurantCustomer] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    pickup_time_request: '',
+    special_instructions: '',
+  });
+  const [restaurantDraftOrder, setRestaurantDraftOrder] = useState(null);
+  const [restaurantOrderBusy, setRestaurantOrderBusy] = useState(false);
+  const [restaurantOrderMessage, setRestaurantOrderMessage] = useState('');
 
   const endRef    = useRef(null);
   const saveTimer = useRef(null);
@@ -228,7 +241,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
 
     const aid     = nanoid();
     const userMsg = normalizeMsg({ id: nanoid(), role: 'user',      content: q           });
-    const aiMsg   = normalizeMsg({ id: aid,      role: 'assistant', content: '', sources: null, isNew: true });
+    const aiMsg   = normalizeMsg({ id: aid,      role: 'assistant', content: '', sources: null, actions: null, isNew: true });
 
     setMessages(prev => [...prev, userMsg, aiMsg]);
     setThinking(true);
@@ -240,10 +253,10 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
       { question: q, documentIds: selected, history, workspaceId: activeWorkspace?.id || null, traceId, redactPii },
       {
         onToken: t   => setMessages(p => p.map(m => m.id === aid ? { ...m, content: m.content + t } : m)),
-        onDone:  src => {
+        onDone:  (src, actions) => {
           setThinking(false);
           setMessages(p => {
-            const updated = p.map(m => m.id === aid ? { ...m, sources: src || null } : m);
+            const updated = p.map(m => m.id === aid ? { ...m, sources: src || null, actions: actions || null } : m);
             scheduleSave(sess.id, updated);
             loadSessions();
             return updated;
@@ -479,6 +492,116 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
     submitQuestion(input);
   }, [input, submitQuestion]);
 
+  const addRestaurantItemToCart = useCallback((item) => {
+    if (!item?.id || (!item?.restaurant_id && !item?.restaurant_name)) return;
+    const restaurantKey = item.restaurant_id || item.restaurant_name;
+    setRestaurantOrderMessage('');
+    setRestaurantDraftOrder(null);
+    setRestaurantCart(prev => {
+      const previousKey = prev.restaurant_id || prev.restaurant_name;
+      const differentRestaurant = previousKey && previousKey !== restaurantKey;
+      if (differentRestaurant && !confirm('Cart has items from another restaurant. Start a new cart for this restaurant?')) {
+        return prev;
+      }
+      const base = differentRestaurant
+        ? { restaurant_id: item.restaurant_id, restaurant_name: item.restaurant_name || 'Restaurant', items: [] }
+        : { ...prev, restaurant_id: item.restaurant_id, restaurant_name: item.restaurant_name || prev.restaurant_name || 'Restaurant' };
+      const existing = base.items.find(x => x.id === item.id);
+      if (existing) {
+        return {
+          ...base,
+          items: base.items.map(x => x.id === item.id ? { ...x, quantity_ordered: Number(x.quantity_ordered || 1) + 1 } : x),
+        };
+      }
+      return {
+        ...base,
+        items: [
+          ...base.items,
+          {
+            id: item.id,
+            menu_item_id: item.menu_item_id || null,
+            item_name: item.item_name,
+            category: item.category || '',
+            price: item.price,
+            currency: item.currency || 'USD',
+            quantity_ordered: 1,
+            instructions: '',
+          },
+        ],
+      };
+    });
+  }, []);
+
+  const updateRestaurantCartItem = useCallback((itemId, key, value) => {
+    setRestaurantDraftOrder(null);
+    setRestaurantCart(prev => ({
+      ...prev,
+      items: prev.items.map(item => item.id === itemId ? { ...item, [key]: value } : item),
+    }));
+  }, []);
+
+  const removeRestaurantCartItem = useCallback((itemId) => {
+    setRestaurantDraftOrder(null);
+    setRestaurantCart(prev => {
+      const items = prev.items.filter(item => item.id !== itemId);
+      return items.length ? { ...prev, items } : { restaurant_id: null, restaurant_name: '', items: [] };
+    });
+  }, []);
+
+  const createChatRestaurantDraft = useCallback(async () => {
+    if ((!restaurantCart.restaurant_id && !restaurantCart.restaurant_name) || !restaurantCart.items.length) return;
+    setRestaurantOrderBusy(true);
+    setRestaurantOrderMessage('');
+    try {
+      const draft = await createRestaurantOrderDraft({
+        restaurant_id: restaurantCart.restaurant_id,
+        restaurant_name: restaurantCart.restaurant_name,
+        workspace_id: activeWorkspace?.id || null,
+        fulfillment_type: 'carryout',
+        customer_name: restaurantCustomer.name,
+        customer_phone: restaurantCustomer.phone,
+        customer_email: restaurantCustomer.email,
+        pickup_time_request: restaurantCustomer.pickup_time_request,
+        special_instructions: restaurantCustomer.special_instructions,
+        source: 'chat',
+        items: restaurantCart.items.map(item => ({
+          menu_item_id: item.menu_item_id || null,
+          item_name: item.item_name || '',
+          category: item.category || '',
+          unit_price: item.price == null ? null : Number(item.price),
+          currency: item.currency || 'USD',
+          quantity_ordered: Math.max(1, Number(item.quantity_ordered || 1)),
+          quantity: Math.max(1, Number(item.quantity_ordered || 1)),
+          instructions: item.instructions || '',
+        })),
+      });
+      const draftOrder = normalizeRestaurantOrderResponse(draft);
+      setRestaurantDraftOrder(draftOrder);
+      setRestaurantOrderMessage(`Order draft is ready for ${draftOrder.restaurant_name || restaurantCart.restaurant_name || 'restaurant'}. Review and place carryout order.`);
+    } catch (e) {
+      setRestaurantOrderMessage(e.message || 'Could not create order draft.');
+    } finally {
+      setRestaurantOrderBusy(false);
+    }
+  }, [activeWorkspace?.id, restaurantCart, restaurantCustomer]);
+
+  const submitChatRestaurantOrder = useCallback(async () => {
+    if (!restaurantDraftOrder?.id) return;
+    setRestaurantOrderBusy(true);
+    setRestaurantOrderMessage('');
+    try {
+      const order = await submitRestaurantOrder(restaurantDraftOrder.id, restaurantCustomer.special_instructions);
+      const submittedOrder = normalizeRestaurantOrderResponse(order);
+      setRestaurantDraftOrder(submittedOrder);
+      setRestaurantCart({ restaurant_id: null, restaurant_name: '', items: [] });
+      setRestaurantOrderMessage(`Carryout order submitted to ${submittedOrder.restaurant_name || 'restaurant'}. Status: ${submittedOrder.status}.`);
+    } catch (e) {
+      setRestaurantOrderMessage(e.message || 'Could not submit order.');
+    } finally {
+      setRestaurantOrderBusy(false);
+    }
+  }, [restaurantDraftOrder?.id, restaurantCustomer.special_instructions]);
+
   if (!embeddedDocs.length) return (
     <div style={s.empty}>
       <span style={{ fontSize: '3rem', opacity: .2 }}>🌿</span>
@@ -601,12 +724,26 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
                 onFeedback={(msgId, rating) =>
                   setSessionFeedback(fb => ({ ...fb, [msgId]: rating }))
                 }
+                onAddRestaurantItem={addRestaurantItemToCart}
               />
             ))
           )}
           {thinking && <Thinking />}
           <div ref={endRef} />
         </div>
+
+        <ChatRestaurantCart
+          cart={restaurantCart}
+          customer={restaurantCustomer}
+          order={restaurantDraftOrder}
+          busy={restaurantOrderBusy}
+          message={restaurantOrderMessage}
+          onCustomer={setRestaurantCustomer}
+          onUpdateItem={updateRestaurantCartItem}
+          onRemoveItem={removeRestaurantCartItem}
+          onDraft={createChatRestaurantDraft}
+          onSubmit={submitChatRestaurantOrder}
+        />
 
         <div style={s.inputBar}>
           <div style={s.inputWrap}>
@@ -645,7 +782,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
 }
 
 // ── Message bubble ────────────────────────────────────────────────────────────
-function Msg({ m, sessionId, prevUserMsg, initialFeedback, onFeedback, isNew = false }) {
+function Msg({ m, sessionId, prevUserMsg, initialFeedback, onFeedback, onAddRestaurantItem, isNew = false }) {
   const isUser = m.role === 'user';
   const [open,     setOpen]     = useState(false);
   const [feedback, setFeedback] = useState(initialFeedback ?? null);  // null | 1 | -1
@@ -743,6 +880,10 @@ function Msg({ m, sessionId, prevUserMsg, initialFeedback, onFeedback, isNew = f
           </div>
         )}
 
+        {!isUser && m.content && (
+          <RestaurantActionItems actions={m.actions} content={m.content} onAdd={onAddRestaurantItem} />
+        )}
+
         {/* Sources list */}
         {!isUser && open && Array.isArray(m.sources) && m.sources.length > 0 && (
           <div style={{ marginTop:6, display:'flex', flexDirection:'column', gap:5 }}>
@@ -752,6 +893,166 @@ function Msg({ m, sessionId, prevUserMsg, initialFeedback, onFeedback, isNew = f
       </div>
     </div>
   );
+}
+
+function RestaurantActionItems({ actions, content = '', onAdd }) {
+  const actionItems = Array.isArray(actions?.restaurant_menu_items) ? actions.restaurant_menu_items : [];
+  const parsedItems = parseRestaurantAnswerItems(content);
+  const seen = new Set();
+  const items = [...actionItems, ...parsedItems].filter(item => {
+    const key = `${item.restaurant_id || item.restaurant_name || ''}|${item.item_name || ''}|${item.price ?? ''}`.toLowerCase();
+    if (!item.item_name || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (!items.length) return null;
+  return (
+    <div style={s.restaurantActions}>
+      <div style={s.restaurantActionsHead}>
+        <span>🍽 Menu items found</span>
+        <small>Add items to a carryout cart from chat</small>
+      </div>
+      <div style={s.restaurantActionGrid}>
+        {items.map(item => (
+          <div key={item.id} style={s.restaurantActionCard}>
+            <div style={s.restaurantName}>{item.restaurant_name || 'Restaurant'}</div>
+            <strong style={s.restaurantItemName}>{item.item_name}</strong>
+            <div style={s.restaurantMeta}>
+              {item.category && <span>{item.category}</span>}
+              {item.price != null && <span>${Number(item.price).toFixed(2)}</span>}
+            </div>
+            {item.description && <p style={s.restaurantDesc}>{item.description}</p>}
+            <button style={s.addToCartBtn} onClick={() => onAdd?.(item)}>＋ Add</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ChatRestaurantCart({
+  cart,
+  customer,
+  order,
+  busy,
+  message,
+  onCustomer,
+  onUpdateItem,
+  onRemoveItem,
+  onDraft,
+  onSubmit,
+}) {
+  const hasItems = Array.isArray(cart.items) && cart.items.length > 0;
+  if (!hasItems && !order && !message) return null;
+  const subtotal = (cart.items || []).reduce((sum, item) => (
+    sum + (Number(item.price) || 0) * (Number(item.quantity_ordered) || 1)
+  ), 0);
+  const draftReady = order?.id && String(order.status || '').toLowerCase() === 'draft';
+  return (
+    <div style={s.chatCart}>
+      <div style={s.chatCartHead}>
+        <div>
+          <strong>🛒 Carryout cart</strong>
+          <span>{cart.restaurant_name || order?.restaurant_name || 'Restaurant order'}</span>
+        </div>
+        <strong>${Number(order?.subtotal ?? subtotal).toFixed(2)}</strong>
+      </div>
+      {hasItems && (
+        <div style={s.chatCartItems}>
+          {cart.items.map(item => (
+            <div key={item.id} style={s.chatCartItem}>
+              <div>
+                <strong>{item.item_name}</strong>
+                <span>{item.price != null ? `$${Number(item.price).toFixed(2)}` : 'Price not set'}</span>
+              </div>
+              <input
+                style={s.qty}
+                type="number"
+                min="1"
+                value={item.quantity_ordered || 1}
+                onChange={e => onUpdateItem(item.id, 'quantity_ordered', e.target.value)}
+              />
+              <button style={s.removeBtn} onClick={() => onRemoveItem(item.id)} title="Remove item">×</button>
+              <input
+                style={s.itemNote}
+                value={item.instructions || ''}
+                onChange={e => onUpdateItem(item.id, 'instructions', e.target.value)}
+                placeholder="Item notes"
+              />
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={s.chatCartFields}>
+        <input style={s.cartInput} value={customer.name} onChange={e=>onCustomer({ ...customer, name:e.target.value })} placeholder="Customer name" />
+        <input style={s.cartInput} value={customer.phone} onChange={e=>onCustomer({ ...customer, phone:e.target.value })} placeholder="Phone" />
+        <input style={s.cartInput} value={customer.pickup_time_request} onChange={e=>onCustomer({ ...customer, pickup_time_request:e.target.value })} placeholder="Pickup time, e.g. ASAP" />
+        <input style={s.cartInput} value={customer.special_instructions} onChange={e=>onCustomer({ ...customer, special_instructions:e.target.value })} placeholder="Order notes" />
+      </div>
+      {message && <div style={message.includes('Could not') ? s.cartError : s.cartStatus}>{message}</div>}
+      <div style={s.chatCartActions}>
+        <button style={s.reviewBtn} disabled={busy || !hasItems} onClick={onDraft}>{busy ? 'Working...' : order?.id ? 'Refresh draft' : 'Review order'}</button>
+        <button
+          style={{ ...s.placeBtn, ...(!draftReady || busy ? s.placeBtnOff : {}) }}
+          disabled={busy || !draftReady}
+          onClick={onSubmit}
+          title={draftReady ? 'Submit carryout order to restaurant' : 'Review order first'}
+        >
+          {busy ? 'Working...' : 'Place carryout order'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function normalizeRestaurantOrderResponse(response) {
+  if (response?.order) {
+    return {
+      ...response.order,
+      items: Array.isArray(response.items) ? response.items : [],
+      events: Array.isArray(response.events) ? response.events : [],
+    };
+  }
+  return response || null;
+}
+
+function parseRestaurantAnswerItems(text = '') {
+  const rows = [];
+  const lines = String(text || '').split('\n');
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line || line.includes('---')) continue;
+    let cells = line.includes('|')
+      ? line.split('|').map(c => c.trim().replace(/^\*\*|\*\*$/g, '')).filter(Boolean)
+      : line.split(/\t+|\s{2,}/).map(c => c.trim()).filter(Boolean);
+    if (cells.length < 3) continue;
+    const joined = cells.join(' ').toLowerCase();
+    if (joined.includes('restaurant') && (joined.includes('price') || joined.includes('source'))) continue;
+    const price = extractAnswerPrice(cells.slice(2).join(' '));
+    if (price == null) continue;
+    const restaurantName = cells[0]?.trim();
+    const itemName = cells[1]?.trim();
+    if (!restaurantName || !itemName || /^source\s*\d+$/i.test(itemName)) continue;
+    rows.push({
+      id: `answer:${restaurantName}:${itemName}:${price}`.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      menu_item_id: null,
+      restaurant_id: null,
+      restaurant_name: restaurantName,
+      item_name: itemName,
+      category: '',
+      price,
+      currency: 'USD',
+      quantity: '',
+      description: 'Matched from the chat answer. Restaurant can confirm final availability and price.',
+      source: 'chat_answer',
+    });
+  }
+  return rows.slice(0, 10);
+}
+
+function extractAnswerPrice(text = '') {
+  const match = String(text).match(/\$?\s*([0-9]+(?:\.[0-9]{1,2})?)/);
+  return match ? Number(match[1]) : null;
 }
 
 // ── Source card — shows match type + rerank badge ─────────────────────────────
@@ -849,6 +1150,30 @@ const s = {
   sendOn:        { background:'#15803d', color:'#fff' },
   sendOff:       { background:'var(--s3)', color:'var(--muted2)', cursor:'not-allowed' },
   srcToggle:     { background:'none', border:'none', cursor:'pointer', padding:'3px 0', display:'flex', alignItems:'center', gap:6 },
+  restaurantActions:{ marginTop:8, border:'1px solid rgba(74,222,128,.2)', background:'rgba(74,222,128,.045)', borderRadius:8, padding:9 },
+  restaurantActionsHead:{ display:'flex', justifyContent:'space-between', gap:10, alignItems:'center', color:'var(--tx2)', fontSize:12, marginBottom:8 },
+  restaurantActionGrid:{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))', gap:8 },
+  restaurantActionCard:{ border:'1px solid var(--b2)', background:'var(--s2)', borderRadius:8, padding:9, display:'flex', flexDirection:'column', gap:5 },
+  restaurantName:{ color:'#86efac', fontSize:10.5, fontWeight:800, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' },
+  restaurantItemName:{ color:'var(--tx)', fontSize:12.5, lineHeight:1.25 },
+  restaurantMeta:{ display:'flex', justifyContent:'space-between', gap:8, color:'var(--muted2)', fontSize:11 },
+  restaurantDesc:{ margin:0, color:'var(--muted2)', fontSize:11, lineHeight:1.35, display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', overflow:'hidden' },
+  addToCartBtn:{ marginTop:'auto', border:'1px solid rgba(74,222,128,.35)', background:'rgba(74,222,128,.12)', color:'#86efac', borderRadius:7, padding:'6px 9px', cursor:'pointer', fontWeight:800 },
+  chatCart:{ borderTop:'1px solid rgba(74,222,128,.18)', background:'rgba(6,19,10,.96)', padding:'10px 14px', flexShrink:0 },
+  chatCartHead:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, color:'var(--tx)', fontSize:13 },
+  chatCartItems:{ display:'flex', flexDirection:'column', gap:7, marginTop:8, maxHeight:130, overflow:'auto' },
+  chatCartItem:{ display:'grid', gridTemplateColumns:'minmax(140px, 1fr) 54px 30px minmax(120px, 1fr)', gap:7, alignItems:'center', fontSize:12 },
+  qty:{ width:'100%', background:'var(--s3)', border:'1px solid var(--b2)', color:'var(--tx)', borderRadius:6, padding:'6px 7px' },
+  removeBtn:{ border:'1px solid rgba(248,113,113,.3)', background:'rgba(248,113,113,.08)', color:'#fecaca', borderRadius:6, cursor:'pointer', height:30 },
+  itemNote:{ minWidth:0, background:'var(--s3)', border:'1px solid var(--b2)', color:'var(--tx)', borderRadius:6, padding:'7px 9px' },
+  chatCartFields:{ display:'grid', gridTemplateColumns:'repeat(4, minmax(0, 1fr))', gap:7, marginTop:8 },
+  cartInput:{ minWidth:0, background:'var(--s3)', border:'1px solid var(--b2)', color:'var(--tx)', borderRadius:6, padding:'7px 9px' },
+  chatCartActions:{ display:'flex', gap:8, marginTop:8, justifyContent:'flex-end', flexWrap:'wrap' },
+  reviewBtn:{ border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx)', borderRadius:7, padding:'7px 11px', cursor:'pointer', fontWeight:800 },
+  placeBtn:{ border:'none', background:'#16a34a', color:'#06130a', borderRadius:7, padding:'7px 11px', cursor:'pointer', fontWeight:900 },
+  placeBtnOff:{ opacity:.48, cursor:'not-allowed' },
+  cartStatus:{ marginTop:8, color:'#86efac', fontSize:12 },
+  cartError:{ marginTop:8, color:'#fecaca', fontSize:12 },
   // feedback styles are inline (avoids CSS var conflicts)
   srcCard:       { background:'var(--s2)', border:'1px solid var(--b1)', borderRadius:'var(--r)', padding:'8px 11px' },
   srcBadge:      { fontSize:10, fontWeight:700, padding:'2px 8px', borderRadius:20, background:'rgba(74,222,128,.12)', color:'#4ade80', border:'1px solid rgba(74,222,128,.25)', flexShrink:0 },

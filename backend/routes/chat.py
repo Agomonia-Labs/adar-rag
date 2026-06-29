@@ -1,6 +1,7 @@
 # routes/chat.py — 3-stage RAG: Hybrid Retrieval → Gemini Re-rank → Generate
 from __future__ import annotations
 import json, asyncio, logging, re
+from difflib import SequenceMatcher
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -242,8 +243,35 @@ async def chat_stream_endpoint(
                         tool_request={"messages": messages, "sources": _chunk_trace(chunks, redact_pii=req.redact_pii)},
                         llm_response=redact_text("".join(output_tokens), req.redact_pii).text,
                     )
+                restaurant_actions = {}
+                async with span("restaurant_chat_actions", trace_id=trace_id, metadata={"enabled": True}) as sp:
+                    try:
+                        restaurant_actions = await _restaurant_chat_actions(
+                            db,
+                            user_id=user_id,
+                            workspace_id=req.workspace_id,
+                            docs=doc_rows,
+                            question=question_for_model,
+                            answer_text="".join(output_tokens),
+                            chunks=chunks,
+                        )
+                    except Exception as exc:
+                        log.warning("Restaurant chat action lookup failed: %s", exc)
+                        restaurant_actions = {"error": str(exc)}
+                    await record_llm_event(
+                        trace_id=trace_id,
+                        span_id=sp,
+                        provider="postgres",
+                        model="restaurant_menu_store",
+                        operation="restaurant_chat_actions",
+                        user_prompt=question_for_model,
+                        tool_response=restaurant_actions,
+                    )
                 await finish_trace(trace_id, "success")
-                await queue.put(("done", _sanitise(chunks, redact_pii=req.redact_pii)))
+                await queue.put(("done", {
+                    "sources": _sanitise(chunks, redact_pii=req.redact_pii),
+                    "actions": restaurant_actions,
+                }))
 
             except HTTPException as exc:
                 await finish_trace(trace_id, "error", str(exc.detail))
@@ -257,7 +285,10 @@ async def chat_stream_endpoint(
         while True:
             item = await queue.get()
             if   item[0] == "token": yield f"data: {json.dumps({'type':'token','text':item[1]})}\n\n"
-            elif item[0] == "done":  yield f"data: {json.dumps({'type':'done','sources':item[1]})}\n\n"; break
+            elif item[0] == "done":
+                payload = item[1] if isinstance(item[1], dict) else {"sources": item[1]}
+                yield f"data: {json.dumps({'type':'done', **payload})}\n\n"
+                break
             elif item[0] == "error": yield f"data: {json.dumps({'type':'error','error':item[1]})}\n\n"; break
 
         await task
@@ -281,6 +312,12 @@ HEALTHCARE_TERMS = {
     "medicine", "diagnosis", "visit", "after visit", "discharge", "follow up",
     "follow-up", "care gap", "allergy", "vital", "provider", "doctor",
     "referral", "prior authorization", "claim", "procedure", "test result",
+}
+
+RESTAURANT_TERMS = {
+    "restaurant", "menu", "food", "dish", "item", "price", "prices", "order",
+    "carryout", "pickup", "takeout", "compare", "biryani", "naan", "curry",
+    "appetizer", "entree", "dessert", "beverage", "drink", "lunch", "dinner",
 }
 
 
@@ -368,6 +405,275 @@ def _is_healthcare_doc(doc: dict, question: str, force: bool = False) -> bool:
     )
     question_match = any(term in q for term in HEALTHCARE_TERMS)
     return metadata_match or question_match
+
+
+async def _restaurant_chat_actions(
+    db,
+    user_id: str,
+    workspace_id: str | None,
+    docs: list[dict],
+    question: str,
+    answer_text: str = "",
+    chunks: list[dict] | None = None,
+) -> dict:
+    if not _is_restaurant_context(docs, question):
+        return {}
+
+    safe_workspace_id = _uuid_or_none(workspace_id)
+    rows = await db.fetch(
+        f"""
+        SELECT mi.id, mi.restaurant_id, mi.category, mi.item_name, mi.price,
+               mi.currency, mi.quantity, mi.description, mi.availability,
+               mi.dietary_tags, mi.spice_level,
+               r.name AS restaurant_name, r.address, r.phone, r.cuisine_type
+        FROM restaurant_menu_items mi
+        JOIN restaurants r ON r.id=mi.restaurant_id
+        WHERE {_restaurant_access_sql("r")}
+          AND ($2::uuid IS NULL OR r.workspace_id=$2::uuid OR r.workspace_id IS NULL)
+          AND LOWER(COALESCE(mi.availability, 'available')) <> 'unavailable'
+        ORDER BY r.name, mi.category, mi.item_name
+        LIMIT 1000
+        """,
+        user_id,
+        safe_workspace_id,
+    )
+    context_parts = _restaurant_context_parts(question, answer_text, chunks or [])
+    scored = []
+    for row in rows:
+        score = _restaurant_menu_match_score(row, context_parts)
+        if score >= 35:
+            scored.append((score, row))
+    scored.sort(key=lambda item: (-item[0], item[1]["restaurant_name"] or "", item[1]["item_name"] or ""))
+    items = [
+        {**_restaurant_menu_action_row(row), "action_score": round(score, 3)}
+        for score, row in scored[:10]
+    ]
+    items = _merge_restaurant_answer_actions(items, rows, answer_text)
+    if not items:
+        return {}
+    return {
+        "type": "restaurant_menu_actions",
+        "source": "restaurant_menu_semantic_lookup",
+        "restaurant_menu_items": items,
+    }
+
+
+def _is_restaurant_context(docs: list[dict], question: str) -> bool:
+    q = (question or "").lower()
+    question_match = any(term in q for term in RESTAURANT_TERMS)
+    doc_match = False
+    for doc in docs:
+        doc_type = (doc.get("doc_type") or "").lower()
+        doc_domain = (doc.get("doc_domain") or "").lower()
+        name = (doc.get("original_name") or "").lower()
+        if (
+            "restaurant" in doc_type
+            or "menu" in doc_type
+            or doc_domain in {"restaurant", "restaurants", "food", "food_service"}
+            or any(term in name for term in ("restaurant", "menu", "food"))
+        ):
+            doc_match = True
+            break
+    return question_match or doc_match
+
+
+def _merge_restaurant_answer_actions(items: list[dict], rows: list, answer_text: str) -> list[dict]:
+    existing_keys = {
+        (
+            str(item.get("restaurant_id") or ""),
+            _normalise_restaurant_text(item.get("item_name") or ""),
+        )
+        for item in items
+    }
+    restaurants: dict[str, dict] = {}
+    for row in rows:
+        name = row["restaurant_name"] or ""
+        key = _normalise_restaurant_text(name)
+        if key and key not in restaurants:
+            restaurants[key] = _restaurant_menu_action_row(row)
+
+    for extracted in _extract_restaurant_answer_rows(answer_text):
+        restaurant_key = _normalise_restaurant_text(extracted["restaurant_name"])
+        restaurant = restaurants.get(restaurant_key)
+        if not restaurant:
+            restaurant = _best_restaurant_name_match(restaurant_key, restaurants)
+        if not restaurant:
+            continue
+        dedupe_key = (
+            str(restaurant.get("restaurant_id") or ""),
+            _normalise_restaurant_text(extracted["item_name"]),
+        )
+        if dedupe_key in existing_keys:
+            continue
+        existing_keys.add(dedupe_key)
+        items.append({
+            "id": f"chat:{restaurant.get('restaurant_id')}:{abs(hash(dedupe_key))}",
+            "menu_item_id": None,
+            "restaurant_id": restaurant.get("restaurant_id"),
+            "restaurant_name": restaurant.get("restaurant_name"),
+            "category": extracted.get("category") or "",
+            "item_name": extracted["item_name"],
+            "price": extracted.get("price"),
+            "currency": "USD",
+            "quantity": "",
+            "description": "Matched from the chat answer. Restaurant can confirm final availability and price.",
+            "availability": "chat_answer",
+            "action_score": 35,
+            "source": "chat_answer_row",
+        })
+    return items[:10]
+
+
+def _extract_restaurant_answer_rows(answer_text: str) -> list[dict]:
+    rows: list[dict] = []
+    for raw_line in (answer_text or "").splitlines():
+        line = raw_line.strip()
+        if not line or "---" in line:
+            continue
+        cells = [cell.strip(" *") for cell in (line.split("|") if "|" in line else re.split(r"\t+", line)) if cell.strip(" *")]
+        if len(cells) < 3:
+            cells = re.split(r"\s{2,}", line)
+        if len(cells) < 3:
+            continue
+        joined = " ".join(cells).lower()
+        if "restaurant" in joined and ("price" in joined or "source" in joined):
+            continue
+        price = _extract_price(" ".join(cells[2:]))
+        if price is None:
+            continue
+        rows.append({
+            "restaurant_name": cells[0],
+            "item_name": cells[1],
+            "price": price,
+        })
+    return rows
+
+
+def _extract_price(text: str) -> float | None:
+    match = re.search(r"\$?\s*([0-9]+(?:\.[0-9]{1,2})?)", text or "")
+    return float(match.group(1)) if match else None
+
+
+def _best_restaurant_name_match(name: str, restaurants: dict[str, dict]) -> dict | None:
+    best_key = ""
+    best_score = 0.0
+    for key in restaurants:
+        score = SequenceMatcher(None, name, key).ratio()
+        if score > best_score:
+            best_score = score
+            best_key = key
+    return restaurants.get(best_key) if best_score >= 0.82 else None
+
+
+def _restaurant_context_parts(question: str, answer_text: str, chunks: list[dict]) -> dict:
+    source_text = " ".join((chunk.get("content") or "")[:1800] for chunk in chunks[:5])
+    return {
+        "question": _normalise_restaurant_text(question),
+        "answer": _normalise_restaurant_text(answer_text),
+        "source": _normalise_restaurant_text(source_text),
+        "all": _normalise_restaurant_text(f"{question}\n{answer_text}\n{source_text}"),
+    }
+
+
+def _restaurant_menu_match_score(row, context_parts: dict) -> float:
+    question_text = context_parts.get("question", "")
+    answer_text = context_parts.get("answer", "")
+    source_text = context_parts.get("source", "")
+    context_text = context_parts.get("all", "")
+    item_name = _normalise_restaurant_text(row["item_name"] or "")
+    restaurant_name = _normalise_restaurant_text(row["restaurant_name"] or "")
+    category = _normalise_restaurant_text(row["category"] or "")
+    description = _normalise_restaurant_text(row["description"] or "")
+    row_text = " ".join(part for part in (item_name, restaurant_name, category, description) if part)
+
+    item_tokens = _meaningful_restaurant_tokens(item_name)
+    context_tokens = set(_meaningful_restaurant_tokens(context_text))
+    if not item_tokens or not context_tokens:
+        return 0.0
+
+    exact_overlap = len([token for token in item_tokens if token in context_tokens]) / len(item_tokens)
+    fuzzy_overlap = len([
+        token for token in item_tokens
+        if token in context_tokens or any(SequenceMatcher(None, token, other).ratio() >= 0.84 for other in context_tokens)
+    ]) / len(item_tokens)
+
+    score = max(exact_overlap, fuzzy_overlap) * 70
+    if item_name and item_name in answer_text:
+        score += 45
+    elif item_name and item_name in question_text:
+        score += 35
+    elif item_name and item_name in source_text:
+        score += 16
+    elif row_text:
+        score += SequenceMatcher(None, item_name, context_text[: max(len(item_name) * 4, 80)]).ratio() * 8
+    if restaurant_name and restaurant_name in answer_text:
+        score += 16
+    elif restaurant_name and restaurant_name in context_text:
+        score += 12
+    if category and category in answer_text:
+        score += 5
+    price = row["price"]
+    if price is not None:
+        price_text = f"{float(price):.2f}".rstrip("0").rstrip(".")
+        if price_text and price_text in context_text:
+            score += 8
+    return score
+
+
+def _meaningful_restaurant_tokens(text: str) -> list[str]:
+    stop = {
+        "what", "which", "show", "give", "tell", "from", "with", "that", "this",
+        "have", "has", "near", "menu", "item", "items", "food", "restaurant",
+        "restaurants", "price", "prices", "compare", "order", "please", "list",
+        "their", "there", "about", "does", "available", "carryout", "pickup",
+        "source", "table", "following", "here", "based", "document",
+        "and", "the", "for", "you", "are", "all", "can", "get", "one", "two",
+    }
+    terms = []
+    raw_terms = re.findall(r"[a-zA-Z][a-zA-Z0-9'\-]{1,}", text or "")
+    for raw in raw_terms:
+        term = raw.lower().strip("-'")
+        if len(term) < 2 or term in stop or term in terms:
+            continue
+        terms.append(term)
+    return terms
+
+
+def _normalise_restaurant_text(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-zA-Z0-9.\s'-]", " ", text or "").lower()).strip()
+
+
+def _uuid_or_none(value: str | None) -> str | None:
+    if not value:
+        return None
+    return value if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", value) else None
+
+
+def _restaurant_access_sql(alias: str, user_param: str = "$1") -> str:
+    return (
+        f"({alias}.user_id={user_param}::uuid OR EXISTS ("
+        f"SELECT 1 FROM workspace_members wm WHERE wm.workspace_id={alias}.workspace_id AND wm.user_id={user_param}::uuid"
+        f"))"
+    )
+
+
+def _restaurant_menu_action_row(row) -> dict:
+    data = dict(row)
+    return {key: _action_json_value(value) for key, value in data.items()}
+
+
+def _action_json_value(value):
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if hasattr(value, "__str__") and value.__class__.__module__.startswith(("uuid", "decimal")):
+        if value.__class__.__name__ == "Decimal":
+            return float(value)
+        return str(value)
+    if isinstance(value, list):
+        return [_action_json_value(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _action_json_value(v) for k, v in value.items()}
+    return value
 
 
 async def _lease_agentic_block(db, doc_id: str, doc: dict, source_index: int, redact_pii: bool = False) -> str:

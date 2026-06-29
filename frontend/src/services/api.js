@@ -99,7 +99,7 @@ export async function streamChat({ question, documentIds, document_ids, history,
       if (!line.startsWith('data: ')) continue;
       let ev; try { ev = JSON.parse(line.slice(6)); } catch { continue; }
       if (ev.type === 'token') onToken?.(ev.text);
-      if (ev.type === 'done')  onDone?.(ev.sources);
+      if (ev.type === 'done')  onDone?.(ev.sources, ev.actions || null, ev);
       if (ev.type === 'error') onError?.(ev.error);
     }
   }
@@ -759,4 +759,43 @@ export async function compareRestaurantMenu({ query, cuisineType = '', workspace
   if (cuisineType) params.set('cuisine_type', cuisineType);
   if (workspaceId) params.set('workspace_id', workspaceId);
   return handleRes(await fetch(`${BASE}/restaurant/menu/compare?${params.toString()}`, { headers: authHdr() }));
+}
+
+export async function createRestaurantOrderDraft(order) {
+  return handleRes(await fetch(`${BASE}/restaurant/orders/draft`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify(order),
+  }));
+}
+
+export async function submitRestaurantOrder(orderId, notes = '') {
+  return handleRes(await fetch(`${BASE}/restaurant/orders/${orderId}/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({ notes }),
+  }));
+}
+
+export async function listMyRestaurantOrders() {
+  return handleRes(await fetch(`${BASE}/restaurant/orders`, { headers: authHdr() }));
+}
+
+export async function fetchRestaurantOrder(orderId) {
+  return handleRes(await fetch(`${BASE}/restaurant/orders/${orderId}`, { headers: authHdr() }));
+}
+
+export async function listRestaurantOwnerOrders({ status = '', workspaceId = null } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (workspaceId) params.set('workspace_id', workspaceId);
+  return handleRes(await fetch(`${BASE}/restaurant/owner/orders?${params.toString()}`, { headers: authHdr() }));
+}
+
+export async function updateRestaurantOwnerOrder(orderId, action, notes = '') {
+  return handleRes(await fetch(`${BASE}/restaurant/owner/orders/${orderId}/${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({ notes }),
+  }));
 }

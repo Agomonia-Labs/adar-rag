@@ -63,6 +63,34 @@ class RestaurantSaveRequest(BaseModel):
     menu_items: list[dict] = []
 
 
+class RestaurantOrderItemRequest(BaseModel):
+    menu_item_id: str | None = None
+    item_name: str = ""
+    category: str = ""
+    unit_price: float | None = None
+    currency: str = "USD"
+    quantity: int = 1
+    quantity_ordered: int | None = None
+    instructions: str = ""
+
+
+class RestaurantOrderDraftRequest(BaseModel):
+    restaurant_id: str | None = None
+    restaurant_name: str = ""
+    workspace_id: str | None = None
+    items: list[RestaurantOrderItemRequest]
+    customer_name: str = ""
+    customer_phone: str = ""
+    customer_email: str = ""
+    pickup_time_request: str = ""
+    special_instructions: str = ""
+    notes: str = ""
+
+
+class RestaurantOrderStatusRequest(BaseModel):
+    notes: str = ""
+
+
 @router.post("/scribe-workflow")
 async def run_restaurant_scribe_workflow(
     background_tasks: BackgroundTasks,
@@ -493,6 +521,323 @@ async def compare_menu_prices(
     }
 
 
+@router.post("/orders/draft")
+async def create_restaurant_order_draft(
+    body: RestaurantOrderDraftRequest,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    if not body.items:
+        raise HTTPException(400, "Add at least one menu item to the cart")
+
+    item_ids = []
+    for item in body.items:
+        raw = str(item.menu_item_id or "").strip()
+        if not raw:
+            continue
+        try:
+            item_ids.append(UUID(raw))
+        except ValueError:
+            if not (item.item_name or "").strip():
+                raise HTTPException(400, f"Invalid menu item id: {raw}")
+            item.menu_item_id = None
+    ad_hoc_items = [item for item in body.items if not str(item.menu_item_id or "").strip()]
+    if ad_hoc_items and not body.restaurant_id:
+        body.restaurant_id = await _resolve_order_restaurant_id(
+            db,
+            user_id=user_id,
+            restaurant_name=body.restaurant_name,
+            workspace_id=body.workspace_id,
+        )
+    quantity_by_item = {str(item.menu_item_id): _order_item_quantity(item) for item in body.items if item.menu_item_id}
+    instructions_by_item = {str(item.menu_item_id): item.instructions or "" for item in body.items if item.menu_item_id}
+
+    menu_rows = []
+    if item_ids:
+        menu_rows = await db.fetch(
+            f"""
+            SELECT mi.*, r.name AS restaurant_name, r.address, r.phone AS restaurant_phone,
+                   r.user_id AS restaurant_owner_id, r.workspace_id AS restaurant_workspace_id
+            FROM restaurant_menu_items mi
+            JOIN restaurants r ON r.id=mi.restaurant_id
+            WHERE mi.id = ANY($2::uuid[])
+              AND {_restaurant_access_sql("r")}
+            ORDER BY mi.item_name
+            """,
+            user_id,
+            item_ids,
+        )
+        if len(menu_rows) != len({str(item_id) for item_id in item_ids}):
+            raise HTTPException(404, "One or more menu items were not found or are not accessible")
+
+    restaurant_ids = {str(row["restaurant_id"]) for row in menu_rows}
+    if ad_hoc_items:
+        restaurant_ids.add(str(body.restaurant_id))
+    if body.restaurant_id and str(body.restaurant_id) not in restaurant_ids:
+        raise HTTPException(400, "Selected items do not belong to the requested restaurant")
+    if len(restaurant_ids) != 1:
+        raise HTTPException(400, "A carryout cart can include items from one restaurant only")
+
+    restaurant_id = next(iter(restaurant_ids))
+    restaurant = await db.fetchrow(
+        f"""
+        SELECT id, name AS restaurant_name, address, phone AS restaurant_phone,
+               user_id AS restaurant_owner_id, workspace_id, workspace_id AS restaurant_workspace_id
+        FROM restaurants r
+        WHERE r.id=$2::uuid
+          AND {_restaurant_access_sql("r")}
+        """,
+        user_id,
+        restaurant_id,
+    )
+    if not restaurant:
+        raise HTTPException(404, "Restaurant was not found or is not accessible")
+    first = menu_rows[0] if menu_rows else restaurant
+    workspace_id = str(first["workspace_id"]) if first.get("workspace_id") else None
+    subtotal = Decimal("0.00")
+    currency = "USD"
+    order_id = str(uuid.uuid4())
+
+    async with db.transaction():
+        for row in menu_rows:
+            price = row["price"]
+            qty = quantity_by_item.get(str(row["id"]), 1)
+            currency = row["currency"] or currency
+            if price is not None:
+                subtotal += Decimal(str(price)) * qty
+        for item in ad_hoc_items:
+            if item.unit_price is not None:
+                subtotal += Decimal(str(item.unit_price)) * _order_item_quantity(item)
+            currency = item.currency or currency
+
+        await db.execute(
+            """
+            INSERT INTO restaurant_orders
+              (id, restaurant_id, customer_user_id, workspace_id, status, fulfillment_type,
+               customer_name, customer_phone, customer_email, pickup_time_request,
+               special_instructions, subtotal, currency, metadata)
+            VALUES ($1,$2,$3,$4,'draft','carryout',$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+            """,
+            order_id,
+            restaurant_id,
+            user_id,
+            workspace_id,
+            body.customer_name or "",
+            body.customer_phone or "",
+            body.customer_email or current_user.get("email") or "",
+            body.pickup_time_request or "",
+            body.special_instructions or "",
+            subtotal,
+            currency,
+            json.dumps({"source": "docintel_conversation_cart", "notes": body.notes or ""}),
+        )
+
+        for row in menu_rows:
+            menu_item_id = str(row["id"])
+            qty = quantity_by_item.get(menu_item_id, 1)
+            unit_price = row["price"]
+            line_total = Decimal("0.00") if unit_price is None else Decimal(str(unit_price)) * qty
+            await db.execute(
+                """
+                INSERT INTO restaurant_order_items
+                  (order_id, menu_item_id, item_name, category, quantity, unit_price,
+                   line_total, currency, instructions, metadata)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
+                """,
+                order_id,
+                menu_item_id,
+                row["item_name"],
+                row["category"] or "",
+                qty,
+                unit_price,
+                line_total,
+                row["currency"] or currency,
+                instructions_by_item.get(menu_item_id, ""),
+                json.dumps({"restaurant_name": first["restaurant_name"]}),
+            )
+        for item in ad_hoc_items:
+            item_name = (item.item_name or "").strip()
+            if not item_name:
+                raise HTTPException(400, "Item name is required for chat-derived order items")
+            qty = _order_item_quantity(item)
+            unit_price = Decimal(str(item.unit_price)) if item.unit_price is not None else None
+            line_total = Decimal("0.00") if unit_price is None else unit_price * qty
+            await db.execute(
+                """
+                INSERT INTO restaurant_order_items
+                  (order_id, menu_item_id, item_name, category, quantity, unit_price,
+                   line_total, currency, instructions, metadata)
+                VALUES ($1,NULL,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+                """,
+                order_id,
+                item_name,
+                item.category or "",
+                qty,
+                unit_price,
+                line_total,
+                item.currency or currency,
+                item.instructions or "",
+                json.dumps({"restaurant_name": first["restaurant_name"], "source": "chat_answer"}),
+            )
+        await _add_order_event(db, order_id, user_id, "draft_created", None, "draft", body.notes or "", {"item_count": len(menu_rows) + len(ad_hoc_items)})
+
+    await audit(
+        db,
+        user_id=user_id,
+        action="restaurant_order_draft",
+        resource_type="restaurant_order",
+        resource_id=order_id,
+        metadata={"restaurant_id": restaurant_id, "subtotal": float(subtotal), "fulfillment_type": "carryout"},
+        ip_address=ip_from(request),
+        user_agent=ua_from(request),
+    )
+    return await _fetch_order_response(db, order_id, user_id)
+
+
+@router.post("/orders/{order_id}/submit")
+async def submit_restaurant_order(
+    order_id: str,
+    body: RestaurantOrderStatusRequest,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    order = await _fetch_order_record(db, order_id, user_id)
+    if not order:
+        raise HTTPException(404, "Order not found")
+    if str(order["customer_user_id"]) != user_id:
+        raise HTTPException(403, "Only the customer can submit this order")
+    if order["status"] != "draft":
+        raise HTTPException(400, f"Only draft orders can be submitted; current status is {order['status']}")
+
+    await _transition_order(
+        db,
+        order,
+        actor_id=user_id,
+        to_status="submitted",
+        event_type="submitted",
+        notes=body.notes or "Customer submitted carryout order",
+        timestamp_column="submitted_at",
+        notify_owner=True,
+    )
+    await audit(
+        db,
+        user_id=user_id,
+        action="restaurant_order_submit",
+        resource_type="restaurant_order",
+        resource_id=order_id,
+        metadata={"restaurant_id": str(order["restaurant_id"]), "fulfillment_type": "carryout"},
+        ip_address=ip_from(request),
+        user_agent=ua_from(request),
+    )
+    return await _fetch_order_response(db, order_id, user_id)
+
+
+@router.get("/orders")
+async def list_my_restaurant_orders(current_user: CurrentUser, db=Depends(get_db)):
+    user_id = str(current_user["id"])
+    rows = await db.fetch(
+        """
+        SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address, r.phone AS restaurant_phone,
+               COUNT(oi.id)::int AS item_count
+        FROM restaurant_orders o
+        JOIN restaurants r ON r.id=o.restaurant_id
+        LEFT JOIN restaurant_order_items oi ON oi.order_id=o.id
+        WHERE o.customer_user_id=$1::uuid
+        GROUP BY o.id, r.id
+        ORDER BY o.created_at DESC
+        LIMIT 100
+        """,
+        user_id,
+    )
+    return {"orders": [_order_row(row) for row in rows]}
+
+
+@router.get("/orders/{order_id}")
+async def get_restaurant_order(order_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    order = await _fetch_order_record(db, order_id, str(current_user["id"]))
+    if not order:
+        raise HTTPException(404, "Order not found")
+    return await _fetch_order_response(db, order_id, str(current_user["id"]))
+
+
+@router.get("/owner/orders")
+async def list_restaurant_owner_orders(
+    current_user: CurrentUser,
+    status: str = Query(""),
+    workspace_id: str | None = Query(None),
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    rows = await db.fetch(
+        f"""
+        SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address, r.phone AS restaurant_phone,
+               COUNT(oi.id)::int AS item_count
+        FROM restaurant_orders o
+        JOIN restaurants r ON r.id=o.restaurant_id
+        LEFT JOIN restaurant_order_items oi ON oi.order_id=o.id
+        WHERE {_restaurant_access_sql("r")}
+          AND o.status <> 'draft'
+          AND ($2='' OR o.status=$2)
+          AND ($3::uuid IS NULL OR r.workspace_id=$3::uuid)
+        GROUP BY o.id, r.id
+        ORDER BY o.created_at DESC
+        LIMIT 150
+        """,
+        user_id,
+        status.strip(),
+        workspace_id,
+    )
+    return {"orders": [_order_row(row) for row in rows]}
+
+
+@router.post("/owner/orders/{order_id}/accept")
+async def accept_restaurant_order(
+    order_id: str,
+    body: RestaurantOrderStatusRequest,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    return await _owner_transition_order_endpoint(db, request, current_user, order_id, "accepted", "accepted", body.notes or "Restaurant accepted carryout order", "accepted_at")
+
+
+@router.post("/owner/orders/{order_id}/reject")
+async def reject_restaurant_order(
+    order_id: str,
+    body: RestaurantOrderStatusRequest,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    return await _owner_transition_order_endpoint(db, request, current_user, order_id, "rejected", "rejected", body.notes or "Restaurant rejected carryout order", "rejected_at")
+
+
+@router.post("/owner/orders/{order_id}/ready")
+async def ready_restaurant_order(
+    order_id: str,
+    body: RestaurantOrderStatusRequest,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    return await _owner_transition_order_endpoint(db, request, current_user, order_id, "ready_for_pickup", "ready_for_pickup", body.notes or "Restaurant marked order ready for pickup", "ready_at")
+
+
+@router.post("/owner/orders/{order_id}/complete")
+async def complete_restaurant_order(
+    order_id: str,
+    body: RestaurantOrderStatusRequest,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    return await _owner_transition_order_endpoint(db, request, current_user, order_id, "completed", "completed", body.notes or "Order completed", "completed_at")
+
+
 async def _execute_restaurant_workflow_background(
     run_id: str,
     doc_id: str,
@@ -821,6 +1166,53 @@ def _restaurant_access_sql(alias: str, user_param: str = "$1") -> str:
     )
 
 
+def _order_item_quantity(item: RestaurantOrderItemRequest) -> int:
+    return max(1, int(item.quantity_ordered or item.quantity or 1))
+
+
+async def _resolve_order_restaurant_id(
+    db,
+    user_id: str,
+    restaurant_name: str,
+    workspace_id: str | None = None,
+) -> str:
+    name = (restaurant_name or "").strip()
+    if not name:
+        raise HTTPException(400, "Restaurant name is required for chat-derived order items")
+    row = await db.fetchrow(
+        f"""
+        SELECT r.id
+        FROM restaurants r
+        WHERE LOWER(r.name)=LOWER($2)
+          AND ($3::uuid IS NULL OR r.workspace_id=$3::uuid OR r.workspace_id IS NULL)
+          AND {_restaurant_access_sql("r")}
+        ORDER BY r.workspace_id NULLS LAST, r.updated_at DESC
+        LIMIT 1
+        """,
+        user_id,
+        name,
+        workspace_id,
+    )
+    if row:
+        return str(row["id"])
+    restaurant_id = str(uuid.uuid4())
+    await db.execute(
+        """
+        INSERT INTO restaurants
+          (id, user_id, workspace_id, name, description, cuisine_type, metadata)
+        VALUES ($1,$2,$3::uuid,$4,$5,$6,$7::jsonb)
+        """,
+        restaurant_id,
+        user_id,
+        workspace_id,
+        name,
+        "Created from a chat answer so carryout orders can be reviewed.",
+        "",
+        json.dumps({"source": "chat_answer_order"}),
+    )
+    return restaurant_id
+
+
 async def _restaurant_source_transcript(db, restaurant: dict[str, Any], user_id: str) -> str:
     source_run_id = restaurant.get("source_run_id")
     if not source_run_id:
@@ -858,6 +1250,196 @@ def _menu_row(row) -> dict[str, Any]:
 def _menu_search_row(row) -> dict[str, Any]:
     data = _menu_row(row)
     return data
+
+
+async def _fetch_order_record(db, order_id: str, user_id: str):
+    return await db.fetchrow(
+        f"""
+        SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address,
+               r.phone AS restaurant_phone, r.user_id AS restaurant_owner_id,
+               r.workspace_id AS restaurant_workspace_id
+        FROM restaurant_orders o
+        JOIN restaurants r ON r.id=o.restaurant_id
+        WHERE o.id=$1::uuid
+          AND (o.customer_user_id=$2::uuid OR {_restaurant_access_sql("r", "$2")})
+        """,
+        order_id,
+        user_id,
+    )
+
+
+async def _fetch_order_response(db, order_id: str, user_id: str) -> dict[str, Any]:
+    order = await _fetch_order_record(db, order_id, user_id)
+    if not order:
+        raise HTTPException(404, "Order not found")
+    items = await db.fetch(
+        """
+        SELECT * FROM restaurant_order_items
+        WHERE order_id=$1::uuid
+        ORDER BY created_at, item_name
+        """,
+        order_id,
+    )
+    events = await db.fetch(
+        """
+        SELECT e.*, u.email AS actor_email
+        FROM restaurant_order_events e
+        LEFT JOIN users u ON u.id=e.actor_id
+        WHERE e.order_id=$1::uuid
+        ORDER BY e.created_at
+        """,
+        order_id,
+    )
+    return {
+        "order": _order_row(order),
+        "items": [_order_row(item) for item in items],
+        "events": [_order_row(event) for event in events],
+    }
+
+
+async def _transition_order(
+    db,
+    order,
+    *,
+    actor_id: str,
+    to_status: str,
+    event_type: str,
+    notes: str = "",
+    timestamp_column: str | None = None,
+    notify_owner: bool = False,
+) -> None:
+    timestamp_columns = {
+        "submitted_at",
+        "accepted_at",
+        "confirmed_at",
+        "ready_at",
+        "completed_at",
+        "cancelled_at",
+        "rejected_at",
+    }
+    from_status = order["status"]
+    assignments = ["status=$2", "updated_at=NOW()"]
+    if timestamp_column:
+        if timestamp_column not in timestamp_columns:
+            raise HTTPException(500, "Invalid order timestamp column")
+        assignments.append(f"{timestamp_column}=NOW()")
+        if timestamp_column == "accepted_at":
+            assignments.append("confirmed_at=NOW()")
+    await db.execute(
+        f"UPDATE restaurant_orders SET {', '.join(assignments)} WHERE id=$1::uuid",
+        str(order["id"]),
+        to_status,
+    )
+    await _add_order_event(db, str(order["id"]), actor_id, event_type, from_status, to_status, notes)
+    if notify_owner:
+        await _notify_restaurant_owner(db, order, actor_id, event_type)
+
+
+async def _owner_transition_order_endpoint(
+    db,
+    request: Request,
+    current_user: CurrentUser,
+    order_id: str,
+    to_status: str,
+    event_type: str,
+    notes: str,
+    timestamp_column: str,
+) -> dict[str, Any]:
+    user_id = str(current_user["id"])
+    order = await _fetch_order_record(db, order_id, user_id)
+    if not order:
+        raise HTTPException(404, "Order not found")
+    await _require_restaurant_order_owner(db, order, user_id)
+
+    allowed = {
+        "accepted": {"submitted"},
+        "rejected": {"submitted"},
+        "ready_for_pickup": {"accepted", "confirmed"},
+        "completed": {"ready_for_pickup"},
+    }
+    if order["status"] not in allowed.get(to_status, set()):
+        raise HTTPException(400, f"Cannot change order from {order['status']} to {to_status}")
+
+    await _transition_order(
+        db,
+        order,
+        actor_id=user_id,
+        to_status=to_status,
+        event_type=event_type,
+        notes=notes,
+        timestamp_column=timestamp_column,
+    )
+    await audit(
+        db,
+        user_id=user_id,
+        action=f"restaurant_order_{event_type}",
+        resource_type="restaurant_order",
+        resource_id=order_id,
+        metadata={"restaurant_id": str(order["restaurant_id"]), "from_status": order["status"], "to_status": to_status},
+        ip_address=ip_from(request),
+        user_agent=ua_from(request),
+    )
+    return await _fetch_order_response(db, order_id, user_id)
+
+
+async def _require_restaurant_order_owner(db, order, user_id: str) -> None:
+    workspace_id = order.get("restaurant_workspace_id") or order.get("workspace_id")
+    if workspace_id:
+        from routes.workspaces import _require_role
+        await _require_role(db, str(workspace_id), user_id, "editor")
+        return
+    if str(order["restaurant_owner_id"]) != user_id:
+        raise HTTPException(403, "Only the restaurant owner can update this order")
+
+
+async def _add_order_event(
+    db,
+    order_id: str,
+    actor_id: str | None,
+    event_type: str,
+    from_status: str | None,
+    to_status: str | None,
+    notes: str = "",
+    metadata: dict | None = None,
+) -> None:
+    await db.execute(
+        """
+        INSERT INTO restaurant_order_events
+          (order_id, actor_id, event_type, from_status, to_status, notes, metadata)
+        VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7::jsonb)
+        """,
+        order_id,
+        actor_id,
+        event_type,
+        from_status,
+        to_status,
+        notes or "",
+        json.dumps(metadata or {}),
+    )
+
+
+async def _notify_restaurant_owner(db, order, actor_id: str, event_type: str) -> None:
+    owner_id = str(order["restaurant_owner_id"]) if order.get("restaurant_owner_id") else None
+    if not owner_id:
+        return
+    message = f"New carryout order submitted for {order.get('restaurant_name') or 'restaurant'}"
+    await db.execute(
+        """
+        INSERT INTO restaurant_notifications
+          (restaurant_id, order_id, user_id, channel, status, message, metadata)
+        VALUES ($1::uuid,$2::uuid,$3::uuid,'in_app','unread',$4,$5::jsonb)
+        """,
+        str(order["restaurant_id"]),
+        str(order["id"]),
+        owner_id,
+        message,
+        json.dumps({"event_type": event_type, "actor_id": actor_id}),
+    )
+
+
+def _order_row(row) -> dict[str, Any]:
+    data = dict(row)
+    return {key: _clean(value) for key, value in data.items()}
 
 
 def _clean(value: Any) -> Any:

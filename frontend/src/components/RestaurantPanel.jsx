@@ -2,13 +2,18 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   approveRestaurantAgentRun,
   compareRestaurantMenu,
+  createRestaurantOrderDraft,
   deleteRestaurant,
   fetchRestaurant,
   fetchRestaurantAgentRun,
+  listMyRestaurantOrders,
+  listRestaurantOwnerOrders,
   listRestaurants,
   runRestaurantScribeWorkflow,
   searchRestaurantMenu,
+  submitRestaurantOrder,
   updateRestaurant,
+  updateRestaurantOwnerOrder,
 } from '../services/api.js';
 
 const LANGUAGES = [
@@ -43,6 +48,12 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
   const [compareRows, setCompareRows] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchRows, setSearchRows] = useState([]);
+  const [cart, setCart] = useState({ restaurant_id:null, restaurant_name:'', items:[] });
+  const [customer, setCustomer] = useState({ name:'', phone:'', email:'', pickup_time_request:'', special_instructions:'' });
+  const [draftOrder, setDraftOrder] = useState(null);
+  const [myOrders, setMyOrders] = useState([]);
+  const [ownerOrders, setOwnerOrders] = useState([]);
+  const [orderStatusFilter, setOrderStatusFilter] = useState('');
   const mediaRef = useRef(null);
   const streamRef = useRef(null);
   const segmentChunksRef = useRef([]);
@@ -75,6 +86,10 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
   useEffect(() => {
     loadRestaurants();
   }, [workspaceId]);
+
+  useEffect(() => {
+    if (tab === 'orders') loadOrders();
+  }, [tab, workspaceId, orderStatusFilter]);
 
   async function loadRestaurants() {
     try {
@@ -256,6 +271,109 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
     setSearchRows([]);
   }
 
+  function addCartItem(item) {
+    setError('');
+    if (!item?.id || !item?.restaurant_id) return;
+    if (cart.restaurant_id && cart.restaurant_id !== item.restaurant_id) {
+      if (!window.confirm('Cart can include one restaurant only for carryout. Replace current cart?')) return;
+      setDraftOrder(null);
+      setCart({ restaurant_id:item.restaurant_id, restaurant_name:item.restaurant_name || '', items:[{ ...item, quantity_ordered:1, instructions:'' }] });
+      return;
+    }
+    setDraftOrder(null);
+    setCart(c => {
+      const existing = c.items.find(x => x.id === item.id);
+      const items = existing
+        ? c.items.map(x => x.id === item.id ? { ...x, quantity_ordered:(x.quantity_ordered || 1) + 1 } : x)
+        : [...c.items, { ...item, quantity_ordered:1, instructions:'' }];
+      return { restaurant_id:item.restaurant_id, restaurant_name:item.restaurant_name || c.restaurant_name || '', items };
+    });
+  }
+
+  function updateCartItem(id, key, value) {
+    setDraftOrder(null);
+    setCart(c => ({ ...c, items:c.items.map(item => item.id === id ? { ...item, [key]: key === 'quantity_ordered' ? Math.max(1, Number(value) || 1) : value } : item) }));
+  }
+
+  function removeCartItem(id) {
+    setDraftOrder(null);
+    setCart(c => {
+      const items = c.items.filter(item => item.id !== id);
+      return items.length ? { ...c, items } : { restaurant_id:null, restaurant_name:'', items:[] };
+    });
+  }
+
+  async function createOrderDraft() {
+    if (!cart.items.length) { setError('Add menu items to the cart first.'); return; }
+    setBusy(true);
+    setError('');
+    try {
+      const data = await createRestaurantOrderDraft({
+        restaurant_id: cart.restaurant_id,
+        items: cart.items.map(item => ({
+          menu_item_id: item.id,
+          quantity: item.quantity_ordered || 1,
+          instructions: item.instructions || '',
+        })),
+        customer_name: customer.name,
+        customer_phone: customer.phone,
+        customer_email: customer.email,
+        pickup_time_request: customer.pickup_time_request,
+        special_instructions: customer.special_instructions,
+        notes: 'Carryout order created from DocIntel restaurant conversation',
+      });
+      setDraftOrder(data);
+    } catch (e) {
+      setError(e.message || 'Could not create carryout order');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function placeOrder() {
+    const orderId = draftOrder?.order?.id;
+    if (!orderId) return;
+    setBusy(true);
+    setError('');
+    try {
+      const data = await submitRestaurantOrder(orderId, 'Customer confirmed carryout order');
+      setDraftOrder(data);
+      setCart({ restaurant_id:null, restaurant_name:'', items:[] });
+      await loadOrders();
+      setTab('orders');
+    } catch (e) {
+      setError(e.message || 'Could not submit carryout order');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadOrders() {
+    try {
+      const [mine, owner] = await Promise.all([
+        listMyRestaurantOrders(),
+        listRestaurantOwnerOrders({ status: orderStatusFilter, workspaceId }),
+      ]);
+      setMyOrders(mine.orders || []);
+      setOwnerOrders(owner.orders || []);
+    } catch (e) {
+      setError(e.message || 'Could not load restaurant orders');
+    }
+  }
+
+  async function ownerAction(orderId, action) {
+    setBusy(true);
+    setError('');
+    try {
+      await updateRestaurantOwnerOrder(orderId, action, `${action} from restaurant owner console`);
+      await loadOrders();
+    } catch (e) {
+      setError(e.message || `Could not ${action} order`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function updateProfile(key, value) {
     setPacket(p => ({ ...normalizePacket(p), restaurant_profile:{ ...(p?.restaurant_profile || {}), [key]:value } }));
   }
@@ -331,6 +449,7 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
             ['scribe', '🎙 Scribe intake'],
             ['restaurants', '🍽 Restaurants'],
             ['compare', '⇄ Compare menus'],
+            ['orders', '🛒 Carryout orders'],
           ].map(([key, label]) => (
             <button key={key} style={{...s.tab, ...(tab===key?s.tabActive:{})}} onClick={() => setTab(key)}>{label}</button>
           ))}
@@ -433,7 +552,43 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
               <input value={compareQuery} onChange={e=>setCompareQuery(e.target.value)} placeholder="Compare item, e.g. chicken biryani" />
               <button style={s.primary} onClick={runCompare}>Compare prices</button>
             </div>
-            <MenuTable items={compareRows.length ? compareRows : searchRows} />
+            <div style={s.orderLayout}>
+              <MenuTable items={compareRows.length ? compareRows : searchRows} onAdd={addCartItem} />
+              <CarryoutCart
+                cart={cart}
+                customer={customer}
+                draftOrder={draftOrder}
+                busy={busy}
+                onCustomer={setCustomer}
+                onUpdateItem={updateCartItem}
+                onRemoveItem={removeCartItem}
+                onDraft={createOrderDraft}
+                onSubmit={placeOrder}
+              />
+            </div>
+          </section>
+        )}
+
+        {tab === 'orders' && (
+          <section style={s.body}>
+            <div style={s.detailHead}>
+              <h3 style={s.h3}>Carryout Order Processing</h3>
+              <div style={s.actionsTight}>
+                <select value={orderStatusFilter} onChange={e=>setOrderStatusFilter(e.target.value)}>
+                  <option value="">All owner orders</option>
+                  <option value="submitted">Submitted</option>
+                  <option value="accepted">Accepted</option>
+                  <option value="ready_for_pickup">Ready</option>
+                  <option value="completed">Completed</option>
+                  <option value="rejected">Rejected</option>
+                </select>
+                <button style={s.secondaryBtn} onClick={loadOrders}>Refresh</button>
+              </div>
+            </div>
+            <div style={s.orderGrid}>
+              <OrderList title="Restaurant owner queue" orders={ownerOrders} owner onAction={ownerAction} busy={busy} />
+              <OrderList title="My carryout orders" orders={myOrders} />
+            </div>
           </section>
         )}
       </div>
@@ -533,11 +688,84 @@ function SavedRestaurantEditor({ draft, busy, onProfile, onMenu, onAdd, onRemove
   );
 }
 
-function MenuTable({ items }) {
+function CarryoutCart({ cart, customer, draftOrder, busy, onCustomer, onUpdateItem, onRemoveItem, onDraft, onSubmit }) {
+  const subtotal = cart.items.reduce((sum, item) => sum + (Number(item.price || 0) * Number(item.quantity_ordered || 1)), 0);
+  const order = draftOrder?.order;
+  return (
+    <aside style={s.cart}>
+      <h3 style={s.h3}>Carryout Cart</h3>
+      <p style={s.muted}>{cart.restaurant_name || 'Add items from one restaurant to start an order.'}</p>
+      <div style={s.cartItems}>
+        {cart.items.map(item => (
+          <div key={item.id} style={s.cartItem}>
+            <div>
+              <strong>{item.item_name}</strong>
+              <p style={s.muted}>{item.price != null ? `$${Number(item.price).toFixed(2)}` : 'Price not set'}</p>
+            </div>
+            <input style={s.qtyInput} type="number" min="1" value={item.quantity_ordered || 1} onChange={e=>onUpdateItem(item.id, 'quantity_ordered', e.target.value)} />
+            <button style={s.iconBtn} onClick={()=>onRemoveItem(item.id)}>×</button>
+            <input style={s.fullInput} value={item.instructions || ''} onChange={e=>onUpdateItem(item.id, 'instructions', e.target.value)} placeholder="Item notes" />
+          </div>
+        ))}
+        {!cart.items.length && <p style={s.empty}>No items in cart.</p>}
+      </div>
+      <div style={s.cartTotal}><span>Estimated subtotal</span><strong>${subtotal.toFixed(2)}</strong></div>
+      <div style={s.grid1}>
+        <label style={s.field}>Customer name<input value={customer.name} onChange={e=>onCustomer({ ...customer, name:e.target.value })} /></label>
+        <label style={s.field}>Phone<input value={customer.phone} onChange={e=>onCustomer({ ...customer, phone:e.target.value })} /></label>
+        <label style={s.field}>Email<input value={customer.email} onChange={e=>onCustomer({ ...customer, email:e.target.value })} /></label>
+        <label style={s.field}>Pickup time request<input value={customer.pickup_time_request} onChange={e=>onCustomer({ ...customer, pickup_time_request:e.target.value })} placeholder="ASAP or 6:30 PM" /></label>
+        <label style={s.field}>Order notes<textarea rows={2} value={customer.special_instructions} onChange={e=>onCustomer({ ...customer, special_instructions:e.target.value })} /></label>
+      </div>
+      {order && (
+        <div style={s.status}>
+          Order draft ready: {order.restaurant_name} · ${Number(order.subtotal || 0).toFixed(2)} · {order.status}
+        </div>
+      )}
+      <div style={s.actions}>
+        <button style={s.secondaryBtn} disabled={busy || !cart.items.length} onClick={onDraft}>{busy ? 'Working...' : 'Review order'}</button>
+        <button style={s.primary} disabled={busy || !order || order.status !== 'draft'} onClick={onSubmit}>Place carryout order</button>
+      </div>
+      <p style={s.muted}>Carryout only. Restaurant must accept before the order is confirmed.</p>
+    </aside>
+  );
+}
+
+function OrderList({ title, orders, owner = false, onAction, busy }) {
+  return (
+    <div style={s.orderList}>
+      <h3 style={s.h3}>{title}</h3>
+      {orders.map(order => (
+        <div key={order.id} style={s.orderCard}>
+          <div style={s.detailHead}>
+            <div>
+              <strong>{order.restaurant_name}</strong>
+              <p style={s.muted}>{order.item_count || 0} item{order.item_count === 1 ? '' : 's'} · ${Number(order.subtotal || 0).toFixed(2)} · {order.fulfillment_type}</p>
+            </div>
+            <span style={s.statusPill}>{order.status}</span>
+          </div>
+          <p style={s.muted}>Customer: {order.customer_name || order.customer_email || 'Not provided'} {order.customer_phone ? `· ${order.customer_phone}` : ''}</p>
+          {order.pickup_time_request && <p style={s.muted}>Pickup: {order.pickup_time_request}</p>}
+          {owner && (
+            <div style={s.actionsTight}>
+              {order.status === 'submitted' && <button style={s.primary} disabled={busy} onClick={()=>onAction(order.id, 'accept')}>Accept & confirm</button>}
+              {order.status === 'submitted' && <button style={s.dangerSmall} disabled={busy} onClick={()=>onAction(order.id, 'reject')}>Reject</button>}
+              {order.status === 'accepted' && <button style={s.primary} disabled={busy} onClick={()=>onAction(order.id, 'ready')}>Mark ready</button>}
+              {order.status === 'ready_for_pickup' && <button style={s.secondaryBtn} disabled={busy} onClick={()=>onAction(order.id, 'complete')}>Complete</button>}
+            </div>
+          )}
+        </div>
+      ))}
+      {!orders.length && <p style={s.empty}>No orders to show.</p>}
+    </div>
+  );
+}
+
+function MenuTable({ items, onAdd = null }) {
   return (
     <div style={s.tableWrap}>
       <table style={s.table}>
-        <thead><tr><th>Restaurant</th><th>Item</th><th>Category</th><th>Price</th><th>Qty</th><th>Description</th></tr></thead>
+        <thead><tr><th>Restaurant</th><th>Item</th><th>Category</th><th>Price</th><th>Qty</th><th>Description</th>{onAdd && <th>Order</th>}</tr></thead>
         <tbody>
           {items.map((item, i) => (
             <tr key={item.id || i}>
@@ -547,9 +775,10 @@ function MenuTable({ items }) {
               <td>{item.price != null ? `$${Number(item.price).toFixed(2)}` : ''}</td>
               <td>{item.quantity}</td>
               <td>{item.description}</td>
+              {onAdd && <td><button style={s.secondaryBtn} onClick={()=>onAdd(item)}>Add</button></td>}
             </tr>
           ))}
-          {!items.length && <tr><td colSpan={6} style={s.empty}>No menu items to show.</td></tr>}
+          {!items.length && <tr><td colSpan={onAdd ? 7 : 6} style={s.empty}>No menu items to show.</td></tr>}
         </tbody>
       </table>
     </div>
@@ -588,6 +817,7 @@ const s = {
   body:{ padding:16, overflow:'auto', flex:1 },
   status:{ padding:'10px 12px', border:'1px solid rgba(74,222,128,.2)', background:'rgba(74,222,128,.08)', color:'#86efac', borderRadius:7, marginBottom:14, fontSize:13, fontWeight:700 },
   grid2:{ display:'grid', gridTemplateColumns:'repeat(2, minmax(0,1fr))', gap:12 },
+  grid1:{ display:'grid', gridTemplateColumns:'1fr', gap:10 },
   field:{ display:'flex', flexDirection:'column', gap:6, fontSize:12, fontWeight:700, color:'var(--tx2)' },
   check:{ display:'flex', alignItems:'center', gap:8, margin:'14px 0', color:'var(--tx2)', fontSize:13 },
   actions:{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap', margin:'12px 0' },
@@ -620,4 +850,15 @@ const s = {
   muted:{ color:'var(--muted2)', fontSize:13 },
   searchBar:{ display:'grid', gridTemplateColumns:'1.2fr auto 1.2fr auto', gap:10, alignItems:'center', marginBottom:12 },
   empty:{ textAlign:'center', color:'var(--muted2)', padding:20 },
+  orderLayout:{ display:'grid', gridTemplateColumns:'minmax(0,1fr) 340px', gap:14, alignItems:'start' },
+  cart:{ border:'1px solid var(--b2)', borderRadius:8, background:'rgba(255,255,255,.02)', padding:12, position:'sticky', top:0 },
+  cartItems:{ display:'flex', flexDirection:'column', gap:8, maxHeight:260, overflow:'auto', margin:'10px 0' },
+  cartItem:{ display:'grid', gridTemplateColumns:'minmax(0,1fr) 58px 28px', gap:7, alignItems:'center', borderBottom:'1px solid var(--b2)', paddingBottom:8 },
+  qtyInput:{ width:'100%', background:'var(--s2)', border:'1px solid var(--b2)', color:'var(--tx)', borderRadius:6, padding:'7px 6px' },
+  fullInput:{ gridColumn:'1 / -1', background:'var(--s2)', border:'1px solid var(--b2)', color:'var(--tx)', borderRadius:6, padding:'8px' },
+  cartTotal:{ display:'flex', justifyContent:'space-between', alignItems:'center', borderTop:'1px solid var(--b2)', borderBottom:'1px solid var(--b2)', padding:'9px 0', margin:'8px 0 12px', color:'var(--tx2)', fontSize:13 },
+  orderGrid:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 },
+  orderList:{ border:'1px solid var(--b2)', borderRadius:8, padding:12, minHeight:300, overflow:'auto' },
+  orderCard:{ border:'1px solid rgba(255,255,255,.08)', borderRadius:8, padding:11, background:'rgba(255,255,255,.025)', marginBottom:10 },
+  statusPill:{ display:'inline-flex', alignItems:'center', padding:'3px 8px', borderRadius:999, background:'rgba(74,222,128,.12)', color:'#86efac', fontSize:11, fontWeight:800 },
 };
