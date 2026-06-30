@@ -16,6 +16,10 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
 
 
+def is_email_configured() -> bool:
+    return bool(GMAIL_USER and GMAIL_APP_PASS)
+
+
 # ── HTML template ─────────────────────────────────────────────────────────────
 def _html_reset(name: str, link: str) -> str:
     return f"""<!DOCTYPE html>
@@ -81,7 +85,7 @@ def _smtp_send(to_email: str, subject: str, html: str) -> None:
 
 async def send_email(to: str, subject: str, body: str) -> None:
     """Generic plain-text email sender used by notifications and verification."""
-    if not GMAIL_USER or not GMAIL_APP_PASS:
+    if not is_email_configured():
         log.warning(f"Email not configured — would have sent '{subject}' to {to}")
         return
     import asyncio
@@ -92,7 +96,7 @@ async def send_email(to: str, subject: str, body: str) -> None:
 async def send_reset_email(to_email: str, to_name: str, reset_link: str) -> bool:
     """Send password reset email. Returns True on success."""
 
-    if not GMAIL_USER or not GMAIL_APP_PASS:
+    if not is_email_configured():
         log.warning(
             f"\n{'='*60}\n"
             f"⚠  No Gmail credentials configured (GMAIL_USER / GMAIL_APP_PASSWORD)\n"
@@ -139,7 +143,7 @@ async def test_smtp_connection() -> dict:
     Test SMTP connection without sending an email.
     Called by the admin test endpoint.
     """
-    if not GMAIL_USER or not GMAIL_APP_PASS:
+    if not is_email_configured():
         return {"ok": False, "error": "GMAIL_USER or GMAIL_APP_PASSWORD not set"}
 
     def _test():

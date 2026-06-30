@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json, asyncio, logging, re
 from difflib import SequenceMatcher
+from typing import Any
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -172,6 +173,35 @@ async def chat_stream_endpoint(
                 async with span("prompt_build", trace_id=trace_id, metadata={"chunk_count": len(chunks)}):
                     context = _build_context(chunks, redact_pii=req.redact_pii)
 
+                restaurant_context = ""
+                restaurant_meta: dict = {"enabled": False}
+                if _is_restaurant_context(doc_rows, question_for_model):
+                    async with span("restaurant_db_context", trace_id=trace_id, metadata={"enabled": True}) as sp:
+                        try:
+                            async with get_pool().acquire() as _conn:
+                                restaurant_context, restaurant_meta = await _restaurant_db_context(
+                                    _conn,
+                                    user_id=user_id,
+                                    workspace_id=req.workspace_id,
+                                    question=question_for_model,
+                                    chunks=chunks,
+                                )
+                        except Exception as exc:
+                            log.warning("Restaurant DB context lookup failed; falling back to RAG only: %s", exc)
+                            restaurant_context = ""
+                            restaurant_meta = {"enabled": True, "error": str(exc), "fallback": "rag_only"}
+                        await record_llm_event(
+                            trace_id=trace_id,
+                            span_id=sp,
+                            provider="postgres",
+                            model="restaurant_menu_store",
+                            operation="restaurant_db_context",
+                            user_prompt=question_for_model,
+                            tool_response=restaurant_meta,
+                        )
+                    if restaurant_context:
+                        context = f"{restaurant_context}\n\n---\n\n{context}"
+
                 agentic_context = ""
                 agentic_meta: dict = {"enabled": req.agent_mode != "off"}
                 if req.agent_mode != "off":
@@ -229,6 +259,20 @@ async def chat_stream_endpoint(
                         "[Agentic Source N]. Use [Source N] retrieved chunks to verify or fill details. If an agentic block "
                         "is partial, say what is missing and answer from document chunks where possible."
                     )
+                if restaurant_context:
+                    language_instruction = (
+                        f"{language_instruction}\n\n"
+                        "RESTAURANT ORDERING RULE:\n"
+                        "For restaurant menu, price comparison, carryout, pickup, or ordering questions, use "
+                        "[Restaurant DB Source] rows first when they are present. Include restaurant name, item, price, "
+                        "restaurant ID, email, phone, and address when available so the user can add the item to a "
+                        "carryout cart. If the user asks to order an item, provide an Order Details table with Field "
+                        "and Value rows for Restaurant, Item, Price, Menu Item ID, Restaurant ID, Email, Phone, and "
+                        "Address, then tell the user to click the Add button and place the carryout order from the cart. "
+                        "Do not say you cannot help place orders; explain that restaurant acceptance/cancellation happens "
+                        "after submission. If document sources disagree with the restaurant DB rows, state the difference "
+                        "briefly and prefer the DB row for ordering/contact fields."
+                    )
                 system_prompt = rag_system(context, language_instruction)
                 async with span("llm_generate", trace_id=trace_id, metadata={"provider": "gemini", "message_count": len(messages)}) as sp:
                     await chat_stream(messages, system_prompt, on_token)
@@ -244,29 +288,6 @@ async def chat_stream_endpoint(
                         llm_response=redact_text("".join(output_tokens), req.redact_pii).text,
                     )
                 restaurant_actions = {}
-                async with span("restaurant_chat_actions", trace_id=trace_id, metadata={"enabled": True}) as sp:
-                    try:
-                        restaurant_actions = await _restaurant_chat_actions(
-                            db,
-                            user_id=user_id,
-                            workspace_id=req.workspace_id,
-                            docs=doc_rows,
-                            question=question_for_model,
-                            answer_text="".join(output_tokens),
-                            chunks=chunks,
-                        )
-                    except Exception as exc:
-                        log.warning("Restaurant chat action lookup failed: %s", exc)
-                        restaurant_actions = {"error": str(exc)}
-                    await record_llm_event(
-                        trace_id=trace_id,
-                        span_id=sp,
-                        provider="postgres",
-                        model="restaurant_menu_store",
-                        operation="restaurant_chat_actions",
-                        user_prompt=question_for_model,
-                        tool_response=restaurant_actions,
-                    )
                 await finish_trace(trace_id, "success")
                 await queue.put(("done", {
                     "sources": _sanitise(chunks, redact_pii=req.redact_pii),
@@ -420,19 +441,17 @@ async def _restaurant_chat_actions(
         return {}
 
     safe_workspace_id = _uuid_or_none(workspace_id)
-    rows = await db.fetch(
+    terms = _restaurant_query_terms(f"{question}\n{answer_text}")
+    rows = await _fetch_restaurant_menu_rows(db, user_id, safe_workspace_id, terms, limit=250)
+    restaurant_rows = await db.fetch(
         f"""
-        SELECT mi.id, mi.restaurant_id, mi.category, mi.item_name, mi.price,
-               mi.currency, mi.quantity, mi.description, mi.availability,
-               mi.dietary_tags, mi.spice_level,
-               r.name AS restaurant_name, r.address, r.phone, r.cuisine_type
-        FROM restaurant_menu_items mi
-        JOIN restaurants r ON r.id=mi.restaurant_id
+        SELECT r.id AS restaurant_id, r.name AS restaurant_name, r.address, r.phone,
+               r.email, r.cuisine_type
+        FROM restaurants r
         WHERE {_restaurant_access_sql("r")}
           AND ($2::uuid IS NULL OR r.workspace_id=$2::uuid OR r.workspace_id IS NULL)
-          AND LOWER(COALESCE(mi.availability, 'available')) <> 'unavailable'
-        ORDER BY r.name, mi.category, mi.item_name
-        LIMIT 1000
+        ORDER BY r.name
+        LIMIT 500
         """,
         user_id,
         safe_workspace_id,
@@ -448,7 +467,7 @@ async def _restaurant_chat_actions(
         {**_restaurant_menu_action_row(row), "action_score": round(score, 3)}
         for score, row in scored[:10]
     ]
-    items = _merge_restaurant_answer_actions(items, rows, answer_text)
+    items = _merge_restaurant_answer_actions(items, rows, restaurant_rows, answer_text)
     if not items:
         return {}
     return {
@@ -456,6 +475,81 @@ async def _restaurant_chat_actions(
         "source": "restaurant_menu_semantic_lookup",
         "restaurant_menu_items": items,
     }
+
+
+async def _restaurant_db_context(
+    db,
+    *,
+    user_id: str,
+    workspace_id: str | None,
+    question: str,
+    chunks: list[dict] | None = None,
+) -> tuple[str, dict]:
+    safe_workspace_id = _uuid_or_none(workspace_id)
+    terms = _restaurant_query_terms(question)
+    rows = await _fetch_restaurant_menu_rows(db, user_id, safe_workspace_id, terms, limit=120)
+    selected = rows[:12]
+    if not selected:
+        return "", {"enabled": True, "matched_rows": 0, "available_rows": len(rows)}
+
+    lines = ["[Restaurant DB Source: menu/contact rows for ordering]"]
+    for index, row in enumerate(selected, start=1):
+        price = row["price"]
+        price_text = "not set" if price is None else f"{row['currency'] or 'USD'} {float(price):.2f}"
+        lines.append(
+            " | ".join(
+                [
+                    f"{index}. restaurant={row['restaurant_name'] or ''}",
+                    f"restaurant_id={row['restaurant_id']}",
+                    f"email={row['email'] or 'not provided'}",
+                    f"phone={row['phone'] or 'not provided'}",
+                    f"address={row['address'] or 'not provided'}",
+                    f"cuisine={row['cuisine_type'] or 'not provided'}",
+                    f"menu_item_id={row['id']}",
+                    f"item={row['item_name'] or ''}",
+                    f"category={row['category'] or ''}",
+                    f"price={price_text}",
+                ]
+            )
+        )
+    return "\n".join(lines), {
+        "enabled": True,
+        "matched_rows": len(selected),
+        "available_rows": len(rows),
+        "restaurants": sorted({str(row["restaurant_name"]) for row in selected if row["restaurant_name"]}),
+    }
+
+
+async def _fetch_restaurant_menu_rows(db, user_id: str, workspace_id: str | None, terms: list[str], limit: int = 120):
+    return await db.fetch(
+        f"""
+        SELECT mi.id, mi.restaurant_id, mi.category, mi.item_name, mi.price,
+               mi.currency, mi.quantity, mi.description, mi.availability,
+               mi.dietary_tags, mi.spice_level,
+               r.name AS restaurant_name, r.address, r.phone, r.email, r.cuisine_type
+        FROM restaurant_menu_items mi
+        JOIN restaurants r ON r.id=mi.restaurant_id
+        WHERE {_restaurant_access_sql("r")}
+          AND ($2::uuid IS NULL OR r.workspace_id=$2::uuid OR r.workspace_id IS NULL)
+          AND LOWER(COALESCE(mi.availability, 'available')) <> 'unavailable'
+          AND (
+            cardinality($3::text[]) = 0
+            OR EXISTS (
+              SELECT 1 FROM unnest($3::text[]) term
+              WHERE mi.item_name ILIKE '%' || term || '%'
+                 OR COALESCE(mi.description, '') ILIKE '%' || term || '%'
+                 OR COALESCE(mi.category, '') ILIKE '%' || term || '%'
+                 OR r.name ILIKE '%' || term || '%'
+            )
+          )
+        ORDER BY r.name, mi.category, mi.item_name
+        LIMIT $4
+        """,
+        user_id,
+        workspace_id,
+        terms,
+        limit,
+    )
 
 
 def _is_restaurant_context(docs: list[dict], question: str) -> bool:
@@ -477,7 +571,7 @@ def _is_restaurant_context(docs: list[dict], question: str) -> bool:
     return question_match or doc_match
 
 
-def _merge_restaurant_answer_actions(items: list[dict], rows: list, answer_text: str) -> list[dict]:
+def _merge_restaurant_answer_actions(items: list[dict], rows: list, restaurant_rows: list, answer_text: str) -> list[dict]:
     existing_keys = {
         (
             str(item.get("restaurant_id") or ""),
@@ -485,41 +579,52 @@ def _merge_restaurant_answer_actions(items: list[dict], rows: list, answer_text:
         )
         for item in items
     }
-    restaurants: dict[str, dict] = {}
+    restaurant_lookup: dict[str, dict] = {}
+    for row in restaurant_rows:
+        restaurant = _restaurant_contact_action_row(row)
+        key = _normalise_restaurant_text(restaurant.get("restaurant_name") or "")
+        if key:
+            restaurant_lookup[key] = restaurant
     for row in rows:
-        name = row["restaurant_name"] or ""
-        key = _normalise_restaurant_text(name)
-        if key and key not in restaurants:
-            restaurants[key] = _restaurant_menu_action_row(row)
+        restaurant = _restaurant_menu_action_row(row)
+        key = _normalise_restaurant_text(restaurant.get("restaurant_name") or "")
+        if key and key not in restaurant_lookup:
+            restaurant_lookup[key] = restaurant
 
     for extracted in _extract_restaurant_answer_rows(answer_text):
         restaurant_key = _normalise_restaurant_text(extracted["restaurant_name"])
-        restaurant = restaurants.get(restaurant_key)
+        restaurant = restaurant_lookup.get(restaurant_key)
         if not restaurant:
-            restaurant = _best_restaurant_name_match(restaurant_key, restaurants)
+            restaurant = _best_restaurant_name_match(restaurant_key, restaurant_lookup)
         if not restaurant:
             continue
+        menu_match = _best_menu_item_match(extracted, rows, restaurant.get("restaurant_id"))
+        action = _restaurant_menu_action_row(menu_match) if menu_match else restaurant
         dedupe_key = (
-            str(restaurant.get("restaurant_id") or ""),
+            str(action.get("restaurant_id") or ""),
             _normalise_restaurant_text(extracted["item_name"]),
         )
         if dedupe_key in existing_keys:
             continue
         existing_keys.add(dedupe_key)
         items.append({
-            "id": f"chat:{restaurant.get('restaurant_id')}:{abs(hash(dedupe_key))}",
-            "menu_item_id": None,
-            "restaurant_id": restaurant.get("restaurant_id"),
-            "restaurant_name": restaurant.get("restaurant_name"),
-            "category": extracted.get("category") or "",
+            "id": action.get("id") or f"chat:{action.get('restaurant_id')}:{abs(hash(dedupe_key))}",
+            "menu_item_id": action.get("id") if menu_match else None,
+            "restaurant_id": action.get("restaurant_id"),
+            "restaurant_name": action.get("restaurant_name"),
+            "address": action.get("address"),
+            "phone": action.get("phone"),
+            "email": action.get("email"),
+            "cuisine_type": action.get("cuisine_type"),
+            "category": action.get("category") or extracted.get("category") or "",
             "item_name": extracted["item_name"],
-            "price": extracted.get("price"),
-            "currency": "USD",
-            "quantity": "",
-            "description": "Matched from the chat answer. Restaurant can confirm final availability and price.",
-            "availability": "chat_answer",
-            "action_score": 35,
-            "source": "chat_answer_row",
+            "price": action.get("price") if action.get("price") is not None else extracted.get("price"),
+            "currency": action.get("currency") or "USD",
+            "quantity": action.get("quantity") or "",
+            "description": action.get("description") or "Matched from the chat answer. Restaurant can confirm final availability and price.",
+            "availability": action.get("availability") or "chat_answer",
+            "action_score": 60 if menu_match else 42,
+            "source": "db_menu_item_match" if menu_match else "db_restaurant_match",
         })
     return items[:10]
 
@@ -565,13 +670,47 @@ def _best_restaurant_name_match(name: str, restaurants: dict[str, dict]) -> dict
     return restaurants.get(best_key) if best_score >= 0.82 else None
 
 
+def _best_menu_item_match(extracted: dict, rows: list, restaurant_id: str | None) -> Any | None:
+    restaurant_id = str(restaurant_id or "")
+    target_item = _normalise_restaurant_text(extracted.get("item_name") or "")
+    target_price = extracted.get("price")
+    if not restaurant_id or not target_item:
+        return None
+
+    best_row = None
+    best_score = 0.0
+    target_tokens = set(_meaningful_restaurant_tokens(target_item))
+    for row in rows:
+        if str(row["restaurant_id"]) != restaurant_id:
+            continue
+        item_name = _normalise_restaurant_text(row["item_name"] or "")
+        if not item_name:
+            continue
+        item_tokens = set(_meaningful_restaurant_tokens(item_name))
+        token_score = 0.0
+        if target_tokens or item_tokens:
+            token_score = len(target_tokens & item_tokens) / max(len(target_tokens | item_tokens), 1)
+        score = max(SequenceMatcher(None, target_item, item_name).ratio(), token_score) * 100
+        if target_price is not None and row["price"] is not None:
+            try:
+                if abs(float(row["price"]) - float(target_price)) < 0.01:
+                    score += 12
+            except (TypeError, ValueError):
+                pass
+        if score > best_score:
+            best_score = score
+            best_row = row
+    return best_row if best_score >= 58 else None
+
+
 def _restaurant_context_parts(question: str, answer_text: str, chunks: list[dict]) -> dict:
-    source_text = " ".join((chunk.get("content") or "")[:1800] for chunk in chunks[:5])
+    source_text = " ".join((chunk.get("content") or "")[:500] for chunk in chunks[:2])
+    answer_hint = (answer_text or "")[:2500]
     return {
         "question": _normalise_restaurant_text(question),
-        "answer": _normalise_restaurant_text(answer_text),
+        "answer": _normalise_restaurant_text(answer_hint),
         "source": _normalise_restaurant_text(source_text),
-        "all": _normalise_restaurant_text(f"{question}\n{answer_text}\n{source_text}"),
+        "all": _normalise_restaurant_text(f"{question}\n{answer_hint}\n{source_text}")[:3500],
     }
 
 
@@ -639,6 +778,19 @@ def _meaningful_restaurant_tokens(text: str) -> list[str]:
     return terms
 
 
+def _restaurant_query_terms(text: str) -> list[str]:
+    tokens = _meaningful_restaurant_tokens(text)
+    preferred = [
+        token for token in tokens
+        if token not in {
+            "comparison", "matched", "answer", "confirm", "final", "availability",
+            "contact", "details", "email", "phone", "address", "source", "eval",
+            "id", "usd",
+        }
+    ]
+    return preferred[:4]
+
+
 def _normalise_restaurant_text(text: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-zA-Z0-9.\s'-]", " ", text or "").lower()).strip()
 
@@ -659,6 +811,19 @@ def _restaurant_access_sql(alias: str, user_param: str = "$1") -> str:
 
 def _restaurant_menu_action_row(row) -> dict:
     data = dict(row)
+    return {key: _action_json_value(value) for key, value in data.items()}
+
+
+def _restaurant_contact_action_row(row) -> dict:
+    data = dict(row)
+    data.setdefault("id", None)
+    data.setdefault("category", "")
+    data.setdefault("item_name", "")
+    data.setdefault("price", None)
+    data.setdefault("currency", "USD")
+    data.setdefault("quantity", "")
+    data.setdefault("description", "")
+    data.setdefault("availability", "")
     return {key: _action_json_value(value) for key, value in data.items()}
 
 

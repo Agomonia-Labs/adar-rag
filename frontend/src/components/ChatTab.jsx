@@ -103,7 +103,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
   const [saving,        setSaving]        = useState(false);
   const [sessionFeedback, setSessionFeedback] = useState({});  // {messageId: 1|-1}
   const [redactPii, setRedactPii] = useState(() => localStorage.getItem('redact_pii_chat') === '1');
-  const [restaurantCart, setRestaurantCart] = useState({ restaurant_id: null, restaurant_name: '', items: [] });
+  const [restaurantCart, setRestaurantCart] = useState({ restaurant_id: null, restaurant_name: '', restaurant: null, items: [] });
   const [restaurantCustomer, setRestaurantCustomer] = useState({
     name: '',
     phone: '',
@@ -494,7 +494,12 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
 
   const addRestaurantItemToCart = useCallback((item) => {
     if (!item?.id || (!item?.restaurant_id && !item?.restaurant_name)) return;
+    if (!hasRestaurantOrderDetails(item)) {
+      setRestaurantOrderMessage('Restaurant id, contact detail, and notification email are required before adding an item to carryout cart.');
+      return;
+    }
     const restaurantKey = item.restaurant_id || item.restaurant_name;
+    const restaurantDetails = restaurantDetailsFromItem(item);
     setRestaurantOrderMessage('');
     setRestaurantDraftOrder(null);
     setRestaurantCart(prev => {
@@ -504,8 +509,8 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
         return prev;
       }
       const base = differentRestaurant
-        ? { restaurant_id: item.restaurant_id, restaurant_name: item.restaurant_name || 'Restaurant', items: [] }
-        : { ...prev, restaurant_id: item.restaurant_id, restaurant_name: item.restaurant_name || prev.restaurant_name || 'Restaurant' };
+        ? { restaurant_id: item.restaurant_id, restaurant_name: item.restaurant_name || 'Restaurant', restaurant: restaurantDetails, items: [] }
+        : { ...prev, restaurant_id: item.restaurant_id, restaurant_name: item.restaurant_name || prev.restaurant_name || 'Restaurant', restaurant: restaurantDetails || prev.restaurant };
       const existing = base.items.find(x => x.id === item.id);
       if (existing) {
         return {
@@ -519,14 +524,19 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
           ...base.items,
           {
             id: item.id,
-            menu_item_id: item.menu_item_id || null,
+            menu_item_id: item.menu_item_id || (item.source !== 'chat_answer' && item.source !== 'chat_answer_row' ? item.id : null),
             item_name: item.item_name,
             category: item.category || '',
-            price: item.price,
-            currency: item.currency || 'USD',
-            quantity_ordered: 1,
-            instructions: '',
-          },
+              price: item.price,
+              currency: item.currency || 'USD',
+              restaurant_name: item.restaurant_name || '',
+              restaurant_address: item.address || item.restaurant_address || '',
+              restaurant_phone: item.phone || item.restaurant_phone || '',
+              restaurant_email: item.email || item.restaurant_email || '',
+              cuisine_type: item.cuisine_type || '',
+              quantity_ordered: 1,
+              instructions: '',
+            },
         ],
       };
     });
@@ -544,7 +554,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
     setRestaurantDraftOrder(null);
     setRestaurantCart(prev => {
       const items = prev.items.filter(item => item.id !== itemId);
-      return items.length ? { ...prev, items } : { restaurant_id: null, restaurant_name: '', items: [] };
+      return items.length ? { ...prev, items } : { restaurant_id: null, restaurant_name: '', restaurant: null, items: [] };
     });
   }, []);
 
@@ -593,7 +603,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
       const order = await submitRestaurantOrder(restaurantDraftOrder.id, restaurantCustomer.special_instructions);
       const submittedOrder = normalizeRestaurantOrderResponse(order);
       setRestaurantDraftOrder(submittedOrder);
-      setRestaurantCart({ restaurant_id: null, restaurant_name: '', items: [] });
+      setRestaurantCart({ restaurant_id: null, restaurant_name: '', restaurant: null, items: [] });
       setRestaurantOrderMessage(`Carryout order submitted to ${submittedOrder.restaurant_name || 'restaurant'}. Status: ${submittedOrder.status}.`);
     } catch (e) {
       setRestaurantOrderMessage(e.message || 'Could not submit order.');
@@ -896,15 +906,7 @@ function Msg({ m, sessionId, prevUserMsg, initialFeedback, onFeedback, onAddRest
 }
 
 function RestaurantActionItems({ actions, content = '', onAdd }) {
-  const actionItems = Array.isArray(actions?.restaurant_menu_items) ? actions.restaurant_menu_items : [];
-  const parsedItems = parseRestaurantAnswerItems(content);
-  const seen = new Set();
-  const items = [...actionItems, ...parsedItems].filter(item => {
-    const key = `${item.restaurant_id || item.restaurant_name || ''}|${item.item_name || ''}|${item.price ?? ''}`.toLowerCase();
-    if (!item.item_name || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const items = mergeRestaurantActionItems(parseRestaurantAnswerItems(content));
   if (!items.length) return null;
   return (
     <div style={s.restaurantActions}>
@@ -912,22 +914,101 @@ function RestaurantActionItems({ actions, content = '', onAdd }) {
         <span>🍽 Menu items found</span>
         <small>Add items to a carryout cart from chat</small>
       </div>
+      {actions?.error && (
+        <div style={s.restaurantActionWarning}>
+          Restaurant details could not be loaded for ordering. Try the question again or use the Restaurant panel search.
+        </div>
+      )}
       <div style={s.restaurantActionGrid}>
-        {items.map(item => (
-          <div key={item.id} style={s.restaurantActionCard}>
-            <div style={s.restaurantName}>{item.restaurant_name || 'Restaurant'}</div>
-            <strong style={s.restaurantItemName}>{item.item_name}</strong>
-            <div style={s.restaurantMeta}>
-              {item.category && <span>{item.category}</span>}
-              {item.price != null && <span>${Number(item.price).toFixed(2)}</span>}
+        {items.map(item => {
+          const hasDetails = hasRestaurantOrderDetails(item);
+          return (
+            <div key={item.id} style={s.restaurantActionCard}>
+              <div style={s.restaurantName}>{item.restaurant_name || 'Restaurant'}</div>
+              <div style={s.restaurantDetailLine}>
+                {[item.cuisine_type, item.address, item.phone].filter(Boolean).join(' · ') || 'Restaurant contact details not loaded'}
+              </div>
+              {item.restaurant_id && <div style={s.restaurantEmailLine}>ID: {item.restaurant_id}</div>}
+              {(item.email || item.restaurant_email) && <div style={s.restaurantEmailLine}>Email: {item.email || item.restaurant_email}</div>}
+              {!hasDetails && <div style={s.restaurantActionWarning}>Cannot add until restaurant id and notification email are available.</div>}
+              <strong style={s.restaurantItemName}>{item.item_name}</strong>
+              <div style={s.restaurantMeta}>
+                {item.category && <span>{item.category}</span>}
+                {item.price != null && <span>${Number(item.price).toFixed(2)}</span>}
+              </div>
+              {item.description && <p style={s.restaurantDesc}>{item.description}</p>}
+              <button
+                style={{ ...s.addToCartBtn, ...(!hasDetails ? s.addToCartBtnOff : {}) }}
+                disabled={!hasDetails}
+                onClick={() => hasDetails && onAdd?.(item)}
+                title={hasDetails ? 'Add to carryout cart' : 'Restaurant details are required before ordering'}
+              >
+                ＋ Add
+              </button>
             </div>
-            {item.description && <p style={s.restaurantDesc}>{item.description}</p>}
-            <button style={s.addToCartBtn} onClick={() => onAdd?.(item)}>＋ Add</button>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
+}
+
+function mergeRestaurantActionItems(items = []) {
+  const byKey = new Map();
+  for (const item of items) {
+    if (!item?.item_name) continue;
+    const key = restaurantItemKey(item);
+    const existing = byKey.get(key);
+    if (!existing || restaurantDetailScore(item) > restaurantDetailScore(existing)) {
+      byKey.set(key, item);
+    } else if (existing && restaurantDetailScore(item) === restaurantDetailScore(existing)) {
+      byKey.set(key, { ...item, ...existing });
+    }
+  }
+  return Array.from(byKey.values());
+}
+
+function restaurantDetailScore(item = {}) {
+  return [
+    item.restaurant_id,
+    item.menu_item_id,
+    item.email || item.restaurant_email,
+    item.phone || item.restaurant_phone,
+    item.address || item.restaurant_address,
+    item.cuisine_type,
+  ].filter(Boolean).length;
+}
+
+function hasRestaurantOrderDetails(item = {}) {
+  return Boolean(
+    (item.restaurant_id || item.menu_item_id) &&
+    (item.email || item.restaurant_email) &&
+    (item.address || item.restaurant_address || item.phone || item.restaurant_phone)
+  );
+}
+
+function restaurantItemKey(item = {}) {
+  return [
+    item.restaurant_id || restaurantNameKey(item.restaurant_name),
+    restaurantNameKey(item.item_name),
+    item.price == null ? '' : Number(item.price).toFixed(2),
+  ].join('|');
+}
+
+function restaurantNameKey(value = '') {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function restaurantDetailsFromItem(item = {}) {
+  if (!item.restaurant_id && !item.restaurant_name) return null;
+  return {
+    id: item.restaurant_id || '',
+    name: item.restaurant_name || 'Restaurant',
+    address: item.address || item.restaurant_address || '',
+    phone: item.phone || item.restaurant_phone || '',
+    email: item.email || item.restaurant_email || '',
+    cuisine_type: item.cuisine_type || '',
+  };
 }
 
 function ChatRestaurantCart({
@@ -948,6 +1029,15 @@ function ChatRestaurantCart({
     sum + (Number(item.price) || 0) * (Number(item.quantity_ordered) || 1)
   ), 0);
   const draftReady = order?.id && String(order.status || '').toLowerCase() === 'draft';
+  const firstItemRestaurant = restaurantDetailsFromItem((cart.items || [])[0] || {});
+  const restaurant = cart.restaurant || firstItemRestaurant || {
+    id: cart.restaurant_id || order?.restaurant_id || '',
+    name: cart.restaurant_name || order?.restaurant_name || '',
+    address: order?.restaurant_address || '',
+    phone: order?.restaurant_phone || '',
+    email: order?.restaurant_email || '',
+    cuisine_type: '',
+  };
   return (
     <div style={s.chatCart}>
       <div style={s.chatCartHead}>
@@ -956,6 +1046,19 @@ function ChatRestaurantCart({
           <span>{cart.restaurant_name || order?.restaurant_name || 'Restaurant order'}</span>
         </div>
         <strong>${Number(order?.subtotal ?? subtotal).toFixed(2)}</strong>
+      </div>
+      <div style={s.cartRestaurantDetails}>
+        <div>
+          <strong>Order will be placed to</strong>
+          <span>{restaurant.name || 'Restaurant'}</span>
+        </div>
+        <div style={s.cartRestaurantMeta}>
+          {restaurant.id && <span>ID: {restaurant.id}</span>}
+          {restaurant.cuisine_type && <span>{restaurant.cuisine_type}</span>}
+          {restaurant.address && <span>{restaurant.address}</span>}
+          {restaurant.phone && <span>{restaurant.phone}</span>}
+          {restaurant.email && <span>Email: {restaurant.email}</span>}
+        </div>
       </div>
       {hasItems && (
         <div style={s.chatCartItems}>
@@ -986,6 +1089,7 @@ function ChatRestaurantCart({
       <div style={s.chatCartFields}>
         <input style={s.cartInput} value={customer.name} onChange={e=>onCustomer({ ...customer, name:e.target.value })} placeholder="Customer name" />
         <input style={s.cartInput} value={customer.phone} onChange={e=>onCustomer({ ...customer, phone:e.target.value })} placeholder="Phone" />
+        <input style={s.cartInput} type="email" value={customer.email} onChange={e=>onCustomer({ ...customer, email:e.target.value })} placeholder="Email for order updates" />
         <input style={s.cartInput} value={customer.pickup_time_request} onChange={e=>onCustomer({ ...customer, pickup_time_request:e.target.value })} placeholder="Pickup time, e.g. ASAP" />
         <input style={s.cartInput} value={customer.special_instructions} onChange={e=>onCustomer({ ...customer, special_instructions:e.target.value })} placeholder="Order notes" />
       </div>
@@ -1017,7 +1121,7 @@ function normalizeRestaurantOrderResponse(response) {
 }
 
 function parseRestaurantAnswerItems(text = '') {
-  const rows = [];
+  const rows = parseRestaurantOrderDetails(text);
   const lines = String(text || '').split('\n');
   for (const raw of lines) {
     const line = raw.trim();
@@ -1026,18 +1130,38 @@ function parseRestaurantAnswerItems(text = '') {
       ? line.split('|').map(c => c.trim().replace(/^\*\*|\*\*$/g, '')).filter(Boolean)
       : line.split(/\t+|\s{2,}/).map(c => c.trim()).filter(Boolean);
     if (cells.length < 3) continue;
+    cells = cells.map(cleanRestaurantAnswerCell);
     const joined = cells.join(' ').toLowerCase();
     if (joined.includes('restaurant') && (joined.includes('price') || joined.includes('source'))) continue;
-    const price = extractAnswerPrice(cells.slice(2).join(' '));
+    const price = extractAnswerPrice(cells[2] || cells.slice(2).join(' '));
     if (price == null) continue;
     const restaurantName = cells[0]?.trim();
     const itemName = cells[1]?.trim();
     if (!restaurantName || !itemName || /^source\s*\d+$/i.test(itemName)) continue;
+    const restaurantId = cells.find(cell => isUuid(cell)) || '';
+    const email = cells.find(cell => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cell)) || '';
+    const phone = cells.find(cell => /\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(cell)) || '';
+    const address = cells.slice(3).find(cell => (
+      cell &&
+      cell !== restaurantId &&
+      cell !== email &&
+      cell !== phone &&
+      !isUuid(cell) &&
+      !/not provided/i.test(cell) &&
+      /\d/.test(cell) &&
+      /[a-zA-Z]/.test(cell)
+    )) || '';
     rows.push({
-      id: `answer:${restaurantName}:${itemName}:${price}`.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      id: restaurantId ? `answer:${restaurantId}:${itemName}:${price}` : `answer:${restaurantName}:${itemName}:${price}`.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
       menu_item_id: null,
-      restaurant_id: null,
+      restaurant_id: restaurantId,
       restaurant_name: restaurantName,
+      restaurant_address: address,
+      restaurant_phone: phone,
+      restaurant_email: email,
+      address,
+      phone,
+      email,
       item_name: itemName,
       category: '',
       price,
@@ -1048,6 +1172,64 @@ function parseRestaurantAnswerItems(text = '') {
     });
   }
   return rows.slice(0, 10);
+}
+
+function parseRestaurantOrderDetails(text = '') {
+  const fields = {};
+  const lines = String(text || '').split('\n');
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line || line.includes('---')) continue;
+    let cells = line.includes('|')
+      ? line.split('|').map(c => c.trim().replace(/^\*\*|\*\*$/g, '')).filter(Boolean)
+      : line.split(/\t+|\s{2,}/).map(c => c.trim()).filter(Boolean);
+    cells = cells.map(cleanRestaurantAnswerCell);
+    if (cells.length !== 2) continue;
+    const key = restaurantNameKey(cells[0]);
+    const value = cells[1];
+    if (!key || !value || key === 'field' || key === 'value') continue;
+    fields[key] = value;
+  }
+  const restaurantName = fields.restaurant || fields['restaurant name'] || '';
+  const itemName = fields.item || fields['menu item'] || fields.dish || '';
+  const price = extractAnswerPrice(fields.price || '');
+  const restaurantId = fields['restaurant id'] || '';
+  if (!restaurantName || !itemName || price == null || !isUuid(restaurantId)) return [];
+  const menuItemId = fields['menu item id'] || '';
+  const email = fields.email || '';
+  const phone = fields.phone || '';
+  const address = fields.address || '';
+  return [{
+    id: `answer:${restaurantId}:${itemName}:${price}`,
+    menu_item_id: isUuid(menuItemId) ? menuItemId : null,
+    restaurant_id: restaurantId,
+    restaurant_name: restaurantName,
+    restaurant_address: address,
+    restaurant_phone: phone,
+    restaurant_email: email,
+    address,
+    phone,
+    email,
+    item_name: itemName,
+    category: fields.category || '',
+    price,
+    currency: 'USD',
+    quantity: '',
+    description: 'Matched from the chat order details. Restaurant can confirm final availability and price.',
+    source: 'chat_order_details',
+  }];
+}
+
+function cleanRestaurantAnswerCell(value = '') {
+  return String(value || '')
+    .replace(/^`+|`+$/g, '')
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .trim();
+}
+
+function isUuid(value = '') {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim());
 }
 
 function extractAnswerPrice(text = '') {
@@ -1152,15 +1334,21 @@ const s = {
   srcToggle:     { background:'none', border:'none', cursor:'pointer', padding:'3px 0', display:'flex', alignItems:'center', gap:6 },
   restaurantActions:{ marginTop:8, border:'1px solid rgba(74,222,128,.2)', background:'rgba(74,222,128,.045)', borderRadius:8, padding:9 },
   restaurantActionsHead:{ display:'flex', justifyContent:'space-between', gap:10, alignItems:'center', color:'var(--tx2)', fontSize:12, marginBottom:8 },
+  restaurantActionWarning:{ color:'#fbbf24', background:'rgba(251,191,36,.08)', border:'1px solid rgba(251,191,36,.2)', borderRadius:6, padding:'5px 7px', fontSize:10.5, lineHeight:1.35 },
   restaurantActionGrid:{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))', gap:8 },
   restaurantActionCard:{ border:'1px solid var(--b2)', background:'var(--s2)', borderRadius:8, padding:9, display:'flex', flexDirection:'column', gap:5 },
   restaurantName:{ color:'#86efac', fontSize:10.5, fontWeight:800, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' },
+  restaurantDetailLine:{ color:'var(--muted2)', fontSize:10.5, lineHeight:1.3, minHeight:14, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' },
+  restaurantEmailLine:{ color:'#bbf7d0', fontSize:10.5, lineHeight:1.3, overflowWrap:'anywhere' },
   restaurantItemName:{ color:'var(--tx)', fontSize:12.5, lineHeight:1.25 },
   restaurantMeta:{ display:'flex', justifyContent:'space-between', gap:8, color:'var(--muted2)', fontSize:11 },
   restaurantDesc:{ margin:0, color:'var(--muted2)', fontSize:11, lineHeight:1.35, display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', overflow:'hidden' },
   addToCartBtn:{ marginTop:'auto', border:'1px solid rgba(74,222,128,.35)', background:'rgba(74,222,128,.12)', color:'#86efac', borderRadius:7, padding:'6px 9px', cursor:'pointer', fontWeight:800 },
+  addToCartBtnOff:{ opacity:.45, cursor:'not-allowed', color:'var(--muted2)', border:'1px solid var(--b2)', background:'var(--s3)' },
   chatCart:{ borderTop:'1px solid rgba(74,222,128,.18)', background:'rgba(6,19,10,.96)', padding:'10px 14px', flexShrink:0 },
   chatCartHead:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, color:'var(--tx)', fontSize:13 },
+  cartRestaurantDetails:{ marginTop:8, border:'1px solid rgba(74,222,128,.18)', background:'rgba(74,222,128,.055)', borderRadius:8, padding:'8px 10px', display:'flex', justifyContent:'space-between', gap:12, alignItems:'flex-start', flexWrap:'wrap', fontSize:12 },
+  cartRestaurantMeta:{ display:'flex', gap:8, flexWrap:'wrap', justifyContent:'flex-end', color:'var(--muted2)', fontSize:11, flex:'1 1 320px', overflowWrap:'anywhere' },
   chatCartItems:{ display:'flex', flexDirection:'column', gap:7, marginTop:8, maxHeight:130, overflow:'auto' },
   chatCartItem:{ display:'grid', gridTemplateColumns:'minmax(140px, 1fr) 54px 30px minmax(120px, 1fr)', gap:7, alignItems:'center', fontSize:12 },
   qty:{ width:'100%', background:'var(--s3)', border:'1px solid var(--b2)', color:'var(--tx)', borderRadius:6, padding:'6px 7px' },

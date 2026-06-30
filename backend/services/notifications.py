@@ -1,7 +1,7 @@
 # services/notifications.py — transactional email notifications
 from __future__ import annotations
 import logging
-from services.email import send_email
+from services.email import is_email_configured, send_email
 
 log = logging.getLogger("docintel.notifications")
 
@@ -63,3 +63,55 @@ You can access this workspace by logging in to আদর DocIntel:
         await send_email(to=invitee_email, subject=subject, body=body)
     except Exception as e:
         log.warning(f"Workspace invite notification failed for {invitee_email}: {e}")
+
+
+async def send_restaurant_order_email(
+    to_email: str,
+    *,
+    audience: str,
+    restaurant_name: str,
+    order_id: str,
+    status: str,
+    message: str,
+    restaurant_id: str = "",
+    customer_name: str = "",
+    subtotal: str = "",
+    app_url: str = "",
+) -> bool:
+    """Send restaurant carryout order email notifications."""
+    if not is_email_configured():
+        log.warning(
+            "Restaurant order email not sent because GMAIL_USER/GMAIL_APP_PASSWORD are not configured order_id=%s to=%s",
+            order_id,
+            to_email,
+        )
+        return False
+    subject_prefix = "New carryout order" if audience == "restaurant_owner" else "Carryout order update"
+    subject = f"{subject_prefix} — {restaurant_name}"
+    body = f"""{message}
+
+Restaurant: {restaurant_name}
+Restaurant ID: {restaurant_id or 'Not available'}
+Order ID: {order_id}
+Status: {status}
+"""
+    if customer_name:
+        body += f"Customer: {customer_name}\n"
+    if subtotal:
+        body += f"Subtotal: {subtotal}\n"
+    if app_url:
+        body += f"\nOpen DocIntel:\n{app_url}\n"
+    body += "\n— আদর DocIntel\n"
+    try:
+        await send_email(to=to_email, subject=subject, body=body)
+        log.info(
+            "Restaurant order email sent to %s restaurant_id=%s order_id=%s audience=%s",
+            to_email,
+            restaurant_id,
+            order_id,
+            audience,
+        )
+        return True
+    except Exception as e:
+        log.warning("Restaurant order email failed for %s order_id=%s: %s", to_email, order_id, e)
+        return False

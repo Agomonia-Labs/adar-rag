@@ -65,7 +65,7 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
   const steps = run?.steps || [];
   const profile = packet?.restaurant_profile || {};
   const menuItems = packet?.menu_items || [];
-  const canApprove = packet && profile.name && menuItems.length > 0 && !busy;
+  const canApprove = packet && profile.name && profile.email && menuItems.length > 0 && !busy;
 
   useEffect(() => {
     if (!run?.run_id || !['running', 'pending'].includes(run.status)) return;
@@ -93,10 +93,15 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
 
   async function loadRestaurants() {
     try {
+      setError('');
       const data = await listRestaurants(workspaceId);
       setRestaurants(data.restaurants || []);
-    } catch {
+      if (data.restored_count) {
+        setError(`Restored ${data.restored_count} old restaurant scribe record${data.restored_count === 1 ? '' : 's'}.`);
+      }
+    } catch (e) {
       setRestaurants([]);
+      setError(e.message || 'Could not load saved restaurants.');
     }
   }
 
@@ -198,13 +203,15 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
       await loadRestaurants();
       setTab('restaurants');
     } catch (e) {
-      setError(e.message || 'Could not approve restaurant menu');
+      const msg = e.message || 'Could not approve restaurant menu';
+      setError(msg === 'Restaurant email is required' ? '' : msg);
     } finally {
       setBusy(false);
     }
   }
 
   async function openRestaurant(id) {
+    setError('');
     setSelected(id);
     setSelectedDetail(null);
     setEditingSaved(false);
@@ -233,7 +240,8 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
       setSavedDraft(null);
       await loadRestaurants();
     } catch (e) {
-      setError(e.message || 'Could not save restaurant changes');
+      const msg = e.message || 'Could not save restaurant changes';
+      setError(msg === 'Restaurant email is required' ? '' : msg);
     } finally {
       setBusy(false);
     }
@@ -241,7 +249,7 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
 
   async function removeSavedRestaurant() {
     if (!selected) return;
-    if (!window.confirm('Delete this restaurant and all saved menu items?')) return;
+    if (!window.confirm('Delete this restaurant, saved menu items, carryout orders, scribe source document, embedded chunks, vectors, and stored files?')) return;
     setBusy(true);
     setError('');
     try {
@@ -451,7 +459,7 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
             ['compare', '⇄ Compare menus'],
             ['orders', '🛒 Carryout orders'],
           ].map(([key, label]) => (
-            <button key={key} style={{...s.tab, ...(tab===key?s.tabActive:{})}} onClick={() => setTab(key)}>{label}</button>
+            <button key={key} style={{...s.tab, ...(tab===key?s.tabActive:{})}} onClick={() => { setError(''); setTab(key); }}>{label}</button>
           ))}
         </nav>
 
@@ -480,7 +488,15 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
                 <h3 style={s.h3}>Review And Approve</h3>
                 <div style={s.grid2}>
                   {['name','cuisine_type','address','phone','email','website'].map(key => (
-                    <label key={key} style={s.field}>{labelize(key)}<input value={profile[key] || ''} onChange={e=>updateProfile(key, e.target.value)} /></label>
+                    <label key={key} style={s.field}>
+                      {labelize(key)}{key === 'email' ? ' *' : ''}
+                      <input
+                        type={key === 'email' ? 'email' : 'text'}
+                        required={key === 'email'}
+                        value={profile[key] || ''}
+                        onChange={e=>updateProfile(key, e.target.value)}
+                      />
+                    </label>
                   ))}
                 </div>
                 <label style={s.field}>Description<textarea rows={3} value={profile.description || ''} onChange={e=>updateProfile('description', e.target.value)} /></label>
@@ -504,6 +520,7 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
                 <div style={s.actions}>
                   <button style={s.secondaryBtn} onClick={addMenuItem}>+ Menu item</button>
                   <button style={s.primary} disabled={!canApprove} onClick={approvePacket}>Approve and save restaurant</button>
+                  {!profile.email && <span style={s.muted}>Restaurant email is required before saving.</span>}
                 </div>
               </div>
             )}
@@ -517,7 +534,8 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
               <div style={s.list}>
                 {restaurants.map(r => (
                   <button key={r.id} style={{...s.restaurantRow, ...(selected===r.id?s.selected:{})}} onClick={()=>openRestaurant(r.id)}>
-                    <strong>{r.name}</strong><span>{r.cuisine_type || 'Cuisine not set'} · {r.menu_count || 0} items</span>
+                    <strong>{r.name}</strong>
+                    <span>{r.cuisine_type || 'Cuisine not set'} · {r.menu_count || 0} items · {r.workspace_id ? 'Workspace' : 'Personal'}</span>
                   </button>
                 ))}
                 {!restaurants.length && <p style={s.muted}>No approved restaurants yet.</p>}
@@ -613,6 +631,7 @@ function AgentSteps({ steps }) {
 
 function RestaurantDetail({ data, onEdit, onDelete, busy }) {
   const r = data.restaurant || {};
+  const menuItems = data.menu_items || [];
   return (
     <>
       <div style={s.detailHead}>
@@ -622,10 +641,15 @@ function RestaurantDetail({ data, onEdit, onDelete, busy }) {
           <button style={s.dangerSmall} disabled={busy} onClick={onDelete}>Delete</button>
         </div>
       </div>
-      <p style={s.muted}>{r.cuisine_type} · {r.address}</p>
+      <p style={s.muted}>{r.cuisine_type} · {r.address} · {r.workspace_id ? 'Workspace menu' : 'Personal menu'}</p>
       <p>{r.description}</p>
       <TranscriptBox transcript={data.transcript || ''} />
-      <MenuTable items={data.menu_items || []} />
+      {!menuItems.length && (
+        <div style={s.warnBox}>
+          This restaurant exists, but no menu item rows are saved for it. Use Refresh to restore older approved scribe data, or edit the restaurant and add menu items.
+        </div>
+      )}
+      <MenuTable items={menuItems} restaurantName={r.name || ''} />
     </>
   );
 }
@@ -657,14 +681,23 @@ function SavedRestaurantEditor({ draft, busy, onProfile, onMenu, onAdd, onRemove
         <h3 style={s.h3}>Edit Saved Menu</h3>
         <div style={s.actionsTight}>
           <button style={s.secondaryBtn} onClick={onCancel}>Cancel</button>
-          <button style={s.primary} disabled={busy || !profile.name} onClick={onSave}>{busy ? 'Saving...' : 'Save changes'}</button>
+          <button style={s.primary} disabled={busy || !profile.name || !profile.email} onClick={onSave}>{busy ? 'Saving...' : 'Save changes'}</button>
         </div>
       </div>
       <div style={s.grid2}>
         {['name','cuisine_type','address','phone','email','website'].map(key => (
-          <label key={key} style={s.field}>{labelize(key)}<input value={profile[key] || ''} onChange={e=>onProfile(key, e.target.value)} /></label>
+          <label key={key} style={s.field}>
+            {labelize(key)}{key === 'email' ? ' *' : ''}
+            <input
+              type={key === 'email' ? 'email' : 'text'}
+              required={key === 'email'}
+              value={profile[key] || ''}
+              onChange={e=>onProfile(key, e.target.value)}
+            />
+          </label>
         ))}
       </div>
+      {!profile.email && <p style={s.muted}>Restaurant email is required before saving.</p>}
       <label style={s.field}>Description<textarea rows={3} value={profile.description || ''} onChange={e=>onProfile('description', e.target.value)} /></label>
       <div style={s.tableWrap}>
         <table style={s.table}>
@@ -744,7 +777,8 @@ function OrderList({ title, orders, owner = false, onAction, busy }) {
             </div>
             <span style={s.statusPill}>{order.status}</span>
           </div>
-          <p style={s.muted}>Customer: {order.customer_name || order.customer_email || 'Not provided'} {order.customer_phone ? `· ${order.customer_phone}` : ''}</p>
+          <p style={s.muted}>Customer: {order.customer_name || 'Not provided'} {order.customer_phone ? `· ${order.customer_phone}` : ''}</p>
+          <p style={s.muted}>Customer email: {order.customer_email || 'Not provided'}</p>
           {order.pickup_time_request && <p style={s.muted}>Pickup: {order.pickup_time_request}</p>}
           {owner && (
             <div style={s.actionsTight}>
@@ -761,7 +795,7 @@ function OrderList({ title, orders, owner = false, onAction, busy }) {
   );
 }
 
-function MenuTable({ items, onAdd = null }) {
+function MenuTable({ items, onAdd = null, restaurantName = '' }) {
   return (
     <div style={s.tableWrap}>
       <table style={s.table}>
@@ -769,7 +803,7 @@ function MenuTable({ items, onAdd = null }) {
         <tbody>
           {items.map((item, i) => (
             <tr key={item.id || i}>
-              <td>{item.restaurant_name || ''}</td>
+              <td>{item.restaurant_name || restaurantName || ''}</td>
               <td>{item.item_name}</td>
               <td>{item.category}</td>
               <td>{item.price != null ? `$${Number(item.price).toFixed(2)}` : ''}</td>
@@ -827,6 +861,7 @@ const s = {
   secondaryBtn:{ border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx)', borderRadius:7, padding:'9px 13px', cursor:'pointer', fontWeight:700 },
   fileName:{ color:'var(--muted2)', fontSize:12 },
   error:{ margin:'10px 16px 0', padding:'9px 11px', border:'1px solid rgba(248,113,113,.35)', background:'rgba(248,113,113,.12)', color:'#fecaca', borderRadius:7, fontSize:13 },
+  warnBox:{ margin:'10px 0', padding:'9px 11px', border:'1px solid rgba(251,191,36,.28)', background:'rgba(251,191,36,.08)', color:'#fde68a', borderRadius:7, fontSize:13, lineHeight:1.45 },
   h3:{ margin:'0 0 10px', fontSize:15 },
   steps:{ marginTop:14, padding:12, border:'1px solid var(--b2)', borderRadius:8, background:'rgba(255,255,255,.02)' },
   step:{ display:'grid', gridTemplateColumns:'90px 1fr', gap:8, borderTop:'1px solid var(--b2)', padding:'8px 0', fontSize:12 },

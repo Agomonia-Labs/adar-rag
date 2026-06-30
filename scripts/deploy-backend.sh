@@ -62,13 +62,14 @@ if [[ "$LLM_PROVIDER" == "openai" ]]; then
   SECRETS+=("OPENAI_API_KEY=docintel-openai-key:latest")
 fi
 
-# Gmail SMTP — add only if the secrets exist in Secret Manager
-if gcloud secrets describe docintel-gmail-user --project="$PROJECT_ID" &>/dev/null; then
+# Gmail SMTP — add only if both secrets exist in Secret Manager
+if gcloud secrets describe docintel-gmail-user --project="$PROJECT_ID" &>/dev/null \
+  && gcloud secrets describe docintel-gmail-app-password --project="$PROJECT_ID" &>/dev/null; then
   SECRETS+=("GMAIL_USER=docintel-gmail-user:latest")
   SECRETS+=("GMAIL_APP_PASSWORD=docintel-gmail-app-password:latest")
   echo "  Gmail SMTP   : enabled (docintel-gmail-user)"
 else
-  echo "  Gmail SMTP   : ⚠ not configured (reset emails will be logged only)"
+  echo "  Gmail SMTP   : ⚠ not configured (emails will be logged only)"
 fi
 
 # Cohere Rerank — add if secret exists

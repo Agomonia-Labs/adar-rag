@@ -21,6 +21,7 @@ from services.chunker import chunk_text
 from services.llm import embed
 from services.restaurant_agent_tools import RESTAURANT_AGENT_TOOLS
 from services.restaurant_intelligence import RestaurantIntelligenceError
+from services.notifications import send_restaurant_order_email
 from services.text_safety import sanitize_text_for_storage
 from services.usage import check_and_log_daily_event, check_document_limit, log_event
 from services.vectordb import delete_document_vectors, store_chunk
@@ -293,6 +294,7 @@ async def approve_restaurant_agent_run(
 @router.get("/restaurants")
 async def list_restaurants(current_user: CurrentUser, workspace_id: str | None = Query(None), db=Depends(get_db)):
     user_id = str(current_user["id"])
+    restored_count = await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
     rows = await db.fetch(
         f"""
         SELECT r.*,
@@ -302,15 +304,91 @@ async def list_restaurants(current_user: CurrentUser, workspace_id: str | None =
         FROM restaurants r
         LEFT JOIN restaurant_menu_items mi ON mi.restaurant_id=r.id
         WHERE {_restaurant_access_sql("r")}
-          AND ($2::uuid IS NULL OR r.workspace_id=$2::uuid)
+          AND ($2::uuid IS NULL OR r.workspace_id=$2::uuid OR r.workspace_id IS NULL)
         GROUP BY r.id
-        ORDER BY r.updated_at DESC
+        ORDER BY r.workspace_id NULLS LAST, r.updated_at DESC
         LIMIT 200
         """,
         user_id,
         workspace_id,
     )
-    return {"restaurants": [_restaurant_row(row) for row in rows]}
+    return {"restaurants": [_restaurant_row(row) for row in rows], "restored_count": restored_count}
+
+
+@router.get("/debug/restore-status")
+async def restaurant_restore_status(current_user: CurrentUser, workspace_id: str | None = Query(None), db=Depends(get_db)):
+    user_id = str(current_user["id"])
+    counts = await db.fetchrow(
+        f"""
+        SELECT
+          COUNT(DISTINCT r.id)::int AS restaurants,
+          COUNT(mi.id)::int AS menu_items,
+          COUNT(DISTINCT r.id) FILTER (WHERE r.workspace_id IS NULL)::int AS personal_restaurants,
+          COUNT(DISTINCT r.id) FILTER (WHERE r.workspace_id IS NOT NULL)::int AS workspace_restaurants
+        FROM restaurants r
+        LEFT JOIN restaurant_menu_items mi ON mi.restaurant_id=r.id
+        WHERE {_restaurant_access_sql("r")}
+          AND ($2::uuid IS NULL OR r.workspace_id=$2::uuid OR r.workspace_id IS NULL)
+        """,
+        user_id,
+        workspace_id,
+    )
+    runs = await db.fetchrow(
+        f"""
+        SELECT
+          COUNT(*)::int AS total_runs,
+          COUNT(*) FILTER (WHERE status='approved')::int AS approved_runs,
+          COUNT(*) FILTER (WHERE status='pending_approval')::int AS pending_approval_runs,
+          COUNT(*) FILTER (WHERE result_data ? 'approved_packet')::int AS approved_packet_runs,
+          COUNT(*) FILTER (WHERE result_data ? 'review_packet')::int AS review_packet_runs,
+          COUNT(*) FILTER (WHERE result_data ? 'restaurant_profile' AND result_data ? 'menu_items')::int AS direct_packet_runs
+        FROM vertical_agent_runs r
+        WHERE r.vertical=$2
+          AND ($3::uuid IS NULL OR r.workspace_id=$3::uuid OR r.workspace_id IS NULL)
+          AND {_restaurant_access_sql("r")}
+        """,
+        user_id,
+        RESTAURANT_VERTICAL,
+        workspace_id,
+    )
+    docs = await db.fetchrow(
+        """
+        SELECT
+          COUNT(*)::int AS restaurant_documents,
+          COUNT(*) FILTER (WHERE status='deleted')::int AS deleted_restaurant_documents,
+          COUNT(*) FILTER (WHERE status='error')::int AS error_restaurant_documents
+        FROM documents
+        WHERE user_id=$1::uuid
+          AND doc_domain='restaurant'
+          AND ($2::uuid IS NULL OR workspace_id=$2::uuid OR workspace_id IS NULL)
+        """,
+        user_id,
+        workspace_id,
+    )
+    audit_rows = await db.fetch(
+        """
+        SELECT action, resource_type, resource_id, metadata, created_at
+        FROM audit_log
+        WHERE user_id=$1::uuid
+          AND action IN ('restaurant_menu_delete', 'restaurant_menu_update', 'delete_document', 'restaurant_menu_approve')
+        ORDER BY created_at DESC
+        LIMIT 20
+        """,
+        user_id,
+    )
+    return {
+        "workspace_id": workspace_id,
+        "restaurants": dict(counts or {}),
+        "restaurant_runs": dict(runs or {}),
+        "restaurant_documents": dict(docs or {}),
+        "recent_audit_events": [_order_row(row) for row in audit_rows],
+        "possible_causes": _restaurant_missing_data_causes(
+            dict(counts or {}),
+            dict(runs or {}),
+            dict(docs or {}),
+            [dict(row) for row in audit_rows],
+        ),
+    }
 
 
 @router.get("/restaurants/{restaurant_id}")
@@ -353,6 +431,7 @@ async def update_restaurant(
     name = str(profile.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "Restaurant name is required")
+    email = _required_restaurant_email(profile)
     await db.execute(
         """
         UPDATE restaurants
@@ -368,7 +447,7 @@ async def update_restaurant(
         profile.get("cuisine_type") or "",
         profile.get("address") or "",
         profile.get("phone") or "",
-        profile.get("email") or "",
+        email,
         profile.get("website") or "",
         json.dumps(profile.get("hours") if isinstance(profile.get("hours"), dict) else {}),
         json.dumps(profile.get("service_options") if isinstance(profile.get("service_options"), list) else []),
@@ -429,18 +508,62 @@ async def delete_restaurant(
     if row.get("workspace_id"):
         from routes.workspaces import _require_role
         await _require_role(db, str(row["workspace_id"]), user_id, "editor")
-    await db.execute("DELETE FROM restaurants WHERE id=$1", restaurant_id)
+
+    source_doc_rows = await db.fetch(
+        """
+        SELECT DISTINCT d.id, d.user_id
+        FROM documents d
+        WHERE d.id IN (
+            SELECT r.document_id
+            FROM vertical_agent_runs r
+            WHERE r.id=$1
+        )
+        OR d.doc_metadata->>'restaurant_id'=$2
+        """,
+        row.get("source_run_id"),
+        restaurant_id,
+    )
+
+    warnings: list[str] = []
+    for doc in source_doc_rows:
+        doc_id = str(doc["id"])
+        doc_user_id = str(doc["user_id"])
+        try:
+            await gcs.delete_prefix(f"users/{doc_user_id}/documents/{doc_id}/")
+        except Exception as exc:
+            warnings.append(f"GCS cleanup skipped for document {doc_id}: {exc}")
+            log.warning("Restaurant delete GCS cleanup failed restaurant_id=%s doc_id=%s: %s", restaurant_id, doc_id, exc)
+        try:
+            await delete_document_vectors(doc_id)
+        except Exception as exc:
+            warnings.append(f"Vector cleanup skipped for document {doc_id}: {exc}")
+            log.warning("Restaurant delete vector cleanup failed restaurant_id=%s doc_id=%s: %s", restaurant_id, doc_id, exc)
+
+    async with db.transaction():
+        for doc in source_doc_rows:
+            await db.execute("DELETE FROM documents WHERE id=$1", str(doc["id"]))
+        await db.execute("DELETE FROM restaurants WHERE id=$1", restaurant_id)
+
     await audit(
         db,
         user_id=user_id,
         action="restaurant_menu_delete",
         resource_type="restaurant",
         resource_id=restaurant_id,
-        metadata={"name": row.get("name")},
+        metadata={
+            "name": row.get("name"),
+            "deleted_document_ids": [str(doc["id"]) for doc in source_doc_rows],
+            "cleanup_warnings": warnings,
+        },
         ip_address=ip_from(request),
         user_agent=ua_from(request),
     )
-    return {"deleted": True, "restaurant_id": restaurant_id}
+    return {
+        "deleted": True,
+        "restaurant_id": restaurant_id,
+        "deleted_document_ids": [str(doc["id"]) for doc in source_doc_rows],
+        "warnings": warnings,
+    }
 
 
 @router.get("/menu/search")
@@ -454,6 +577,7 @@ async def search_menu(
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
+    await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
     q = f"%{query.strip()}%" if query.strip() else "%"
     rows = await db.fetch(
         f"""
@@ -468,8 +592,8 @@ async def search_menu(
               WHERE tag ILIKE '%' || $5 || '%'
           ))
           AND ($6::numeric IS NULL OR mi.price <= $6::numeric)
-          AND ($7::uuid IS NULL OR r.workspace_id=$7::uuid)
-        ORDER BY mi.price NULLS LAST, r.name, mi.item_name
+          AND ($7::uuid IS NULL OR r.workspace_id=$7::uuid OR r.workspace_id IS NULL)
+        ORDER BY r.workspace_id NULLS LAST, mi.price NULLS LAST, r.name, mi.item_name
         LIMIT 100
         """,
         user_id,
@@ -492,6 +616,7 @@ async def compare_menu_prices(
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
+    await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
     q = f"%{query.strip()}%"
     rows = await db.fetch(
         f"""
@@ -501,8 +626,8 @@ async def compare_menu_prices(
         WHERE {_restaurant_access_sql("r")}
           AND (mi.item_name ILIKE $2 OR mi.description ILIKE $2)
           AND ($3='' OR r.cuisine_type ILIKE '%' || $3 || '%')
-          AND ($4::uuid IS NULL OR r.workspace_id=$4::uuid)
-        ORDER BY mi.price NULLS LAST, r.name, mi.item_name
+          AND ($4::uuid IS NULL OR r.workspace_id=$4::uuid OR r.workspace_id IS NULL)
+        ORDER BY r.workspace_id NULLS LAST, mi.price NULLS LAST, r.name, mi.item_name
         LIMIT 100
         """,
         user_id,
@@ -559,7 +684,8 @@ async def create_restaurant_order_draft(
         menu_rows = await db.fetch(
             f"""
             SELECT mi.*, r.name AS restaurant_name, r.address, r.phone AS restaurant_phone,
-                   r.user_id AS restaurant_owner_id, r.workspace_id AS restaurant_workspace_id
+                   r.email AS restaurant_email, r.user_id AS restaurant_owner_id,
+                   r.workspace_id AS restaurant_workspace_id
             FROM restaurant_menu_items mi
             JOIN restaurants r ON r.id=mi.restaurant_id
             WHERE mi.id = ANY($2::uuid[])
@@ -584,7 +710,8 @@ async def create_restaurant_order_draft(
     restaurant = await db.fetchrow(
         f"""
         SELECT id, name AS restaurant_name, address, phone AS restaurant_phone,
-               user_id AS restaurant_owner_id, workspace_id, workspace_id AS restaurant_workspace_id
+               email AS restaurant_email, user_id AS restaurant_owner_id,
+               workspace_id, workspace_id AS restaurant_workspace_id
         FROM restaurants r
         WHERE r.id=$2::uuid
           AND {_restaurant_access_sql("r")}
@@ -723,6 +850,11 @@ async def submit_restaurant_order(
         timestamp_column="submitted_at",
         notify_owner=True,
     )
+    await _safe_order_notification(
+        _notify_restaurant_customer(db, order, user_id, "submitted", "submitted"),
+        order,
+        "customer submitted",
+    )
     await audit(
         db,
         user_id=user_id,
@@ -742,6 +874,7 @@ async def list_my_restaurant_orders(current_user: CurrentUser, db=Depends(get_db
     rows = await db.fetch(
         """
         SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address, r.phone AS restaurant_phone,
+               r.email AS restaurant_email,
                COUNT(oi.id)::int AS item_count
         FROM restaurant_orders o
         JOIN restaurants r ON r.id=o.restaurant_id
@@ -916,7 +1049,15 @@ async def _execute_restaurant_workflow_background(
             await db.execute("UPDATE documents SET status='error', error_message=$2, updated_at=NOW() WHERE id=$1", doc_id, str(exc)[:500])
 
 
-async def _save_restaurant_packet(db, user_id: str, workspace_id: str | None, run_id: str, packet: dict[str, Any]) -> str:
+async def _save_restaurant_packet(
+    db,
+    user_id: str,
+    workspace_id: str | None,
+    run_id: str,
+    packet: dict[str, Any],
+    *,
+    require_email: bool = True,
+) -> str:
     user_id = _id_text(user_id)
     workspace_id = _id_text(workspace_id)
     run_id = _id_text(run_id)
@@ -924,6 +1065,7 @@ async def _save_restaurant_packet(db, user_id: str, workspace_id: str | None, ru
     menu_items = packet.get("menu_items") if isinstance(packet.get("menu_items"), list) else []
     name = str(profile.get("name") or "Unnamed Restaurant").strip()
     address = str(profile.get("address") or "").strip()
+    email = _required_restaurant_email(profile) if require_email else str(profile.get("email") or "").strip()
     existing = await db.fetchrow(
         """
         SELECT id FROM restaurants
@@ -954,7 +1096,7 @@ async def _save_restaurant_packet(db, user_id: str, workspace_id: str | None, ru
             profile.get("cuisine_type") or "",
             address,
             profile.get("phone") or "",
-            profile.get("email") or "",
+            email,
             profile.get("website") or "",
             json.dumps(profile.get("hours") if isinstance(profile.get("hours"), dict) else {}),
             json.dumps(profile.get("service_options") if isinstance(profile.get("service_options"), list) else []),
@@ -980,7 +1122,7 @@ async def _save_restaurant_packet(db, user_id: str, workspace_id: str | None, ru
             profile.get("cuisine_type") or "",
             address,
             profile.get("phone") or "",
-            profile.get("email") or "",
+            email,
             profile.get("website") or "",
             json.dumps(profile.get("hours") if isinstance(profile.get("hours"), dict) else {}),
             json.dumps(profile.get("service_options") if isinstance(profile.get("service_options"), list) else []),
@@ -1014,6 +1156,105 @@ async def _save_restaurant_packet(db, user_id: str, workspace_id: str | None, ru
             json.dumps({"source_run_id": run_id}),
         )
     return restaurant_id
+
+
+async def _restore_approved_restaurants_if_needed(db, user_id: str, workspace_id: str | None = None) -> int:
+    """Backfill restaurants from older approved restaurant scribe runs.
+
+    Earlier restaurant scribe runs may have the approved packet in
+    vertical_agent_runs but no corresponding restaurants row. The list/search
+    endpoints call this opportunistically so old approved menu data comes back
+    without a separate manual migration.
+    """
+    user_id = _id_text(user_id)
+    workspace_id = _id_text(workspace_id)
+    runs = await db.fetch(
+        f"""
+        SELECT r.id, r.user_id, r.workspace_id, r.result_data
+        FROM vertical_agent_runs r
+        WHERE r.vertical=$2
+          AND ($3::uuid IS NULL OR r.workspace_id=$3::uuid OR r.workspace_id IS NULL)
+          AND {_restaurant_access_sql("r")}
+          AND NOT EXISTS (
+              SELECT 1 FROM restaurants existing
+              JOIN restaurant_menu_items existing_item ON existing_item.restaurant_id=existing.id
+              WHERE existing.source_run_id=r.id
+          )
+        ORDER BY r.updated_at DESC
+        LIMIT 50
+        """,
+        user_id,
+        RESTAURANT_VERTICAL,
+        workspace_id,
+    )
+    restored = 0
+    for run in runs:
+        result = _json(run.get("result_data")) or {}
+        packet = _restaurant_packet_from_result(result)
+        if not isinstance(packet, dict):
+            continue
+        profile = packet.get("restaurant_profile")
+        menu_items = packet.get("menu_items")
+        if not isinstance(profile, dict) or not isinstance(menu_items, list):
+            continue
+        owner_id = str(run["user_id"])
+        run_workspace_id = str(run["workspace_id"]) if run.get("workspace_id") else None
+        await _save_restaurant_packet(db, owner_id, run_workspace_id, str(run["id"]), packet, require_email=False)
+        restored += 1
+    if restored:
+        log.info("Restored %s approved restaurant scribe run(s) for user_id=%s workspace_id=%s", restored, user_id, workspace_id)
+    return restored
+
+
+def _restaurant_packet_from_result(result: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(result, dict):
+        return None
+    for key in ("approved_packet", "review_packet", "restaurant_packet", "packet"):
+        packet = result.get(key)
+        if isinstance(packet, dict) and isinstance(packet.get("restaurant_profile"), dict) and isinstance(packet.get("menu_items"), list):
+            return packet
+    if isinstance(result.get("restaurant_profile"), dict) and isinstance(result.get("menu_items"), list):
+        return result
+    nested = result.get("result")
+    if isinstance(nested, dict):
+        return _restaurant_packet_from_result(nested)
+    return None
+
+
+def _restaurant_missing_data_causes(counts: dict[str, Any], runs: dict[str, Any], docs: dict[str, Any], audit_rows) -> list[str]:
+    causes: list[str] = []
+    restaurants = int(counts.get("restaurants") or 0)
+    menu_items = int(counts.get("menu_items") or 0)
+    total_runs = int(runs.get("total_runs") or 0)
+    packet_runs = (
+        int(runs.get("approved_packet_runs") or 0)
+        + int(runs.get("review_packet_runs") or 0)
+        + int(runs.get("direct_packet_runs") or 0)
+    )
+    if restaurants == 0 and total_runs == 0:
+        causes.append("No restaurant rows and no restaurant agent runs are visible to this user/workspace. Most likely this is a different database, different account, different workspace, or the data was deleted with the source document/user.")
+    if restaurants == 0 and total_runs > 0 and packet_runs == 0:
+        causes.append("Restaurant agent runs exist, but none contain a recognizable restaurant_profile/menu_items packet. The workflow may have failed before extraction or stored an unexpected result shape.")
+    if restaurants == 0 and packet_runs > 0:
+        causes.append("Recoverable restaurant packets exist in vertical agent runs but are not appearing as saved restaurants. Refresh should restore them; if not, check backend logs for restore errors.")
+    if restaurants > 0 and menu_items == 0:
+        causes.append("Restaurant records exist but menu item rows are empty. This can happen if Edit/Save was submitted with an empty menu, because saved menus are replaced during update.")
+    for row in audit_rows:
+        action = row.get("action")
+        if action == "restaurant_menu_delete":
+            causes.append("Recent audit log contains restaurant_menu_delete, so a saved restaurant was explicitly deleted from the Restaurant panel.")
+            break
+    for row in audit_rows:
+        action = row.get("action")
+        if action == "restaurant_menu_update":
+            causes.append("Recent audit log contains restaurant_menu_update. If that update had an empty menu payload, old menu items would have been replaced with no items.")
+            break
+    deleted_docs = int(docs.get("deleted_restaurant_documents") or 0)
+    if deleted_docs:
+        causes.append("Some restaurant documents are marked deleted. Deleting a source document can cascade-delete vertical agent runs, which removes the restore source.")
+    if not causes:
+        causes.append("Restaurant data appears present from counts. If the UI is empty, the issue is likely frontend filtering, workspace selection, auth/account mismatch, or stale deployed frontend/backend.")
+    return causes
 
 
 async def _persist_workflow_transcript(
@@ -1256,10 +1497,12 @@ async def _fetch_order_record(db, order_id: str, user_id: str):
     return await db.fetchrow(
         f"""
         SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address,
-               r.phone AS restaurant_phone, r.user_id AS restaurant_owner_id,
+               r.phone AS restaurant_phone, r.email AS restaurant_email,
+               r.user_id AS restaurant_owner_id, owner.email AS restaurant_owner_email,
                r.workspace_id AS restaurant_workspace_id
         FROM restaurant_orders o
         JOIN restaurants r ON r.id=o.restaurant_id
+        LEFT JOIN users owner ON owner.id=r.user_id
         WHERE o.id=$1::uuid
           AND (o.customer_user_id=$2::uuid OR {_restaurant_access_sql("r", "$2")})
         """,
@@ -1332,7 +1575,11 @@ async def _transition_order(
     )
     await _add_order_event(db, str(order["id"]), actor_id, event_type, from_status, to_status, notes)
     if notify_owner:
-        await _notify_restaurant_owner(db, order, actor_id, event_type)
+        await _safe_order_notification(
+            _notify_restaurant_owner(db, order, actor_id, event_type),
+            order,
+            f"restaurant owner {event_type}",
+        )
 
 
 async def _owner_transition_order_endpoint(
@@ -1368,6 +1615,11 @@ async def _owner_transition_order_endpoint(
         event_type=event_type,
         notes=notes,
         timestamp_column=timestamp_column,
+    )
+    await _safe_order_notification(
+        _notify_restaurant_customer(db, order, user_id, event_type, to_status),
+        order,
+        f"customer {event_type}",
     )
     await audit(
         db,
@@ -1422,24 +1674,183 @@ async def _notify_restaurant_owner(db, order, actor_id: str, event_type: str) ->
     owner_id = str(order["restaurant_owner_id"]) if order.get("restaurant_owner_id") else None
     if not owner_id:
         return
-    message = f"New carryout order submitted for {order.get('restaurant_name') or 'restaurant'}"
+    restaurant_name = order.get("restaurant_name") or "restaurant"
+    customer = order.get("customer_name") or order.get("customer_email") or "a customer"
+    message = f"New carryout order from {customer} for {restaurant_name}"
+    await _record_restaurant_notification(
+        db,
+        order,
+        owner_id,
+        channel="in_app",
+        status="unread",
+        message=message,
+        metadata={"event_type": event_type, "actor_id": actor_id, "audience": "restaurant_owner"},
+    )
+    await _send_order_email_to_user(
+        db,
+        owner_id,
+        email=order.get("restaurant_email") or order.get("restaurant_owner_email"),
+        audience="restaurant_owner",
+        status=event_type,
+        message=message,
+        data={
+            "type": "restaurant_order",
+            "order_id": str(order["id"]),
+            "restaurant_id": str(order["restaurant_id"]),
+            "event_type": event_type,
+            "audience": "restaurant_owner",
+        },
+        order=order,
+    )
+
+
+async def _safe_order_notification(notification, order, label: str) -> None:
+    try:
+        await notification
+    except Exception as exc:
+        try:
+            order_id = order.get("id")
+        except Exception:
+            order_id = "unknown"
+        log.warning(
+            "Restaurant order notification failed label=%s order_id=%s: %s",
+            label,
+            order_id,
+            exc,
+        )
+
+
+async def _notify_restaurant_customer(db, order, actor_id: str, event_type: str, to_status: str) -> None:
+    customer_id = str(order["customer_user_id"]) if order.get("customer_user_id") else None
+    if not customer_id:
+        return
+    restaurant_name = order.get("restaurant_name") or "restaurant"
+    messages = {
+        "submitted": f"Your carryout order was submitted to {restaurant_name}.",
+        "accepted": f"{restaurant_name} accepted your carryout order.",
+        "rejected": f"{restaurant_name} could not accept your carryout order.",
+        "ready_for_pickup": f"Your carryout order is ready for pickup at {restaurant_name}.",
+        "completed": f"Your carryout order at {restaurant_name} is complete.",
+    }
+    message = messages.get(to_status, f"Your carryout order at {restaurant_name} is now {to_status}.")
+    await _record_restaurant_notification(
+        db,
+        order,
+        customer_id,
+        channel="in_app",
+        status="unread",
+        message=message,
+        metadata={"event_type": event_type, "actor_id": actor_id, "audience": "customer", "to_status": to_status},
+    )
+    await _send_order_email_to_user(
+        db,
+        customer_id,
+        email=order.get("customer_email"),
+        audience="customer",
+        status=to_status,
+        message=message,
+        data={
+            "type": "restaurant_order",
+            "order_id": str(order["id"]),
+            "restaurant_id": str(order["restaurant_id"]),
+            "event_type": event_type,
+            "status": to_status,
+            "audience": "customer",
+        },
+        order=order,
+    )
+
+
+async def _record_restaurant_notification(
+    db,
+    order,
+    user_id: str,
+    *,
+    channel: str,
+    status: str,
+    message: str,
+    metadata: dict,
+) -> None:
     await db.execute(
         """
         INSERT INTO restaurant_notifications
           (restaurant_id, order_id, user_id, channel, status, message, metadata)
-        VALUES ($1::uuid,$2::uuid,$3::uuid,'in_app','unread',$4,$5::jsonb)
+        VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7::jsonb)
         """,
         str(order["restaurant_id"]),
         str(order["id"]),
-        owner_id,
+        user_id,
+        channel,
+        status,
         message,
-        json.dumps({"event_type": event_type, "actor_id": actor_id}),
+        json.dumps(metadata or {}),
     )
+
+
+async def _send_order_email_to_user(
+    db,
+    user_id: str,
+    *,
+    email: str | None,
+    audience: str,
+    status: str,
+    message: str,
+    data: dict,
+    order,
+) -> None:
+    to_email = (email or "").strip()
+    if not to_email:
+        log.info("No email available for restaurant order notification user_id=%s order_id=%s", user_id, order["id"])
+        return
+    subtotal = ""
+    if order.get("subtotal") is not None:
+        subtotal = f"{order.get('currency') or 'USD'} {float(order.get('subtotal')):.2f}"
+    ok = await send_restaurant_order_email(
+        to_email,
+        audience=audience,
+        restaurant_name=order.get("restaurant_name") or "restaurant",
+        order_id=str(order["id"]),
+        restaurant_id=str(order["restaurant_id"]),
+        status=status,
+        message=message,
+        customer_name=order.get("customer_name") or order.get("customer_email") or "",
+        subtotal=subtotal,
+        app_url=os.getenv("APP_URL", "https://docintel.adar.agomoniai.com"),
+    )
+    await _record_restaurant_notification(
+        db,
+        order,
+        user_id,
+        channel="email",
+        status="sent" if ok else "failed",
+        message=message,
+        metadata={**data, "email": _mask_email(to_email), "provider": "smtp"},
+    )
+
+
+def _mask_email(email: str) -> str:
+    name, _, domain = email.partition("@")
+    if not domain:
+        return ""
+    if len(name) <= 2:
+        masked = name[:1] + "*"
+    else:
+        masked = name[:2] + "***"
+    return f"{masked}@{domain}"
 
 
 def _order_row(row) -> dict[str, Any]:
     data = dict(row)
     return {key: _clean(value) for key, value in data.items()}
+
+
+def _required_restaurant_email(profile: dict[str, Any]) -> str:
+    email = str((profile or {}).get("email") or "").strip()
+    if not email:
+        raise HTTPException(400, "Restaurant email is required")
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(400, "Restaurant email is invalid")
+    return email
 
 
 def _clean(value: Any) -> Any:
