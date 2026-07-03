@@ -7,12 +7,17 @@ import {
   fetchRestaurant,
   fetchRestaurantAgentRun,
   listMyRestaurantOrders,
+  listMyRestaurantFeedback,
+  listRestaurantOwnerFeedback,
   listRestaurantOwnerOrders,
   listRestaurants,
+  recommendRestaurantMenu,
   runRestaurantScribeWorkflow,
   searchRestaurantMenu,
+  submitRestaurantFeedback,
   submitRestaurantOrder,
   updateRestaurant,
+  updateRestaurantFeedbackStatus,
   updateRestaurantOwnerOrder,
 } from '../services/api.js';
 
@@ -48,11 +53,15 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
   const [compareRows, setCompareRows] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchRows, setSearchRows] = useState([]);
+  const [recommendRows, setRecommendRows] = useState([]);
   const [cart, setCart] = useState({ restaurant_id:null, restaurant_name:'', items:[] });
   const [customer, setCustomer] = useState({ name:'', phone:'', email:'', pickup_time_request:'', special_instructions:'' });
   const [draftOrder, setDraftOrder] = useState(null);
   const [myOrders, setMyOrders] = useState([]);
   const [ownerOrders, setOwnerOrders] = useState([]);
+  const [myFeedback, setMyFeedback] = useState([]);
+  const [ownerFeedback, setOwnerFeedback] = useState([]);
+  const [feedbackDraft, setFeedbackDraft] = useState(null);
   const [orderStatusFilter, setOrderStatusFilter] = useState('');
   const workspaceRole = activeWorkspace?.my_role || null;
   const canManageRestaurantOps = !workspaceId || ['editor', 'owner'].includes(workspaceRole);
@@ -63,11 +72,13 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
         ['restaurants', '🍽 Restaurants'],
         ['compare', '⇄ Compare menus'],
         ['orders', '🛒 Carryout orders'],
+        ['feedback', '⭐ Feedback'],
       ]
     : [
         ['restaurants', '🍽 Restaurants'],
         ['compare', '⇄ Compare menus'],
         ['orders', '🛒 My carryout orders'],
+        ['feedback', '⭐ Feedback'],
       ];
   const mediaRef = useRef(null);
   const streamRef = useRef(null);
@@ -109,6 +120,10 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
   useEffect(() => {
     if (tab === 'orders') loadOrders();
   }, [tab, workspaceId, orderStatusFilter]);
+
+  useEffect(() => {
+    if (tab === 'feedback') loadFeedback();
+  }, [tab, workspaceId]);
 
   async function loadRestaurants() {
     try {
@@ -301,12 +316,23 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
     const data = await searchRestaurantMenu({ query: searchQuery, workspaceId });
     setSearchRows(data.items || []);
     setCompareRows([]);
+    setRecommendRows([]);
   }
 
   async function runCompare() {
     if (!compareQuery.trim()) return;
     const data = await compareRestaurantMenu({ query: compareQuery, workspaceId });
     setCompareRows(data.items || []);
+    setSearchRows([]);
+    setRecommendRows([]);
+  }
+
+  async function runRecommend() {
+    const query = compareQuery.trim() || searchQuery.trim();
+    if (!query) return;
+    const data = await recommendRestaurantMenu({ query, workspaceId });
+    setRecommendRows(data.items || []);
+    setCompareRows([]);
     setSearchRows([]);
   }
 
@@ -409,6 +435,71 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
       await loadOrders();
     } catch (e) {
       setError(e.message || `Could not ${action} order`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startFeedback(target = {}) {
+    setFeedbackDraft({
+      restaurant_id: target.restaurant_id || '',
+      restaurant_name: target.restaurant_name || '',
+      menu_item_id: target.menu_item_id || target.id || null,
+      menu_item_name: target.menu_item_name || target.item_name || '',
+      order_id: target.order_id || null,
+      rating: 5,
+      feedback_text: '',
+      tags: [],
+    });
+    setTab('feedback');
+  }
+
+  async function submitFeedbackDraft() {
+    if (!feedbackDraft?.restaurant_id) { setError('Restaurant is required for feedback.'); return; }
+    setBusy(true);
+    setError('');
+    try {
+      await submitRestaurantFeedback({
+        restaurant_id: feedbackDraft.restaurant_id,
+        menu_item_id: feedbackDraft.menu_item_id,
+        order_id: feedbackDraft.order_id,
+        rating: Number(feedbackDraft.rating || 5),
+        feedback_text: feedbackDraft.feedback_text || '',
+        source_type: feedbackDraft.order_id ? 'order' : 'menu',
+        tags: feedbackDraft.tags || [],
+      });
+      setFeedbackDraft(null);
+      await Promise.all([loadFeedback(), loadRestaurants()]);
+      if (selected) await openRestaurant(selected);
+    } catch (e) {
+      setError(e.message || 'Could not submit restaurant feedback');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadFeedback() {
+    try {
+      const [mine, owner] = await Promise.all([
+        listMyRestaurantFeedback(workspaceId),
+        listRestaurantOwnerFeedback({ workspaceId }),
+      ]);
+      setMyFeedback(mine.feedback || []);
+      setOwnerFeedback(owner.feedback || []);
+    } catch (e) {
+      setError(e.message || 'Could not load restaurant feedback');
+    }
+  }
+
+  async function respondFeedback(feedbackId, status = 'acknowledged') {
+    const ownerResponse = window.prompt('Optional restaurant response to customer feedback:', '') || '';
+    setBusy(true);
+    setError('');
+    try {
+      await updateRestaurantFeedbackStatus(feedbackId, { status, ownerResponse, workspaceId });
+      await loadFeedback();
+    } catch (e) {
+      setError(e.message || 'Could not update feedback');
     } finally {
       setBusy(false);
     }
@@ -563,6 +654,7 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
                   <button key={r.id} style={{...s.restaurantRow, ...(selected===r.id?s.selected:{})}} onClick={()=>openRestaurant(r.id)}>
                     <strong>{r.name}</strong>
                     <span>{r.cuisine_type || 'Cuisine not set'} · {r.menu_count || 0} items · {r.workspace_id ? 'Workspace' : 'Personal'}</span>
+                    <RatingBadge item={r} />
                   </button>
                 ))}
                 {!restaurants.length && <p style={s.muted}>No approved restaurants yet.</p>}
@@ -596,9 +688,10 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
               <button style={s.secondaryBtn} onClick={runSearch}>Search</button>
               <input value={compareQuery} onChange={e=>setCompareQuery(e.target.value)} placeholder="Compare item, e.g. chicken biryani" />
               <button style={s.primary} onClick={runCompare}>Compare prices</button>
+              <button style={s.secondaryBtn} onClick={runRecommend}>Recommend</button>
             </div>
             <div style={s.orderLayout}>
-              <MenuTable items={compareRows.length ? compareRows : searchRows} onAdd={addCartItem} />
+              <MenuTable items={recommendRows.length ? recommendRows : compareRows.length ? compareRows : searchRows} onAdd={addCartItem} onFeedback={startFeedback} />
               <CarryoutCart
                 cart={cart}
                 customer={customer}
@@ -634,7 +727,22 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
             </div>
             <div style={s.orderGrid}>
               {canProcessRestaurantOrders && <OrderList title="Restaurant owner queue" orders={ownerOrders} owner onAction={ownerAction} busy={busy} />}
-              <OrderList title="My carryout orders" orders={myOrders} />
+              <OrderList title="My carryout orders" orders={myOrders} onFeedback={startFeedback} />
+            </div>
+          </section>
+        )}
+
+        {tab === 'feedback' && (
+          <section style={s.body}>
+            <div style={s.grid2}>
+              <FeedbackForm draft={feedbackDraft} setDraft={setFeedbackDraft} busy={busy} onSubmit={submitFeedbackDraft} />
+              <FeedbackList
+                title={canProcessRestaurantOrders && ownerFeedback.length ? 'Restaurant feedback queue' : 'My feedback'}
+                feedback={canProcessRestaurantOrders && ownerFeedback.length ? ownerFeedback : myFeedback}
+                owner={canProcessRestaurantOrders && ownerFeedback.length > 0}
+                busy={busy}
+                onRespond={respondFeedback}
+              />
             </div>
           </section>
         )}
@@ -674,6 +782,7 @@ function RestaurantDetail({ data, onEdit, onDelete, busy }) {
         )}
       </div>
       <p style={s.muted}>{r.cuisine_type} · {r.address} · {r.workspace_id ? 'Workspace menu' : 'Personal menu'}</p>
+      <RatingBadge item={r} />
       <p>{r.description}</p>
       <TranscriptBox transcript={data.transcript || ''} />
       {!menuItems.length && (
@@ -796,7 +905,7 @@ function CarryoutCart({ cart, customer, draftOrder, busy, onCustomer, onUpdateIt
   );
 }
 
-function OrderList({ title, orders, owner = false, onAction, busy }) {
+function OrderList({ title, orders, owner = false, onAction, busy, onFeedback = null }) {
   return (
     <div style={s.orderList}>
       <h3 style={s.h3}>{title}</h3>
@@ -813,6 +922,25 @@ function OrderList({ title, orders, owner = false, onAction, busy }) {
           <p style={s.muted}>Customer email: {order.customer_email || 'Not provided'}</p>
           {order.pickup_time_request && <p style={s.muted}>Pickup: {order.pickup_time_request}</p>}
           <OrderItems items={order.order_items} />
+          {!owner && onFeedback && ['submitted','accepted','ready_for_pickup','completed'].includes(order.status) && (
+            <div style={s.actionsTight}>
+              {(order.order_items || []).map(item => (
+                <button
+                  key={item.id || item.menu_item_id || item.item_name}
+                  style={s.secondaryBtn}
+                  onClick={() => onFeedback({
+                    restaurant_id: order.restaurant_id,
+                    restaurant_name: order.restaurant_name,
+                    menu_item_id: item.menu_item_id,
+                    menu_item_name: item.item_name,
+                    order_id: order.id,
+                  })}
+                >
+                  ⭐ Feedback: {item.item_name}
+                </button>
+              ))}
+            </div>
+          )}
           {owner && (
             <div style={s.actionsTight}>
               {order.status === 'submitted' && <button style={s.primary} disabled={busy} onClick={()=>onAction(order.id, 'accept')}>Accept & confirm</button>}
@@ -855,11 +983,11 @@ function OrderItems({ items }) {
   );
 }
 
-function MenuTable({ items, onAdd = null, restaurantName = '' }) {
+function MenuTable({ items, onAdd = null, onFeedback = null, restaurantName = '' }) {
   return (
     <div style={s.tableWrap}>
       <table style={s.table}>
-        <thead><tr><th>Restaurant</th><th>Item</th><th>Category</th><th>Price</th><th>Qty</th><th>Description</th>{onAdd && <th>Order</th>}</tr></thead>
+        <thead><tr><th>Restaurant</th><th>Item</th><th>Rating</th><th>Category</th><th>Price</th><th>Qty</th><th>Description</th>{(onAdd || onFeedback) && <th>Action</th>}</tr></thead>
         <tbody>
           {items.map((item, i) => (
             <tr key={item.id || i}>
@@ -874,17 +1002,112 @@ function MenuTable({ items, onAdd = null, restaurantName = '' }) {
                 {item.item_name}
                 {item.id && <div style={s.micro}>Menu item ID: {item.id}</div>}
               </td>
+              <td><RatingBadge item={item} /></td>
               <td>{item.category}</td>
               <td>{item.price != null ? `$${Number(item.price).toFixed(2)}` : ''}</td>
               <td>{item.quantity}</td>
-              <td>{item.description}</td>
-              {onAdd && <td><button style={s.secondaryBtn} onClick={()=>onAdd(item)}>Add</button></td>}
+              <td>
+                {item.description}
+                {item.recommendation_score != null && (
+                  <div style={s.micro}>Recommended: {item.recommendation_score}/100 · {item.recommendation_reason}</div>
+                )}
+              </td>
+              {(onAdd || onFeedback) && (
+                <td>
+                  <div style={s.actionsTight}>
+                    {onAdd && <button style={s.secondaryBtn} onClick={()=>onAdd(item)}>Add</button>}
+                    {onFeedback && <button style={s.secondaryBtn} onClick={()=>onFeedback(item)}>Feedback</button>}
+                  </div>
+                </td>
+              )}
             </tr>
           ))}
-          {!items.length && <tr><td colSpan={onAdd ? 7 : 6} style={s.empty}>No menu items to show.</td></tr>}
+          {!items.length && <tr><td colSpan={(onAdd || onFeedback) ? 8 : 7} style={s.empty}>No menu items to show.</td></tr>}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function FeedbackForm({ draft, setDraft, busy, onSubmit }) {
+  if (!draft) {
+    return (
+      <div style={s.review}>
+        <h3 style={s.h3}>Customer Feedback</h3>
+        <p style={s.muted}>Select Feedback from a menu row or carryout order item. Ratings appear to customers in restaurant lists, menu search, and price comparisons.</p>
+      </div>
+    );
+  }
+  const tagOptions = ['taste', 'value', 'portion', 'freshness', 'spice', 'packaging', 'wait time', 'accuracy'];
+  const toggleTag = tag => {
+    const tags = draft.tags || [];
+    setDraft({ ...draft, tags: tags.includes(tag) ? tags.filter(t => t !== tag) : [...tags, tag] });
+  };
+  return (
+    <div style={s.review}>
+      <h3 style={s.h3}>Give Feedback</h3>
+      <p style={s.muted}>{draft.restaurant_name || 'Restaurant'} {draft.menu_item_name ? `· ${draft.menu_item_name}` : ''}</p>
+      <label style={s.field}>Rating
+        <select value={draft.rating} onChange={e=>setDraft({ ...draft, rating:Number(e.target.value) })}>
+          {[5,4,3,2,1].map(v => <option key={v} value={v}>{'⭐'.repeat(v)} {v}/5</option>)}
+        </select>
+      </label>
+      <label style={s.field}>Feedback
+        <textarea rows={5} value={draft.feedback_text} onChange={e=>setDraft({ ...draft, feedback_text:e.target.value })} placeholder="What should future customers or the restaurant know?" />
+      </label>
+      <div style={s.tagRow}>
+        {tagOptions.map(tag => (
+          <button key={tag} style={{...s.tagBtn, ...((draft.tags || []).includes(tag) ? s.tagBtnOn : {})}} onClick={()=>toggleTag(tag)} type="button">{tag}</button>
+        ))}
+      </div>
+      <div style={s.actions}>
+        <button style={s.primary} disabled={busy} onClick={onSubmit}>Submit feedback</button>
+        <button style={s.secondaryBtn} disabled={busy} onClick={()=>setDraft(null)}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function FeedbackList({ title, feedback, owner = false, busy, onRespond }) {
+  const rows = Array.isArray(feedback) ? feedback : [];
+  return (
+    <div style={s.orderList}>
+      <h3 style={s.h3}>{title}</h3>
+      {rows.map(row => (
+        <div key={row.id} style={s.orderCard}>
+          <div style={s.detailHead}>
+            <div>
+              <strong>{row.restaurant_name}</strong>
+              <p style={s.muted}>{row.menu_item_name || 'Restaurant feedback'} · {row.verified_order ? 'Verified order' : 'Unverified'} · {row.status}</p>
+            </div>
+            <span style={s.ratingPill}>{'⭐'.repeat(Number(row.rating || 0))} {row.rating}/5</span>
+          </div>
+          {row.feedback_text && <p>{row.feedback_text}</p>}
+          {!!(row.tags || []).length && <p style={s.muted}>Tags: {(row.tags || []).join(', ')}</p>}
+          {row.owner_response && <p style={s.status}>Restaurant response: {row.owner_response}</p>}
+          {owner && (
+            <div style={s.actionsTight}>
+              <button style={s.secondaryBtn} disabled={busy} onClick={()=>onRespond(row.id, 'acknowledged')}>Acknowledge</button>
+              <button style={s.primary} disabled={busy} onClick={()=>onRespond(row.id, 'responded')}>Respond</button>
+              <button style={s.secondaryBtn} disabled={busy} onClick={()=>onRespond(row.id, 'resolved')}>Resolve</button>
+            </div>
+          )}
+        </div>
+      ))}
+      {!rows.length && <p style={s.empty}>No feedback yet.</p>}
+    </div>
+  );
+}
+
+function RatingBadge({ item = {} }) {
+  const avg = item.avg_rating == null ? null : Number(item.avg_rating);
+  const count = Number(item.rating_count || 0);
+  if (!count || !Number.isFinite(avg)) return <span style={s.micro}>No ratings yet</span>;
+  return (
+    <span style={s.ratingInline}>
+      ⭐ {avg.toFixed(1)} · {count} rating{count === 1 ? '' : 's'}
+      {Number(item.verified_rating_count || 0) > 0 ? ` · ${item.verified_rating_count} verified` : ''}
+    </span>
   );
 }
 
@@ -946,6 +1169,10 @@ const s = {
   detail:{ border:'1px solid var(--b2)', borderRadius:8, padding:14, overflow:'auto' },
   detailHead:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, marginBottom:10 },
   actionsTight:{ display:'flex', alignItems:'center', gap:8 },
+  tagRow:{ display:'flex', gap:6, flexWrap:'wrap', margin:'10px 0' },
+  tagBtn:{ border:'1px solid var(--b2)', background:'transparent', color:'var(--muted2)', borderRadius:20, padding:'5px 9px', cursor:'pointer', fontSize:12 },
+  tagBtnOn:{ borderColor:'rgba(251,191,36,.45)', background:'rgba(251,191,36,.12)', color:'#fde68a' },
+  ratingInline:{ display:'inline-flex', alignItems:'center', gap:4, border:'1px solid rgba(251,191,36,.22)', background:'rgba(251,191,36,.08)', color:'#fde68a', borderRadius:20, padding:'2px 7px', fontSize:11, fontWeight:800, width:'fit-content', marginTop:3 },
   dangerSmall:{ background:'rgba(239,68,68,.14)', color:'#fecaca', border:'1px solid rgba(239,68,68,.35)', borderRadius:7, padding:'9px 13px', fontWeight:800, cursor:'pointer' },
   transcriptBox:{ border:'1px solid var(--b2)', borderRadius:8, margin:'12px 0', background:'rgba(255,255,255,.02)' },
   transcriptSummary:{ cursor:'pointer', padding:'10px 12px', color:'#86efac', fontWeight:800, fontSize:13 },
@@ -969,4 +1196,5 @@ const s = {
   orderItem:{ display:'grid', gridTemplateColumns:'minmax(0,1fr) auto', gap:10, alignItems:'start', paddingBottom:7, borderBottom:'1px solid rgba(255,255,255,.06)' },
   orderItemPrice:{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:3, color:'var(--tx2)', fontSize:12, whiteSpace:'nowrap' },
   statusPill:{ display:'inline-flex', alignItems:'center', padding:'3px 8px', borderRadius:999, background:'rgba(74,222,128,.12)', color:'#86efac', fontSize:11, fontWeight:800 },
+  ratingPill:{ display:'inline-flex', alignItems:'center', padding:'3px 8px', borderRadius:999, background:'rgba(251,191,36,.12)', color:'#fde68a', fontSize:11, fontWeight:800, whiteSpace:'nowrap' },
 };

@@ -255,6 +255,11 @@ Features:
 - Restaurant profile and menu item persistence.
 - Menu search.
 - Menu price comparison.
+- Customer ratings and feedback on restaurants/menu items.
+- Verified-order feedback when feedback is linked to a carryout order.
+- Restaurant owner feedback queue with acknowledge/respond/resolve statuses.
+- Rating badges in restaurant list, restaurant detail, menu search, menu compare, and recommendations.
+- Menu recommendations ranked by menu match, price, rating, feedback volume, and verified-order signals.
 - Conversational text and speech menu search.
 - Add menu items from chat to carryout cart.
 - Place carryout order.
@@ -266,11 +271,11 @@ Features:
 
 Restaurant personas:
 
-- Food lover/customer: search menus, compare prices, ask using text or speech, and place carryout orders.
-- Restaurant owner: scribe menus, review extracted menus, edit restaurant details, approve menu updates, and process only orders for their matching restaurant email.
+- Food lover/customer: search menus, compare prices, ask using text or speech, place carryout orders, submit ratings, and review their own feedback history.
+- Restaurant owner: scribe menus, review extracted menus, edit restaurant details, approve menu updates, process only orders for their matching restaurant email, and respond to customer feedback.
 - Restaurant staff: process carryout order queue for their restaurant.
 - Workspace owner: manage all restaurants in a workspace.
-- Workspace viewer: view menus, compare prices, and place orders without editing restaurant data.
+- Workspace viewer: view menus, compare prices, place orders, and leave feedback without editing restaurant data.
 
 Ordering rules:
 
@@ -278,6 +283,9 @@ Ordering rules:
 - Orders are scoped to the workspace where the restaurant/menu was saved.
 - Restaurant owners see only matching restaurant-email orders, unless they are workspace owners.
 - Customers can view their own carryout orders in the active workspace.
+- Customer feedback is scoped to the active workspace and restaurant.
+- Feedback tied to an accessible order is marked as verified.
+- Dismissed feedback is excluded from visible aggregate ratings.
 
 ### Configurable ADK-Style Agent Workflows
 
@@ -437,7 +445,7 @@ Authorization: Bearer <jwt_token>
 | Workspaces | `/api/workspaces` | Workspace and member management |
 | Usage | `/api/usage` | Usage and tier status |
 | Billing | `/api/billing` | Subscription/billing metadata |
-| Feedback | `/api/feedback` | User feedback |
+| Feedback | `/api/feedback` | Chat answer feedback |
 | Tags | `/api/tags` | Document tags |
 | Evals | `/api/evals` | RAG evaluation |
 | Agent evals | `/api/agent-evals` | Vertical workflow evaluation |
@@ -445,7 +453,7 @@ Authorization: Bearer <jwt_token>
 | Voice | `/api/voice` | Voice/audio helper APIs |
 | Lease | `/api/lease` | Lease vertical workflows |
 | Healthcare | `/api/healthcare` | Healthcare workflows |
-| Restaurant | `/api/restaurant` | Restaurant scribe, menu, compare, carryout orders |
+| Restaurant | `/api/restaurant` | Restaurant scribe, menu, compare, recommendations, carryout orders, customer feedback |
 | Admin | `/api/admin` | Admin-only users/documents/platform views |
 
 ## Local Development
@@ -577,6 +585,10 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 9. Add matching menu items to cart.
 10. Place carryout order.
 11. Restaurant owner/staff accepts, rejects, marks ready, or completes the order.
+12. Customer submits restaurant/menu feedback from a menu row or carryout order item.
+13. Verified order feedback updates restaurant and menu-item rating badges.
+14. Restaurant owner reviews feedback in the Feedback tab and can acknowledge, respond, resolve, or dismiss.
+15. Customers use Recommend to see ranked menu options based on match, price, ratings, and verified feedback signals.
 
 ## Deployment
 
@@ -701,6 +713,8 @@ For production:
 2. Apply migrations during a maintenance window when changing existing columns or data.
 3. Verify pgvector extension is enabled.
 4. Verify HNSW/vector indexes after embedding model dimension changes.
+5. Apply restaurant feedback migration when enabling customer ratings:
+   `scripts/20260702_restaurant_feedback_mvp_migration.sql`.
 5. Never change `EMBEDDING_DIM` without re-embedding existing documents.
 6. Validate RBAC and workspace visibility with owner, editor, and viewer users.
 7. Validate restaurant owner-email order scoping before enabling carryout order processing.

@@ -93,6 +93,25 @@ class RestaurantOrderStatusRequest(BaseModel):
     workspace_id: str | None = None
 
 
+class RestaurantFeedbackRequest(BaseModel):
+    restaurant_id: str
+    menu_item_id: str | None = None
+    order_id: str | None = None
+    rating: int
+    feedback_text: str = ""
+    language: str = ""
+    source_type: str = "text"
+    tags: list[str] = []
+    signals: dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
+
+
+class RestaurantFeedbackStatusRequest(BaseModel):
+    status: str = "acknowledged"
+    owner_response: str = ""
+    workspace_id: str | None = None
+
+
 @router.post("/scribe-workflow")
 async def run_restaurant_scribe_workflow(
     background_tasks: BackgroundTasks,
@@ -305,12 +324,24 @@ async def list_restaurants(current_user: CurrentUser, workspace_id: str | None =
                wm.role AS viewer_role,
                COUNT(mi.id)::int AS menu_count,
                MIN(mi.price) FILTER (WHERE mi.price IS NOT NULL) AS min_price,
-               MAX(mi.price) FILTER (WHERE mi.price IS NOT NULL) AS max_price
+               MAX(mi.price) FILTER (WHERE mi.price IS NOT NULL) AS max_price,
+               COALESCE(fb.rating_count, 0)::int AS rating_count,
+               fb.avg_rating AS avg_rating,
+               COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count
         FROM restaurants r
         LEFT JOIN restaurant_menu_items mi ON mi.restaurant_id=r.id
         LEFT JOIN workspace_members wm ON wm.workspace_id=r.workspace_id AND wm.user_id=$1::uuid
+        LEFT JOIN (
+            SELECT restaurant_id,
+                   COUNT(*)::int AS rating_count,
+                   ROUND(AVG(rating)::numeric, 2) AS avg_rating,
+                   COUNT(*) FILTER (WHERE verified_order)::int AS verified_rating_count
+            FROM restaurant_feedback
+            WHERE status <> 'dismissed'
+            GROUP BY restaurant_id
+        ) fb ON fb.restaurant_id=r.id
         WHERE (($2::uuid IS NULL AND r.workspace_id IS NULL) OR r.workspace_id=$2::uuid)
-        GROUP BY r.id, wm.role
+        GROUP BY r.id, wm.role, fb.rating_count, fb.avg_rating, fb.verified_rating_count
         ORDER BY r.workspace_id NULLS LAST, r.updated_at DESC
         LIMIT 200
         """,
@@ -412,9 +443,21 @@ async def get_restaurant(
     user_email = str(current_user.get("email") or "")
     row = await db.fetchrow(
         """
-        SELECT r.*, wm.role AS viewer_role
+        SELECT r.*, wm.role AS viewer_role,
+               COALESCE(fb.rating_count, 0)::int AS rating_count,
+               fb.avg_rating AS avg_rating,
+               COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count
         FROM restaurants r
         LEFT JOIN workspace_members wm ON wm.workspace_id=r.workspace_id AND wm.user_id=$2::uuid
+        LEFT JOIN (
+            SELECT restaurant_id,
+                   COUNT(*)::int AS rating_count,
+                   ROUND(AVG(rating)::numeric, 2) AS avg_rating,
+                   COUNT(*) FILTER (WHERE verified_order)::int AS verified_rating_count
+            FROM restaurant_feedback
+            WHERE status <> 'dismissed'
+            GROUP BY restaurant_id
+        ) fb ON fb.restaurant_id=r.id
         WHERE r.id=$1
           AND (($3::uuid IS NULL AND r.workspace_id IS NULL) OR r.workspace_id=$3::uuid)
         """,
@@ -426,8 +469,21 @@ async def get_restaurant(
         raise HTTPException(404, "Restaurant not found")
     items = await db.fetch(
         """
-        SELECT * FROM restaurant_menu_items
-        WHERE restaurant_id=$1
+        SELECT mi.*,
+               COALESCE(fb.rating_count, 0)::int AS rating_count,
+               fb.avg_rating AS avg_rating,
+               COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count
+        FROM restaurant_menu_items mi
+        LEFT JOIN (
+            SELECT menu_item_id,
+                   COUNT(*)::int AS rating_count,
+                   ROUND(AVG(rating)::numeric, 2) AS avg_rating,
+                   COUNT(*) FILTER (WHERE verified_order)::int AS verified_rating_count
+            FROM restaurant_feedback
+            WHERE status <> 'dismissed' AND menu_item_id IS NOT NULL
+            GROUP BY menu_item_id
+        ) fb ON fb.menu_item_id=mi.id
+        WHERE mi.restaurant_id=$1
         ORDER BY COALESCE(NULLIF(category, ''), 'zzz'), item_name
         """,
         restaurant_id,
@@ -633,9 +689,21 @@ async def search_menu(
     rows = await db.fetch(
         f"""
         SELECT mi.*, r.name AS restaurant_name, r.address, r.address AS restaurant_address,
-               r.phone AS restaurant_phone, r.email AS restaurant_email, r.cuisine_type
+               r.phone AS restaurant_phone, r.email AS restaurant_email, r.cuisine_type,
+               COALESCE(fb.rating_count, 0)::int AS rating_count,
+               fb.avg_rating AS avg_rating,
+               COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count
         FROM restaurant_menu_items mi
         JOIN restaurants r ON r.id=mi.restaurant_id
+        LEFT JOIN (
+            SELECT menu_item_id,
+                   COUNT(*)::int AS rating_count,
+                   ROUND(AVG(rating)::numeric, 2) AS avg_rating,
+                   COUNT(*) FILTER (WHERE verified_order)::int AS verified_rating_count
+            FROM restaurant_feedback
+            WHERE status <> 'dismissed' AND menu_item_id IS NOT NULL
+            GROUP BY menu_item_id
+        ) fb ON fb.menu_item_id=mi.id
         WHERE TRUE
           AND ($1='' OR mi.item_name ILIKE $2 OR mi.description ILIKE $2 OR r.name ILIKE $2)
           AND ($3='' OR r.cuisine_type ILIKE '%' || $3 || '%')
@@ -673,9 +741,21 @@ async def compare_menu_prices(
     rows = await db.fetch(
         f"""
         SELECT mi.*, r.name AS restaurant_name, r.address, r.address AS restaurant_address,
-               r.phone AS restaurant_phone, r.email AS restaurant_email, r.cuisine_type
+               r.phone AS restaurant_phone, r.email AS restaurant_email, r.cuisine_type,
+               COALESCE(fb.rating_count, 0)::int AS rating_count,
+               fb.avg_rating AS avg_rating,
+               COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count
         FROM restaurant_menu_items mi
         JOIN restaurants r ON r.id=mi.restaurant_id
+        LEFT JOIN (
+            SELECT menu_item_id,
+                   COUNT(*)::int AS rating_count,
+                   ROUND(AVG(rating)::numeric, 2) AS avg_rating,
+                   COUNT(*) FILTER (WHERE verified_order)::int AS verified_rating_count
+            FROM restaurant_feedback
+            WHERE status <> 'dismissed' AND menu_item_id IS NOT NULL
+            GROUP BY menu_item_id
+        ) fb ON fb.menu_item_id=mi.id
         WHERE TRUE
           AND (mi.item_name ILIKE $1 OR mi.description ILIKE $1)
           AND ($2='' OR r.cuisine_type ILIKE '%' || $2 || '%')
@@ -696,6 +776,63 @@ async def compare_menu_prices(
         "highest_price": max(prices) if prices else None,
         "items": items,
     }
+
+
+@router.get("/menu/recommend")
+async def recommend_restaurant_menu(
+    current_user: CurrentUser,
+    query: str = Query("", description="Menu item, cuisine, craving, or dietary preference"),
+    cuisine_type: str = Query(""),
+    max_price: float | None = Query(None),
+    workspace_id: str | None = Query(None),
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    if await _can_restore_restaurants(db, user_id, workspace_id):
+        await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
+    q = f"%{query.strip()}%" if query.strip() else "%"
+    rows = await db.fetch(
+        f"""
+        SELECT mi.*, r.name AS restaurant_name, r.address, r.address AS restaurant_address,
+               r.phone AS restaurant_phone, r.email AS restaurant_email, r.cuisine_type,
+               COALESCE(fb.rating_count, 0)::int AS rating_count,
+               fb.avg_rating AS avg_rating,
+               COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count
+        FROM restaurant_menu_items mi
+        JOIN restaurants r ON r.id=mi.restaurant_id
+        LEFT JOIN (
+            SELECT menu_item_id,
+                   COUNT(*)::int AS rating_count,
+                   ROUND(AVG(rating)::numeric, 2) AS avg_rating,
+                   COUNT(*) FILTER (WHERE verified_order)::int AS verified_rating_count
+            FROM restaurant_feedback
+            WHERE status <> 'dismissed' AND menu_item_id IS NOT NULL
+            GROUP BY menu_item_id
+        ) fb ON fb.menu_item_id=mi.id
+        WHERE TRUE
+          AND ($1='' OR mi.item_name ILIKE $2 OR mi.description ILIKE $2 OR r.name ILIKE $2 OR r.cuisine_type ILIKE $2)
+          AND ($3='' OR r.cuisine_type ILIKE '%' || $3 || '%')
+          AND ($4::numeric IS NULL OR mi.price <= $4::numeric)
+          AND ($5::uuid IS NULL OR r.workspace_id=$5::uuid OR r.workspace_id IS NULL)
+          AND LOWER(COALESCE(mi.availability, 'available')) <> 'unavailable'
+        LIMIT 150
+        """,
+        query.strip(),
+        q,
+        cuisine_type.strip(),
+        max_price,
+        workspace_id,
+    )
+    items = []
+    prices = [float(row["price"]) for row in rows if row["price"] is not None]
+    max_seen_price = max(prices) if prices else None
+    for row in rows:
+        item = _menu_search_row(row)
+        item["recommendation_score"] = _restaurant_recommendation_score(item, query, max_seen_price)
+        item["recommendation_reason"] = _restaurant_recommendation_reason(item)
+        items.append(item)
+    items.sort(key=lambda item: (-float(item.get("recommendation_score") or 0), item.get("price") is None, item.get("price") or 0, item.get("restaurant_name") or ""))
+    return {"query": query, "count": len(items), "items": items[:50]}
 
 
 @router.post("/orders/draft")
@@ -941,6 +1078,202 @@ async def submit_restaurant_order(
         user_agent=ua_from(request),
     )
     return await _fetch_order_response(db, order_id, user_id, user_email, body.workspace_id)
+
+
+@router.post("/feedback")
+async def submit_restaurant_feedback(
+    body: RestaurantFeedbackRequest,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    if body.rating < 1 or body.rating > 5:
+        raise HTTPException(400, "Rating must be between 1 and 5")
+    restaurant = await db.fetchrow(
+        """
+        SELECT r.*, wm.role AS viewer_role
+        FROM restaurants r
+        LEFT JOIN workspace_members wm ON wm.workspace_id=r.workspace_id AND wm.user_id=$2::uuid
+        WHERE r.id=$1::uuid
+          AND (r.user_id=$2::uuid OR r.workspace_id IS NULL OR wm.user_id=$2::uuid)
+        """,
+        body.restaurant_id,
+        user_id,
+    )
+    if not restaurant:
+        raise HTTPException(404, "Restaurant not found or not accessible")
+    menu_item_id = _id_text(body.menu_item_id)
+    if menu_item_id:
+        exists = await db.fetchval(
+            "SELECT 1 FROM restaurant_menu_items WHERE id=$1::uuid AND restaurant_id=$2::uuid",
+            menu_item_id,
+            body.restaurant_id,
+        )
+        if not exists:
+            raise HTTPException(400, "Menu item does not belong to this restaurant")
+    order_id = _id_text(body.order_id)
+    verified_order = False
+    if order_id:
+        verified_order = bool(await db.fetchval(
+            """
+            SELECT 1
+            FROM restaurant_orders o
+            LEFT JOIN restaurant_order_items oi ON oi.order_id=o.id
+            WHERE o.id=$1::uuid
+              AND o.restaurant_id=$2::uuid
+              AND o.customer_user_id=$3::uuid
+              AND ($4::uuid IS NULL OR oi.menu_item_id=$4::uuid)
+            """,
+            order_id,
+            body.restaurant_id,
+            user_id,
+            menu_item_id,
+        ))
+        if not verified_order:
+            raise HTTPException(403, "Order is not linked to this customer, restaurant, or menu item")
+    feedback_id = str(uuid.uuid4())
+    workspace_id = str(restaurant["workspace_id"]) if restaurant.get("workspace_id") else None
+    await db.execute(
+        """
+        INSERT INTO restaurant_feedback
+          (id, restaurant_id, menu_item_id, order_id, customer_user_id, workspace_id,
+           rating, feedback_text, language, source_type, tags, signals, verified_order, metadata)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13,$14::jsonb)
+        """,
+        feedback_id,
+        body.restaurant_id,
+        menu_item_id,
+        order_id,
+        user_id,
+        workspace_id,
+        body.rating,
+        sanitize_text_for_storage(body.feedback_text or ""),
+        body.language or "",
+        body.source_type or "text",
+        json.dumps([str(tag).strip() for tag in body.tags if str(tag).strip()][:12]),
+        json.dumps(body.signals if isinstance(body.signals, dict) else {}),
+        verified_order,
+        json.dumps(body.metadata if isinstance(body.metadata, dict) else {}),
+    )
+    await audit(
+        db,
+        user_id=user_id,
+        action="restaurant_feedback_submit",
+        resource_type="restaurant_feedback",
+        resource_id=feedback_id,
+        metadata={"restaurant_id": body.restaurant_id, "menu_item_id": menu_item_id, "order_id": order_id, "rating": body.rating, "verified_order": verified_order},
+        ip_address=ip_from(request),
+        user_agent=ua_from(request),
+    )
+    return {"feedback": await _fetch_feedback_row(db, feedback_id)}
+
+
+@router.get("/feedback")
+async def list_my_restaurant_feedback(
+    current_user: CurrentUser,
+    workspace_id: str | None = Query(None),
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    rows = await db.fetch(
+        """
+        SELECT f.*, r.name AS restaurant_name, mi.item_name AS menu_item_name
+        FROM restaurant_feedback f
+        JOIN restaurants r ON r.id=f.restaurant_id
+        LEFT JOIN restaurant_menu_items mi ON mi.id=f.menu_item_id
+        WHERE f.customer_user_id=$1::uuid
+          AND (($2::uuid IS NULL AND f.workspace_id IS NULL) OR f.workspace_id=$2::uuid)
+        ORDER BY f.created_at DESC
+        LIMIT 100
+        """,
+        user_id,
+        workspace_id,
+    )
+    return {"feedback": [_feedback_row(row) for row in rows]}
+
+
+@router.get("/owner/feedback")
+async def list_restaurant_owner_feedback(
+    current_user: CurrentUser,
+    status: str = Query(""),
+    workspace_id: str | None = Query(None),
+    db=Depends(get_db),
+):
+    user_email = str(current_user.get("email") or "")
+    rows = await db.fetch(
+        f"""
+        SELECT f.*, r.name AS restaurant_name, r.email AS restaurant_email,
+               mi.item_name AS menu_item_name, u.email AS customer_email
+        FROM restaurant_feedback f
+        JOIN restaurants r ON r.id=f.restaurant_id
+        LEFT JOIN restaurant_menu_items mi ON mi.id=f.menu_item_id
+        LEFT JOIN users u ON u.id=f.customer_user_id
+        WHERE {_restaurant_order_manage_sql("r", "$1", "$1")}
+          AND ($2='' OR f.status=$2)
+          AND (($3::uuid IS NULL AND f.workspace_id IS NULL AND r.workspace_id IS NULL)
+               OR (f.workspace_id=$3::uuid AND r.workspace_id=$3::uuid))
+        ORDER BY f.created_at DESC
+        LIMIT 150
+        """,
+        user_email,
+        status.strip(),
+        workspace_id,
+    )
+    return {"feedback": [_feedback_row(row, mask_customer=False) for row in rows]}
+
+
+@router.post("/owner/feedback/{feedback_id}/status")
+async def update_restaurant_feedback_status(
+    feedback_id: str,
+    body: RestaurantFeedbackStatusRequest,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    user_email = str(current_user.get("email") or "")
+    allowed = {"submitted", "acknowledged", "responded", "resolved", "dismissed"}
+    status = body.status if body.status in allowed else "acknowledged"
+    row = await db.fetchrow(
+        f"""
+        SELECT f.*, r.email AS restaurant_email, r.name AS restaurant_name
+        FROM restaurant_feedback f
+        JOIN restaurants r ON r.id=f.restaurant_id
+        WHERE f.id=$1::uuid
+          AND {_restaurant_order_manage_sql("r", "$2", "$3")}
+          AND (($4::uuid IS NULL AND f.workspace_id IS NULL AND r.workspace_id IS NULL)
+               OR (f.workspace_id=$4::uuid AND r.workspace_id=$4::uuid))
+        """,
+        feedback_id,
+        user_id,
+        user_email,
+        body.workspace_id,
+    )
+    if not row:
+        raise HTTPException(404, "Feedback not found or not manageable")
+    await db.execute(
+        """
+        UPDATE restaurant_feedback
+        SET status=$2, owner_response=$3, updated_at=NOW(),
+            responded_at=CASE WHEN $3 <> '' THEN NOW() ELSE responded_at END
+        WHERE id=$1::uuid
+        """,
+        feedback_id,
+        status,
+        sanitize_text_for_storage(body.owner_response or ""),
+    )
+    await audit(
+        db,
+        user_id=user_id,
+        action="restaurant_feedback_status",
+        resource_type="restaurant_feedback",
+        resource_id=feedback_id,
+        metadata={"status": status, "restaurant_id": str(row["restaurant_id"])},
+        ip_address=ip_from(request),
+        user_agent=ua_from(request),
+    )
+    return {"feedback": await _fetch_feedback_row(db, feedback_id, mask_customer=False)}
 
 
 @router.get("/orders")
@@ -2068,6 +2401,39 @@ def _order_row(row) -> dict[str, Any]:
     return cleaned
 
 
+async def _fetch_feedback_row(db, feedback_id: str, mask_customer: bool = True) -> dict[str, Any]:
+    row = await db.fetchrow(
+        """
+        SELECT f.*, r.name AS restaurant_name, r.email AS restaurant_email,
+               mi.item_name AS menu_item_name, u.email AS customer_email
+        FROM restaurant_feedback f
+        JOIN restaurants r ON r.id=f.restaurant_id
+        LEFT JOIN restaurant_menu_items mi ON mi.id=f.menu_item_id
+        LEFT JOIN users u ON u.id=f.customer_user_id
+        WHERE f.id=$1::uuid
+        """,
+        feedback_id,
+    )
+    return _feedback_row(row, mask_customer=mask_customer) if row else {}
+
+
+def _feedback_row(row, mask_customer: bool = True) -> dict[str, Any]:
+    data = dict(row)
+    cleaned = {key: _clean(value) for key, value in data.items()}
+    for key in ("tags", "signals", "metadata"):
+        value = cleaned.get(key)
+        if isinstance(value, str):
+            try:
+                cleaned[key] = json.loads(value)
+            except json.JSONDecodeError:
+                cleaned[key] = [] if key == "tags" else {}
+        elif value is None:
+            cleaned[key] = [] if key == "tags" else {}
+    if mask_customer and cleaned.get("customer_email"):
+        cleaned["customer_email"] = _mask_email(str(cleaned["customer_email"]))
+    return cleaned
+
+
 def _required_restaurant_email(profile: dict[str, Any]) -> str:
     email = str((profile or {}).get("email") or "").strip()
     if not email:
@@ -2103,6 +2469,44 @@ def _json(value: Any) -> dict[str, Any]:
         except json.JSONDecodeError:
             return {}
     return {}
+
+
+def _restaurant_recommendation_score(item: dict[str, Any], query: str, max_seen_price: float | None = None) -> float:
+    text = " ".join(
+        str(item.get(key) or "")
+        for key in ("item_name", "description", "category", "restaurant_name", "cuisine_type")
+    ).lower()
+    terms = [term for term in re.findall(r"[a-z0-9]+", (query or "").lower()) if len(term) > 1]
+    text_score = 0.35 if not terms else min(1.0, sum(1 for term in terms if term in text) / max(len(terms), 1))
+
+    avg_rating = float(item.get("avg_rating") or 0)
+    rating_score = avg_rating / 5 if avg_rating else 0.0
+    verified_score = min(1.0, float(item.get("verified_rating_count") or 0) / 10)
+    popularity_score = min(1.0, float(item.get("rating_count") or 0) / 20)
+
+    price_score = 0.35
+    if item.get("price") is not None and max_seen_price:
+        price_score = max(0.0, 1.0 - (float(item["price"]) / max_seen_price))
+
+    score = (
+        text_score * 0.35
+        + rating_score * 0.25
+        + verified_score * 0.15
+        + price_score * 0.15
+        + popularity_score * 0.10
+    )
+    return round(score * 100, 2)
+
+
+def _restaurant_recommendation_reason(item: dict[str, Any]) -> str:
+    reasons: list[str] = []
+    if item.get("avg_rating"):
+        reasons.append(f"{float(item['avg_rating']):.1f}/5 from {int(item.get('rating_count') or 0)} rating(s)")
+    if item.get("verified_rating_count"):
+        reasons.append(f"{int(item['verified_rating_count'])} verified order rating(s)")
+    if item.get("price") is not None:
+        reasons.append(f"{item.get('currency') or 'USD'} {float(item['price']):.2f}")
+    return "; ".join(reasons) or "Recommended from menu match and current availability"
 
 
 def _safe_filename(name: str, suffix: str = ".txt") -> str:

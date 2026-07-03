@@ -642,6 +642,35 @@ CREATE INDEX IF NOT EXISTS idx_restaurant_notifications_order ON restaurant_noti
 CREATE INDEX IF NOT EXISTS idx_restaurant_notifications_user  ON restaurant_notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_restaurant_notifications_status ON restaurant_notifications(status);
 
+CREATE TABLE IF NOT EXISTS restaurant_feedback (
+    id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    restaurant_id  UUID        NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+    menu_item_id   UUID        REFERENCES restaurant_menu_items(id) ON DELETE SET NULL,
+    order_id       UUID        REFERENCES restaurant_orders(id) ON DELETE SET NULL,
+    customer_user_id UUID      REFERENCES users(id) ON DELETE SET NULL,
+    workspace_id   UUID        REFERENCES workspaces(id) ON DELETE SET NULL,
+    rating         SMALLINT    NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    feedback_text  TEXT        NOT NULL DEFAULT '',
+    language       TEXT        NOT NULL DEFAULT '',
+    source_type    TEXT        NOT NULL DEFAULT 'text',
+    tags           JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    signals        JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    verified_order BOOLEAN     NOT NULL DEFAULT FALSE,
+    status         TEXT        NOT NULL DEFAULT 'submitted',
+    owner_response TEXT        NOT NULL DEFAULT '',
+    metadata       JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ DEFAULT NOW(),
+    responded_at   TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_restaurant_feedback_restaurant ON restaurant_feedback(restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_feedback_menu       ON restaurant_feedback(menu_item_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_feedback_order      ON restaurant_feedback(order_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_feedback_workspace  ON restaurant_feedback(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_feedback_customer   ON restaurant_feedback(customer_user_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_feedback_status     ON restaurant_feedback(status);
+CREATE INDEX IF NOT EXISTS idx_restaurant_feedback_created    ON restaurant_feedback(created_at DESC);
+
 """
 
 

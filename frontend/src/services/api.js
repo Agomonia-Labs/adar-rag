@@ -816,3 +816,42 @@ export async function updateRestaurantOwnerOrder(orderId, action, notes = '', wo
     body: JSON.stringify({ notes, workspace_id: workspaceId }),
   }));
 }
+
+export async function recommendRestaurantMenu({ query = '', cuisineType = '', maxPrice = '', workspaceId = null } = {}) {
+  const params = new URLSearchParams();
+  if (query) params.set('query', query);
+  if (cuisineType) params.set('cuisine_type', cuisineType);
+  if (maxPrice !== '' && maxPrice != null) params.set('max_price', maxPrice);
+  if (workspaceId) params.set('workspace_id', workspaceId);
+  return handleRes(await fetch(`${BASE}/restaurant/menu/recommend?${params.toString()}`, { headers: authHdr() }));
+}
+
+export async function submitRestaurantFeedback(feedback) {
+  return handleRes(await fetch(`${BASE}/restaurant/feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify(feedback),
+  }));
+}
+
+export async function listMyRestaurantFeedback(workspaceId = null) {
+  const params = new URLSearchParams();
+  if (workspaceId) params.set('workspace_id', workspaceId);
+  const qs = params.toString();
+  return handleRes(await fetch(`${BASE}/restaurant/feedback${qs ? `?${qs}` : ''}`, { headers: authHdr() }));
+}
+
+export async function listRestaurantOwnerFeedback({ status = '', workspaceId = null } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (workspaceId) params.set('workspace_id', workspaceId);
+  return handleRes(await fetch(`${BASE}/restaurant/owner/feedback?${params.toString()}`, { headers: authHdr() }));
+}
+
+export async function updateRestaurantFeedbackStatus(feedbackId, { status = 'acknowledged', ownerResponse = '', workspaceId = null } = {}) {
+  return handleRes(await fetch(`${BASE}/restaurant/owner/feedback/${feedbackId}/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({ status, owner_response: ownerResponse, workspace_id: workspaceId }),
+  }));
+}
