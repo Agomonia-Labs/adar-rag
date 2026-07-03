@@ -1,8 +1,11 @@
 # routes/chat.py — 3-stage RAG: Hybrid Retrieval → Gemini Re-rank → Generate
 from __future__ import annotations
 import json, asyncio, logging, re
+from contextlib import suppress
 from difflib import SequenceMatcher
+from decimal import Decimal
 from typing import Any
+from uuid import UUID
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -175,6 +178,8 @@ async def chat_stream_endpoint(
 
                 restaurant_context = ""
                 restaurant_meta: dict = {"enabled": False}
+                restaurant_actions: dict = {}
+                restaurant_action_candidates: list[dict] = []
                 if _is_restaurant_context(doc_rows, question_for_model):
                     async with span("restaurant_db_context", trace_id=trace_id, metadata={"enabled": True}) as sp:
                         try:
@@ -186,10 +191,13 @@ async def chat_stream_endpoint(
                                     question=question_for_model,
                                     chunks=chunks,
                                 )
+                                restaurant_action_candidates = restaurant_meta.pop("action_candidates", []) or []
                         except Exception as exc:
                             log.warning("Restaurant DB context lookup failed; falling back to RAG only: %s", exc)
                             restaurant_context = ""
                             restaurant_meta = {"enabled": True, "error": str(exc), "fallback": "rag_only"}
+                            restaurant_actions = {}
+                            restaurant_action_candidates = []
                         await record_llm_event(
                             trace_id=trace_id,
                             span_id=sp,
@@ -200,7 +208,10 @@ async def chat_stream_endpoint(
                             tool_response=restaurant_meta,
                         )
                     if restaurant_context:
-                        context = f"{restaurant_context}\n\n---\n\n{context}"
+                        if _is_restaurant_ordering_question(question_for_model):
+                            context = restaurant_context
+                        else:
+                            context = f"{restaurant_context}\n\n---\n\n{context}"
 
                 agentic_context = ""
                 agentic_meta: dict = {"enabled": req.agent_mode != "off"}
@@ -263,10 +274,17 @@ async def chat_stream_endpoint(
                     language_instruction = (
                         f"{language_instruction}\n\n"
                         "RESTAURANT ORDERING RULE:\n"
-                        "For restaurant menu, price comparison, carryout, pickup, or ordering questions, use "
-                        "[Restaurant DB Source] rows first when they are present. Include restaurant name, item, price, "
-                        "restaurant ID, email, phone, and address when available so the user can add the item to a "
-                        "carryout cart. If the user asks to order an item, provide an Order Details table with Field "
+                        "For restaurant menu, price comparison, carryout, pickup, or ordering questions, use only "
+                        "[Restaurant DB Source] rows when they are present. Do not fill restaurant ordering rows from "
+                        "regular [Source N] chunks because those chunks do not contain the authoritative restaurant_id "
+                        "or menu_item_id. For price comparisons, use a table "
+                        "with these columns exactly when available: Restaurant, Item, Price, Menu Item ID, Restaurant ID, "
+                        "Email, Phone, Address. These fields allow the UI to render an Add button for the carryout cart. "
+                        "Every menu row shown from a Restaurant DB Source row must include that same row's Menu Item ID "
+                        "and Restaurant ID. If the item spelling in document text differs from the Restaurant DB row "
+                        "for the same restaurant and price, prefer the Restaurant DB IDs and mention the spelling "
+                        "difference briefly only if needed. "
+                        "If the user asks to order an item, provide an Order Details table with Field "
                         "and Value rows for Restaurant, Item, Price, Menu Item ID, Restaurant ID, Email, Phone, and "
                         "Address, then tell the user to click the Add button and place the carryout order from the cart. "
                         "Do not say you cannot help place orders; explain that restaurant acceptance/cancellation happens "
@@ -287,7 +305,11 @@ async def chat_stream_endpoint(
                         tool_request={"messages": messages, "sources": _chunk_trace(chunks, redact_pii=req.redact_pii)},
                         llm_response=redact_text("".join(output_tokens), req.redact_pii).text,
                     )
-                restaurant_actions = {}
+                restaurant_actions = _restaurant_actions_from_candidates(
+                    restaurant_action_candidates,
+                    question_for_model,
+                    "".join(output_tokens),
+                )
                 await finish_trace(trace_id, "success")
                 await queue.put(("done", {
                     "sources": _sanitise(chunks, redact_pii=req.redact_pii),
@@ -303,16 +325,22 @@ async def chat_stream_endpoint(
 
         task = asyncio.create_task(run())
 
-        while True:
-            item = await queue.get()
-            if   item[0] == "token": yield f"data: {json.dumps({'type':'token','text':item[1]})}\n\n"
-            elif item[0] == "done":
-                payload = item[1] if isinstance(item[1], dict) else {"sources": item[1]}
-                yield f"data: {json.dumps({'type':'done', **payload})}\n\n"
-                break
-            elif item[0] == "error": yield f"data: {json.dumps({'type':'error','error':item[1]})}\n\n"; break
+        try:
+            while True:
+                item = await queue.get()
+                if   item[0] == "token": yield f"data: {json.dumps({'type':'token','text':item[1]})}\n\n"
+                elif item[0] == "done":
+                    payload = item[1] if isinstance(item[1], dict) else {"sources": item[1]}
+                    yield f"data: {json.dumps(_json_safe({'type':'done', **payload}))}\n\n"
+                    break
+                elif item[0] == "error": yield f"data: {json.dumps({'type':'error','error':item[1]})}\n\n"; break
 
-        await task
+            await task
+        except asyncio.CancelledError:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+            return
 
     return StreamingResponse(
         generate(),
@@ -487,10 +515,16 @@ async def _restaurant_db_context(
 ) -> tuple[str, dict]:
     safe_workspace_id = _uuid_or_none(workspace_id)
     terms = _restaurant_query_terms(question)
-    rows = await _fetch_restaurant_menu_rows(db, user_id, safe_workspace_id, terms, limit=120)
-    selected = rows[:12]
+    rows = await _fetch_restaurant_menu_rows(db, user_id, safe_workspace_id, terms, limit=300)
+    context_parts = _restaurant_context_parts(question, "", chunks or [])
+    scored_rows = [
+        (round(_restaurant_menu_match_score(row, context_parts), 3), row)
+        for row in rows
+    ]
+    scored_rows.sort(key=lambda item: (-item[0], item[1]["restaurant_name"] or "", item[1]["item_name"] or ""))
+    selected = _select_restaurant_db_context_rows(scored_rows, question)
     if not selected:
-        return "", {"enabled": True, "matched_rows": 0, "available_rows": len(rows)}
+        return "", {"enabled": True, "matched_rows": 0, "available_rows": len(rows), "actions": {}}
 
     lines = ["[Restaurant DB Source: menu/contact rows for ordering]"]
     for index, row in enumerate(selected, start=1):
@@ -512,11 +546,23 @@ async def _restaurant_db_context(
                 ]
             )
         )
+    action_candidates = []
+    for score, row in scored_rows:
+        action_candidates.append({
+            **_restaurant_menu_action_row(row),
+            "menu_item_id": str(row["id"]),
+            "source": "restaurant_db_context",
+            "action_score": score,
+        })
+        if len(action_candidates) >= 60:
+            break
     return "\n".join(lines), {
         "enabled": True,
         "matched_rows": len(selected),
         "available_rows": len(rows),
         "restaurants": sorted({str(row["restaurant_name"]) for row in selected if row["restaurant_name"]}),
+        "query_terms": terms,
+        "action_candidates": action_candidates,
     }
 
 
@@ -552,6 +598,51 @@ async def _fetch_restaurant_menu_rows(db, user_id: str, workspace_id: str | None
     )
 
 
+def _select_restaurant_db_context_rows(scored_rows: list[tuple[float, Any]], question: str, limit: int = 40) -> list[Any]:
+    if not scored_rows:
+        return []
+
+    query_tokens = {
+        token
+        for token in _restaurant_query_terms(question)
+        if token not in {"near", "nearby"}
+    }
+    exact_intent_rows: list[tuple[float, Any]] = []
+    strong_intent_rows: list[tuple[float, Any]] = []
+    fallback_rows: list[tuple[float, Any]] = []
+
+    for score, row in scored_rows:
+        item_tokens = set(_meaningful_restaurant_tokens(row["item_name"] or ""))
+        overlap = len(query_tokens & item_tokens)
+        if query_tokens and query_tokens.issubset(item_tokens):
+            exact_intent_rows.append((score + 200, row))
+        elif query_tokens and overlap >= max(2, len(query_tokens) - 1):
+            strong_intent_rows.append((score + 80 + overlap, row))
+        elif score > 0:
+            fallback_rows.append((score, row))
+
+    selected: list[Any] = []
+    seen_rows: set[str] = set()
+
+    def add_rows(candidates: list[tuple[float, Any]], max_rows: int | None = None) -> None:
+        candidates.sort(key=lambda item: (-item[0], item[1]["restaurant_name"] or "", item[1]["item_name"] or ""))
+        for _, row in candidates:
+            row_id = str(row["id"])
+            if row_id in seen_rows:
+                continue
+            seen_rows.add(row_id)
+            selected.append(row)
+            if len(selected) >= limit or (max_rows is not None and len(selected) >= max_rows):
+                break
+
+    add_rows(exact_intent_rows)
+    if len(selected) < limit:
+        add_rows(strong_intent_rows)
+    if len(selected) < min(12, limit):
+        add_rows(fallback_rows, max_rows=min(12, limit))
+    return selected[:limit]
+
+
 def _is_restaurant_context(docs: list[dict], question: str) -> bool:
     q = (question or "").lower()
     question_match = any(term in q for term in RESTAURANT_TERMS)
@@ -569,6 +660,31 @@ def _is_restaurant_context(docs: list[dict], question: str) -> bool:
             doc_match = True
             break
     return question_match or doc_match
+
+
+def _is_restaurant_ordering_question(question: str) -> bool:
+    q = (question or "").lower()
+    return any(
+        term in q
+        for term in (
+            "menu",
+            "menus",
+            "price",
+            "prices",
+            "compare",
+            "comparison",
+            "order",
+            "carryout",
+            "pickup",
+            "add",
+            "cart",
+            "restaurant id",
+            "menu item id",
+            "email",
+            "phone",
+            "address",
+        )
+    )
 
 
 def _merge_restaurant_answer_actions(items: list[dict], rows: list, restaurant_rows: list, answer_text: str) -> list[dict]:
@@ -627,6 +743,78 @@ def _merge_restaurant_answer_actions(items: list[dict], rows: list, restaurant_r
             "source": "db_menu_item_match" if menu_match else "db_restaurant_match",
         })
     return items[:10]
+
+
+def _restaurant_actions_from_candidates(candidates: list[dict], question: str, answer_text: str) -> dict:
+    if not candidates:
+        return {}
+    question_norm = _normalise_restaurant_text(question)
+    answer_norm = _normalise_restaurant_text(answer_text)
+    answer_raw = (answer_text or "").lower()
+    combined = f"{question_norm} {answer_norm}".strip()
+    scored: list[tuple[float, dict]] = []
+    for item in candidates:
+        item_name = _normalise_restaurant_text(str(item.get("item_name") or ""))
+        restaurant_name = _normalise_restaurant_text(str(item.get("restaurant_name") or ""))
+        restaurant_id = str(item.get("restaurant_id") or "")
+        menu_item_id = str(item.get("menu_item_id") or item.get("id") or "")
+        if not item_name or not restaurant_id or not menu_item_id:
+            continue
+        if menu_item_id.lower() not in answer_raw:
+            continue
+        item_tokens = set(_meaningful_restaurant_tokens(item_name))
+        question_tokens = set(_meaningful_restaurant_tokens(question_norm))
+        answer_tokens = set(_meaningful_restaurant_tokens(answer_norm))
+        item_question_overlap = len(item_tokens & question_tokens) / max(len(item_tokens), 1)
+        item_answer_overlap = len(item_tokens & answer_tokens) / max(len(item_tokens), 1)
+        item_name_in_answer = bool(item_name and item_name in answer_norm)
+        item_name_in_question = bool(item_name and item_name in question_norm)
+        item_relevant = (
+            item_name_in_answer
+            or item_name_in_question
+            or item_answer_overlap >= 0.5
+            or item_question_overlap >= 0.5
+        )
+        if not item_relevant or restaurant_id.lower() not in answer_raw:
+            continue
+        score = float(item.get("action_score") or 0)
+        if item_name_in_answer:
+            score += 80
+        elif item_answer_overlap >= 0.5:
+            score += 45
+        if restaurant_name and restaurant_name in answer_norm:
+            score += 55
+        elif restaurant_name and restaurant_name in combined:
+            score += 25
+        if item_name_in_question:
+            score += 45
+        elif item_question_overlap >= 0.5:
+            score += 35
+        price = item.get("price")
+        if price is not None:
+            price_text = f"{float(price):.2f}".rstrip("0").rstrip(".")
+            if price_text and price_text in answer_norm:
+                score += 10
+        if score >= 70:
+            scored.append((score, item))
+    if not scored:
+        return {}
+    scored.sort(key=lambda pair: (-pair[0], str(pair[1].get("restaurant_name") or ""), str(pair[1].get("item_name") or "")))
+    deduped: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for score, item in scored:
+        key = (str(item.get("restaurant_id") or ""), _normalise_restaurant_text(str(item.get("item_name") or "")))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append({**item, "action_score": round(score, 3)})
+        if len(deduped) >= 8:
+            break
+    return {
+        "type": "restaurant_menu_actions",
+        "source": "restaurant_db_answer_filter",
+        "restaurant_menu_items": deduped,
+    }
 
 
 def _extract_restaurant_answer_rows(answer_text: str) -> list[dict]:
@@ -770,8 +958,19 @@ def _meaningful_restaurant_tokens(text: str) -> list[str]:
     }
     terms = []
     raw_terms = re.findall(r"[a-zA-Z][a-zA-Z0-9'\-]{1,}", text or "")
+    aliases = {
+        "goad": "goat",
+        "good": "goat",
+        "goatdum": "goat",
+        "goadum": "goat",
+        "mutton": "goat",
+        "vejawada": "bezawada",
+        "bezawara": "bezawada",
+        "biriyani": "biryani",
+    }
     for raw in raw_terms:
         term = raw.lower().strip("-'")
+        term = aliases.get(term, term)
         if len(term) < 2 or term in stop or term in terms:
             continue
         terms.append(term)
@@ -828,6 +1027,10 @@ def _restaurant_contact_action_row(row) -> dict:
 
 
 def _action_json_value(value):
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, Decimal):
+        return float(value)
     if hasattr(value, "isoformat"):
         return value.isoformat()
     if hasattr(value, "__str__") and value.__class__.__module__.startswith(("uuid", "decimal")):
@@ -838,6 +1041,22 @@ def _action_json_value(value):
         return [_action_json_value(v) for v in value]
     if isinstance(value, dict):
         return {k: _action_json_value(v) for k, v in value.items()}
+    return value
+
+
+def _json_safe(value):
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, Decimal):
+        return float(value)
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, tuple):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
     return value
 
 

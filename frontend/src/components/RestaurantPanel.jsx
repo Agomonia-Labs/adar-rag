@@ -26,7 +26,7 @@ const LANGUAGES = [
 
 const RECORDING_SEGMENT_MS = 180000;
 
-export default function RestaurantPanel({ workspaceId = null, onClose }) {
+export default function RestaurantPanel({ workspaceId = null, activeWorkspace = null, onClose }) {
   const [tab, setTab] = useState('scribe');
   const [title, setTitle] = useState('');
   const [language, setLanguage] = useState('en-US');
@@ -54,6 +54,21 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
   const [myOrders, setMyOrders] = useState([]);
   const [ownerOrders, setOwnerOrders] = useState([]);
   const [orderStatusFilter, setOrderStatusFilter] = useState('');
+  const workspaceRole = activeWorkspace?.my_role || null;
+  const canManageRestaurantOps = !workspaceId || ['editor', 'owner'].includes(workspaceRole);
+  const canProcessRestaurantOrders = canManageRestaurantOps || ownerOrders.length > 0;
+  const tabs = canManageRestaurantOps
+    ? [
+        ['scribe', '🎙 Scribe intake'],
+        ['restaurants', '🍽 Restaurants'],
+        ['compare', '⇄ Compare menus'],
+        ['orders', '🛒 Carryout orders'],
+      ]
+    : [
+        ['restaurants', '🍽 Restaurants'],
+        ['compare', '⇄ Compare menus'],
+        ['orders', '🛒 My carryout orders'],
+      ];
   const mediaRef = useRef(null);
   const streamRef = useRef(null);
   const segmentChunksRef = useRef([]);
@@ -86,6 +101,10 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
   useEffect(() => {
     loadRestaurants();
   }, [workspaceId]);
+
+  useEffect(() => {
+    if (!tabs.some(([key]) => key === tab)) setTab(tabs[0][0]);
+  }, [canManageRestaurantOps, tab]);
 
   useEffect(() => {
     if (tab === 'orders') loadOrders();
@@ -216,12 +235,16 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
     setSelectedDetail(null);
     setEditingSaved(false);
     setSavedDraft(null);
-    const data = await fetchRestaurant(id);
+    const data = await fetchRestaurant(id, workspaceId);
     setSelectedDetail(data);
   }
 
   function startSavedEdit() {
     if (!selectedDetail) return;
+    if (!selectedDetail?.restaurant?.can_manage) {
+      setError('Only a matching restaurant email or workspace owner/editor can update this menu.');
+      return;
+    }
     setSavedDraft({
       restaurant_profile: { ...(selectedDetail.restaurant || {}) },
       menu_items: (selectedDetail.menu_items || []).map(item => ({ ...item })),
@@ -231,6 +254,10 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
 
   async function saveRestaurantEdits() {
     if (!selected || !savedDraft) return;
+    if (!selectedDetail?.restaurant?.can_manage) {
+      setError('Only a matching restaurant email or workspace owner/editor can update this menu.');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -249,6 +276,10 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
 
   async function removeSavedRestaurant() {
     if (!selected) return;
+    if (!selectedDetail?.restaurant?.can_manage) {
+      setError('Only a matching restaurant email or workspace owner/editor can delete this restaurant.');
+      return;
+    }
     if (!window.confirm('Delete this restaurant, saved menu items, carryout orders, scribe source document, embedded chunks, vectors, and stored files?')) return;
     setBusy(true);
     setError('');
@@ -318,6 +349,7 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
     try {
       const data = await createRestaurantOrderDraft({
         restaurant_id: cart.restaurant_id,
+        workspace_id: workspaceId,
         items: cart.items.map(item => ({
           menu_item_id: item.id,
           quantity: item.quantity_ordered || 1,
@@ -344,7 +376,7 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
     setBusy(true);
     setError('');
     try {
-      const data = await submitRestaurantOrder(orderId, 'Customer confirmed carryout order');
+      const data = await submitRestaurantOrder(orderId, 'Customer confirmed carryout order', workspaceId);
       setDraftOrder(data);
       setCart({ restaurant_id:null, restaurant_name:'', items:[] });
       await loadOrders();
@@ -359,7 +391,7 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
   async function loadOrders() {
     try {
       const [mine, owner] = await Promise.all([
-        listMyRestaurantOrders(),
+        listMyRestaurantOrders(workspaceId),
         listRestaurantOwnerOrders({ status: orderStatusFilter, workspaceId }),
       ]);
       setMyOrders(mine.orders || []);
@@ -373,7 +405,7 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
     setBusy(true);
     setError('');
     try {
-      await updateRestaurantOwnerOrder(orderId, action, `${action} from restaurant owner console`);
+      await updateRestaurantOwnerOrder(orderId, action, `${action} from restaurant owner console`, workspaceId);
       await loadOrders();
     } catch (e) {
       setError(e.message || `Could not ${action} order`);
@@ -446,19 +478,14 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
       <div style={s.modal}>
         <header style={s.header}>
           <div>
-            <h2 style={s.title}>Restaurant Menu Scribe</h2>
+            <h2 style={s.title}>Restaurant Menu Scribe & Carryout Orders</h2>
             <p style={s.subtitle}>Record a restaurant owner conversation, extract profile/menu data, approve it, then compare menus across restaurants.</p>
           </div>
           <button style={s.close} onClick={onClose}>×</button>
         </header>
 
         <nav style={s.tabs}>
-          {[
-            ['scribe', '🎙 Scribe intake'],
-            ['restaurants', '🍽 Restaurants'],
-            ['compare', '⇄ Compare menus'],
-            ['orders', '🛒 Carryout orders'],
-          ].map(([key, label]) => (
+          {tabs.map(([key, label]) => (
             <button key={key} style={{...s.tab, ...(tab===key?s.tabActive:{})}} onClick={() => { setError(''); setTab(key); }}>{label}</button>
           ))}
         </nav>
@@ -590,21 +617,23 @@ export default function RestaurantPanel({ workspaceId = null, onClose }) {
         {tab === 'orders' && (
           <section style={s.body}>
             <div style={s.detailHead}>
-              <h3 style={s.h3}>Carryout Order Processing</h3>
+              <h3 style={s.h3}>{canProcessRestaurantOrders ? 'Carryout Order Processing' : 'My Carryout Orders'}</h3>
               <div style={s.actionsTight}>
-                <select value={orderStatusFilter} onChange={e=>setOrderStatusFilter(e.target.value)}>
-                  <option value="">All owner orders</option>
-                  <option value="submitted">Submitted</option>
-                  <option value="accepted">Accepted</option>
-                  <option value="ready_for_pickup">Ready</option>
-                  <option value="completed">Completed</option>
-                  <option value="rejected">Rejected</option>
-                </select>
+                {canProcessRestaurantOrders && (
+                  <select value={orderStatusFilter} onChange={e=>setOrderStatusFilter(e.target.value)}>
+                    <option value="">All owner orders</option>
+                    <option value="submitted">Submitted</option>
+                    <option value="accepted">Accepted</option>
+                    <option value="ready_for_pickup">Ready</option>
+                    <option value="completed">Completed</option>
+                    <option value="rejected">Rejected</option>
+                  </select>
+                )}
                 <button style={s.secondaryBtn} onClick={loadOrders}>Refresh</button>
               </div>
             </div>
             <div style={s.orderGrid}>
-              <OrderList title="Restaurant owner queue" orders={ownerOrders} owner onAction={ownerAction} busy={busy} />
+              {canProcessRestaurantOrders && <OrderList title="Restaurant owner queue" orders={ownerOrders} owner onAction={ownerAction} busy={busy} />}
               <OrderList title="My carryout orders" orders={myOrders} />
             </div>
           </section>
@@ -632,14 +661,17 @@ function AgentSteps({ steps }) {
 function RestaurantDetail({ data, onEdit, onDelete, busy }) {
   const r = data.restaurant || {};
   const menuItems = data.menu_items || [];
+  const canManage = !!r.can_manage;
   return (
     <>
       <div style={s.detailHead}>
         <h3 style={s.h3}>{r.name}</h3>
-        <div style={s.actionsTight}>
-          <button style={s.secondaryBtn} onClick={onEdit}>Edit</button>
-          <button style={s.dangerSmall} disabled={busy} onClick={onDelete}>Delete</button>
-        </div>
+        {canManage && (
+          <div style={s.actionsTight}>
+            <button style={s.secondaryBtn} onClick={onEdit}>Edit</button>
+            <button style={s.dangerSmall} disabled={busy} onClick={onDelete}>Delete</button>
+          </div>
+        )}
       </div>
       <p style={s.muted}>{r.cuisine_type} · {r.address} · {r.workspace_id ? 'Workspace menu' : 'Personal menu'}</p>
       <p>{r.description}</p>
@@ -780,6 +812,7 @@ function OrderList({ title, orders, owner = false, onAction, busy }) {
           <p style={s.muted}>Customer: {order.customer_name || 'Not provided'} {order.customer_phone ? `· ${order.customer_phone}` : ''}</p>
           <p style={s.muted}>Customer email: {order.customer_email || 'Not provided'}</p>
           {order.pickup_time_request && <p style={s.muted}>Pickup: {order.pickup_time_request}</p>}
+          <OrderItems items={order.order_items} />
           {owner && (
             <div style={s.actionsTight}>
               {order.status === 'submitted' && <button style={s.primary} disabled={busy} onClick={()=>onAction(order.id, 'accept')}>Accept & confirm</button>}
@@ -795,6 +828,33 @@ function OrderList({ title, orders, owner = false, onAction, busy }) {
   );
 }
 
+function OrderItems({ items }) {
+  const rows = Array.isArray(items) ? items : [];
+  if (!rows.length) return <p style={s.muted}>No item details available.</p>;
+  return (
+    <div style={s.orderItems}>
+      {rows.map((item, i) => {
+        const qty = Number(item.quantity || 1);
+        const unit = item.unit_price == null ? null : Number(item.unit_price);
+        const line = item.line_total == null ? (unit == null ? null : unit * qty) : Number(item.line_total);
+        return (
+          <div key={item.id || `${item.item_name}-${i}`} style={s.orderItem}>
+            <div>
+              <strong>{qty} × {item.item_name || 'Menu item'}</strong>
+              {item.category && <span style={s.micro}> {item.category}</span>}
+              {item.instructions && <div style={s.micro}>Notes: {item.instructions}</div>}
+            </div>
+            <div style={s.orderItemPrice}>
+              {unit != null && <span>${unit.toFixed(2)} each</span>}
+              {line != null && <strong>${line.toFixed(2)}</strong>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function MenuTable({ items, onAdd = null, restaurantName = '' }) {
   return (
     <div style={s.tableWrap}>
@@ -803,8 +863,17 @@ function MenuTable({ items, onAdd = null, restaurantName = '' }) {
         <tbody>
           {items.map((item, i) => (
             <tr key={item.id || i}>
-              <td>{item.restaurant_name || restaurantName || ''}</td>
-              <td>{item.item_name}</td>
+              <td>
+                <strong>{item.restaurant_name || restaurantName || ''}</strong>
+                {item.restaurant_id && <div style={s.micro}>Restaurant ID: {item.restaurant_id}</div>}
+                {item.restaurant_email && <div style={s.micro}>Email: {item.restaurant_email}</div>}
+                {item.restaurant_phone && <div style={s.micro}>Phone: {item.restaurant_phone}</div>}
+                {(item.restaurant_address || item.address) && <div style={s.micro}>Address: {item.restaurant_address || item.address}</div>}
+              </td>
+              <td>
+                {item.item_name}
+                {item.id && <div style={s.micro}>Menu item ID: {item.id}</div>}
+              </td>
               <td>{item.category}</td>
               <td>{item.price != null ? `$${Number(item.price).toFixed(2)}` : ''}</td>
               <td>{item.quantity}</td>
@@ -883,6 +952,7 @@ const s = {
   transcriptMeta:{ display:'flex', flexWrap:'wrap', gap:8, padding:'0 12px 8px', color:'var(--muted2)', fontSize:11 },
   transcriptText:{ margin:0, padding:'0 12px 12px', maxHeight:260, overflow:'auto', whiteSpace:'pre-wrap', wordBreak:'break-word', color:'var(--tx2)', fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize:12, lineHeight:1.55 },
   muted:{ color:'var(--muted2)', fontSize:13 },
+  micro:{ color:'var(--muted2)', fontSize:11, lineHeight:1.35, marginTop:3, wordBreak:'break-word' },
   searchBar:{ display:'grid', gridTemplateColumns:'1.2fr auto 1.2fr auto', gap:10, alignItems:'center', marginBottom:12 },
   empty:{ textAlign:'center', color:'var(--muted2)', padding:20 },
   orderLayout:{ display:'grid', gridTemplateColumns:'minmax(0,1fr) 340px', gap:14, alignItems:'start' },
@@ -895,5 +965,8 @@ const s = {
   orderGrid:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 },
   orderList:{ border:'1px solid var(--b2)', borderRadius:8, padding:12, minHeight:300, overflow:'auto' },
   orderCard:{ border:'1px solid rgba(255,255,255,.08)', borderRadius:8, padding:11, background:'rgba(255,255,255,.025)', marginBottom:10 },
+  orderItems:{ display:'flex', flexDirection:'column', gap:7, margin:'10px 0 12px', padding:'9px 10px', border:'1px solid var(--b2)', borderRadius:7, background:'rgba(255,255,255,.025)' },
+  orderItem:{ display:'grid', gridTemplateColumns:'minmax(0,1fr) auto', gap:10, alignItems:'start', paddingBottom:7, borderBottom:'1px solid rgba(255,255,255,.06)' },
+  orderItemPrice:{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:3, color:'var(--tx2)', fontSize:12, whiteSpace:'nowrap' },
   statusPill:{ display:'inline-flex', alignItems:'center', padding:'3px 8px', borderRadius:999, background:'rgba(74,222,128,.12)', color:'#86efac', fontSize:11, fontWeight:800 },
 };

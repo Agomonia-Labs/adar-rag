@@ -10,6 +10,7 @@ import EvalBadges from './EvalBadges.jsx';
 const nanoid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 const QUICK  = ['Summarise all documents','What are the key findings?',
                 'Show data in a table','List all dates and deadlines'];
+const MAX_VISIBLE_SESSIONS = 5;
 const SPEECH_LOCALES = { en:'en-US', es:'es-ES', bn:'bn-BD', hi:'hi-IN', ar:'ar-SA' };
 const SPEECH_LABELS = { en:'English', es:'Spanish', bn:'Bangla', hi:'Hindi', ar:'Arabic' };
 
@@ -249,25 +250,30 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
     const history = messages.filter(m => m.content).slice(-12)
                             .map(({ role, content }) => ({ role, content }));
 
-    await streamChat(
-      { question: q, documentIds: selected, history, workspaceId: activeWorkspace?.id || null, traceId, redactPii },
-      {
-        onToken: t   => setMessages(p => p.map(m => m.id === aid ? { ...m, content: m.content + t } : m)),
-        onDone:  (src, actions) => {
-          setThinking(false);
-          setMessages(p => {
-            const updated = p.map(m => m.id === aid ? { ...m, sources: src || null, actions: actions || null } : m);
-            scheduleSave(sess.id, updated);
-            loadSessions();
-            return updated;
-          });
-        },
-        onError: err => {
-          setMessages(p => p.map(m => m.id === aid ? { ...m, content: `⚠ ${err}` } : m));
-          setThinking(false);
-        },
-      }
-    );
+    try {
+      await streamChat(
+        { question: q, documentIds: selected, history, workspaceId: activeWorkspace?.id || null, traceId, redactPii },
+        {
+          onToken: t   => setMessages(p => p.map(m => m.id === aid ? { ...m, content: m.content + t } : m)),
+          onDone:  (src, actions) => {
+            setThinking(false);
+            setMessages(p => {
+              const updated = p.map(m => m.id === aid ? { ...m, sources: src || null, actions: actions || null } : m);
+              scheduleSave(sess.id, updated);
+              loadSessions();
+              return updated;
+            });
+          },
+          onError: err => {
+            setMessages(p => p.map(m => m.id === aid ? { ...m, content: `⚠ ${err}` } : m));
+            setThinking(false);
+          },
+        }
+      );
+    } catch (err) {
+      setMessages(p => p.map(m => m.id === aid ? { ...m, content: `⚠ ${err?.message || err}` } : m));
+      setThinking(false);
+    }
   }, [thinking, selected, messages, activeSession, scheduleSave, stopListening, activeWorkspace?.id, redactPii]);
 
   const stopServerVoiceInput = useCallback(() => {
@@ -524,19 +530,20 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
           ...base.items,
           {
             id: item.id,
-            menu_item_id: item.menu_item_id || (item.source !== 'chat_answer' && item.source !== 'chat_answer_row' ? item.id : null),
+            menu_item_id: String(item.source || '').startsWith('chat_') ? null : item.menu_item_id || null,
+            restaurant_id: item.restaurant_id || '',
             item_name: item.item_name,
             category: item.category || '',
-              price: item.price,
-              currency: item.currency || 'USD',
-              restaurant_name: item.restaurant_name || '',
-              restaurant_address: item.address || item.restaurant_address || '',
-              restaurant_phone: item.phone || item.restaurant_phone || '',
-              restaurant_email: item.email || item.restaurant_email || '',
-              cuisine_type: item.cuisine_type || '',
-              quantity_ordered: 1,
-              instructions: '',
-            },
+            price: item.price,
+            currency: item.currency || 'USD',
+            restaurant_name: item.restaurant_name || '',
+            restaurant_address: item.address || item.restaurant_address || '',
+            restaurant_phone: item.phone || item.restaurant_phone || '',
+            restaurant_email: item.email || item.restaurant_email || '',
+            cuisine_type: item.cuisine_type || '',
+            quantity_ordered: 1,
+            instructions: '',
+          },
         ],
       };
     });
@@ -600,7 +607,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
     setRestaurantOrderBusy(true);
     setRestaurantOrderMessage('');
     try {
-      const order = await submitRestaurantOrder(restaurantDraftOrder.id, restaurantCustomer.special_instructions);
+      const order = await submitRestaurantOrder(restaurantDraftOrder.id, restaurantCustomer.special_instructions, activeWorkspace?.id || null);
       const submittedOrder = normalizeRestaurantOrderResponse(order);
       setRestaurantDraftOrder(submittedOrder);
       setRestaurantCart({ restaurant_id: null, restaurant_name: '', restaurant: null, items: [] });
@@ -622,6 +629,8 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
     </div>
   );
 
+  const visibleSessions = sessions.slice(0, MAX_VISIBLE_SESSIONS);
+
   return (
     <div style={s.wrap}>
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
@@ -636,17 +645,24 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
               <div style={s.sidebarEmpty}>Loading…</div>
             ) : sessions.length === 0 ? (
               <div style={s.sidebarEmpty}>No sessions yet.<br/>Click ＋ New to start.</div>
-            ) : sessions.map(sess => (
-              <div key={sess.id} onClick={() => openSession(sess)}
-                style={{ ...s.sessionItem, ...(activeSession?.id === sess.id ? s.sessionActive : {}) }}>
-                <div style={s.sessionTitle}>{sess.title}</div>
-                <div style={s.sessionMeta}>
-                  {sess.message_count} msg{sess.message_count !== 1 ? 's' : ''}
-                  {' · '}{new Date(sess.updated_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })}
-                </div>
-                <button style={s.sessionDel} onClick={e => removeSession(sess.id, e)} title="Delete">✕</button>
-              </div>
-            ))}
+            ) : (
+              <>
+                {visibleSessions.map(sess => (
+                  <div key={sess.id} onClick={() => openSession(sess)}
+                    style={{ ...s.sessionItem, ...(activeSession?.id === sess.id ? s.sessionActive : {}) }}>
+                    <div style={s.sessionTitle}>{sess.title}</div>
+                    <div style={s.sessionMeta}>
+                      {sess.message_count} msg{sess.message_count !== 1 ? 's' : ''}
+                      {' · '}{new Date(sess.updated_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })}
+                    </div>
+                    <button style={s.sessionDel} onClick={e => removeSession(sess.id, e)} title="Delete">✕</button>
+                  </div>
+                ))}
+                {sessions.length > MAX_VISIBLE_SESSIONS && (
+                  <div style={s.sidebarMore}>Showing latest {MAX_VISIBLE_SESSIONS} of {sessions.length}</div>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -906,7 +922,10 @@ function Msg({ m, sessionId, prevUserMsg, initialFeedback, onFeedback, onAddRest
 }
 
 function RestaurantActionItems({ actions, content = '', onAdd }) {
-  const items = mergeRestaurantActionItems(parseRestaurantAnswerItems(content));
+  const structuredItems = Array.isArray(actions?.restaurant_menu_items)
+    ? actions.restaurant_menu_items.map(normalizeRestaurantActionItem).filter(Boolean)
+    : [];
+  const items = mergeRestaurantActionItems(structuredItems);
   if (!items.length) return null;
   return (
     <div style={s.restaurantActions}>
@@ -928,7 +947,8 @@ function RestaurantActionItems({ actions, content = '', onAdd }) {
               <div style={s.restaurantDetailLine}>
                 {[item.cuisine_type, item.address, item.phone].filter(Boolean).join(' · ') || 'Restaurant contact details not loaded'}
               </div>
-              {item.restaurant_id && <div style={s.restaurantEmailLine}>ID: {item.restaurant_id}</div>}
+              {item.restaurant_id && <div style={s.restaurantEmailLine}>Restaurant ID: {item.restaurant_id}</div>}
+              {item.menu_item_id && <div style={s.restaurantEmailLine}>Menu Item ID: {item.menu_item_id}</div>}
               {(item.email || item.restaurant_email) && <div style={s.restaurantEmailLine}>Email: {item.email || item.restaurant_email}</div>}
               {!hasDetails && <div style={s.restaurantActionWarning}>Cannot add until restaurant id and notification email are available.</div>}
               <strong style={s.restaurantItemName}>{item.item_name}</strong>
@@ -951,6 +971,31 @@ function RestaurantActionItems({ actions, content = '', onAdd }) {
       </div>
     </div>
   );
+}
+
+function normalizeRestaurantActionItem(item = {}) {
+  const restaurantId = extractUuid(item.restaurant_id || '');
+  if (!restaurantId || !item.item_name) return null;
+  return {
+    id: item.id || item.menu_item_id || `db:${restaurantId}:${item.item_name}:${item.price ?? ''}`,
+    menu_item_id: extractUuid(item.menu_item_id || item.id || '') || null,
+    restaurant_id: restaurantId,
+    restaurant_name: item.restaurant_name || '',
+    restaurant_address: item.address || item.restaurant_address || '',
+    restaurant_phone: item.phone || item.restaurant_phone || '',
+    restaurant_email: item.email || item.restaurant_email || '',
+    address: item.address || item.restaurant_address || '',
+    phone: item.phone || item.restaurant_phone || '',
+    email: item.email || item.restaurant_email || '',
+    cuisine_type: item.cuisine_type || '',
+    item_name: item.item_name || '',
+    category: item.category || '',
+    price: item.price == null ? null : Number(item.price),
+    currency: item.currency || 'USD',
+    quantity: item.quantity || '',
+    description: item.description || 'Matched from the Restaurant DB.',
+    source: item.source || 'restaurant_db_action',
+  };
 }
 
 function mergeRestaurantActionItems(items = []) {
@@ -981,7 +1026,7 @@ function restaurantDetailScore(item = {}) {
 
 function hasRestaurantOrderDetails(item = {}) {
   return Boolean(
-    (item.restaurant_id || item.menu_item_id) &&
+    item.restaurant_id &&
     (item.email || item.restaurant_email) &&
     (item.address || item.restaurant_address || item.phone || item.restaurant_phone)
   );
@@ -1123,38 +1168,48 @@ function normalizeRestaurantOrderResponse(response) {
 function parseRestaurantAnswerItems(text = '') {
   const rows = parseRestaurantOrderDetails(text);
   const lines = String(text || '').split('\n');
+  let headers = [];
   for (const raw of lines) {
     const line = raw.trim();
     if (!line || line.includes('---')) continue;
-    let cells = line.includes('|')
-      ? line.split('|').map(c => c.trim().replace(/^\*\*|\*\*$/g, '')).filter(Boolean)
-      : line.split(/\t+|\s{2,}/).map(c => c.trim()).filter(Boolean);
+    let cells = splitRestaurantAnswerRow(line);
     if (cells.length < 3) continue;
     cells = cells.map(cleanRestaurantAnswerCell);
     const joined = cells.join(' ').toLowerCase();
-    if (joined.includes('restaurant') && (joined.includes('price') || joined.includes('source'))) continue;
-    const price = extractAnswerPrice(cells[2] || cells.slice(2).join(' '));
+    if (joined.includes('restaurant') && (joined.includes('price') || joined.includes('source'))) {
+      headers = cells.map(restaurantNameKey);
+      continue;
+    }
+    const cellByHeader = restaurantAnswerCellsByHeader(headers, cells);
+    const price = extractAnswerPrice(
+      cellByHeader.price ||
+      cellByHeader.unit_price ||
+      cells[2] ||
+      cells.slice(2).join(' ')
+    );
     if (price == null) continue;
-    const restaurantName = cells[0]?.trim();
-    const itemName = cells[1]?.trim();
+    const restaurantName = (cellByHeader.restaurant || cellByHeader['restaurant name'] || cells[0] || '').trim();
+    const itemName = (cellByHeader.item || cellByHeader['menu item'] || cellByHeader['item name'] || cells[1] || '').trim();
     if (!restaurantName || !itemName || /^source\s*\d+$/i.test(itemName)) continue;
-    const restaurantId = cells.find(cell => isUuid(cell)) || '';
-    const email = cells.find(cell => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cell)) || '';
-    const phone = cells.find(cell => /\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(cell)) || '';
-    const address = cells.slice(3).find(cell => (
+    const ids = resolveRestaurantAnswerIds(cellByHeader, cells);
+    const restaurantId = ids.restaurant_id;
+    const menuItemId = ids.menu_item_id;
+    const email = extractEmail(cellByHeader.email || cellByHeader['restaurant email'] || '') || cells.map(extractEmail).find(Boolean) || '';
+    const phone = extractPhone(cellByHeader.phone || cellByHeader['restaurant phone'] || '') || cells.map(extractPhone).find(Boolean) || '';
+    const address = cellByHeader.address || cellByHeader['restaurant address'] || cells.slice(3).find(cell => (
       cell &&
-      cell !== restaurantId &&
-      cell !== email &&
-      cell !== phone &&
-      !isUuid(cell) &&
+      !extractUuid(cell) &&
+      !extractEmail(cell) &&
+      !extractPhone(cell) &&
       !/not provided/i.test(cell) &&
       /\d/.test(cell) &&
       /[a-zA-Z]/.test(cell)
     )) || '';
+    const resolvedRestaurantId = restaurantId;
     rows.push({
-      id: restaurantId ? `answer:${restaurantId}:${itemName}:${price}` : `answer:${restaurantName}:${itemName}:${price}`.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-      menu_item_id: null,
-      restaurant_id: restaurantId,
+      id: menuItemId || (resolvedRestaurantId ? `answer:${resolvedRestaurantId}:${itemName}:${price}` : `answer:${restaurantName}:${itemName}:${price}`.toLowerCase().replace(/[^a-z0-9]+/g, '-')),
+      menu_item_id: menuItemId,
+      restaurant_id: resolvedRestaurantId,
       restaurant_name: restaurantName,
       restaurant_address: address,
       restaurant_phone: phone,
@@ -1174,15 +1229,50 @@ function parseRestaurantAnswerItems(text = '') {
   return rows.slice(0, 10);
 }
 
+function restaurantAnswerCellsByHeader(headers = [], cells = []) {
+  if (!headers.length) return {};
+  return headers.reduce((acc, header, index) => {
+    if (header) acc[header] = cells[index] || '';
+    return acc;
+  }, {});
+}
+
+function splitRestaurantAnswerRow(line = '') {
+  if (line.includes('|')) {
+    let parts = line.split('|');
+    if (parts.length && parts[0].trim() === '') parts = parts.slice(1);
+    if (parts.length && parts[parts.length - 1].trim() === '') parts = parts.slice(0, -1);
+    return parts.map(c => c.trim().replace(/^\*\*|\*\*$/g, ''));
+  }
+  return line.split(/\t+|\s{2,}/).map(c => c.trim()).filter(Boolean);
+}
+
+function resolveRestaurantAnswerIds(cellByHeader = {}, cells = []) {
+  let restaurantId = extractUuid(cellByHeader['restaurant id'] || cellByHeader.restaurant_id || '');
+  let menuItemId = extractUuid(cellByHeader['menu item id'] || cellByHeader.menu_item_id || '');
+  if (restaurantId && menuItemId && restaurantId === menuItemId) {
+    const uniqueIds = Array.from(new Set(cells.map(extractUuid).filter(Boolean)));
+    if (uniqueIds.length > 1) {
+      menuItemId = uniqueIds[0];
+      restaurantId = uniqueIds[1];
+    }
+  }
+  if (!restaurantId && !menuItemId) {
+    restaurantId = cells.map(extractUuid).find(Boolean) || '';
+  }
+  return {
+    restaurant_id: restaurantId || '',
+    menu_item_id: menuItemId || null,
+  };
+}
+
 function parseRestaurantOrderDetails(text = '') {
   const fields = {};
   const lines = String(text || '').split('\n');
   for (const raw of lines) {
     const line = raw.trim();
     if (!line || line.includes('---')) continue;
-    let cells = line.includes('|')
-      ? line.split('|').map(c => c.trim().replace(/^\*\*|\*\*$/g, '')).filter(Boolean)
-      : line.split(/\t+|\s{2,}/).map(c => c.trim()).filter(Boolean);
+    let cells = splitRestaurantAnswerRow(line);
     cells = cells.map(cleanRestaurantAnswerCell);
     if (cells.length !== 2) continue;
     const key = restaurantNameKey(cells[0]);
@@ -1193,15 +1283,15 @@ function parseRestaurantOrderDetails(text = '') {
   const restaurantName = fields.restaurant || fields['restaurant name'] || '';
   const itemName = fields.item || fields['menu item'] || fields.dish || '';
   const price = extractAnswerPrice(fields.price || '');
-  const restaurantId = fields['restaurant id'] || '';
-  if (!restaurantName || !itemName || price == null || !isUuid(restaurantId)) return [];
+  const restaurantId = extractUuid(fields['restaurant id'] || '');
+  if (!restaurantName || !itemName || price == null || !restaurantId) return [];
   const menuItemId = fields['menu item id'] || '';
-  const email = fields.email || '';
-  const phone = fields.phone || '';
+  const email = extractEmail(fields.email || '');
+  const phone = extractPhone(fields.phone || '');
   const address = fields.address || '';
   return [{
     id: `answer:${restaurantId}:${itemName}:${price}`,
-    menu_item_id: isUuid(menuItemId) ? menuItemId : null,
+    menu_item_id: extractUuid(menuItemId) || null,
     restaurant_id: restaurantId,
     restaurant_name: restaurantName,
     restaurant_address: address,
@@ -1230,6 +1320,21 @@ function cleanRestaurantAnswerCell(value = '') {
 
 function isUuid(value = '') {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+}
+
+function extractUuid(value = '') {
+  const match = String(value || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  return match ? match[0] : '';
+}
+
+function extractEmail(value = '') {
+  const match = String(value || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return match ? match[0] : '';
+}
+
+function extractPhone(value = '') {
+  const match = String(value || '').match(/\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/);
+  return match ? match[0].trim() : '';
 }
 
 function extractAnswerPrice(text = '') {
@@ -1304,6 +1409,7 @@ const s = {
   sessionTitle:  { fontSize:12.5, fontWeight:500, color:'var(--tx)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', paddingRight:18 },
   sessionMeta:   { fontSize:10.5, color:'var(--muted2)', marginTop:2 },
   sessionDel:    { position:'absolute', right:6, top:8, background:'none', border:'none', color:'var(--muted2)', cursor:'pointer', fontSize:11, padding:2, opacity:0, transition:'opacity .15s' },
+  sidebarMore:   { fontSize:10.5, color:'var(--muted2)', textAlign:'center', padding:'8px 6px' },
   main:          { flex:1, display:'flex', flexDirection:'column', overflow:'hidden' },
   topBar:        { display:'flex', alignItems:'center', gap:7, padding:'8px 12px', background:'var(--s1)', borderBottom:'1px solid var(--b1)', flexWrap:'wrap', flexShrink:0 },
   sidebarToggle: { fontSize:11.5, padding:'4px 8px', background:'var(--s3)', border:'1px solid var(--b2)', color:'var(--muted2)', borderRadius:6, cursor:'pointer', flexShrink:0 },

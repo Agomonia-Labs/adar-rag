@@ -1,6 +1,7 @@
 # services/notifications.py — transactional email notifications
 from __future__ import annotations
 import logging
+from typing import Any
 from services.email import is_email_configured, send_email
 
 log = logging.getLogger("docintel.notifications")
@@ -76,6 +77,7 @@ async def send_restaurant_order_email(
     restaurant_id: str = "",
     customer_name: str = "",
     subtotal: str = "",
+    order_items: list[dict[str, Any]] | None = None,
     app_url: str = "",
 ) -> bool:
     """Send restaurant carryout order email notifications."""
@@ -99,6 +101,32 @@ Status: {status}
         body += f"Customer: {customer_name}\n"
     if subtotal:
         body += f"Subtotal: {subtotal}\n"
+    if order_items:
+        body += "\nItemized order:\n"
+        for item in order_items:
+            name = str(item.get("item_name") or "Menu item").strip()
+            category = str(item.get("category") or "").strip()
+            quantity = int(item.get("quantity_ordered") or item.get("quantity") or 1)
+            currency = str(item.get("currency") or "USD").strip()
+            unit_price = item.get("unit_price")
+            line_total = item.get("line_total")
+            price_text = ""
+            if unit_price is not None:
+                try:
+                    price_text = f" @ {currency} {float(unit_price):.2f}"
+                except (TypeError, ValueError):
+                    price_text = f" @ {unit_price}"
+            total_text = ""
+            if line_total is not None:
+                try:
+                    total_text = f" = {currency} {float(line_total):.2f}"
+                except (TypeError, ValueError):
+                    total_text = f" = {line_total}"
+            category_text = f" [{category}]" if category else ""
+            body += f"- {quantity} x {name}{category_text}{price_text}{total_text}\n"
+            instructions = str(item.get("instructions") or "").strip()
+            if instructions:
+                body += f"  Notes: {instructions}\n"
     if app_url:
         body += f"\nOpen DocIntel:\n{app_url}\n"
     body += "\n— আদর DocIntel\n"

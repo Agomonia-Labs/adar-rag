@@ -1,832 +1,828 @@
-# 🌿 আদর DocIntel
+# Adar DocIntel
 
-> **A Self-Service Document Intelligence Platform**
-> Upload documents · Auto-chunk · Embed · Chat · Summarize
+Adar DocIntel is a self-service document intelligence platform from Agomonia Labs. It combines horizontal RAG capabilities with domain-specific Agentic AI workflows for healthcare, lease management, restaurant menu intelligence, and other document-heavy verticals.
 
-**Live demo:** https://docintel.adar.agomoniai.com/demo.docintel.html
-**Production:** https://docintel.adar.agomoniai.com
+- Product: https://docintel.adar.agomoniai.com
+- Product demo: https://docintel.adar.agomoniai.com/demo.docintel.html
+- Agomonia Labs: https://labs.agomoniai.com
 
-Built by [Agomonia Labs](https://agomoniai.com) on the **ADAR** platform — purpose-built AI assistants for real-world domains.
+## What DocIntel Does
 
----
+DocIntel turns documents, transcripts, and structured domain workflows into searchable, reviewable, conversational intelligence.
 
-## Table of Contents
+Core capabilities:
 
-1. [What it does](#what-it-does)
-2. [Vertical agentic workflows](#vertical-agentic-workflows)
-3. [Architecture](#architecture)
-4. [Design decisions](#design-decisions)
-5. [Data pipeline](#data-pipeline)
-6. [Database schema](#database-schema)
-7. [GCS folder structure](#gcs-folder-structure)
-8. [API reference](#api-reference)
-9. [File structure](#file-structure)
-10. [Local development](#local-development)
-11. [GCP production deployment](#gcp-production-deployment)
-12. [Configuration reference](#configuration-reference)
-13. [Security checklist](#security-checklist)
+- Upload PDFs, DOCX, CSV, text files, images, audio, and domain-specific document sets.
+- Extract text with document parsers and OCR support for scanned/image documents.
+- Detect document language and support multilingual interaction in English, Spanish, Bengali, Hindi, and Arabic.
+- Classify documents with Gemini using `GOOGLE_AI_KEY`.
+- Chunk documents with metadata, persist source/chunks in Google Cloud Storage, and store embeddings in PostgreSQL with pgvector.
+- Search with hybrid retrieval: vector search, full-text search, reciprocal rank fusion, and Gemini reranking.
+- Chat with citations, source previews, streaming answers, and optional PII redaction.
+- Summarize documents and multi-document sets.
+- Compare documents and domain objects.
+- Use voice input for chat and workflow intake where browser support is available.
+- Track traces, spans, retrieved context, tool calls, LLM prompts/responses, evaluations, usage, and audit history.
+- Manage workspaces, RBAC, usage tiers, billing/subscription state, and admin controls.
 
----
+## Product Layers
 
-## What it does
+DocIntel is intentionally split into a reusable horizontal layer and specialized vertical layers.
 
-আদর DocIntel turns static documents into a conversational knowledge base.
+| Layer | Purpose |
+| --- | --- |
+| Horizontal document intelligence | Ingestion, OCR, classification, language support, chunking, embeddings, hybrid search, rerank, chat, summaries, compare, PII redaction, tracing, evaluation, governance, RBAC, usage metering |
+| Vertical Agentic AI workflows | Domain-specific orchestration using configurable agents, tools, review screens, approvals, persistence, and searchable outputs |
+| Operational workflow layer | Approval queues, carryout orders, after-visit summary artifacts, obligation checklists, owner queues, notifications, and audit trails |
 
-| Step | Trigger | What happens |
-|------|---------|--------------|
-| **Register / Login** | User | JWT issued, bcrypt password hashing, role-based access |
-| **Upload** | User | File saved to GCS; background chunking starts automatically |
-| **Chunking** | Automatic | Text extracted → 350-word windows (60-word overlap) → saved to GCS with metadata JSON |
-| **View source** | User | Signed GCS URL opens the original file (1-hour expiry) |
-| **View chunks** | User | Slide-over panel shows every chunk with word count, GCS path, and full text |
-| **Embed** | User clicks ⚡ | Chunks fetched from GCS → Gemini embedding REST API → stored in pgvector |
-| **Chat** | User | Question embedded → pgvector cosine similarity → Gemini streams grounded answer + citations |
-| **Summarize** | User | 5 summary types, direct or map-reduce, streaming output — no embedding required |
-| **Admin** | Admin user | Full user/document management across the entire platform |
+## Major Features
 
----
+### Self-Service Ingestion
 
-## Vertical agentic workflows
+1. User uploads a document or transcript/audio file.
+2. Backend saves the source artifact to GCS.
+3. Text extraction runs in the background.
+4. Extracted text is chunked using sliding windows.
+5. Chunk metadata and chunk text are saved to GCS.
+6. Document status is updated in PostgreSQL.
+7. User can embed chunks into pgvector.
+8. The document becomes available for chat, search, summarize, compare, and vertical workflows.
 
-DocIntel separates the reusable horizontal document-intelligence layer from domain-specific vertical workflows.
+### Classification
 
-| Layer | Capabilities |
-|-------|--------------|
-| **Horizontal RAG platform** | Upload, OCR, extraction, PII redaction, language detection, chunking, embeddings, hybrid search, rerank, citations, chat, summaries, compares, traces, audit, workspaces, usage metering |
-| **Lease intelligence** | Lease abstraction, critical dates, obligations, clause flags, risk flags, amendment comparison, human approval, approved packet persistence |
-| **Healthcare intelligence** | Clinical document intelligence, clinical scribe, SOAP note draft, patient summary, follow-up checklist, prior authorization readiness, PHI/governance review |
-| **Restaurant intelligence** | Restaurant owner scribe intake, long audio segmentation, full transcript persistence, menu/profile extraction, deterministic menu item parsing, edit/approve/save, menu search and price comparison |
+DocIntel classifies documents by domain and type, such as:
 
-### Restaurant menu scribe workflow
+- General
+- Lease
+- Lease extension/amendment
+- Healthcare clinical document
+- Healthcare prior authorization document
+- Restaurant/menu document
 
-The restaurant vertical is designed for real owner/operator conversations, including long menu walkthroughs.
+Classification is powered by Gemini and uses `GOOGLE_AI_KEY`. The implementation logs confidence, source, sample size, and fallback reason so silent failures are visible.
 
-1. The browser records restaurant/menu intake audio in complete standalone segments.
-2. Each segment is uploaded to GCS and transcribed independently.
-3. Segment transcripts are merged into one full transcript with segment labels.
-4. The full transcript is saved and shown to the user for review.
-5. The agent workflow runs on transcript text, not directly on audio.
-6. Profile extraction identifies restaurant name, description, cuisine, address, phone, website, hours, service options, and payment options.
-7. Menu extraction uses both LLM transcript-window extraction and deterministic item-price pattern parsing.
-8. Deterministic normalization preserves every extracted row so long menus are not silently shortened by a later LLM call.
-9. The owner reviews and edits restaurant profile and menu rows before approval.
-10. Approved restaurants and menu items are saved to relational tables for search, comparison, and future recommendation workflows.
+### Multilingual Support
 
-Key restaurant APIs:
+Supported interaction languages:
 
-| API | Purpose |
-|-----|---------|
-| `POST /api/restaurant/scribe-workflow` | Record/upload one or more audio segments and start the restaurant workflow |
-| `GET /api/restaurant/agent-runs/{run_id}` | Poll agent status, transcript, steps, and extracted packet |
-| `POST /api/restaurant/agent-runs/{run_id}/approve` | Save approved restaurant profile and menu items |
-| `GET /api/restaurant/restaurants` | List saved restaurants |
-| `GET /api/restaurant/restaurants/{restaurant_id}` | Open restaurant, menu items, and source transcript |
-| `PUT /api/restaurant/restaurants/{restaurant_id}` | Edit saved restaurant profile and menu |
-| `DELETE /api/restaurant/restaurants/{restaurant_id}` | Delete restaurant and menu rows |
-| `GET /api/restaurant/menu/search` | Search menu items across restaurants |
-| `GET /api/restaurant/menu/compare` | Compare item prices across participating restaurants |
+- English
+- Spanish
+- Bengali
+- Hindi
+- Arabic
 
-Restaurant tuning:
+Users can work with multilingual documents and ask questions in supported languages. Voice input and transcript workflows can also support multilingual use cases depending on browser and transcription support.
 
-| Environment variable | Default | Purpose |
-|----------------------|---------|---------|
-| `RESTAURANT_SCRIBE_MAX_MB` | `25` | Max total uploaded/recorded restaurant audio size |
-| `RESTAURANT_TRANSCRIPTION_MAX_OUTPUT_TOKENS` | `8192` | Gemini output limit per segment transcription |
-| `RESTAURANT_TRANSCRIPT_WINDOW_CHARS` | `16000` | Transcript window size for agent extraction |
-| `RESTAURANT_TRANSCRIPT_WINDOW_OVERLAP` | `1200` | Overlap between transcript windows |
-| `RESTAURANT_TRANSCRIPT_MAX_WINDOWS` | `12` | Max transcript windows processed per workflow |
+### Chat, Retrieval, and Conversation
 
----
+Chat uses:
+
+- Query embedding
+- Hybrid retrieval from pgvector and full-text search
+- Reciprocal rank fusion
+- Optional Gemini reranking
+- Grounded context construction
+- Streaming Gemini answer generation
+- Citations and source previews
+- Trace recording for retrieval, context, prompt, and response
+
+Restaurant menu/order questions additionally use structured Restaurant DB context so restaurant IDs, menu item IDs, email, phone, and address can be returned reliably for ordering.
+
+### Summarization
+
+DocIntel supports:
+
+- Executive summary
+- Bullet summary
+- Section summary
+- Detailed summary
+- Custom prompt summary
+- Multi-document summary
+- Map-reduce summarization for larger documents
+
+### Voice Input
+
+Voice support includes:
+
+- Browser Web Speech API based chat input where supported.
+- Direct post-to-chat behavior after speech capture.
+- Healthcare clinical scribe audio workflow.
+- Restaurant scribe audio workflow.
+
+Browser note:
+
+- Chrome/Edge provide the best Web Speech API support.
+- Safari and Firefox may block or limit Web Speech API speech recognition depending on browser, OS, network, and permission model.
+- Server-side upload/transcription workflows are preferred for production-grade audio capture.
+
+### PII Redaction
+
+PII redaction can identify and mask sensitive data before it is sent into selected flows or displayed back to the user. It considers common PII formats, spacing variations, and healthcare/governance use cases.
+
+### Traceability and Governance
+
+DocIntel records production-grade traceability:
+
+- Request trace ID
+- User and workspace context
+- Retrieved chunks
+- Agentic workflow context
+- Tool/function call data
+- LLM prompts and responses
+- Trace spans and timing
+- Evaluation results
+- Governance flags
+- Audit records
+- Field-level change history for approved healthcare workflow outputs
+
+The admin dashboard can inspect traces, spans, retrieved context, tool calls, and LLM responses.
+
+### Usage Metering
+
+Usage limits can be enforced by tier for:
+
+- Queries
+- Uploads
+- Documents
+- Storage
+- Summaries
+- Embeddings
+- Agent workflows
+- Other configured events
+
+The Usage panel exposes usage status and configured limits to the user.
+
+## Vertical Workflows
+
+### Lease Intelligence
+
+Lease workflows support real estate and lease management.
+
+Features:
+
+- Upload lease and amendments.
+- Classify lease documents.
+- Extract lease abstract.
+- Ask lease questions with citations.
+- Extract critical dates.
+- Compare amendment to original lease.
+- Generate obligation checklist.
+- Review clause flags.
+- Review risk flags.
+- Save approved abstract and approved workflow output.
+- Reuse saved lease abstract in agentic workflow.
+
+Agentic workflow sequence:
+
+1. Agent steps
+2. Summary
+3. Lease abstract
+4. Critical dates
+5. Obligation checklist
+6. Clause flags
+7. Risk flags
+
+### Healthcare Intelligence
+
+Healthcare workflows support clinical documents, patient-friendly summaries, clinical scribe, and prior authorization readiness.
+
+Implemented healthcare workflows:
+
+- Clinical document workflow
+- Clinical scribe workflow
+- Prior authorization workflow
+- Patient-ready After Visit Summary PDF workflow
+
+Healthcare document types:
+
+- After visit summaries
+- Clinical notes
+- Lab reports
+- Medication lists
+- Prior history
+- Referral notes
+- Payer policy documents
+- Prior authorization request packets
+- Patient-doctor visit transcripts
+
+Clinical scribe flow:
+
+1. Record or upload clinical conversation audio.
+2. Confirm consent.
+3. Generate transcript.
+4. Run multi-agent workflow.
+5. Draft SOAP note.
+6. Create patient-friendly visit summary.
+7. Extract follow-up checklist.
+8. Review PHI/governance/quality flags.
+9. Approve fields with RBAC and audit trail.
+10. Generate patient-ready After Visit Summary PDF.
+11. Save PDF to GCS.
+12. Chunk and embed AVS as a searchable clinical document.
+
+Prior authorization flow:
+
+1. Intake patient/encounter context.
+2. Read patient evidence from clinical documents.
+3. Read payer policy criteria.
+4. Map each payer criterion to patient evidence.
+5. Identify missing evidence and submission risk.
+6. Generate human-review prior authorization packet.
+
+Healthcare personas:
+
+- Patient: understand visit, instructions, labs, medications, and follow-ups.
+- Caregiver: track tasks, care gaps, and medication changes.
+- Provider/clinician: review SOAP note, clinical context, and care plan.
+- Small clinic staff: reduce documentation work and coordinate follow-ups.
+- Care coordinator: view patient story across documents and visits.
+- Prior authorization team: find evidence faster and check policy readiness.
+- Compliance team: inspect PHI flags, traceability, approvals, and field changes.
+
+### Restaurant Menu Scribe and Carryout Orders
+
+The restaurant vertical turns restaurant/menu conversations into searchable menu intelligence and carryout ordering workflows.
+
+Features:
+
+- Restaurant owner scribe intake.
+- Audio upload/recording and transcript persistence.
+- Long transcript segmentation.
+- Restaurant profile extraction.
+- Menu extraction from transcript windows.
+- Deterministic menu item parsing for long menus.
+- Owner review/edit/approval.
+- Restaurant profile and menu item persistence.
+- Menu search.
+- Menu price comparison.
+- Conversational text and speech menu search.
+- Add menu items from chat to carryout cart.
+- Place carryout order.
+- Restaurant owner queue.
+- Accept, reject, ready-for-pickup, and complete order states.
+- Customer order history.
+- Email notification with itemized breakdown.
+- Workspace and owner-email scoped RBAC.
+
+Restaurant personas:
+
+- Food lover/customer: search menus, compare prices, ask using text or speech, and place carryout orders.
+- Restaurant owner: scribe menus, review extracted menus, edit restaurant details, approve menu updates, and process only orders for their matching restaurant email.
+- Restaurant staff: process carryout order queue for their restaurant.
+- Workspace owner: manage all restaurants in a workspace.
+- Workspace viewer: view menus, compare prices, and place orders without editing restaurant data.
+
+Ordering rules:
+
+- Carryout only.
+- Orders are scoped to the workspace where the restaurant/menu was saved.
+- Restaurant owners see only matching restaurant-email orders, unless they are workspace owners.
+- Customers can view their own carryout orders in the active workspace.
+
+### Configurable ADK-Style Agent Workflows
+
+Agent workflows are configured with JSON files under:
+
+```text
+backend/config/agent_workflows/
+```
+
+Current configs:
+
+- `lease_phase2.json`
+- `healthcare_phase1.json`
+- `healthcare_prior_auth_phase1.json`
+- `healthcare_transcription_phase1.json`
+
+The generic workflow wrapper supports orchestrator/sub-agent concepts and can be extended for new verticals such as healthcare imaging, legal, insurance, finance, brokerage, restaurant operations, and more.
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Browser                                                                    │
-│                                                                             │
-│  React 18 + Vite — hosted on Firebase Hosting                              │
-│  https://docintel.adar.agomoniai.com  (Route 53 CNAME → Firebase)         │
-│                                                                             │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────────────────┐   │
-│  │  📂 Documents   │  │   💬 Chat        │  │  ⚙ Admin Dashboard      │   │
-│  │                 │  │                 │  │                          │   │
-│  │  Stats bar      │  │  Chip doc sel.  │  │  Real-time stats cards   │   │
-│  │  Drop zone      │  │  SSE messages   │  │  Users table             │   │
-│  │  Doc cards      │  │  Markdown table │  │  Documents table         │   │
-│  │  Left strip     │  │  Source viewer  │  │  Promote/Delete          │   │
-│  │  Chunks panel   │  │  localStorage   │  │                          │   │
-│  │  Summary panel  │  │  history        │  │                          │   │
-│  └────────┬────────┘  └───────┬─────────┘  └──────────────────────────┘   │
-│           │                   │                                             │
-│    /api/* via Firebase    SSE direct to Cloud Run (bypasses 60s timeout)   │
-│    Hosting rewrite        VITE_STREAM_BASE env var                         │
-└───────────┼───────────────────┼─────────────────────────────────────────────┘
-            │ HTTPS + Bearer JWT│
-            ▼                   ▼
-┌───────────────────────────────────────────────────────────────────────────┐
-│  Cloud Run — docintel-backend  (us-central1)                             │
-│  Python 3.12 · FastAPI · Uvicorn · asyncpg                               │
-│                                                                           │
-│  Auth routes         /api/auth/register|login|me                         │
-│  Document routes     /api/documents/ CRUD + view-url + chunks + embed    │
-│  Chat route          /api/chat/stream          → SSE token stream        │
-│  Summarize routes    /api/summarize/document/*/stream                    │
-│                      /api/summarize/documents/stream  (multi-doc)        │
-│  Admin routes        /api/admin/stats|users|documents                    │
-│                                                                           │
-│  ┌────────────────┐  ┌──────────────────┐  ┌────────────────────────┐   │
-│  │  auth/         │  │  services/       │  │  routes/               │   │
-│  │  service.py    │  │  llm.py          │  │  documents.py          │   │
-│  │  bcrypt + JWT  │  │  REST API only   │  │  chat.py               │   │
-│  │                │  │  (no Gemini SDK) │  │  summarize.py          │   │
-│  │  dependencies  │  │                  │  │  admin.py              │   │
-│  │  get_current_  │  │  storage.py GCS  │  │                        │   │
-│  │  user          │  │  extractor.py    │  │                        │   │
-│  │                │  │  chunker.py      │  │                        │   │
-│  │                │  │  vectordb.py     │  │                        │   │
-│  └────────────────┘  └──────────────────┘  └────────────────────────┘   │
-└──────┬──────────────────────────┬──────────────────────┬──────────────────┘
-       │                          │                      │
-       ▼                          ▼                      ▼
-┌──────────────┐     ┌────────────────────────┐   ┌──────────────────────┐
-│ Cloud SQL    │     │ Google Cloud Storage   │   │ Gemini REST API      │
-│ PostgreSQL15 │     │ docintel-documents     │   │                      │
-│ + pgvector   │     │                        │   │ Embed:               │
-│              │     │ users/                 │   │  v1/models/          │
-│ users        │     │  {uid}/                │   │  gemini-embedding-2  │
-│ documents    │     │   documents/           │   │  :embedContent       │
-│ document_    │     │    {did}/              │   │  768 dims via REST   │
-│  chunks      │     │     source/file        │   │                      │
-│ (vec 768)    │     │     chunks/            │   │ Chat + Summarize:    │
-│ HNSW index   │     │      chunk_*.txt       │   │  v1beta/models/      │
-│ cosine sim   │     │      _metadata.json    │   │  gemini-1.5-flash    │
-│              │     │                        │   │  :streamGenerateContent│
-└──────────────┘     └────────────────────────┘   └──────────────────────┘
+```mermaid
+flowchart TB
+  User["User / Workspace Member"] --> Frontend["React + Vite Frontend"]
+  Frontend --> API["FastAPI Backend on Cloud Run or Docker"]
+
+  API --> Auth["Auth, RBAC, Workspaces"]
+  API --> Ingestion["Document / Audio Ingestion"]
+  API --> Chat["Chat, Summarize, Compare"]
+  API --> Agents["Vertical Agentic Workflows"]
+  API --> Traces["Tracing, Eval, Audit, Usage"]
+
+  Ingestion --> GCS["Google Cloud Storage: source files, chunks, transcripts, PDFs"]
+  Ingestion --> Extract["Extractor, OCR, Chunker, Classifier"]
+  Extract --> DB["PostgreSQL + pgvector"]
+
+  Chat --> DB
+  Chat --> Gemini["Gemini / OpenAI APIs"]
+  Agents --> DB
+  Agents --> Gemini
+  Agents --> GCS
+  Traces --> DB
+
+  API --> Email["Email Notifications"]
 ```
 
-### Infrastructure map (GCP project: `bdas-493785`)
+### Backend Components
 
-| Component | Service | Name |
-|-----------|---------|------|
-| Frontend | Firebase Hosting | `docintel-adar` → `docintel-adar.web.app` |
-| Backend | Cloud Run | `docintel-backend` (`us-central1`) |
-| Database | Cloud SQL | `docintel-db` (PostgreSQL 15, pgvector) |
-| Storage | Cloud Storage | `docintel-documents` |
-| Registry | Artifact Registry | `us-central1-docker.pkg.dev/bdas-493785/docintel/` |
-| DNS | Route 53 | `docintel.adar.agomoniai.com` → Firebase |
-| Secrets | Secret Manager | JWT, DB URL, Gemini key, GCS bucket |
-| Identity | Service Account | `docintel-sa@bdas-493785.iam.gserviceaccount.com` |
+| Component | Responsibility |
+| --- | --- |
+| `backend/main.py` | FastAPI app, CORS, health checks, router registration, startup schema initialization |
+| `backend/auth/` | Registration, login, JWT, password hashing, current user dependencies |
+| `backend/database/` | asyncpg pool, schema creation, pgvector setup |
+| `backend/routes/documents.py` | Upload, classify, chunk, view, embed, delete, reclassify |
+| `backend/routes/chat.py` | Streaming RAG chat, restaurant DB context, agentic context, tracing |
+| `backend/routes/summarize.py` | Streaming summarization |
+| `backend/routes/compare.py` | Document comparison |
+| `backend/routes/lease.py` | Lease vertical APIs |
+| `backend/routes/healthcare.py` | Healthcare vertical APIs |
+| `backend/routes/restaurant.py` | Restaurant vertical APIs, menu, order, owner queue |
+| `backend/routes/traces.py` | Trace inspection APIs |
+| `backend/routes/agent_evals.py` | Agent workflow evaluation APIs |
+| `backend/routes/usage.py` | Usage and tier limits |
+| `backend/routes/workspaces.py` | Workspace membership and RBAC |
+| `backend/services/llm.py` | Gemini/OpenAI calls, embeddings, streaming generation |
+| `backend/services/vectordb.py` | pgvector storage and hybrid retrieval |
+| `backend/services/adk_workflow.py` | Generic configurable multi-agent workflow runner |
+| `backend/services/*_intelligence.py` | Domain-specific intelligence and normalization logic |
+| `backend/services/tracing.py` | Trace, span, and LLM event persistence |
+| `backend/services/email.py` and `notifications.py` | Email notification support |
 
----
+### Frontend Components
 
-## Design decisions
+| Component | Responsibility |
+| --- | --- |
+| `frontend/src/App.jsx` | Auth state, navigation, workspace/vertical routing |
+| `DocumentsTab.jsx` | Upload, document cards, classification, chunks, embedding |
+| `ChatTab.jsx` | Streaming chat, source previews, voice input, restaurant add-to-cart actions |
+| `SummaryPanel.jsx` | Summary workflows |
+| `ComparePanel.jsx` | Document comparison |
+| `LeasePanel.jsx` | Lease abstraction, agent workflow, approval, display |
+| `HealthcarePanel.jsx` | Healthcare clinical, scribe, prior auth, AVS workflows |
+| `RestaurantPanel.jsx` | Restaurant scribe, menu editing, compare menus, carryout orders |
+| `WorkspacesTab.jsx` | Workspace membership and switching |
+| `UsagePanel.jsx` | Tier and usage visibility |
+| `AdminDashboard.jsx` | Admin users, documents, traces, evaluations |
+| `EvalPanel.jsx` and `EvalBadges.jsx` | Evaluation result display |
 
-### Why Gemini REST API (no SDK) for generation
+### Data Stores
 
-The `google-generativeai` Python SDK uses gRPC with Cloud Run's metadata server for authentication. This triggers a `503 Illegal metadata` error on Cloud Run, even when an API key is explicitly configured. The SDK retries for 600 seconds before failing.
+| Store | Data |
+| --- | --- |
+| PostgreSQL | Users, workspaces, documents, chunks, vectors, traces, evals, vertical workflow runs, restaurant/menu/order records, lease/healthcare outputs |
+| pgvector | 768-dimension Gemini embeddings or configured provider embeddings |
+| GCS | Original source files, extracted chunks, transcripts, AVS PDFs, generated artifacts |
+| Browser storage | Limited local UI/session state such as chat history |
 
-**Fix:** All Gemini calls go through `httpx` directly to the REST API with `?key=API_KEY` as a query parameter, completely bypassing the metadata server.
+## Retrieval Design
 
-```python
-# Embeddings — v1 (stable, no systemInstruction needed)
-url = "https://generativelanguage.googleapis.com/v1/models/gemini-embedding-2:embedContent"
+1. User submits a question.
+2. Query is embedded.
+3. pgvector vector search retrieves semantically similar chunks.
+4. Full-text search retrieves lexical matches.
+5. Reciprocal rank fusion combines vector and lexical candidates.
+6. Gemini reranker scores query/chunk pairs.
+7. Top chunks are converted into grounded context.
+8. Domain contexts are optionally added:
+   - Lease/healthcare agent outputs
+   - Restaurant DB context for menu/order questions
+9. Gemini streams the final answer.
+10. Sources, actions, and trace metadata are returned to the frontend.
 
-# Chat/Summarize — v1beta (supports systemInstruction field)
-url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent"
-```
+## Security, Governance, and RBAC
 
-### Why pgvector 768 dimensions
+DocIntel includes:
 
-pgvector's HNSW index has a hard limit of 2000 dimensions. `gemini-embedding-2` supports `outputDimensionality` to reduce output size. Setting `outputDimensionality=768` gives good retrieval quality while staying well under the limit.
+- JWT authentication.
+- Password hashing.
+- Workspace membership checks.
+- Workspace owner/editor/viewer behavior.
+- Admin role.
+- Restaurant owner-email matching for restaurant order processing.
+- Healthcare persona-aware approval and field-level audit.
+- PII redaction support.
+- Traceability of prompt/context/response/tool events.
+- Usage metering and subscription gates.
+- GCS signed URLs instead of public source files.
+- Soft/hard delete handling depending on workflow.
 
-### Why Firebase Hosting rewrites + direct Cloud Run for SSE
+Recommended production practices:
 
-Firebase Hosting rewrites to Cloud Run have a **60-second timeout** on streaming responses. Regular API calls (upload, list, delete) are fast and go through Firebase rewrites at `/api/**`. SSE streaming (chat, summarize) go directly to the Cloud Run URL via `VITE_STREAM_BASE` to bypass this timeout.
+- Use Secret Manager for all secrets.
+- Use a Cloud Run service account instead of local key files.
+- Keep GCS buckets private.
+- Restrict CORS origins.
+- Enable Cloud SQL backups.
+- Enable Cloud Run logs/metrics/alerts.
+- Review trace retention and PHI/PII policies before healthcare production use.
+- Validate notification settings before enabling order workflows.
 
-```
-Regular:  Browser → Firebase Hosting → Cloud Run
-SSE:      Browser → Cloud Run directly (CORS: docintel.adar.agomoniai.com)
-```
+## Main API Groups
 
-### Why asyncpg (not SQLAlchemy)
+All authenticated APIs require:
 
-FastAPI's async model benefits from a native async Postgres driver. asyncpg is faster, lighter, and avoids SQLAlchemy ORM complexity for this use case. All queries are parameterized raw SQL, preventing injection.
-
-### Why bcrypt directly (not passlib)
-
-bcrypt v4 changed its API and broke passlib compatibility. Using `import bcrypt` directly avoids the dependency conflict.
-
-### Why map-reduce for large document summarization
-
-The Gemini 1.5 Flash context window handles most documents in a single call. For documents exceeding ~50,000 characters, `summarize.py` automatically switches to map-reduce:
-
-1. **Map phase** — summarize each batch of 6 chunks independently
-2. **Reduce phase** — combine all batch summaries into the final output
-
-Progress is streamed to the frontend via SSE `meta` events.
-
-### Color-coded AI responses
-
-The RAG system prompt instructs Gemini to use specific markdown conventions as semantic signals:
-
-| Convention | Frontend color | Semantic meaning |
-|---|---|---|
-| `**bold**` | Amber `#fbbf24` | Key findings, critical numbers, conclusions |
-| `*italic*` | Blue `#93c5fd` | Context, qualifications, background |
-| Numbers: `$2.4M`, `17%` | Green `#4ade80` | Auto-detected metrics |
-| `## Heading` | Bright green | Section titles |
-| `> blockquote` | Amber panel | Key takeaway or warning |
-
-### Chat history persistence
-
-Chat history is stored in `localStorage` per user (`chat_history_{userId}`) — last 50 messages. This survives page refreshes and tab restores on the same device. No backend database table is required.
-
----
-
-## Data pipeline
-
-```
-User uploads file
-      │
-      ▼
-FastAPI receives multipart → saves to GCS:
-  users/{uid}/documents/{did}/source/{filename}
-  PostgreSQL: documents row (status='uploading')
-      │
-      ▼ (background task)
-services/extractor.py
-  PDF  → PyMuPDF (text-based) or Gemini Vision OCR (scanned)
-  DOCX → python-docx
-  CSV  → csv module
-  IMG  → Gemini Vision REST API
-  TXT  → direct read
-      │
-      ▼
-services/chunker.py
-  350-word sliding window, 60-word overlap
-  Each chunk: {index, word_count, char_count, gcs_path}
-      │
-      ▼
-GCS: users/{uid}/documents/{did}/chunks/
-  _metadata.json   ← document info + full chunk list
-  chunk_0000.txt
-  chunk_0001.txt
-  ...
-PostgreSQL: status='chunked', chunk_count=N
-      │
-      ▼ (user clicks ⚡ Embed)
-services/llm.py → embed()
-  For each chunk text:
-    POST /v1/models/gemini-embedding-2:embedContent
-    → 768-dimensional vector
-      │
-      ▼
-services/vectordb.py → store_embedding()
-  INSERT INTO document_chunks
-    (document_id, user_id, chunk_index, content, embedding)
-PostgreSQL: status='embedded'
-      │
-      ▼ (user sends chat message)
-services/llm.py → embed_query()
-  POST /v1/models/gemini-embedding-2:embedContent
-  taskType: RETRIEVAL_QUERY → 768-dim query vector
-      │
-      ▼
-services/vectordb.py → find_similar()
-  SELECT ... ORDER BY embedding <=> $query_vec
-  WHERE user_id = $uid AND document_id = ANY($doc_ids)
-  LIMIT 6                        ← TOP_K=6
-      │
-      ▼
-routes/chat.py → chat_stream()
-  Build context string from top-6 chunks
-  POST /v1beta/models/gemini-1.5-flash:streamGenerateContent
-    systemInstruction: RAG prompt + color formatting rules
-    contents: [{role, content}] × last 12 messages
-  Stream tokens via SSE to browser
-```
-
----
-
-## Database schema
-
-```sql
--- Extensions
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "vector";
-
--- Users
-CREATE TABLE IF NOT EXISTS users (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    email           TEXT UNIQUE NOT NULL,
-    hashed_password TEXT NOT NULL,
-    full_name       TEXT,
-    role            TEXT NOT NULL DEFAULT 'user',   -- 'user' | 'admin'
-    created_at      TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Documents (one row per uploaded file)
-CREATE TABLE IF NOT EXISTS documents (
-    id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id          UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    original_name    TEXT NOT NULL,           -- original filename shown in UI
-    filename         TEXT NOT NULL,           -- sanitized storage filename
-    file_type        TEXT NOT NULL,           -- pdf | docx | csv | image | text
-    file_size        BIGINT NOT NULL,
-    gcs_source_path  TEXT NOT NULL,           -- users/{uid}/documents/{did}/source/file.pdf
-    gcs_chunks_dir   TEXT NOT NULL,           -- users/{uid}/documents/{did}/chunks/
-    status           TEXT NOT NULL DEFAULT 'uploading',
-    -- status values: uploading → chunking → chunked → embedding → embedded | error
-    chunk_count      INT DEFAULT 0,
-    error_message    TEXT,
-    created_at       TIMESTAMPTZ DEFAULT NOW(),
-    updated_at       TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Vector chunks (created when user triggers embedding)
-CREATE TABLE IF NOT EXISTS document_chunks (
-    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    document_id    UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    user_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    chunk_index    INT NOT NULL,
-    chunk_total    INT NOT NULL,
-    content        TEXT NOT NULL,
-    embedding      vector(768),               -- 768-dim Gemini embeddings
-    chunk_metadata JSONB DEFAULT '{}',
-    created_at     TIMESTAMPTZ DEFAULT NOW()
-);
-
--- HNSW index for fast cosine similarity (pgvector)
--- Created automatically on first embed; supports up to 2000 dims
-CREATE INDEX IF NOT EXISTS document_chunks_embedding_idx
-    ON document_chunks
-    USING hnsw (embedding vector_cosine_ops)
-    WITH (m = 16, ef_construction = 64);
-```
-
----
-
-## GCS folder structure
-
-Every user's data is completely isolated by path prefix:
-
-```
-gs://docintel-documents/
-  users/
-    {user_uuid}/
-      documents/
-        {doc_uuid}/
-          source/
-            Q3_Report.pdf               ← original uploaded file
-          chunks/
-            _metadata.json              ← document info + full chunk index
-            chunk_0000.txt              ← chunk 0 text (≈350 words)
-            chunk_0001.txt              ← chunk 1 text
-            chunk_0002.txt
-            ...
-```
-
-**`_metadata.json` schema:**
-
-```json
-{
-  "document": {
-    "id": "91f2d246-9d40-416f-acb6-c9fa886fcd9f",
-    "user_id": "a4b8c2d1-...",
-    "filename": "Q3_Report.pdf",
-    "original_name": "Q3 Financial Report 2024.pdf",
-    "file_type": "pdf",
-    "file_size": 2457600,
-    "total_chunks": 42,
-    "created_at": "2024-10-15T10:30:00Z"
-  },
-  "chunks": [
-    {
-      "index": 0,
-      "word_count": 347,
-      "char_count": 1923,
-      "gcs_path": "users/uid/documents/did/chunks/chunk_0000.txt"
-    },
-    {
-      "index": 1,
-      "word_count": 351,
-      "char_count": 1981,
-      "gcs_path": "users/uid/documents/did/chunks/chunk_0001.txt"
-    }
-  ]
-}
-```
-
----
-
-## API reference
-
-All endpoints except `/api/auth/*` and `/api/health` require:
-```
+```http
 Authorization: Bearer <jwt_token>
 ```
 
-### Health
+| API Group | Prefix | Purpose |
+| --- | --- | --- |
+| Health | `/api/health` | Backend and dependency status |
+| Auth | `/api/auth` | Register, login, current user, password reset |
+| Documents | `/api/documents` | Upload, classify, chunks, embed, delete |
+| Chat | `/api/chat` | Streaming RAG chat |
+| Chat sessions | `/api/chat/sessions` | Conversation/session history |
+| Summarize | `/api/summarize` | Streaming document summaries |
+| Compare | `/api/compare` | Document comparison |
+| Workspaces | `/api/workspaces` | Workspace and member management |
+| Usage | `/api/usage` | Usage and tier status |
+| Billing | `/api/billing` | Subscription/billing metadata |
+| Feedback | `/api/feedback` | User feedback |
+| Tags | `/api/tags` | Document tags |
+| Evals | `/api/evals` | RAG evaluation |
+| Agent evals | `/api/agent-evals` | Vertical workflow evaluation |
+| Traces | `/api/traces` | Trace flow/span/LLM event inspection |
+| Voice | `/api/voice` | Voice/audio helper APIs |
+| Lease | `/api/lease` | Lease vertical workflows |
+| Healthcare | `/api/healthcare` | Healthcare workflows |
+| Restaurant | `/api/restaurant` | Restaurant scribe, menu, compare, carryout orders |
+| Admin | `/api/admin` | Admin-only users/documents/platform views |
 
-```
-GET /api/health
-→ {"status":"ok","llm":"gemini","db_connected":true}
-```
-
-### Auth
-
-| Method | Path | Body | Response |
-|--------|------|------|----------|
-| POST | `/api/auth/register` | `{email, password, full_name}` | `{message, user_id, email}` |
-| POST | `/api/auth/login` | `{email, password}` | `{access_token, user_id, email, full_name, role}` |
-| GET | `/api/auth/me` | — | `{id, email, full_name, role, created_at}` |
-
-### Documents
-
-| Method | Path | Notes |
-|--------|------|-------|
-| POST | `/api/documents/upload` | multipart `files[]`, max 500 per user |
-| GET | `/api/documents/` | list current user's documents |
-| GET | `/api/documents/{id}` | single document detail |
-| GET | `/api/documents/{id}/view-url` | signed GCS URL (1-hour expiry) |
-| GET | `/api/documents/{id}/chunks` | `{document, chunks[]}` from GCS metadata |
-| GET | `/api/documents/{id}/chunks/{n}` | `{content, index, word_count, ...}` |
-| POST | `/api/documents/{id}/embed` | triggers embedding background task |
-| DELETE | `/api/documents/{id}` | removes GCS files + pgvector rows + DB row |
-
-### Chat
-
-```
-POST /api/chat/stream
-Content-Type: application/json
-Authorization: Bearer <token>
-
-{
-  "question": "What was Q3 revenue?",
-  "document_ids": ["uuid1", "uuid2"],
-  "history": [
-    {"role": "user",      "content": "previous question"},
-    {"role": "assistant", "content": "previous answer"}
-  ]
-}
-```
-
-SSE event stream response:
-
-```
-data: {"type":"token","text":"Revenue"}
-data: {"type":"token","text":" grew"}
-data: {"type":"done","sources":[{"doc_name":"..","chunk_index":0,"similarity":0.94,"preview":"..."}]}
-data: {"type":"error","error":"message"}
-```
-
-### Summarize
-
-```
-POST /api/summarize/document/{id}/stream
-Content-Type: application/json
-
-{
-  "summary_type": "executive",    // executive|bullets|sections|detailed|custom
-  "custom_prompt": "",            // required when summary_type="custom"
-  "chunk_indices": []             // optional: summarize specific chunks only
-}
-```
-
-```
-POST /api/summarize/documents/stream    // multi-document
-
-{
-  "document_ids": ["uuid1", "uuid2"],
-  "summary_type": "detailed",
-  "custom_prompt": ""
-}
-```
-
-SSE events: `token` / `done` / `error` / `meta` (map-reduce progress)
-
-### Admin (role=admin required)
-
-| Method | Path | Notes |
-|--------|------|-------|
-| GET | `/api/admin/stats` | total users, docs, vectors, bytes |
-| GET | `/api/admin/users` | all users with doc counts |
-| PATCH | `/api/admin/users/{id}/role` | `{"role":"admin"}` or `{"role":"user"}` |
-| DELETE | `/api/admin/users/{id}` | delete user + all data cascade |
-| GET | `/api/admin/documents` | all documents across all users |
-| DELETE | `/api/admin/documents/{id}` | force delete any document |
-
----
-
-## File structure
-
-```
-docintel-v4/
-├── README.md
-├── DEPLOY.md                        ← full GCP deployment walkthrough
-├── .env                             ← local config (never commit)
-├── .deploy-config                   ← GCP project vars (auto-generated by setup.sh)
-├── docker-compose.yml               ← local dev (postgres + backend + frontend)
-├── firebase.json                    ← Firebase Hosting + Cloud Run rewrite
-├── .firebaserc                      ← Firebase project = bdas-493785
-├── deploy.sh                        ← master deploy script (--backend / --frontend)
-│
-├── scripts/
-│   ├── setup.sh                     ← one-time GCP infra + IAM
-│   ├── secrets.sh                   ← populate GCP Secret Manager
-│   ├── setup-pgvector.sh            ← enable pgvector on Cloud SQL
-│   ├── deploy-backend.sh            ← docker build → push → cloud run deploy
-│   └── deploy-frontend.sh           ← npm build → firebase deploy
-│
-├── backend/
-│   ├── main.py                      ← FastAPI app, lifespan, CORS, routers
-│   ├── requirements.txt
-│   ├── Dockerfile                   ← python:3.12-slim, libglib2.0 libgomp1 libgl1
-│   ├── scripts/
-│   │   └── create_admin.py          ← interactive admin promotion script
-│   ├── auth/
-│   │   ├── service.py               ← bcrypt direct (no passlib) + JWT/jose
-│   │   ├── dependencies.py          ← get_current_user, get_admin_user
-│   │   └── router.py                ← /register /login /me
-│   ├── database/
-│   │   ├── connection.py            ← asyncpg pool, Cloud SQL socket URL parser
-│   │   └── models.py                ← CREATE TABLE + HNSW index on boot
-│   ├── routes/
-│   │   ├── documents.py             ← upload, list, view-url, chunks, embed, delete
-│   │   ├── chat.py                  ← user-scoped streaming RAG via SSE
-│   │   ├── summarize.py             ← 5-type streaming summarization, map-reduce
-│   │   └── admin.py                 ← stats, users, documents management
-│   └── services/
-│       ├── llm.py                   ← Gemini via httpx REST (no SDK), OpenAI fallback
-│       │                               embed: v1 REST, chat: v1beta REST
-│       ├── storage.py               ← GCS upload/download/signed URL (ADC on Cloud Run)
-│       ├── extractor.py             ← PyMuPDF, python-docx, csv, Gemini Vision OCR
-│       ├── chunker.py               ← 350-word windows, 60-word overlap
-│       └── vectordb.py              ← pgvector store + user-scoped cosine search
-│
-└── frontend/
-    ├── package.json
-    ├── vite.config.js               ← dev proxy /api → :8000
-    ├── .env.production              ← VITE_STREAM_BASE=https://cloud-run-url
-    ├── public/
-    │   └── demo.docintel.html       ← 11-slide product demo, Web Speech API narration
-    └── src/
-        ├── main.jsx
-        ├── App.jsx                  ← auth state machine, tab layout, JWT restore
-        ├── index.css                ← dark theme CSS variables (demo palette)
-        ├── pages/
-        │   └── AuthPages.jsx        ← Login + Register + demo link
-        ├── components/
-        │   ├── DocumentsTab.jsx     ← stats bar, drop zone, doc cards, status strips
-        │   ├── ChunksViewer.jsx     ← slide-over chunk browser with text preview
-        │   ├── SummaryPanel.jsx     ← 5-type streaming summary, map-reduce progress
-        │   ├── ChatTab.jsx          ← chip selector, SSE chat, source cards, localStorage
-        │   ├── AdminDashboard.jsx   ← stats grid, users table, documents table
-        │   ├── MarkdownRenderer.jsx ← tables, headings, bold/italic/code, blockquote
-        │   │                           color-coded: amber=important, blue=context, green=metrics
-        │   └── Toast.jsx            ← fixed-position toasts (success/error/info)
-        └── services/
-            └── api.js               ← all fetch calls, SSE streaming, Bearer auth
-```
-
----
-
-## Local development
+## Local Development
 
 ### Prerequisites
 
-- Docker + Docker Compose
-- Node.js 18+
-- Python 3.12+ (optional — Docker handles this)
-- A Gemini API key (free): https://aistudio.google.com
+- Docker and Docker Compose
+- Node.js 18+ if running frontend outside Docker
+- Python 3.12+ if running backend outside Docker
+- Google AI Studio API key for Gemini
+- Google Cloud Storage bucket or compatible local service account setup
 
-### Step 1 — Configure
+### Environment
+
+Copy the example file:
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+Minimum local values:
 
 ```env
-# Required
-JWT_SECRET_KEY=<python -c "import secrets; print(secrets.token_hex(32))">
+JWT_SECRET_KEY=<generate-a-secret>
+DATABASE_URL=postgresql://docintel:docintel_secret@postgres:5432/docintel
 LLM_PROVIDER=gemini
-GOOGLE_AI_KEY=AIzaSy...
-GCS_BUCKET_NAME=my-docintel-bucket
-
-# Gemini dims (must match)
-EMBEDDING_DIM=768
-GEMINI_EMBED_MODEL=gemini-embedding-2
-GEMINI_CHAT_MODEL=gemini-1.5-flash
-
-# GCS key path (for local Docker only)
+GOOGLE_AI_KEY=<google-ai-studio-key>
+GCS_BUCKET_NAME=<bucket-name>
 GCS_SERVICE_ACCOUNT_KEY_PATH=./gcs-key.json
+EMBEDDING_DIM=768
+GEMINI_EMBED_MODEL=models/text-embedding-004
+GEMINI_CHAT_MODEL=gemini-1.5-flash
+GMAIL_USER=
+GMAIL_APP_PASSWORD=
+EMAIL_FROM_NAME=Adar DocIntel
 ```
 
-Place your GCS service account JSON at `./gcs-key.json`.
+Generate a JWT secret:
 
-### Step 2 — Start
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+### Run with Docker Compose
 
 ```bash
 docker compose up --build
 ```
 
-| URL | Service |
-|-----|---------|
-| http://localhost:3000 | Frontend (React) |
-| http://localhost:8000/docs | FastAPI Swagger UI |
-| http://localhost:8000/api/health | Health check |
+Services:
 
-### Step 3 — Create an admin user
+- Frontend: http://localhost:3000
+- Backend: http://localhost:8000
+- Backend health: http://localhost:8000/api/health
+- PostgreSQL: localhost:5432
 
-```bash
-docker compose exec backend python scripts/create_admin.py
-```
+### Run Frontend Separately
 
-### Running without Docker
-
-**Backend:**
-```bash
-cd backend
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-# Start postgres+pgvector locally
-docker run -d --name pgvec -p 5432:5432 \
-  -e POSTGRES_DB=docintel \
-  -e POSTGRES_USER=docintel \
-  -e POSTGRES_PASSWORD=docintel_secret \
-  pgvector/pgvector:pg16
-
-# Set DATABASE_URL in .env
-uvicorn main:app --reload --port 8000
-```
-
-**Frontend:**
 ```bash
 cd frontend
-npm ci
-npm run dev    # proxies /api/* → localhost:8000
+npm install
+npm run dev
 ```
 
----
+Default Vite URL:
 
-## GCP production deployment
+```text
+http://localhost:5173
+```
 
-Full step-by-step in `DEPLOY.md`. Quick reference:
-
-### One-time infrastructure setup
+### Run Backend Separately
 
 ```bash
-# Create all GCP resources (Cloud SQL, GCS, Artifact Registry, IAM)
-bash scripts/setup.sh
-
-# Populate Secret Manager
-bash scripts/secrets.sh
-
-# Enable pgvector on Cloud SQL
-bash scripts/setup-pgvector.sh
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Deploy
+## How to Use the App
+
+### General Document Workflow
+
+1. Register or log in.
+2. Create or select a workspace.
+3. Upload documents in the Documents tab.
+4. Wait for extraction and chunking.
+5. Review classification and chunks if needed.
+6. Click Embed.
+7. Open Chat.
+8. Select documents.
+9. Ask questions by text or voice.
+10. Review citations and source previews.
+11. Use Summarize or Compare when needed.
+
+### Lease Workflow
+
+1. Upload lease and amendments.
+2. Confirm classification as lease/lease extension.
+3. Embed documents.
+4. Open Lease panel.
+5. Run lease abstraction or agent workflow.
+6. Review summary, abstract, dates, obligations, clause flags, and risk flags.
+7. Approve and save outputs.
+8. Ask lease questions in chat with agentic context.
+
+### Healthcare Workflow
+
+1. Upload clinical documents or payer policy documents.
+2. Embed documents.
+3. Open Healthcare panel.
+4. Run clinical workflow, prior authorization workflow, or clinical scribe workflow.
+5. Review generated outputs.
+6. Approve field-level changes where applicable.
+7. Generate AVS PDF when clinical scribe output is ready.
+8. Use chat to ask patient/provider/care coordination questions over approved clinical context and documents.
+
+### Restaurant Workflow
+
+1. Open Restaurant Menu Scribe and Carryout Orders.
+2. Record or upload restaurant/menu conversation.
+3. Review full transcript.
+4. Run restaurant agent workflow.
+5. Review and edit restaurant profile and menu rows.
+6. Approve and save restaurant.
+7. Use menu search or Compare Menus.
+8. Ask food/menu questions in chat using text or voice.
+9. Add matching menu items to cart.
+10. Place carryout order.
+11. Restaurant owner/staff accepts, rejects, marks ready, or completes the order.
+
+## Deployment
+
+This repository supports Docker Compose for local development and GCP/Firebase for production-style deployment.
+
+### Production Architecture
+
+```mermaid
+flowchart LR
+  Browser["Browser"] --> Firebase["Firebase Hosting"]
+  Firebase --> CloudRun["Cloud Run Backend"]
+  Browser --> CloudRunSSE["Cloud Run Direct SSE"]
+  CloudRun --> CloudSQL["Cloud SQL PostgreSQL + pgvector"]
+  CloudRun --> GCS["Google Cloud Storage"]
+  CloudRun --> SecretManager["Secret Manager"]
+  CloudRun --> Gemini["Gemini API"]
+  CloudRun --> SMTP["Gmail SMTP / Email Provider"]
+```
+
+Regular APIs can flow through Firebase rewrites. Streaming endpoints should call Cloud Run directly with `VITE_STREAM_BASE` to avoid hosting timeout limits.
+
+### Backend Deployment
+
+Use the deployment script:
 
 ```bash
-# Both backend and frontend
-bash deploy.sh
-
-# Backend only (Python code changed)
-bash deploy.sh --backend
-
-# Frontend only (React code changed)
-bash deploy.sh --frontend
+./deploy.sh --backend
 ```
 
-### Manual commands
+Backend deployment should configure:
+
+- Cloud Run service
+- Cloud SQL connection
+- Artifact Registry image
+- Service account permissions
+- Secret Manager environment variables
+- CORS allowed origins
+- GCS bucket access
+
+Common backend secrets/env vars:
+
+```text
+DATABASE_URL
+JWT_SECRET_KEY
+JWT_ALGORITHM
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+LLM_PROVIDER
+GOOGLE_AI_KEY
+OPENAI_API_KEY
+GCS_BUCKET_NAME
+GCS_SERVICE_ACCOUNT_KEY_JSON
+GCS_SIGNED_URL_EXPIRY_SECONDS
+EMBEDDING_DIM
+GEMINI_EMBED_MODEL
+GEMINI_CHAT_MODEL
+CHUNK_SIZE
+CHUNK_OVERLAP
+TOP_K
+MAX_UPLOAD_FILES
+MAX_FILE_SIZE_MB
+GMAIL_USER
+GMAIL_APP_PASSWORD
+EMAIL_FROM_NAME
+RESTAURANT_SCRIBE_MAX_MB
+RESTAURANT_TRANSCRIPTION_MAX_OUTPUT_TOKENS
+RESTAURANT_TRANSCRIPT_WINDOW_CHARS
+RESTAURANT_TRANSCRIPT_WINDOW_OVERLAP
+RESTAURANT_TRANSCRIPT_MAX_WINDOWS
+```
+
+### Frontend Deployment
+
+Use:
 
 ```bash
-# Tail Cloud Run logs
-gcloud run services logs tail docintel-backend \
-  --region=us-central1 --project=bdas-493785
-
-# Health check
-curl https://docintel-backend-tzwvc47f5q-uc.a.run.app/api/health
-
-# Promote user to admin via Cloud SQL
-gcloud sql connect docintel-db --user=docintel \
-  --database=docintel --project=bdas-493785
-# UPDATE users SET role='admin' WHERE email='you@example.com';
-
-# Fix vector column if embedding dim changes
-# ALTER TABLE document_chunks DROP COLUMN embedding;
-# ALTER TABLE document_chunks ADD COLUMN embedding vector(768);
+./deploy.sh --frontend
 ```
 
-### Firebase custom domain
+or:
 
 ```bash
-# Create hosting site
-firebase hosting:sites:create docintel-adar --project=bdas-493785
-
-# Deploy frontend
-firebase deploy --only hosting --project=bdas-493785
+cd frontend
+npm install
+npm run build
+firebase deploy --only hosting
 ```
 
-Add a Route 53 CNAME record:
-```
-docintel.adar.agomoniai.com  →  docintel-adar.web.app
-```
+Frontend production env should include:
 
-Then in Firebase Console → Hosting → Add custom domain → enter the subdomain.
-
----
-
-## Configuration reference
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LLM_PROVIDER` | `openai` | `gemini` or `openai` |
-| `GOOGLE_AI_KEY` | — | Gemini API key (get free at aistudio.google.com) |
-| `GEMINI_EMBED_MODEL` | `gemini-embedding-2` | Embedding model |
-| `GEMINI_CHAT_MODEL` | `gemini-1.5-flash` | Chat/summarize model |
-| `OPENAI_API_KEY` | — | OpenAI key (if using OpenAI) |
-| `OPENAI_EMBED_MODEL` | `text-embedding-3-small` | OpenAI embed model |
-| `OPENAI_CHAT_MODEL` | `gpt-4o-mini` | OpenAI chat model |
-| `EMBEDDING_DIM` | `1536` | `768` for Gemini, `1536` for OpenAI |
-| `DATABASE_URL` | — | PostgreSQL connection string |
-| `GCS_BUCKET_NAME` | — | GCS bucket name |
-| `JWT_SECRET_KEY` | — | 32-byte hex secret |
-| `JWT_ALGORITHM` | `HS256` | JWT algorithm |
-| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `480` | Token lifetime (8 hours) |
-| `CHUNK_SIZE` | `350` | Words per chunk |
-| `CHUNK_OVERLAP` | `60` | Overlap words between chunks |
-| `TOP_K` | `6` | Chunks retrieved per query |
-| `MAX_UPLOAD_FILES` | `500` | Max documents per user |
-| `MAX_FILE_SIZE_MB` | `50` | Max single file size |
-| `GCS_SIGNED_URL_EXPIRY_SECONDS` | `3600` | Source file URL lifetime |
-
-> ⚠️ **Switching LLM providers:** If you change `EMBEDDING_DIM` (e.g. Gemini→OpenAI), all existing vectors must be deleted and re-embedded. The pgvector column type is fixed at table creation time.
-
----
-
-## Security checklist
-
-### Before going to production
-
-- [ ] Set `JWT_SECRET_KEY` to a new random 32-byte hex value
-- [ ] Restrict CORS in `main.py` to your exact domain only
-- [ ] Move all secrets to GCP Secret Manager (not `.env` files in containers)
-- [ ] Ensure GCS bucket is **not public** — uniform bucket-level access, no allUsers binding
-- [ ] Verify service account has only `roles/storage.objectAdmin` — no broader project access
-- [ ] Set `JWT_ACCESS_TOKEN_EXPIRE_MINUTES=60` for shorter-lived sessions
-- [ ] Enable Cloud Run `--min-instances=0` to scale to zero when idle (cost saving)
-- [ ] Add Cloud Armor or Cloud Run ingress rules to restrict traffic if needed
-- [ ] Rotate the `docintel-sa` service account key regularly or switch to Workload Identity
-
-### Firebase Hosting security headers (already in `firebase.json`)
-
-```json
-"X-Content-Type-Options": "nosniff"
-"X-Frame-Options": "DENY"
-"Referrer-Policy": "strict-origin-when-cross-origin"
+```text
+VITE_API_BASE
+VITE_STREAM_BASE
 ```
 
-### Sensitive files to never commit
+If using Firebase Hosting rewrites for standard APIs and direct Cloud Run for streaming, configure:
 
-```gitignore
-.env
-.env.*
-gcs-key.json
-.deploy-config
-*.pem
+```text
+VITE_API_BASE=
+VITE_STREAM_BASE=https://<cloud-run-service-url>
 ```
 
----
+### Full Deployment
 
-## Product demo
-
-A self-narrating 11-slide product walkthrough with Web Speech API (male voice):
-
-```
-https://docintel.adar.agomoniai.com/demo.docintel.html
+```bash
+./deploy.sh
 ```
 
-| Slide | Topic |
-|-------|-------|
-| 1 | Welcome — platform overview |
-| 2 | Secure registration & login |
-| 3 | Upload up to 500 documents |
-| 4 | Automatic chunking with metadata |
-| 5 | Browse source & chunks |
-| 6 | One-click vector embedding |
-| 7 | Semantic chat with citations |
-| 8 | Rich table & markdown rendering |
-| 9 | 5-type document summarization |
-| 10 | Admin dashboard |
-| 11 | Full feature summary + CTA |
+See also:
 
-Controls: ← → arrows, keyboard arrow keys, ▶ Auto mode (auto-advances after each narration).
+- `Deploy.md`
+- `FrontendDeploy.md`
+- `deploy.sh`
+- `firebase.json`
 
----
+### Database Migration Notes
 
-*Built with ❤️ by [Agomonia Labs](https://agomoniai.com) · আদর means affection in Bengali*
+The app initializes required tables on backend startup through `backend/database/models.py`, including additional tables for traces, evaluations, usage, vertical workflows, restaurant records, and related features.
+
+For production:
+
+1. Back up Cloud SQL before schema changes.
+2. Apply migrations during a maintenance window when changing existing columns or data.
+3. Verify pgvector extension is enabled.
+4. Verify HNSW/vector indexes after embedding model dimension changes.
+5. Never change `EMBEDDING_DIM` without re-embedding existing documents.
+6. Validate RBAC and workspace visibility with owner, editor, and viewer users.
+7. Validate restaurant owner-email order scoping before enabling carryout order processing.
+8. Validate healthcare trace/PHI retention policies before production healthcare pilots.
+
+## Configuration Reference
+
+| Variable | Purpose |
+| --- | --- |
+| `JWT_SECRET_KEY` | JWT signing secret |
+| `DATABASE_URL` | PostgreSQL connection URL |
+| `LLM_PROVIDER` | `gemini` or `openai` |
+| `GOOGLE_AI_KEY` | Gemini API key for classification, embeddings, chat, OCR, workflows |
+| `OPENAI_API_KEY` | OpenAI key if using OpenAI provider |
+| `GCS_BUCKET_NAME` | Bucket for source files, chunks, transcripts, PDFs |
+| `GCS_SERVICE_ACCOUNT_KEY_PATH` | Local service account JSON path |
+| `GCS_SERVICE_ACCOUNT_KEY_JSON` | Service account JSON for cloud deployment |
+| `EMBEDDING_DIM` | Vector dimension; must match embedding model |
+| `CHUNK_SIZE` | Target words per chunk |
+| `CHUNK_OVERLAP` | Word overlap between chunks |
+| `TOP_K` | Final retrieved chunk count |
+| `GMAIL_USER` | Gmail user for email notifications |
+| `GMAIL_APP_PASSWORD` | Gmail app password |
+| `EMAIL_FROM_NAME` | Display name for outbound email |
+| `RESTAURANT_*` | Restaurant scribe/transcript extraction limits |
+
+## Repository Structure
+
+```text
+.
+├── README.md
+├── Deploy.md
+├── FrontendDeploy.md
+├── docker-compose.yml
+├── deploy.sh
+├── firebase.json
+├── backend/
+│   ├── main.py
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── assets/
+│   ├── auth/
+│   ├── config/agent_workflows/
+│   ├── database/
+│   ├── routes/
+│   ├── services/
+│   └── tests/
+├── frontend/
+│   ├── Dockerfile
+│   ├── package.json
+│   ├── public/
+│   └── src/
+├── sample_documents/
+└── scripts/
+```
+
+## Troubleshooting
+
+### Classification Returns General
+
+Check:
+
+- `GOOGLE_AI_KEY` is set in the backend environment.
+- Gemini response is not empty or cut off by max tokens.
+- Backend logs show `confidence`, `source`, `sample_chars`, and `reason`.
+- Uploaded text extraction produced enough content.
+
+### Chat Answer Has Missing Restaurant IDs
+
+Restaurant ordering/menu answers must use Restaurant DB context. If IDs are missing:
+
+- Verify restaurant and menu rows exist in `restaurants` and `restaurant_menu_items`.
+- Verify active workspace matches the restaurant workspace.
+- Verify current user has access to the workspace.
+- Verify menu item availability is not `unavailable`.
+- Verify the answer table includes both `Menu Item ID` and `Restaurant ID`.
+
+### Restaurant Cards Show Extra Items
+
+Cards are generated only from answer-visible IDs. If extra cards appear:
+
+- Confirm backend sends only action rows whose `menu_item_id` and `restaurant_id` appear in the final answer.
+- Confirm frontend uses structured `actions.restaurant_menu_items`, not markdown fallback parsing.
+
+### Email Notifications Do Not Send
+
+Check:
+
+- `GMAIL_USER`
+- `GMAIL_APP_PASSWORD`
+- `EMAIL_FROM_NAME`
+- `/api/health/email`
+- Restaurant has a required email address.
+- Customer email is captured during order submission.
+
+### Speech Recognition Does Not Work in Browser
+
+Use Chrome or Edge first. Safari and Firefox may block Web Speech API recognition. For production audio workflows, prefer server-side upload/transcription.
+
+### Embedding or Search Fails
+
+Check:
+
+- `EMBEDDING_DIM`
+- Embedding model configuration
+- pgvector extension
+- Existing documents were embedded with the same dimension
+- `document_chunks.embedding` index exists
+
+## Current Product Direction
+
+DocIntel is designed to support many verticals on one reusable architecture:
+
+- Healthcare review workbench
+- Clinical scribe and AVS generation
+- Prior authorization readiness
+- Lease intelligence and obligation tracking
+- Restaurant menu scribe and carryout ordering
+- Legal and contract management
+- Insurance and finance document workflows
+- Brokerage and real estate workflows
+- Sports/league assistant workflows
+- Multilingual document and voice-first workflows
+
+The product thesis is simple: organizations and individuals should be able to turn unstructured documents and conversations into governed, searchable, domain-specific intelligence without building a custom AI platform for every use case.

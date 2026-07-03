@@ -89,6 +89,7 @@ export async function streamChat({ question, documentIds, document_ids, history,
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let finished = false;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -99,9 +100,18 @@ export async function streamChat({ question, documentIds, document_ids, history,
       if (!line.startsWith('data: ')) continue;
       let ev; try { ev = JSON.parse(line.slice(6)); } catch { continue; }
       if (ev.type === 'token') onToken?.(ev.text);
-      if (ev.type === 'done')  onDone?.(ev.sources, ev.actions || null, ev);
-      if (ev.type === 'error') onError?.(ev.error);
+      if (ev.type === 'done') {
+        onDone?.(ev.sources, ev.actions || null, ev);
+        finished = true;
+        break;
+      }
+      if (ev.type === 'error') {
+        onError?.(ev.error);
+        finished = true;
+        break;
+      }
     }
+    if (finished) return;
   }
 }
 
@@ -725,8 +735,9 @@ export async function listRestaurants(workspaceId = null) {
   return handleRes(await fetch(`${BASE}/restaurant/restaurants${q}`, { headers: authHdr() }));
 }
 
-export async function fetchRestaurant(restaurantId) {
-  return handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}`, { headers: authHdr() }));
+export async function fetchRestaurant(restaurantId, workspaceId = null) {
+  const q = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : '';
+  return handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}${q}`, { headers: authHdr() }));
 }
 
 export async function updateRestaurant(restaurantId, restaurantProfile, menuItems = []) {
@@ -769,20 +780,26 @@ export async function createRestaurantOrderDraft(order) {
   }));
 }
 
-export async function submitRestaurantOrder(orderId, notes = '') {
+export async function submitRestaurantOrder(orderId, notes = '', workspaceId = null) {
   return handleRes(await fetch(`${BASE}/restaurant/orders/${orderId}/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHdr() },
-    body: JSON.stringify({ notes }),
+    body: JSON.stringify({ notes, workspace_id: workspaceId }),
   }));
 }
 
-export async function listMyRestaurantOrders() {
-  return handleRes(await fetch(`${BASE}/restaurant/orders`, { headers: authHdr() }));
+export async function listMyRestaurantOrders(workspaceId = null) {
+  const params = new URLSearchParams();
+  if (workspaceId) params.set('workspace_id', workspaceId);
+  const qs = params.toString();
+  return handleRes(await fetch(`${BASE}/restaurant/orders${qs ? `?${qs}` : ''}`, { headers: authHdr() }));
 }
 
-export async function fetchRestaurantOrder(orderId) {
-  return handleRes(await fetch(`${BASE}/restaurant/orders/${orderId}`, { headers: authHdr() }));
+export async function fetchRestaurantOrder(orderId, workspaceId = null) {
+  const params = new URLSearchParams();
+  if (workspaceId) params.set('workspace_id', workspaceId);
+  const qs = params.toString();
+  return handleRes(await fetch(`${BASE}/restaurant/orders/${orderId}${qs ? `?${qs}` : ''}`, { headers: authHdr() }));
 }
 
 export async function listRestaurantOwnerOrders({ status = '', workspaceId = null } = {}) {
@@ -792,10 +809,10 @@ export async function listRestaurantOwnerOrders({ status = '', workspaceId = nul
   return handleRes(await fetch(`${BASE}/restaurant/owner/orders?${params.toString()}`, { headers: authHdr() }));
 }
 
-export async function updateRestaurantOwnerOrder(orderId, action, notes = '') {
+export async function updateRestaurantOwnerOrder(orderId, action, notes = '', workspaceId = null) {
   return handleRes(await fetch(`${BASE}/restaurant/owner/orders/${orderId}/${action}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHdr() },
-    body: JSON.stringify({ notes }),
+    body: JSON.stringify({ notes, workspace_id: workspaceId }),
   }));
 }

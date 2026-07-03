@@ -90,6 +90,7 @@ class RestaurantOrderDraftRequest(BaseModel):
 
 class RestaurantOrderStatusRequest(BaseModel):
     notes: str = ""
+    workspace_id: str | None = None
 
 
 @router.post("/scribe-workflow")
@@ -294,25 +295,34 @@ async def approve_restaurant_agent_run(
 @router.get("/restaurants")
 async def list_restaurants(current_user: CurrentUser, workspace_id: str | None = Query(None), db=Depends(get_db)):
     user_id = str(current_user["id"])
-    restored_count = await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
+    user_email = str(current_user.get("email") or "")
+    restored_count = 0
+    if await _can_restore_restaurants(db, user_id, workspace_id):
+        restored_count = await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
     rows = await db.fetch(
         f"""
         SELECT r.*,
+               wm.role AS viewer_role,
                COUNT(mi.id)::int AS menu_count,
                MIN(mi.price) FILTER (WHERE mi.price IS NOT NULL) AS min_price,
                MAX(mi.price) FILTER (WHERE mi.price IS NOT NULL) AS max_price
         FROM restaurants r
         LEFT JOIN restaurant_menu_items mi ON mi.restaurant_id=r.id
-        WHERE {_restaurant_access_sql("r")}
-          AND ($2::uuid IS NULL OR r.workspace_id=$2::uuid OR r.workspace_id IS NULL)
-        GROUP BY r.id
+        LEFT JOIN workspace_members wm ON wm.workspace_id=r.workspace_id AND wm.user_id=$1::uuid
+        WHERE (($2::uuid IS NULL AND r.workspace_id IS NULL) OR r.workspace_id=$2::uuid)
+        GROUP BY r.id, wm.role
         ORDER BY r.workspace_id NULLS LAST, r.updated_at DESC
         LIMIT 200
         """,
         user_id,
         workspace_id,
     )
-    return {"restaurants": [_restaurant_row(row) for row in rows], "restored_count": restored_count}
+    restaurant_rows = []
+    for row in rows:
+        data = _restaurant_row(row)
+        data["can_manage"] = _restaurant_can_manage(dict(row), user_id, user_email)
+        restaurant_rows.append(data)
+    return {"restaurants": restaurant_rows, "restored_count": restored_count}
 
 
 @router.get("/debug/restore-status")
@@ -392,9 +402,26 @@ async def restaurant_restore_status(current_user: CurrentUser, workspace_id: str
 
 
 @router.get("/restaurants/{restaurant_id}")
-async def get_restaurant(restaurant_id: str, current_user: CurrentUser, db=Depends(get_db)):
+async def get_restaurant(
+    restaurant_id: str,
+    current_user: CurrentUser,
+    workspace_id: str | None = Query(None),
+    db=Depends(get_db),
+):
     user_id = str(current_user["id"])
-    row = await db.fetchrow(f"SELECT r.* FROM restaurants r WHERE r.id=$1 AND {_restaurant_access_sql('r', '$2')}", restaurant_id, user_id)
+    user_email = str(current_user.get("email") or "")
+    row = await db.fetchrow(
+        """
+        SELECT r.*, wm.role AS viewer_role
+        FROM restaurants r
+        LEFT JOIN workspace_members wm ON wm.workspace_id=r.workspace_id AND wm.user_id=$2::uuid
+        WHERE r.id=$1
+          AND (($3::uuid IS NULL AND r.workspace_id IS NULL) OR r.workspace_id=$3::uuid)
+        """,
+        restaurant_id,
+        user_id,
+        workspace_id,
+    )
     if not row:
         raise HTTPException(404, "Restaurant not found")
     items = await db.fetch(
@@ -405,10 +432,13 @@ async def get_restaurant(restaurant_id: str, current_user: CurrentUser, db=Depen
         """,
         restaurant_id,
     )
+    can_manage = _restaurant_can_manage(dict(row), user_id, user_email)
+    restaurant = _restaurant_row(row)
+    restaurant["can_manage"] = can_manage
     return {
-        "restaurant": _restaurant_row(row),
+        "restaurant": restaurant,
         "menu_items": [_menu_row(item) for item in items],
-        "transcript": await _restaurant_source_transcript(db, dict(row), user_id),
+        "transcript": await _restaurant_source_transcript(db, dict(row), user_id) if can_manage else "",
     }
 
 
@@ -421,12 +451,20 @@ async def update_restaurant(
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
-    row = await db.fetchrow(f"SELECT r.* FROM restaurants r WHERE r.id=$1 AND {_restaurant_access_sql('r', '$2')}", restaurant_id, user_id)
+    user_email = str(current_user.get("email") or "")
+    row = await db.fetchrow(
+        f"""
+        SELECT r.*, wm.role AS viewer_role
+        FROM restaurants r
+        LEFT JOIN workspace_members wm ON wm.workspace_id=r.workspace_id AND wm.user_id=$2::uuid
+        WHERE r.id=$1 AND {_restaurant_catalog_manage_sql('r', '$2', '$3')}
+        """,
+        restaurant_id,
+        user_id,
+        user_email,
+    )
     if not row:
-        raise HTTPException(404, "Restaurant not found")
-    if row.get("workspace_id"):
-        from routes.workspaces import _require_role
-        await _require_role(db, str(row["workspace_id"]), user_id, "editor")
+        raise HTTPException(403, "Only a matching restaurant email or workspace owner/editor can update this restaurant")
     profile = body.restaurant_profile or {}
     name = str(profile.get("name") or "").strip()
     if not name:
@@ -491,7 +529,12 @@ async def update_restaurant(
         ip_address=ip_from(request),
         user_agent=ua_from(request),
     )
-    return await get_restaurant(restaurant_id, current_user, db)
+    return await get_restaurant(
+        restaurant_id,
+        current_user,
+        str(row["workspace_id"]) if row.get("workspace_id") else None,
+        db,
+    )
 
 
 @router.delete("/restaurants/{restaurant_id}")
@@ -502,13 +545,20 @@ async def delete_restaurant(
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
-    row = await db.fetchrow(f"SELECT r.* FROM restaurants r WHERE r.id=$1 AND {_restaurant_access_sql('r', '$2')}", restaurant_id, user_id)
+    user_email = str(current_user.get("email") or "")
+    row = await db.fetchrow(
+        f"""
+        SELECT r.*, wm.role AS viewer_role
+        FROM restaurants r
+        LEFT JOIN workspace_members wm ON wm.workspace_id=r.workspace_id AND wm.user_id=$2::uuid
+        WHERE r.id=$1 AND {_restaurant_catalog_manage_sql('r', '$2', '$3')}
+        """,
+        restaurant_id,
+        user_id,
+        user_email,
+    )
     if not row:
-        raise HTTPException(404, "Restaurant not found")
-    if row.get("workspace_id"):
-        from routes.workspaces import _require_role
-        await _require_role(db, str(row["workspace_id"]), user_id, "editor")
-
+        raise HTTPException(403, "Only a matching restaurant email or workspace owner/editor can delete this restaurant")
     source_doc_rows = await db.fetch(
         """
         SELECT DISTINCT d.id, d.user_id
@@ -577,26 +627,27 @@ async def search_menu(
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
-    await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
+    if await _can_restore_restaurants(db, user_id, workspace_id):
+        await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
     q = f"%{query.strip()}%" if query.strip() else "%"
     rows = await db.fetch(
         f"""
-        SELECT mi.*, r.name AS restaurant_name, r.address, r.cuisine_type
+        SELECT mi.*, r.name AS restaurant_name, r.address, r.address AS restaurant_address,
+               r.phone AS restaurant_phone, r.email AS restaurant_email, r.cuisine_type
         FROM restaurant_menu_items mi
         JOIN restaurants r ON r.id=mi.restaurant_id
-        WHERE {_restaurant_access_sql("r")}
-          AND ($2='' OR mi.item_name ILIKE $3 OR mi.description ILIKE $3 OR r.name ILIKE $3)
-          AND ($4='' OR r.cuisine_type ILIKE '%' || $4 || '%')
-          AND ($5='' OR EXISTS (
+        WHERE TRUE
+          AND ($1='' OR mi.item_name ILIKE $2 OR mi.description ILIKE $2 OR r.name ILIKE $2)
+          AND ($3='' OR r.cuisine_type ILIKE '%' || $3 || '%')
+          AND ($4='' OR EXISTS (
               SELECT 1 FROM jsonb_array_elements_text(mi.dietary_tags) tag
-              WHERE tag ILIKE '%' || $5 || '%'
+              WHERE tag ILIKE '%' || $4 || '%'
           ))
-          AND ($6::numeric IS NULL OR mi.price <= $6::numeric)
-          AND ($7::uuid IS NULL OR r.workspace_id=$7::uuid OR r.workspace_id IS NULL)
+          AND ($5::numeric IS NULL OR mi.price <= $5::numeric)
+          AND ($6::uuid IS NULL OR r.workspace_id=$6::uuid OR r.workspace_id IS NULL)
         ORDER BY r.workspace_id NULLS LAST, mi.price NULLS LAST, r.name, mi.item_name
         LIMIT 100
         """,
-        user_id,
         query.strip(),
         q,
         cuisine_type.strip(),
@@ -616,21 +667,22 @@ async def compare_menu_prices(
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
-    await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
+    if await _can_restore_restaurants(db, user_id, workspace_id):
+        await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
     q = f"%{query.strip()}%"
     rows = await db.fetch(
         f"""
-        SELECT mi.*, r.name AS restaurant_name, r.address, r.cuisine_type
+        SELECT mi.*, r.name AS restaurant_name, r.address, r.address AS restaurant_address,
+               r.phone AS restaurant_phone, r.email AS restaurant_email, r.cuisine_type
         FROM restaurant_menu_items mi
         JOIN restaurants r ON r.id=mi.restaurant_id
-        WHERE {_restaurant_access_sql("r")}
-          AND (mi.item_name ILIKE $2 OR mi.description ILIKE $2)
-          AND ($3='' OR r.cuisine_type ILIKE '%' || $3 || '%')
-          AND ($4::uuid IS NULL OR r.workspace_id=$4::uuid OR r.workspace_id IS NULL)
+        WHERE TRUE
+          AND (mi.item_name ILIKE $1 OR mi.description ILIKE $1)
+          AND ($2='' OR r.cuisine_type ILIKE '%' || $2 || '%')
+          AND ($3::uuid IS NULL OR r.workspace_id=$3::uuid OR r.workspace_id IS NULL)
         ORDER BY r.workspace_id NULLS LAST, mi.price NULLS LAST, r.name, mi.item_name
         LIMIT 100
         """,
-        user_id,
         q,
         cuisine_type.strip(),
         workspace_id,
@@ -688,15 +740,29 @@ async def create_restaurant_order_draft(
                    r.workspace_id AS restaurant_workspace_id
             FROM restaurant_menu_items mi
             JOIN restaurants r ON r.id=mi.restaurant_id
-            WHERE mi.id = ANY($2::uuid[])
-              AND {_restaurant_access_sql("r")}
+            WHERE mi.id = ANY($1::uuid[])
             ORDER BY mi.item_name
             """,
-            user_id,
             item_ids,
         )
         if len(menu_rows) != len({str(item_id) for item_id in item_ids}):
-            raise HTTPException(404, "One or more menu items were not found or are not accessible")
+            found_item_ids = {str(row["id"]) for row in menu_rows}
+            missing_item_ids = {str(item_id) for item_id in item_ids} - found_item_ids
+            if not body.restaurant_id:
+                raise HTTPException(404, "One or more menu items were not found or are not accessible")
+            for item in body.items:
+                if str(item.menu_item_id or "") in missing_item_ids and (item.item_name or "").strip():
+                    item.menu_item_id = None
+            unresolved_missing = [
+                str(item.menu_item_id)
+                for item in body.items
+                if str(item.menu_item_id or "") in missing_item_ids
+            ]
+            if unresolved_missing:
+                raise HTTPException(404, "One or more menu items were not found or are not accessible")
+            ad_hoc_items = [item for item in body.items if not str(item.menu_item_id or "").strip()]
+            quantity_by_item = {str(item.menu_item_id): _order_item_quantity(item) for item in body.items if item.menu_item_id}
+            instructions_by_item = {str(item.menu_item_id): item.instructions or "" for item in body.items if item.menu_item_id}
 
     restaurant_ids = {str(row["restaurant_id"]) for row in menu_rows}
     if ad_hoc_items:
@@ -713,16 +779,24 @@ async def create_restaurant_order_draft(
                email AS restaurant_email, user_id AS restaurant_owner_id,
                workspace_id, workspace_id AS restaurant_workspace_id
         FROM restaurants r
-        WHERE r.id=$2::uuid
-          AND {_restaurant_access_sql("r")}
+        WHERE r.id=$1::uuid
         """,
-        user_id,
         restaurant_id,
     )
     if not restaurant:
         raise HTTPException(404, "Restaurant was not found or is not accessible")
+    requested_workspace_id = _id_text(body.workspace_id)
+    restaurant_workspace_raw = _row_get(restaurant, "workspace_id")
+    restaurant_workspace_id = str(restaurant_workspace_raw) if restaurant_workspace_raw else None
+    if requested_workspace_id != restaurant_workspace_id:
+        raise HTTPException(403, "Carryout orders must be created in the same workspace as the restaurant menu")
+    for row in menu_rows:
+        menu_workspace_raw = _row_get(row, "restaurant_workspace_id")
+        menu_workspace_id = str(menu_workspace_raw) if menu_workspace_raw else None
+        if menu_workspace_id != restaurant_workspace_id:
+            raise HTTPException(400, "All menu items must belong to the selected restaurant workspace")
     first = menu_rows[0] if menu_rows else restaurant
-    workspace_id = str(first["workspace_id"]) if first.get("workspace_id") else None
+    workspace_id = restaurant_workspace_id
     subtotal = Decimal("0.00")
     currency = "USD"
     order_id = str(uuid.uuid4())
@@ -782,7 +856,7 @@ async def create_restaurant_order_draft(
                 line_total,
                 row["currency"] or currency,
                 instructions_by_item.get(menu_item_id, ""),
-                json.dumps({"restaurant_name": first["restaurant_name"]}),
+                json.dumps({"restaurant_name": _row_get(first, "restaurant_name")}),
             )
         for item in ad_hoc_items:
             item_name = (item.item_name or "").strip()
@@ -806,7 +880,7 @@ async def create_restaurant_order_draft(
                 line_total,
                 item.currency or currency,
                 item.instructions or "",
-                json.dumps({"restaurant_name": first["restaurant_name"], "source": "chat_answer"}),
+                json.dumps({"restaurant_name": _row_get(first, "restaurant_name"), "source": "chat_answer"}),
             )
         await _add_order_event(db, order_id, user_id, "draft_created", None, "draft", body.notes or "", {"item_count": len(menu_rows) + len(ad_hoc_items)})
 
@@ -820,7 +894,7 @@ async def create_restaurant_order_draft(
         ip_address=ip_from(request),
         user_agent=ua_from(request),
     )
-    return await _fetch_order_response(db, order_id, user_id)
+    return await _fetch_order_response(db, order_id, user_id, workspace_id=workspace_id)
 
 
 @router.post("/orders/{order_id}/submit")
@@ -832,7 +906,8 @@ async def submit_restaurant_order(
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
-    order = await _fetch_order_record(db, order_id, user_id)
+    user_email = str(current_user.get("email") or "")
+    order = await _fetch_order_record(db, order_id, user_id, user_email, body.workspace_id)
     if not order:
         raise HTTPException(404, "Order not found")
     if str(order["customer_user_id"]) != user_id:
@@ -865,36 +940,66 @@ async def submit_restaurant_order(
         ip_address=ip_from(request),
         user_agent=ua_from(request),
     )
-    return await _fetch_order_response(db, order_id, user_id)
+    return await _fetch_order_response(db, order_id, user_id, user_email, body.workspace_id)
 
 
 @router.get("/orders")
-async def list_my_restaurant_orders(current_user: CurrentUser, db=Depends(get_db)):
+async def list_my_restaurant_orders(
+    current_user: CurrentUser,
+    workspace_id: str | None = Query(None),
+    db=Depends(get_db),
+):
     user_id = str(current_user["id"])
     rows = await db.fetch(
         """
         SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address, r.phone AS restaurant_phone,
                r.email AS restaurant_email,
-               COUNT(oi.id)::int AS item_count
+               COUNT(oi.id)::int AS item_count,
+               COALESCE(
+                 jsonb_agg(
+                   jsonb_build_object(
+                     'id', oi.id,
+                     'menu_item_id', oi.menu_item_id,
+                     'item_name', oi.item_name,
+                     'category', oi.category,
+                     'quantity', oi.quantity,
+                     'unit_price', oi.unit_price,
+                     'line_total', oi.line_total,
+                     'currency', oi.currency,
+                     'instructions', oi.instructions
+                   )
+                   ORDER BY oi.created_at, oi.item_name
+                 ) FILTER (WHERE oi.id IS NOT NULL),
+                 '[]'::jsonb
+               ) AS order_items
         FROM restaurant_orders o
         JOIN restaurants r ON r.id=o.restaurant_id
         LEFT JOIN restaurant_order_items oi ON oi.order_id=o.id
         WHERE o.customer_user_id=$1::uuid
+          AND (($2::uuid IS NULL AND o.workspace_id IS NULL) OR o.workspace_id=$2::uuid)
         GROUP BY o.id, r.id
         ORDER BY o.created_at DESC
         LIMIT 100
         """,
         user_id,
+        workspace_id,
     )
     return {"orders": [_order_row(row) for row in rows]}
 
 
 @router.get("/orders/{order_id}")
-async def get_restaurant_order(order_id: str, current_user: CurrentUser, db=Depends(get_db)):
-    order = await _fetch_order_record(db, order_id, str(current_user["id"]))
+async def get_restaurant_order(
+    order_id: str,
+    current_user: CurrentUser,
+    workspace_id: str | None = Query(None),
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    user_email = str(current_user.get("email") or "")
+    order = await _fetch_order_record(db, order_id, user_id, user_email, workspace_id)
     if not order:
         raise HTTPException(404, "Order not found")
-    return await _fetch_order_response(db, order_id, str(current_user["id"]))
+    return await _fetch_order_response(db, order_id, user_id, user_email, workspace_id)
 
 
 @router.get("/owner/orders")
@@ -905,22 +1010,42 @@ async def list_restaurant_owner_orders(
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
+    user_email = str(current_user.get("email") or "")
     rows = await db.fetch(
         f"""
         SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address, r.phone AS restaurant_phone,
-               COUNT(oi.id)::int AS item_count
+               r.email AS restaurant_email,
+               COUNT(oi.id)::int AS item_count,
+               COALESCE(
+                 jsonb_agg(
+                   jsonb_build_object(
+                     'id', oi.id,
+                     'menu_item_id', oi.menu_item_id,
+                     'item_name', oi.item_name,
+                     'category', oi.category,
+                     'quantity', oi.quantity,
+                     'unit_price', oi.unit_price,
+                     'line_total', oi.line_total,
+                     'currency', oi.currency,
+                     'instructions', oi.instructions
+                   )
+                   ORDER BY oi.created_at, oi.item_name
+                 ) FILTER (WHERE oi.id IS NOT NULL),
+                 '[]'::jsonb
+               ) AS order_items
         FROM restaurant_orders o
         JOIN restaurants r ON r.id=o.restaurant_id
         LEFT JOIN restaurant_order_items oi ON oi.order_id=o.id
-        WHERE {_restaurant_access_sql("r")}
+        WHERE {_restaurant_order_manage_sql("r", "$1", "$1")}
           AND o.status <> 'draft'
           AND ($2='' OR o.status=$2)
-          AND ($3::uuid IS NULL OR r.workspace_id=$3::uuid)
+          AND (($3::uuid IS NULL AND o.workspace_id IS NULL AND r.workspace_id IS NULL)
+               OR (o.workspace_id=$3::uuid AND r.workspace_id=$3::uuid))
         GROUP BY o.id, r.id
         ORDER BY o.created_at DESC
         LIMIT 150
         """,
-        user_id,
+        user_email,
         status.strip(),
         workspace_id,
     )
@@ -935,7 +1060,7 @@ async def accept_restaurant_order(
     current_user: CurrentUser,
     db=Depends(get_db),
 ):
-    return await _owner_transition_order_endpoint(db, request, current_user, order_id, "accepted", "accepted", body.notes or "Restaurant accepted carryout order", "accepted_at")
+    return await _owner_transition_order_endpoint(db, request, current_user, order_id, "accepted", "accepted", body.notes or "Restaurant accepted carryout order", "accepted_at", body.workspace_id)
 
 
 @router.post("/owner/orders/{order_id}/reject")
@@ -946,7 +1071,7 @@ async def reject_restaurant_order(
     current_user: CurrentUser,
     db=Depends(get_db),
 ):
-    return await _owner_transition_order_endpoint(db, request, current_user, order_id, "rejected", "rejected", body.notes or "Restaurant rejected carryout order", "rejected_at")
+    return await _owner_transition_order_endpoint(db, request, current_user, order_id, "rejected", "rejected", body.notes or "Restaurant rejected carryout order", "rejected_at", body.workspace_id)
 
 
 @router.post("/owner/orders/{order_id}/ready")
@@ -957,7 +1082,7 @@ async def ready_restaurant_order(
     current_user: CurrentUser,
     db=Depends(get_db),
 ):
-    return await _owner_transition_order_endpoint(db, request, current_user, order_id, "ready_for_pickup", "ready_for_pickup", body.notes or "Restaurant marked order ready for pickup", "ready_at")
+    return await _owner_transition_order_endpoint(db, request, current_user, order_id, "ready_for_pickup", "ready_for_pickup", body.notes or "Restaurant marked order ready for pickup", "ready_at", body.workspace_id)
 
 
 @router.post("/owner/orders/{order_id}/complete")
@@ -968,7 +1093,7 @@ async def complete_restaurant_order(
     current_user: CurrentUser,
     db=Depends(get_db),
 ):
-    return await _owner_transition_order_endpoint(db, request, current_user, order_id, "completed", "completed", body.notes or "Order completed", "completed_at")
+    return await _owner_transition_order_endpoint(db, request, current_user, order_id, "completed", "completed", body.notes or "Order completed", "completed_at", body.workspace_id)
 
 
 async def _execute_restaurant_workflow_background(
@@ -1407,6 +1532,54 @@ def _restaurant_access_sql(alias: str, user_param: str = "$1") -> str:
     )
 
 
+def _restaurant_manage_sql(alias: str, user_param: str = "$1") -> str:
+    return (
+        f"({alias}.user_id={user_param}::uuid OR EXISTS ("
+        f"SELECT 1 FROM workspace_members wm WHERE wm.workspace_id={alias}.workspace_id "
+        f"AND wm.user_id={user_param}::uuid AND wm.role IN ('editor','owner')"
+        f"))"
+    )
+
+
+def _restaurant_order_manage_sql(alias: str, user_param: str = "$1", email_param: str = "$2") -> str:
+    return (
+        f"(COALESCE({alias}.email, '') <> '' AND COALESCE({email_param}::text, '') <> '' "
+        f"AND LOWER({alias}.email)=LOWER({email_param}::text))"
+    )
+
+
+def _restaurant_catalog_manage_sql(alias: str, user_param: str = "$1", email_param: str = "$2") -> str:
+    return (
+        f"({_restaurant_order_manage_sql(alias, user_param, email_param)} OR EXISTS ("
+        f"SELECT 1 FROM workspace_members wm WHERE wm.workspace_id={alias}.workspace_id "
+        f"AND wm.user_id={user_param}::uuid AND wm.role='owner'"
+        f"))"
+    )
+
+
+async def _can_restore_restaurants(db, user_id: str, workspace_id: str | None = None) -> bool:
+    if not workspace_id:
+        return True
+    role = await db.fetchval(
+        """
+        SELECT role
+        FROM workspace_members
+        WHERE workspace_id=$1::uuid AND user_id=$2::uuid
+        """,
+        workspace_id,
+        user_id,
+    )
+    return role in {"editor", "owner"}
+
+
+def _restaurant_can_manage(row: dict[str, Any], user_id: str, user_email: str = "") -> bool:
+    restaurant_email = str(row.get("email") or "").strip().lower()
+    login_email = str(user_email or "").strip().lower()
+    if restaurant_email and login_email and restaurant_email == login_email:
+        return True
+    return row.get("viewer_role") == "owner"
+
+
 def _order_item_quantity(item: RestaurantOrderItemRequest) -> int:
     return max(1, int(item.quantity_ordered or item.quantity or 1))
 
@@ -1493,7 +1666,24 @@ def _menu_search_row(row) -> dict[str, Any]:
     return data
 
 
-async def _fetch_order_record(db, order_id: str, user_id: str):
+def _row_get(row, key: str, default: Any = None) -> Any:
+    if row is None:
+        return default
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
+async def _fetch_order_record(
+    db,
+    order_id: str,
+    user_id: str,
+    user_email: str = "",
+    workspace_id: str | None = None,
+):
     return await db.fetchrow(
         f"""
         SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address,
@@ -1504,15 +1694,25 @@ async def _fetch_order_record(db, order_id: str, user_id: str):
         JOIN restaurants r ON r.id=o.restaurant_id
         LEFT JOIN users owner ON owner.id=r.user_id
         WHERE o.id=$1::uuid
-          AND (o.customer_user_id=$2::uuid OR {_restaurant_access_sql("r", "$2")})
+          AND (o.customer_user_id=$2::uuid OR {_restaurant_order_manage_sql("r", "$2", "$3")})
+          AND (($4::uuid IS NULL AND o.workspace_id IS NULL AND r.workspace_id IS NULL)
+               OR (o.workspace_id=$4::uuid AND r.workspace_id=$4::uuid))
         """,
         order_id,
         user_id,
+        user_email,
+        workspace_id,
     )
 
 
-async def _fetch_order_response(db, order_id: str, user_id: str) -> dict[str, Any]:
-    order = await _fetch_order_record(db, order_id, user_id)
+async def _fetch_order_response(
+    db,
+    order_id: str,
+    user_id: str,
+    user_email: str = "",
+    workspace_id: str | None = None,
+) -> dict[str, Any]:
+    order = await _fetch_order_record(db, order_id, user_id, user_email, workspace_id)
     if not order:
         raise HTTPException(404, "Order not found")
     items = await db.fetch(
@@ -1591,12 +1791,14 @@ async def _owner_transition_order_endpoint(
     event_type: str,
     notes: str,
     timestamp_column: str,
+    workspace_id: str | None,
 ) -> dict[str, Any]:
     user_id = str(current_user["id"])
-    order = await _fetch_order_record(db, order_id, user_id)
+    user_email = str(current_user.get("email") or "")
+    order = await _fetch_order_record(db, order_id, user_id, user_email, workspace_id)
     if not order:
         raise HTTPException(404, "Order not found")
-    await _require_restaurant_order_owner(db, order, user_id)
+    await _require_restaurant_order_owner(db, order, user_id, user_email)
 
     allowed = {
         "accepted": {"submitted"},
@@ -1631,17 +1833,15 @@ async def _owner_transition_order_endpoint(
         ip_address=ip_from(request),
         user_agent=ua_from(request),
     )
-    return await _fetch_order_response(db, order_id, user_id)
+    return await _fetch_order_response(db, order_id, user_id, user_email, workspace_id)
 
 
-async def _require_restaurant_order_owner(db, order, user_id: str) -> None:
-    workspace_id = order.get("restaurant_workspace_id") or order.get("workspace_id")
-    if workspace_id:
-        from routes.workspaces import _require_role
-        await _require_role(db, str(workspace_id), user_id, "editor")
+async def _require_restaurant_order_owner(db, order, user_id: str, user_email: str = "") -> None:
+    restaurant_email = str(_row_get(order, "restaurant_email") or "").strip().lower()
+    login_email = str(user_email or "").strip().lower()
+    if restaurant_email and login_email and restaurant_email == login_email:
         return
-    if str(order["restaurant_owner_id"]) != user_id:
-        raise HTTPException(403, "Only the restaurant owner can update this order")
+    raise HTTPException(403, "Only the restaurant owner can update this order")
 
 
 async def _add_order_event(
@@ -1805,6 +2005,7 @@ async def _send_order_email_to_user(
     subtotal = ""
     if order.get("subtotal") is not None:
         subtotal = f"{order.get('currency') or 'USD'} {float(order.get('subtotal')):.2f}"
+    order_items = await _fetch_order_email_items(db, str(order["id"]))
     ok = await send_restaurant_order_email(
         to_email,
         audience=audience,
@@ -1815,6 +2016,7 @@ async def _send_order_email_to_user(
         message=message,
         customer_name=order.get("customer_name") or order.get("customer_email") or "",
         subtotal=subtotal,
+        order_items=order_items,
         app_url=os.getenv("APP_URL", "https://docintel.adar.agomoniai.com"),
     )
     await _record_restaurant_notification(
@@ -1826,6 +2028,19 @@ async def _send_order_email_to_user(
         message=message,
         metadata={**data, "email": _mask_email(to_email), "provider": "smtp"},
     )
+
+
+async def _fetch_order_email_items(db, order_id: str) -> list[dict[str, Any]]:
+    rows = await db.fetch(
+        """
+        SELECT item_name, category, quantity AS quantity_ordered, unit_price, line_total, currency, instructions
+        FROM restaurant_order_items
+        WHERE order_id=$1::uuid
+        ORDER BY created_at, item_name
+        """,
+        order_id,
+    )
+    return [_order_row(row) for row in rows]
 
 
 def _mask_email(email: str) -> str:
@@ -1841,7 +2056,16 @@ def _mask_email(email: str) -> str:
 
 def _order_row(row) -> dict[str, Any]:
     data = dict(row)
-    return {key: _clean(value) for key, value in data.items()}
+    cleaned = {key: _clean(value) for key, value in data.items()}
+    order_items = cleaned.get("order_items")
+    if isinstance(order_items, str):
+        try:
+            cleaned["order_items"] = json.loads(order_items)
+        except json.JSONDecodeError:
+            cleaned["order_items"] = []
+    elif order_items is None:
+        cleaned["order_items"] = []
+    return cleaned
 
 
 def _required_restaurant_email(profile: dict[str, Any]) -> str:

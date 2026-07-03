@@ -37,6 +37,19 @@ export default function App() {
     document.documentElement.dir = current.dir;
   }, [uiLang]);
 
+  useEffect(() => {
+    localStorage.removeItem('docintel_push_enabled');
+    localStorage.removeItem('docintel_fcm_token');
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.getRegistrations()
+      .then(registrations => {
+        registrations
+          .filter(reg => reg.active?.scriptURL?.includes('/firebase-messaging-sw.js'))
+          .forEach(reg => reg.unregister().catch(() => {}));
+      })
+      .catch(() => {});
+  }, []);
+
   // Handle Stripe redirect — force logout so user re-authenticates with updated plan
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
@@ -110,6 +123,7 @@ export default function App() {
       {showRestaurantPanel && (
         <RestaurantPanel
           workspaceId={activeWorkspace?.id || null}
+          activeWorkspace={activeWorkspace}
           onClose={() => setShowRestaurantPanel(false)}
         />
       )}
@@ -178,15 +192,13 @@ export default function App() {
                   <div style={s.verticalGroup}>
                     <div style={s.verticalGroupTitle}>Restaurant</div>
                     <button
-                      style={{...s.verticalItem, ...(!canCreateWorkspaceContent ? s.verticalItemDisabled : {})}}
-                      disabled={!canCreateWorkspaceContent}
+                      style={s.verticalItem}
                       onClick={() => {
-                        if (!canCreateWorkspaceContent) return;
                         setShowVerticals(false);
                         setShowRestaurantPanel(true);
                       }}>
                       <span>🍽</span>
-                      <span>Restaurant menu scribe</span>
+                      <span>Restaurant Menu Scribe & Carryout Orders</span>
                     </button>
                   </div>
                 </div>
