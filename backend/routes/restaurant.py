@@ -10,6 +10,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
@@ -104,6 +105,14 @@ class RestaurantFeedbackRequest(BaseModel):
     tags: list[str] = []
     signals: dict[str, Any] = {}
     metadata: dict[str, Any] = {}
+
+
+class RestaurantFeedbackAnalyzeRequest(BaseModel):
+    feedback_text: str
+    language: str = ""
+    current_rating: int | None = None
+    restaurant_name: str = ""
+    menu_item_name: str = ""
 
 
 class RestaurantFeedbackStatusRequest(BaseModel):
@@ -692,14 +701,16 @@ async def search_menu(
                r.phone AS restaurant_phone, r.email AS restaurant_email, r.cuisine_type,
                COALESCE(fb.rating_count, 0)::int AS rating_count,
                fb.avg_rating AS avg_rating,
-               COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count
+               COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count,
+               COALESCE(fb.feedback_signals, '[]'::jsonb) AS feedback_signals
         FROM restaurant_menu_items mi
         JOIN restaurants r ON r.id=mi.restaurant_id
         LEFT JOIN (
             SELECT menu_item_id,
                    COUNT(*)::int AS rating_count,
                    ROUND(AVG(rating)::numeric, 2) AS avg_rating,
-                   COUNT(*) FILTER (WHERE verified_order)::int AS verified_rating_count
+                   COUNT(*) FILTER (WHERE verified_order)::int AS verified_rating_count,
+                   COALESCE(jsonb_agg(signals) FILTER (WHERE signals <> '{{}}'::jsonb), '[]'::jsonb) AS feedback_signals
             FROM restaurant_feedback
             WHERE status <> 'dismissed' AND menu_item_id IS NOT NULL
             GROUP BY menu_item_id
@@ -744,14 +755,16 @@ async def compare_menu_prices(
                r.phone AS restaurant_phone, r.email AS restaurant_email, r.cuisine_type,
                COALESCE(fb.rating_count, 0)::int AS rating_count,
                fb.avg_rating AS avg_rating,
-               COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count
+               COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count,
+               COALESCE(fb.feedback_signals, '[]'::jsonb) AS feedback_signals
         FROM restaurant_menu_items mi
         JOIN restaurants r ON r.id=mi.restaurant_id
         LEFT JOIN (
             SELECT menu_item_id,
                    COUNT(*)::int AS rating_count,
                    ROUND(AVG(rating)::numeric, 2) AS avg_rating,
-                   COUNT(*) FILTER (WHERE verified_order)::int AS verified_rating_count
+                   COUNT(*) FILTER (WHERE verified_order)::int AS verified_rating_count,
+                   COALESCE(jsonb_agg(signals) FILTER (WHERE signals <> '{{}}'::jsonb), '[]'::jsonb) AS feedback_signals
             FROM restaurant_feedback
             WHERE status <> 'dismissed' AND menu_item_id IS NOT NULL
             GROUP BY menu_item_id
@@ -1080,6 +1093,21 @@ async def submit_restaurant_order(
     return await _fetch_order_response(db, order_id, user_id, user_email, body.workspace_id)
 
 
+@router.post("/feedback/analyze")
+async def analyze_restaurant_feedback(body: RestaurantFeedbackAnalyzeRequest, current_user: CurrentUser):
+    text = sanitize_text_for_storage(body.feedback_text or "").strip()
+    if not text:
+        raise HTTPException(400, "Feedback text is required")
+    analysis = await _analyze_restaurant_feedback_text(
+        text,
+        language=body.language,
+        current_rating=body.current_rating,
+        restaurant_name=body.restaurant_name,
+        menu_item_name=body.menu_item_name,
+    )
+    return {"analysis": analysis}
+
+
 @router.post("/feedback")
 async def submit_restaurant_feedback(
     body: RestaurantFeedbackRequest,
@@ -1134,6 +1162,15 @@ async def submit_restaurant_feedback(
             raise HTTPException(403, "Order is not linked to this customer, restaurant, or menu item")
     feedback_id = str(uuid.uuid4())
     workspace_id = str(restaurant["workspace_id"]) if restaurant.get("workspace_id") else None
+    signals = body.signals if isinstance(body.signals, dict) else {}
+    if body.feedback_text and not signals.get("suggested_rating"):
+        analysis = await _analyze_restaurant_feedback_text(
+            body.feedback_text,
+            language=body.language,
+            current_rating=body.rating,
+            prefer_gemini=False,
+        )
+        signals = {**analysis, **signals}
     await db.execute(
         """
         INSERT INTO restaurant_feedback
@@ -1152,7 +1189,7 @@ async def submit_restaurant_feedback(
         body.language or "",
         body.source_type or "text",
         json.dumps([str(tag).strip() for tag in body.tags if str(tag).strip()][:12]),
-        json.dumps(body.signals if isinstance(body.signals, dict) else {}),
+        json.dumps(signals),
         verified_order,
         json.dumps(body.metadata if isinstance(body.metadata, dict) else {}),
     )
@@ -2471,6 +2508,232 @@ def _json(value: Any) -> dict[str, Any]:
     return {}
 
 
+FEEDBACK_TOPICS = ["taste", "value", "portion", "freshness", "spice", "packaging", "wait_time", "accuracy"]
+TOPIC_QUERY_TERMS = {
+    "taste": ["taste", "tasty", "flavor", "flavour", "delicious", "best", "good"],
+    "value": ["value", "cheap", "price", "affordable", "deal", "budget", "cost"],
+    "portion": ["portion", "large", "size", "quantity", "enough", "filling"],
+    "freshness": ["fresh", "freshness", "hot", "warm", "quality"],
+    "spice": ["spice", "spicy", "mild", "heat"],
+    "packaging": ["packaging", "packed", "spill", "container"],
+    "wait_time": ["fast", "quick", "pickup", "wait", "ready", "delay", "slow"],
+    "accuracy": ["accurate", "correct", "wrong", "missing", "order accuracy"],
+}
+POSITIVE_TERMS = {
+    "great", "good", "excellent", "amazing", "delicious", "fresh", "hot", "fast", "quick",
+    "large", "generous", "perfect", "accurate", "friendly", "recommend", "best", "love",
+    "loved", "tasty", "worth", "affordable",
+}
+NEGATIVE_TERMS = {
+    "bad", "poor", "cold", "late", "slow", "small", "stale", "wrong", "missing", "bland",
+    "expensive", "overpriced", "salty", "burnt", "dry", "delay", "delayed", "not good",
+    "disappointed", "terrible",
+}
+
+
+async def _analyze_restaurant_feedback_text(
+    text: str,
+    language: str = "",
+    current_rating: int | None = None,
+    restaurant_name: str = "",
+    menu_item_name: str = "",
+    prefer_gemini: bool = True,
+) -> dict[str, Any]:
+    text = sanitize_text_for_storage(text or "").strip()
+    if not text:
+        return _heuristic_feedback_analysis("")
+    google_ai_key = os.getenv("GOOGLE_AI_KEY", "").strip()
+    if not prefer_gemini or not google_ai_key:
+        return _heuristic_feedback_analysis(text, current_rating=current_rating, analyzer="heuristic")
+
+    model = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash").removeprefix("models/")
+    prompt = f"""
+Analyze restaurant customer feedback and return only JSON.
+
+Feedback:
+{text[:3000]}
+
+Context:
+restaurant={restaurant_name}
+menu_item={menu_item_name}
+language={language}
+current_rating={current_rating}
+
+Return this exact JSON shape:
+{{
+  "suggested_rating": 1-5,
+  "overall_sentiment": "positive|neutral|negative|mixed",
+  "confidence": 0.0-1.0,
+  "tags": ["taste","value","portion","freshness","spice","packaging","wait_time","accuracy"],
+  "topic_sentiment": {{
+    "taste": {{"sentiment":"positive|neutral|negative|mixed|unknown","score": -1.0 to 1.0}},
+    "value": {{"sentiment":"positive|neutral|negative|mixed|unknown","score": -1.0 to 1.0}},
+    "portion": {{"sentiment":"positive|neutral|negative|mixed|unknown","score": -1.0 to 1.0}},
+    "freshness": {{"sentiment":"positive|neutral|negative|mixed|unknown","score": -1.0 to 1.0}},
+    "spice": {{"sentiment":"positive|neutral|negative|mixed|unknown","score": -1.0 to 1.0}},
+    "packaging": {{"sentiment":"positive|neutral|negative|mixed|unknown","score": -1.0 to 1.0}},
+    "wait_time": {{"sentiment":"positive|neutral|negative|mixed|unknown","score": -1.0 to 1.0}},
+    "accuracy": {{"sentiment":"positive|neutral|negative|mixed|unknown","score": -1.0 to 1.0}}
+  }},
+  "reason": "short human-readable explanation"
+}}
+"""
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0,
+            "maxOutputTokens": 900,
+            "responseMimeType": "application/json",
+        },
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                params={"key": google_ai_key},
+                json=payload,
+            )
+        if not resp.is_success:
+            log.warning("Restaurant feedback sentiment failed %s: %s", resp.status_code, resp.text[:300])
+            return _heuristic_feedback_analysis(text, current_rating=current_rating, analyzer="heuristic_after_gemini_error")
+        parts = resp.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        raw = " ".join((part.get("text") or "").strip() for part in parts if part.get("text")).strip()
+        data = _json_from_text(raw)
+        return _normalize_feedback_analysis(data, fallback_text=text, current_rating=current_rating, analyzer="gemini")
+    except Exception as exc:
+        log.warning("Restaurant feedback sentiment fallback: %s", exc)
+        return _heuristic_feedback_analysis(text, current_rating=current_rating, analyzer="heuristic_after_exception")
+
+
+def _heuristic_feedback_analysis(text: str, current_rating: int | None = None, analyzer: str = "heuristic") -> dict[str, Any]:
+    lower = (text or "").lower()
+    pos = sum(1 for term in POSITIVE_TERMS if term in lower)
+    neg = sum(1 for term in NEGATIVE_TERMS if term in lower)
+    if pos > neg:
+        sentiment = "positive"
+    elif neg > pos:
+        sentiment = "negative"
+    elif pos and neg:
+        sentiment = "mixed"
+    else:
+        sentiment = "neutral"
+    suggested = current_rating if current_rating and 1 <= current_rating <= 5 else 3
+    if sentiment == "positive":
+        suggested = 5 if pos >= neg + 2 else 4
+    elif sentiment == "negative":
+        suggested = 1 if neg >= pos + 2 else 2
+    elif sentiment == "mixed":
+        suggested = 3
+
+    topics: dict[str, dict[str, Any]] = {}
+    tags: list[str] = []
+    for topic, terms in TOPIC_QUERY_TERMS.items():
+        mentioned = any(term in lower for term in terms)
+        topic_pos = sum(1 for term in terms + list(POSITIVE_TERMS) if term in lower) if mentioned else 0
+        topic_neg = sum(1 for term in terms + list(NEGATIVE_TERMS) if term in lower) if mentioned else 0
+        score = 0.0
+        topic_sentiment = "unknown"
+        if mentioned:
+            tags.append(topic)
+            score = max(-1.0, min(1.0, (topic_pos - topic_neg) / max(topic_pos + topic_neg, 1)))
+            topic_sentiment = "positive" if score > 0.15 else "negative" if score < -0.15 else "neutral"
+        topics[topic] = {"sentiment": topic_sentiment, "score": round(score, 2)}
+
+    return {
+        "suggested_rating": int(max(1, min(5, suggested))),
+        "overall_sentiment": sentiment,
+        "confidence": 0.55 if text else 0.0,
+        "tags": tags[:8],
+        "topic_sentiment": topics,
+        "reason": "Suggested from semantic sentiment keywords. Customer can override before submitting.",
+        "analyzer": analyzer,
+    }
+
+
+def _normalize_feedback_analysis(
+    data: dict[str, Any],
+    fallback_text: str = "",
+    current_rating: int | None = None,
+    analyzer: str = "gemini",
+) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return _heuristic_feedback_analysis(fallback_text, current_rating=current_rating, analyzer="heuristic_after_invalid_json")
+    topics = data.get("topic_sentiment") if isinstance(data.get("topic_sentiment"), dict) else {}
+    normalized_topics: dict[str, dict[str, Any]] = {}
+    for topic in FEEDBACK_TOPICS:
+        value = topics.get(topic) if isinstance(topics.get(topic), dict) else {}
+        score = value.get("score", 0)
+        try:
+            score = float(score)
+        except (TypeError, ValueError):
+            score = 0.0
+        sentiment = str(value.get("sentiment") or "unknown").lower()
+        if sentiment not in {"positive", "neutral", "negative", "mixed", "unknown"}:
+            sentiment = "unknown"
+        normalized_topics[topic] = {"sentiment": sentiment, "score": round(max(-1.0, min(1.0, score)), 2)}
+    try:
+        rating = int(data.get("suggested_rating") or current_rating or 3)
+    except (TypeError, ValueError):
+        rating = current_rating or 3
+    sentiment = str(data.get("overall_sentiment") or "neutral").lower()
+    if sentiment not in {"positive", "neutral", "negative", "mixed"}:
+        sentiment = "neutral"
+    tags = [str(tag).strip().lower().replace(" ", "_") for tag in (data.get("tags") or []) if str(tag).strip()]
+    tags = [tag for tag in tags if tag in FEEDBACK_TOPICS][:8]
+    return {
+        "suggested_rating": int(max(1, min(5, rating))),
+        "overall_sentiment": sentiment,
+        "confidence": max(0.0, min(1.0, float(data.get("confidence") or 0.7))),
+        "tags": tags,
+        "topic_sentiment": normalized_topics,
+        "reason": str(data.get("reason") or "Suggested from semantic sentiment. Customer can override before submitting.")[:400],
+        "analyzer": analyzer,
+    }
+
+
+def _json_from_text(text: str) -> dict[str, Any]:
+    cleaned = re.sub(r"```(?:json)?\s*", "", text or "").replace("```", "").strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        return json.loads(match.group(0)) if match else {}
+
+
+def _feedback_intent_score(item: dict[str, Any], query: str) -> float:
+    signals = item.get("feedback_signals") or []
+    if isinstance(signals, str):
+        try:
+            signals = json.loads(signals)
+        except json.JSONDecodeError:
+            signals = []
+    if not isinstance(signals, list):
+        return 0.0
+    lower_query = (query or "").lower()
+    target_topics = [
+        topic for topic, terms in TOPIC_QUERY_TERMS.items()
+        if any(term in lower_query for term in terms)
+    ]
+    if not target_topics:
+        target_topics = ["taste", "value"]
+    scores: list[float] = []
+    for signal in signals:
+        if not isinstance(signal, dict):
+            continue
+        topics = signal.get("topic_sentiment") if isinstance(signal.get("topic_sentiment"), dict) else {}
+        for topic in target_topics:
+            value = topics.get(topic)
+            if isinstance(value, dict):
+                try:
+                    scores.append(float(value.get("score") or 0))
+                except (TypeError, ValueError):
+                    pass
+    if not scores:
+        return 0.0
+    avg = sum(scores) / len(scores)
+    return max(-1.0, min(1.0, avg))
+
+
 def _restaurant_recommendation_score(item: dict[str, Any], query: str, max_seen_price: float | None = None) -> float:
     text = " ".join(
         str(item.get(key) or "")
@@ -2483,6 +2746,7 @@ def _restaurant_recommendation_score(item: dict[str, Any], query: str, max_seen_
     rating_score = avg_rating / 5 if avg_rating else 0.0
     verified_score = min(1.0, float(item.get("verified_rating_count") or 0) / 10)
     popularity_score = min(1.0, float(item.get("rating_count") or 0) / 20)
+    intent_score = (_feedback_intent_score(item, query) + 1.0) / 2.0
 
     price_score = 0.35
     if item.get("price") is not None and max_seen_price:
@@ -2492,8 +2756,9 @@ def _restaurant_recommendation_score(item: dict[str, Any], query: str, max_seen_
         text_score * 0.35
         + rating_score * 0.25
         + verified_score * 0.15
-        + price_score * 0.15
-        + popularity_score * 0.10
+        + price_score * 0.12
+        + popularity_score * 0.08
+        + intent_score * 0.05
     )
     return round(score * 100, 2)
 
@@ -2506,6 +2771,9 @@ def _restaurant_recommendation_reason(item: dict[str, Any]) -> str:
         reasons.append(f"{int(item['verified_rating_count'])} verified order rating(s)")
     if item.get("price") is not None:
         reasons.append(f"{item.get('currency') or 'USD'} {float(item['price']):.2f}")
+    intent = _feedback_intent_score(item, "")
+    if intent > 0.15:
+        reasons.append("positive customer sentiment signals")
     return "; ".join(reasons) or "Recommended from menu match and current availability"
 
 

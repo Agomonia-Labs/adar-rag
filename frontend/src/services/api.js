@@ -826,6 +826,20 @@ export async function recommendRestaurantMenu({ query = '', cuisineType = '', ma
   return handleRes(await fetch(`${BASE}/restaurant/menu/recommend?${params.toString()}`, { headers: authHdr() }));
 }
 
+export async function analyzeRestaurantFeedback({ feedbackText = '', language = '', currentRating = null, restaurantName = '', menuItemName = '' } = {}) {
+  return handleRes(await fetch(`${BASE}/restaurant/feedback/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({
+      feedback_text: feedbackText,
+      language,
+      current_rating: currentRating,
+      restaurant_name: restaurantName,
+      menu_item_name: menuItemName,
+    }),
+  }));
+}
+
 export async function submitRestaurantFeedback(feedback) {
   return handleRes(await fetch(`${BASE}/restaurant/feedback`, {
     method: 'POST',

@@ -256,10 +256,12 @@ Features:
 - Menu search.
 - Menu price comparison.
 - Customer ratings and feedback on restaurants/menu items.
+- Customer voice feedback with record/upload, Gemini transcription, editable transcript, and saved feedback source metadata.
+- Semantic sentiment analysis suggests rating, tags, and topic-level signals from typed or voice feedback.
 - Verified-order feedback when feedback is linked to a carryout order.
 - Restaurant owner feedback queue with acknowledge/respond/resolve statuses.
 - Rating badges in restaurant list, restaurant detail, menu search, menu compare, and recommendations.
-- Menu recommendations ranked by menu match, price, rating, feedback volume, and verified-order signals.
+- Menu recommendations ranked by menu match, price, rating, feedback volume, verified-order signals, and intent-specific sentiment such as value, portion, freshness, wait time, and accuracy.
 - Conversational text and speech menu search.
 - Add menu items from chat to carryout cart.
 - Place carryout order.
@@ -585,10 +587,11 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 9. Add matching menu items to cart.
 10. Place carryout order.
 11. Restaurant owner/staff accepts, rejects, marks ready, or completes the order.
-12. Customer submits restaurant/menu feedback from a menu row or carryout order item.
-13. Verified order feedback updates restaurant and menu-item rating badges.
-14. Restaurant owner reviews feedback in the Feedback tab and can acknowledge, respond, resolve, or dismiss.
-15. Customers use Recommend to see ranked menu options based on match, price, ratings, and verified feedback signals.
+12. Customer submits restaurant/menu feedback from a menu row or carryout order item using typed text, recorded voice, or uploaded audio.
+13. DocIntel suggests a rating and tags from semantic sentiment, while the customer can override before submit.
+14. Verified order feedback updates restaurant and menu-item rating badges.
+15. Restaurant owner reviews feedback in the Feedback tab and can acknowledge, respond, resolve, or dismiss.
+16. Customers use Recommend to see ranked menu options based on match, price, ratings, verified feedback, and sentiment signals.
 
 ## Deployment
 

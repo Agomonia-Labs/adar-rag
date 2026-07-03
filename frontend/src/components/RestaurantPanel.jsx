@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  analyzeRestaurantFeedback,
   approveRestaurantAgentRun,
   compareRestaurantMenu,
   createRestaurantOrderDraft,
@@ -16,6 +17,7 @@ import {
   searchRestaurantMenu,
   submitRestaurantFeedback,
   submitRestaurantOrder,
+  transcribeVoice,
   updateRestaurant,
   updateRestaurantFeedbackStatus,
   updateRestaurantOwnerOrder,
@@ -449,6 +451,8 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
       order_id: target.order_id || null,
       rating: 5,
       feedback_text: '',
+      language,
+      source_type: 'text',
       tags: [],
     });
     setTab('feedback');
@@ -465,8 +469,14 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
         order_id: feedbackDraft.order_id,
         rating: Number(feedbackDraft.rating || 5),
         feedback_text: feedbackDraft.feedback_text || '',
-        source_type: feedbackDraft.order_id ? 'order' : 'menu',
+        language: feedbackDraft.language || language,
+        source_type: feedbackDraft.source_type || (feedbackDraft.order_id ? 'order' : 'menu'),
         tags: feedbackDraft.tags || [],
+        signals: {
+          ...(feedbackDraft.sentiment_analysis || {}),
+          ...(feedbackDraft.source_type === 'voice' ? { voice_feedback: true, transcribed: true } : {}),
+        },
+        metadata: feedbackDraft.voice_metadata || {},
       });
       setFeedbackDraft(null);
       await Promise.all([loadFeedback(), loadRestaurants()]);
@@ -735,7 +745,7 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
         {tab === 'feedback' && (
           <section style={s.body}>
             <div style={s.grid2}>
-              <FeedbackForm draft={feedbackDraft} setDraft={setFeedbackDraft} busy={busy} onSubmit={submitFeedbackDraft} />
+              <FeedbackForm draft={feedbackDraft} setDraft={setFeedbackDraft} busy={busy} language={language} onSubmit={submitFeedbackDraft} />
               <FeedbackList
                 title={canProcessRestaurantOrders && ownerFeedback.length ? 'Restaurant feedback queue' : 'My feedback'}
                 feedback={canProcessRestaurantOrders && ownerFeedback.length ? ownerFeedback : myFeedback}
@@ -1029,12 +1039,123 @@ function MenuTable({ items, onAdd = null, onFeedback = null, restaurantName = ''
   );
 }
 
-function FeedbackForm({ draft, setDraft, busy, onSubmit }) {
+function FeedbackForm({ draft, setDraft, busy, language = 'en-US', onSubmit }) {
+  const [recordingFeedback, setRecordingFeedback] = useState(false);
+  const [transcribingFeedback, setTranscribingFeedback] = useState(false);
+  const [analyzingFeedback, setAnalyzingFeedback] = useState(false);
+  const [voiceError, setVoiceError] = useState('');
+  const recorderRef = useRef(null);
+  const voiceChunksRef = useRef([]);
+  const voiceStreamRef = useRef(null);
+
+  async function transcribeFeedbackAudio(blob, filename = 'restaurant-feedback.webm') {
+    if (!blob) return;
+    setVoiceError('');
+    setTranscribingFeedback(true);
+    try {
+      const file = blob instanceof File ? blob : new File([blob], filename, { type: blob.type || 'audio/webm' });
+      const result = await transcribeVoice(file, draft?.language || language);
+      const text = (result?.text || '').trim();
+      if (!text) {
+        setVoiceError('No speech was detected. Please try again or type feedback manually.');
+        return;
+      }
+      setDraft(current => ({
+        ...current,
+        feedback_text: current?.feedback_text ? `${current.feedback_text}\n${text}` : text,
+        source_type: 'voice',
+        language: current?.language || language,
+        voice_metadata: {
+          ...(current?.voice_metadata || {}),
+          trace_id: result?.trace_id || '',
+          audio_type: file.type || blob.type || 'audio/webm',
+          audio_bytes: file.size || blob.size || 0,
+        },
+      }));
+      await suggestFeedbackRating(text);
+    } catch (e) {
+      setVoiceError(e.message || 'Could not transcribe voice feedback.');
+    } finally {
+      setTranscribingFeedback(false);
+    }
+  }
+
+  async function startVoiceFeedback() {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setVoiceError('Voice recording is not supported in this browser. You can upload an audio file or type feedback.');
+      return;
+    }
+    setVoiceError('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      voiceStreamRef.current = stream;
+      voiceChunksRef.current = [];
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      recorderRef.current = recorder;
+      recorder.ondataavailable = event => {
+        if (event.data?.size) voiceChunksRef.current.push(event.data);
+      };
+      recorder.onstop = async () => {
+        const type = recorder.mimeType || 'audio/webm';
+        const blob = new Blob(voiceChunksRef.current, { type });
+        voiceStreamRef.current?.getTracks().forEach(track => track.stop());
+        voiceStreamRef.current = null;
+        if (blob.size) await transcribeFeedbackAudio(blob);
+      };
+      recorder.start();
+      setRecordingFeedback(true);
+    } catch (e) {
+      setVoiceError(e.message || 'Microphone permission was denied or recording failed.');
+    }
+  }
+
+  function stopVoiceFeedback() {
+    setRecordingFeedback(false);
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      recorderRef.current.stop();
+    } else {
+      voiceStreamRef.current?.getTracks().forEach(track => track.stop());
+      voiceStreamRef.current = null;
+    }
+  }
+
+  async function suggestFeedbackRating(text = draft?.feedback_text || '') {
+    const feedbackText = (text || '').trim();
+    if (!feedbackText) {
+      setVoiceError('Type, record, or upload feedback before asking for a suggested rating.');
+      return;
+    }
+    setVoiceError('');
+    setAnalyzingFeedback(true);
+    try {
+      const result = await analyzeRestaurantFeedback({
+        feedbackText,
+        language: draft?.language || language,
+        currentRating: draft?.rating || 5,
+        restaurantName: draft?.restaurant_name || '',
+        menuItemName: draft?.menu_item_name || '',
+      });
+      const analysis = result?.analysis || {};
+      const suggestedTags = Array.isArray(analysis.tags) ? analysis.tags.map(tag => String(tag).replaceAll('_', ' ')) : [];
+      setDraft(current => ({
+        ...current,
+        rating: Number(analysis.suggested_rating || current?.rating || 5),
+        tags: Array.from(new Set([...(current?.tags || []), ...suggestedTags])),
+        sentiment_analysis: analysis,
+      }));
+    } catch (e) {
+      setVoiceError(e.message || 'Could not suggest rating from feedback.');
+    } finally {
+      setAnalyzingFeedback(false);
+    }
+  }
+
   if (!draft) {
     return (
       <div style={s.review}>
         <h3 style={s.h3}>Customer Feedback</h3>
-        <p style={s.muted}>Select Feedback from a menu row or carryout order item. Ratings appear to customers in restaurant lists, menu search, and price comparisons.</p>
+        <p style={s.muted}>Select Feedback from a menu row or carryout order item. Customers can type, record, or upload feedback. Ratings appear in restaurant lists, menu search, price comparisons, and recommendations.</p>
       </div>
     );
   }
@@ -1055,6 +1176,49 @@ function FeedbackForm({ draft, setDraft, busy, onSubmit }) {
       <label style={s.field}>Feedback
         <textarea rows={5} value={draft.feedback_text} onChange={e=>setDraft({ ...draft, feedback_text:e.target.value })} placeholder="What should future customers or the restaurant know?" />
       </label>
+      <div style={s.sentimentBox}>
+        <div>
+          <strong>Semantic rating suggestion</strong>
+          <p style={s.micro}>DocIntel can suggest a rating and tags from sentiment. You can change everything before submit.</p>
+          {draft.sentiment_analysis && (
+            <p style={s.micro}>
+              Suggested: {draft.sentiment_analysis.suggested_rating}/5 · {draft.sentiment_analysis.overall_sentiment}
+              {draft.sentiment_analysis.reason ? ` · ${draft.sentiment_analysis.reason}` : ''}
+            </p>
+          )}
+        </div>
+        <button type="button" style={s.secondaryBtn} disabled={busy || analyzingFeedback} onClick={()=>suggestFeedbackRating()}>
+          {analyzingFeedback ? 'Analyzing...' : 'Suggest rating'}
+        </button>
+      </div>
+      <div style={s.voiceFeedbackBox}>
+        <div>
+          <strong>Voice feedback</strong>
+          <p style={s.micro}>Record or upload a short customer comment. The transcript is editable before submit.</p>
+        </div>
+        <div style={s.actionsTight}>
+          {!recordingFeedback
+            ? <button type="button" style={s.secondaryBtn} disabled={busy || transcribingFeedback} onClick={startVoiceFeedback}>🎙 Record</button>
+            : <button type="button" style={s.dangerSmall} onClick={stopVoiceFeedback}>■ Stop</button>}
+          <label style={s.secondaryBtn}>
+            Upload audio
+            <input
+              type="file"
+              accept="audio/*"
+              hidden
+              disabled={busy || transcribingFeedback}
+              onChange={e => {
+                const file = e.target.files?.[0];
+                if (file) transcribeFeedbackAudio(file, file.name);
+                e.target.value = '';
+              }}
+            />
+          </label>
+          {transcribingFeedback && <span style={s.micro}>Transcribing...</span>}
+        </div>
+        {draft.source_type === 'voice' && <p style={s.micro}>Voice transcript ready. Please review before submitting.</p>}
+        {voiceError && <div style={s.inlineError}>{voiceError}</div>}
+      </div>
       <div style={s.tagRow}>
         {tagOptions.map(tag => (
           <button key={tag} style={{...s.tagBtn, ...((draft.tags || []).includes(tag) ? s.tagBtnOn : {})}} onClick={()=>toggleTag(tag)} type="button">{tag}</button>
@@ -1173,6 +1337,9 @@ const s = {
   tagBtn:{ border:'1px solid var(--b2)', background:'transparent', color:'var(--muted2)', borderRadius:20, padding:'5px 9px', cursor:'pointer', fontSize:12 },
   tagBtnOn:{ borderColor:'rgba(251,191,36,.45)', background:'rgba(251,191,36,.12)', color:'#fde68a' },
   ratingInline:{ display:'inline-flex', alignItems:'center', gap:4, border:'1px solid rgba(251,191,36,.22)', background:'rgba(251,191,36,.08)', color:'#fde68a', borderRadius:20, padding:'2px 7px', fontSize:11, fontWeight:800, width:'fit-content', marginTop:3 },
+  sentimentBox:{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:12, margin:'10px 0', padding:11, border:'1px solid rgba(251,191,36,.24)', background:'rgba(251,191,36,.07)', borderRadius:8 },
+  voiceFeedbackBox:{ margin:'10px 0', padding:11, border:'1px solid rgba(96,165,250,.24)', background:'rgba(96,165,250,.07)', borderRadius:8 },
+  inlineError:{ marginTop:8, padding:'8px 10px', border:'1px solid rgba(248,113,113,.32)', background:'rgba(248,113,113,.1)', color:'#fecaca', borderRadius:7, fontSize:12 },
   dangerSmall:{ background:'rgba(239,68,68,.14)', color:'#fecaca', border:'1px solid rgba(239,68,68,.35)', borderRadius:7, padding:'9px 13px', fontWeight:800, cursor:'pointer' },
   transcriptBox:{ border:'1px solid var(--b2)', borderRadius:8, margin:'12px 0', background:'rgba(255,255,255,.02)' },
   transcriptSummary:{ cursor:'pointer', padding:'10px 12px', color:'#86efac', fontWeight:800, fontSize:13 },
