@@ -671,6 +671,9 @@ CREATE INDEX IF NOT EXISTS idx_restaurant_feedback_customer   ON restaurant_feed
 CREATE INDEX IF NOT EXISTS idx_restaurant_feedback_status     ON restaurant_feedback(status);
 CREATE INDEX IF NOT EXISTS idx_restaurant_feedback_created    ON restaurant_feedback(created_at DESC);
 
+ALTER TABLE restaurant_feedback
+    ADD COLUMN IF NOT EXISTS responded_at TIMESTAMPTZ;
+
 """
 
 

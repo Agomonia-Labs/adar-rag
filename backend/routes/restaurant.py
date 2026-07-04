@@ -1278,12 +1278,11 @@ async def update_restaurant_feedback_status(
         FROM restaurant_feedback f
         JOIN restaurants r ON r.id=f.restaurant_id
         WHERE f.id=$1::uuid
-          AND {_restaurant_order_manage_sql("r", "$2", "$3")}
-          AND (($4::uuid IS NULL AND f.workspace_id IS NULL AND r.workspace_id IS NULL)
-               OR (f.workspace_id=$4::uuid AND r.workspace_id=$4::uuid))
+          AND {_restaurant_order_manage_sql("r", "$2", "$2")}
+          AND (($3::uuid IS NULL AND f.workspace_id IS NULL AND r.workspace_id IS NULL)
+               OR (f.workspace_id=$3::uuid AND r.workspace_id=$3::uuid))
         """,
         feedback_id,
-        user_id,
         user_email,
         body.workspace_id,
     )
@@ -1292,8 +1291,7 @@ async def update_restaurant_feedback_status(
     await db.execute(
         """
         UPDATE restaurant_feedback
-        SET status=$2, owner_response=$3, updated_at=NOW(),
-            responded_at=CASE WHEN $3 <> '' THEN NOW() ELSE responded_at END
+        SET status=$2, owner_response=$3, updated_at=NOW()
         WHERE id=$1::uuid
         """,
         feedback_id,
