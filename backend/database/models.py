@@ -595,6 +595,20 @@ CREATE INDEX IF NOT EXISTS idx_restaurant_orders_workspace  ON restaurant_orders
 CREATE INDEX IF NOT EXISTS idx_restaurant_orders_status     ON restaurant_orders(status);
 CREATE INDEX IF NOT EXISTS idx_restaurant_orders_created    ON restaurant_orders(created_at DESC);
 
+ALTER TABLE restaurant_orders
+    ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'unpaid',
+    ADD COLUMN IF NOT EXISTS payment_provider TEXT,
+    ADD COLUMN IF NOT EXISTS stripe_checkout_session_id TEXT,
+    ADD COLUMN IF NOT EXISTS stripe_payment_intent_id TEXT,
+    ADD COLUMN IF NOT EXISTS stripe_refund_id TEXT,
+    ADD COLUMN IF NOT EXISTS payment_amount NUMERIC(10,2),
+    ADD COLUMN IF NOT EXISTS platform_fee_amount NUMERIC(10,2),
+    ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS refund_error TEXT;
+CREATE INDEX IF NOT EXISTS idx_restaurant_orders_payment_status ON restaurant_orders(payment_status);
+CREATE INDEX IF NOT EXISTS idx_restaurant_orders_stripe_session ON restaurant_orders(stripe_checkout_session_id);
+
 CREATE TABLE IF NOT EXISTS restaurant_order_items (
     id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     order_id       UUID        NOT NULL REFERENCES restaurant_orders(id) ON DELETE CASCADE,

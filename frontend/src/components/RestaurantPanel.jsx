@@ -4,6 +4,7 @@ import {
   approveRestaurantAgentRun,
   compareRestaurantMenu,
   createRestaurantOrderDraft,
+  createRestaurantOrderCheckout,
   deleteRestaurant,
   fetchRestaurant,
   fetchRestaurantAgentRun,
@@ -16,7 +17,6 @@ import {
   runRestaurantScribeWorkflow,
   searchRestaurantMenu,
   submitRestaurantFeedback,
-  submitRestaurantOrder,
   transcribeVoice,
   updateRestaurant,
   updateRestaurantFeedbackStatus,
@@ -404,13 +404,20 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
     setBusy(true);
     setError('');
     try {
-      const data = await submitRestaurantOrder(orderId, 'Customer confirmed carryout order', workspaceId);
-      setDraftOrder(data);
-      setCart({ restaurant_id:null, restaurant_name:'', items:[] });
-      await loadOrders();
-      setTab('orders');
+      const baseUrl = window.location.href.split('?')[0];
+      const workspaceParam = workspaceId ? `&workspace_id=${encodeURIComponent(workspaceId)}` : '';
+      const data = await createRestaurantOrderCheckout(orderId, {
+        workspaceId,
+        successUrl: `${baseUrl}?restaurant_payment=success&order_id=${encodeURIComponent(orderId)}${workspaceParam}&session_id={CHECKOUT_SESSION_ID}`,
+        cancelUrl: `${baseUrl}?restaurant_payment=cancelled&order_id=${encodeURIComponent(orderId)}${workspaceParam}`,
+      });
+      if (data.checkout_url) {
+        window.location.href = data.checkout_url;
+        return;
+      }
+      if (data.order) setDraftOrder(data.order);
     } catch (e) {
-      setError(e.message || 'Could not submit carryout order');
+      setError(e.message || 'Could not start payment checkout');
     } finally {
       setBusy(false);
     }
@@ -904,13 +911,14 @@ function CarryoutCart({ cart, customer, draftOrder, busy, onCustomer, onUpdateIt
       {order && (
         <div style={s.status}>
           Order draft ready: {order.restaurant_name} · ${Number(order.subtotal || 0).toFixed(2)} · {order.status}
+          {order.payment_status ? ` · payment ${order.payment_status}` : ''}
         </div>
       )}
       <div style={s.actions}>
         <button style={s.secondaryBtn} disabled={busy || !cart.items.length} onClick={onDraft}>{busy ? 'Working...' : 'Review order'}</button>
-        <button style={s.primary} disabled={busy || !order || order.status !== 'draft'} onClick={onSubmit}>Place carryout order</button>
+        <button style={s.primary} disabled={busy || !order || !['draft','payment_pending'].includes(order.status)} onClick={onSubmit}>Pay & Place Order</button>
       </div>
-      <p style={s.muted}>Carryout only. Restaurant must accept before the order is confirmed.</p>
+      <p style={s.muted}>Carryout only. Payment is collected before the restaurant receives the order.</p>
     </aside>
   );
 }

@@ -788,6 +788,22 @@ export async function submitRestaurantOrder(orderId, notes = '', workspaceId = n
   }));
 }
 
+export async function createRestaurantOrderCheckout(orderId, {
+  workspaceId = null,
+  successUrl = '',
+  cancelUrl = '',
+} = {}) {
+  return handleRes(await fetch(`${BASE}/restaurant/orders/${orderId}/checkout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      success_url: successUrl || null,
+      cancel_url: cancelUrl || null,
+    }),
+  }));
+}
+
 export async function listMyRestaurantOrders(workspaceId = null) {
   const params = new URLSearchParams();
   if (workspaceId) params.set('workspace_id', workspaceId);

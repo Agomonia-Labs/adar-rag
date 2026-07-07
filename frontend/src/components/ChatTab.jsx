@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { streamChat, listSessions, createSession, getSession,
          saveSessionMessages, deleteSession, submitFeedback,
          getSessionFeedback, transcribeVoice,
-         createRestaurantOrderDraft, submitRestaurantOrder } from '../services/api.js';
+         createRestaurantOrderDraft, createRestaurantOrderCheckout } from '../services/api.js';
 import MarkdownRenderer from './MarkdownRenderer.jsx';
 import EvalBadges from './EvalBadges.jsx';
 
@@ -607,17 +607,25 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
     setRestaurantOrderBusy(true);
     setRestaurantOrderMessage('');
     try {
-      const order = await submitRestaurantOrder(restaurantDraftOrder.id, restaurantCustomer.special_instructions, activeWorkspace?.id || null);
-      const submittedOrder = normalizeRestaurantOrderResponse(order);
-      setRestaurantDraftOrder(submittedOrder);
-      setRestaurantCart({ restaurant_id: null, restaurant_name: '', restaurant: null, items: [] });
-      setRestaurantOrderMessage(`Carryout order submitted to ${submittedOrder.restaurant_name || 'restaurant'}. Status: ${submittedOrder.status}.`);
+      const baseUrl = window.location.href.split('?')[0];
+      const workspaceId = activeWorkspace?.id || null;
+      const workspaceParam = workspaceId ? `&workspace_id=${encodeURIComponent(workspaceId)}` : '';
+      const checkout = await createRestaurantOrderCheckout(restaurantDraftOrder.id, {
+        workspaceId,
+        successUrl: `${baseUrl}?restaurant_payment=success&order_id=${encodeURIComponent(restaurantDraftOrder.id)}${workspaceParam}&session_id={CHECKOUT_SESSION_ID}`,
+        cancelUrl: `${baseUrl}?restaurant_payment=cancelled&order_id=${encodeURIComponent(restaurantDraftOrder.id)}${workspaceParam}`,
+      });
+      if (checkout.checkout_url) {
+        window.location.href = checkout.checkout_url;
+        return;
+      }
+      if (checkout.order) setRestaurantDraftOrder(normalizeRestaurantOrderResponse(checkout.order));
     } catch (e) {
-      setRestaurantOrderMessage(e.message || 'Could not submit order.');
+      setRestaurantOrderMessage(e.message || 'Could not start payment checkout.');
     } finally {
       setRestaurantOrderBusy(false);
     }
-  }, [restaurantDraftOrder?.id, restaurantCustomer.special_instructions]);
+  }, [activeWorkspace?.id, restaurantDraftOrder?.id]);
 
   if (!embeddedDocs.length) return (
     <div style={s.empty}>
@@ -1145,9 +1153,9 @@ function ChatRestaurantCart({
           style={{ ...s.placeBtn, ...(!draftReady || busy ? s.placeBtnOff : {}) }}
           disabled={busy || !draftReady}
           onClick={onSubmit}
-          title={draftReady ? 'Submit carryout order to restaurant' : 'Review order first'}
+          title={draftReady ? 'Pay and submit carryout order to restaurant' : 'Review order first'}
         >
-          {busy ? 'Working...' : 'Place carryout order'}
+          {busy ? 'Working...' : 'Pay & Place Order'}
         </button>
       </div>
     </div>

@@ -11,7 +11,7 @@ from typing import Any
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel
 
 from auth.dependencies import CurrentUser
@@ -43,6 +43,10 @@ log = logging.getLogger("docintel.restaurant.route")
 
 RESTAURANT_WORKFLOW_ID = "restaurant_menu_scribe_phase1"
 RESTAURANT_VERTICAL = "restaurant"
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_RESTAURANT_WEBHOOK_SECRET = os.getenv("STRIPE_RESTAURANT_WEBHOOK_SECRET", STRIPE_WEBHOOK_SECRET)
+APP_URL = os.getenv("APP_URL", "https://docintel.adar.agomoniai.com")
 MAX_RESTAURANT_AUDIO_BYTES = int(os.getenv("RESTAURANT_SCRIBE_MAX_MB", "25")) * 1024 * 1024
 SUPPORTED_RESTAURANT_AUDIO_TYPES = {
     "audio/webm",
@@ -53,6 +57,33 @@ SUPPORTED_RESTAURANT_AUDIO_TYPES = {
     "audio/x-wav",
     "audio/ogg",
 }
+
+
+def _stripe():
+    import stripe as _s
+    _s.api_key = STRIPE_SECRET_KEY
+    return _s
+
+
+def _stripe_to_plain(value):
+    if isinstance(value, dict):
+        return {k: _stripe_to_plain(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_stripe_to_plain(v) for v in value]
+    try:
+        converter = object.__getattribute__(value, "to_dict_recursive")
+    except Exception:
+        converter = None
+    if callable(converter):
+        try:
+            return _stripe_to_plain(converter())
+        except Exception:
+            pass
+    try:
+        data = object.__getattribute__(value, "_data")
+    except Exception:
+        return value
+    return _stripe_to_plain(data)
 
 
 class RestaurantApprovalRequest(BaseModel):
@@ -92,6 +123,12 @@ class RestaurantOrderDraftRequest(BaseModel):
 class RestaurantOrderStatusRequest(BaseModel):
     notes: str = ""
     workspace_id: str | None = None
+
+
+class RestaurantOrderCheckoutRequest(BaseModel):
+    workspace_id: str | None = None
+    success_url: str | None = None
+    cancel_url: str | None = None
 
 
 class RestaurantFeedbackRequest(BaseModel):
@@ -1093,6 +1130,121 @@ async def submit_restaurant_order(
     return await _fetch_order_response(db, order_id, user_id, user_email, body.workspace_id)
 
 
+@router.post("/orders/{order_id}/checkout")
+async def create_restaurant_order_checkout(
+    order_id: str,
+    body: RestaurantOrderCheckoutRequest,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(503, "Stripe is not configured for restaurant payments")
+    user_id = str(current_user["id"])
+    user_email = str(current_user.get("email") or "")
+    order = await _fetch_order_record(db, order_id, user_id, user_email, body.workspace_id)
+    if not order:
+        raise HTTPException(404, "Order not found")
+    if str(order["customer_user_id"]) != user_id:
+        raise HTTPException(403, "Only the customer can pay for this order")
+    if order["status"] not in {"draft", "payment_pending"}:
+        raise HTTPException(400, f"Only draft or payment-pending orders can be paid; current status is {order['status']}")
+    subtotal = Decimal(str(order["subtotal"] or "0"))
+    if subtotal <= 0:
+        raise HTTPException(400, "Order total must be greater than zero before payment")
+
+    items = await db.fetch(
+        """
+        SELECT item_name, quantity, unit_price, line_total, currency
+        FROM restaurant_order_items
+        WHERE order_id=$1::uuid
+        ORDER BY created_at, item_name
+        """,
+        order_id,
+    )
+    line_items = []
+    currency = str(order["currency"] or "USD").lower()
+    for item in items:
+        line_total = Decimal(str(item["line_total"] or "0"))
+        qty = max(1, int(item["quantity"] or 1))
+        unit_amount = int((line_total / qty * 100).quantize(Decimal("1")))
+        if unit_amount <= 0:
+            continue
+        line_items.append({
+            "price_data": {
+                "currency": currency,
+                "product_data": {"name": item["item_name"] or "Restaurant item"},
+                "unit_amount": unit_amount,
+            },
+            "quantity": qty,
+        })
+    if not line_items:
+        raise HTTPException(400, "Order has no payable items")
+
+    stripe = _stripe()
+    success_url = body.success_url or f"{APP_URL}?restaurant_payment=success&order_id={order_id}&session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = body.cancel_url or f"{APP_URL}?restaurant_payment=cancelled&order_id={order_id}"
+    session = stripe.checkout.Session.create(
+        mode="payment",
+        payment_method_types=["card"],
+        customer_email=order["customer_email"] or user_email or None,
+        line_items=line_items,
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={
+            "kind": "restaurant_order",
+            "order_id": order_id,
+            "user_id": user_id,
+            "restaurant_id": str(order["restaurant_id"]),
+            "workspace_id": str(order["workspace_id"] or ""),
+        },
+        payment_intent_data={
+            "metadata": {
+                "kind": "restaurant_order",
+                "order_id": order_id,
+                "user_id": user_id,
+                "restaurant_id": str(order["restaurant_id"]),
+            },
+        },
+    )
+    await db.execute(
+        """
+        UPDATE restaurant_orders
+        SET status='payment_pending',
+            payment_status='payment_pending',
+            payment_provider='stripe',
+            stripe_checkout_session_id=$2,
+            payment_amount=$3,
+            updated_at=NOW()
+        WHERE id=$1::uuid
+        """,
+        order_id,
+        session["id"],
+        subtotal,
+    )
+    await _add_order_event(
+        db,
+        order_id,
+        user_id,
+        "payment_checkout_created",
+        order["status"],
+        "payment_pending",
+        "Stripe checkout created for carryout order",
+        {"stripe_checkout_session_id": session["id"]},
+    )
+    await audit(
+        db,
+        user_id=user_id,
+        action="restaurant_order_checkout",
+        resource_type="restaurant_order",
+        resource_id=order_id,
+        metadata={"restaurant_id": str(order["restaurant_id"]), "stripe_checkout_session_id": session["id"]},
+        ip_address=ip_from(request),
+        user_agent=ua_from(request),
+    )
+    return {"checkout_url": session["url"], "session_id": session["id"], "order": await _fetch_order_response(db, order_id, user_id, user_email, body.workspace_id)}
+
+
 @router.post("/feedback/analyze")
 async def analyze_restaurant_feedback(body: RestaurantFeedbackAnalyzeRequest, current_user: CurrentUser):
     text = sanitize_text_for_storage(body.feedback_text or "").strip()
@@ -1405,7 +1557,7 @@ async def list_restaurant_owner_orders(
         JOIN restaurants r ON r.id=o.restaurant_id
         LEFT JOIN restaurant_order_items oi ON oi.order_id=o.id
         WHERE {_restaurant_order_manage_sql("r", "$1", "$1")}
-          AND o.status <> 'draft'
+          AND o.status NOT IN ('draft', 'payment_pending', 'payment_failed')
           AND ($2='' OR o.status=$2)
           AND (($3::uuid IS NULL AND o.workspace_id IS NULL AND r.workspace_id IS NULL)
                OR (o.workspace_id=$3::uuid AND r.workspace_id=$3::uuid))
@@ -1462,6 +1614,169 @@ async def complete_restaurant_order(
     db=Depends(get_db),
 ):
     return await _owner_transition_order_endpoint(db, request, current_user, order_id, "completed", "completed", body.notes or "Order completed", "completed_at", body.workspace_id)
+
+
+@router.post("/payments/webhook")
+async def restaurant_payment_webhook(request: Request):
+    if not STRIPE_SECRET_KEY:
+        return Response(status_code=200)
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    stripe = _stripe()
+    try:
+        event = stripe.Webhook.construct_event(payload, sig, STRIPE_RESTAURANT_WEBHOOK_SECRET)
+    except Exception as exc:
+        log.warning("Restaurant payment webhook signature failed: %s", exc)
+        raise HTTPException(400, "Invalid signature")
+    event = _stripe_to_plain(event)
+
+    data = _stripe_to_plain(event["data"]["object"])
+    etype = event["type"]
+    pool = get_pool()
+    try:
+        async with pool.acquire() as db:
+            if etype == "checkout.session.completed":
+                await _handle_restaurant_checkout_completed(db, data)
+            elif etype in {"checkout.session.expired", "payment_intent.payment_failed"}:
+                await _handle_restaurant_payment_failed(db, data)
+    except Exception:
+        metadata = data.get("metadata") if isinstance(data, dict) else {}
+        log.exception(
+            "Restaurant payment webhook failed event_id=%s event_type=%s order_id=%s session_id=%s",
+            event.get("id") if isinstance(event, dict) else "",
+            etype,
+            (metadata or {}).get("order_id") if isinstance(metadata, dict) else "",
+            data.get("id") if isinstance(data, dict) else "",
+        )
+        raise
+    return Response(status_code=200)
+
+
+async def _handle_restaurant_checkout_completed(db, session: dict) -> None:
+    session = _stripe_to_plain(session)
+    metadata = session.get("metadata") or {}
+    if metadata.get("kind") != "restaurant_order":
+        return
+    order_id = metadata.get("order_id")
+    if not order_id:
+        return
+    order = await db.fetchrow(
+        """
+        SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address,
+               r.phone AS restaurant_phone, r.email AS restaurant_email,
+               r.user_id AS restaurant_owner_id, owner.email AS restaurant_owner_email,
+               r.workspace_id AS restaurant_workspace_id
+        FROM restaurant_orders o
+        JOIN restaurants r ON r.id=o.restaurant_id
+        LEFT JOIN users owner ON owner.id=r.user_id
+        WHERE o.id=$1::uuid
+        """,
+        order_id,
+    )
+    if not order:
+        log.warning("Restaurant payment completed for missing order_id=%s", order_id)
+        return
+    order = _order_row(order)
+
+    actor_id = metadata.get("user_id") or str(order["customer_user_id"])
+    amount_total = Decimal(str(session.get("amount_total") or 0)) / Decimal("100")
+    await db.execute(
+        """
+        UPDATE restaurant_orders
+        SET payment_status='paid',
+            payment_provider='stripe',
+            stripe_checkout_session_id=COALESCE(stripe_checkout_session_id, $2),
+            stripe_payment_intent_id=$3,
+            payment_amount=COALESCE(payment_amount, $4),
+            paid_at=COALESCE(paid_at, NOW()),
+            updated_at=NOW()
+        WHERE id=$1::uuid
+        """,
+        order_id,
+        session.get("id"),
+        session.get("payment_intent"),
+        amount_total,
+    )
+    if order["status"] in {"draft", "payment_pending"}:
+        await db.execute(
+            """
+            UPDATE restaurant_orders
+            SET status='submitted',
+                submitted_at=COALESCE(submitted_at, NOW()),
+                updated_at=NOW()
+            WHERE id=$1::uuid
+            """,
+            order_id,
+        )
+        await _safe_add_order_event(
+            db,
+            order_id,
+            actor_id,
+            "paid_submitted",
+            order["status"],
+            "submitted",
+            "Stripe payment completed; carryout order submitted to restaurant",
+            {"stripe_checkout_session_id": session.get("id"), "stripe_payment_intent_id": session.get("payment_intent")},
+        )
+        submitted_order = {**order, "status": "submitted"}
+        await _safe_order_notification(
+            _notify_restaurant_owner(db, submitted_order, actor_id, "paid_submitted"),
+            submitted_order,
+            "restaurant owner paid submitted",
+        )
+        await _safe_order_notification(
+            _notify_restaurant_customer(db, submitted_order, actor_id, "paid_submitted", "submitted"),
+            submitted_order,
+            "customer paid submitted",
+        )
+    else:
+        await _safe_add_order_event(
+            db,
+            order_id,
+            actor_id,
+            "payment_completed",
+            order["status"],
+            order["status"],
+            "Stripe payment completed",
+            {"stripe_checkout_session_id": session.get("id")},
+        )
+
+
+async def _handle_restaurant_payment_failed(db, obj: dict) -> None:
+    obj = _stripe_to_plain(obj)
+    metadata = obj.get("metadata") or {}
+    if metadata.get("kind") != "restaurant_order":
+        return
+    order_id = metadata.get("order_id")
+    if not order_id:
+        return
+    order = await db.fetchrow("SELECT * FROM restaurant_orders WHERE id=$1::uuid", order_id)
+    if not order:
+        return
+    to_status = "payment_failed" if order["status"] == "payment_pending" else order["status"]
+    await db.execute(
+        """
+        UPDATE restaurant_orders
+        SET status=$2,
+            payment_status='payment_failed',
+            stripe_payment_intent_id=COALESCE(stripe_payment_intent_id, $3),
+            updated_at=NOW()
+        WHERE id=$1::uuid
+        """,
+        order_id,
+        to_status,
+        obj.get("payment_intent") or obj.get("id"),
+    )
+    await _safe_add_order_event(
+        db,
+        order_id,
+        metadata.get("user_id") or str(order["customer_user_id"]),
+        "payment_failed",
+        order["status"],
+        to_status,
+        "Stripe payment was not completed",
+        {"stripe_object_id": obj.get("id"), "stripe_object_type": obj.get("object")},
+    )
 
 
 async def _execute_restaurant_workflow_background(
@@ -2119,6 +2434,7 @@ async def _transition_order(
     timestamp_column: str | None = None,
     notify_owner: bool = False,
 ) -> None:
+    order = _order_row(order)
     timestamp_columns = {
         "submitted_at",
         "accepted_at",
@@ -2177,6 +2493,9 @@ async def _owner_transition_order_endpoint(
     if order["status"] not in allowed.get(to_status, set()):
         raise HTTPException(400, f"Cannot change order from {order['status']} to {to_status}")
 
+    if to_status == "rejected":
+        await _refund_restaurant_order_for_rejection(db, order, user_id)
+
     await _transition_order(
         db,
         order,
@@ -2202,6 +2521,104 @@ async def _owner_transition_order_endpoint(
         user_agent=ua_from(request),
     )
     return await _fetch_order_response(db, order_id, user_id, user_email, workspace_id)
+
+
+async def _refund_restaurant_order_for_rejection(db, order, actor_id: str) -> None:
+    order = _order_row(order)
+    payment_status = str(order.get("payment_status") or "unpaid")
+    if payment_status == "refunded":
+        return
+    if payment_status == "refund_pending":
+        raise HTTPException(409, "Refund is already pending for this order")
+    if payment_status not in {"paid", "refund_failed"}:
+        return
+    payment_intent_id = str(order.get("stripe_payment_intent_id") or "").strip()
+    if not payment_intent_id:
+        await db.execute(
+            """
+            UPDATE restaurant_orders
+            SET payment_status='refund_pending',
+                refund_error='Missing Stripe payment intent id for paid order rejection',
+                updated_at=NOW()
+            WHERE id=$1::uuid
+            """,
+            str(order["id"]),
+        )
+        await _safe_add_order_event(
+            db,
+            str(order["id"]),
+            actor_id,
+            "refund_pending",
+            order.get("status"),
+            order.get("status"),
+            "Refund could not be issued automatically because Stripe payment intent id is missing",
+        )
+        raise HTTPException(409, "Refund could not be issued automatically because payment intent id is missing")
+
+    stripe = _stripe()
+    try:
+        refund = stripe.Refund.create(
+            payment_intent=payment_intent_id,
+            metadata={
+                "kind": "restaurant_order_refund",
+                "order_id": str(order["id"]),
+                "restaurant_id": str(order["restaurant_id"]),
+                "actor_id": actor_id,
+            },
+            idempotency_key=f"restaurant-order-refund-{order['id']}",
+        )
+        refund = _stripe_to_plain(refund)
+    except Exception as exc:
+        await db.execute(
+            """
+            UPDATE restaurant_orders
+            SET payment_status='refund_failed',
+                refund_error=$2,
+                updated_at=NOW()
+            WHERE id=$1::uuid
+            """,
+            str(order["id"]),
+            str(exc)[:1000],
+        )
+        await _safe_add_order_event(
+            db,
+            str(order["id"]),
+            actor_id,
+            "refund_failed",
+            order.get("status"),
+            order.get("status"),
+            "Stripe refund failed while rejecting restaurant order",
+            {"error": str(exc)[:1000], "stripe_payment_intent_id": payment_intent_id},
+        )
+        log.exception("Restaurant order refund failed order_id=%s payment_intent=%s", order["id"], payment_intent_id)
+        raise HTTPException(502, "Stripe refund failed; order was not rejected")
+
+    await db.execute(
+        """
+        UPDATE restaurant_orders
+        SET payment_status='refunded',
+            stripe_refund_id=$2,
+            refunded_at=NOW(),
+            refund_error=NULL,
+            updated_at=NOW()
+        WHERE id=$1::uuid
+        """,
+        str(order["id"]),
+        refund.get("id") if isinstance(refund, dict) else None,
+    )
+    await _safe_add_order_event(
+        db,
+        str(order["id"]),
+        actor_id,
+        "refunded",
+        order.get("status"),
+        order.get("status"),
+        "Stripe refund issued before restaurant rejected the order",
+        {
+            "stripe_refund_id": refund.get("id") if isinstance(refund, dict) else None,
+            "stripe_payment_intent_id": payment_intent_id,
+        },
+    )
 
 
 async def _require_restaurant_order_owner(db, order, user_id: str, user_email: str = "") -> None:
@@ -2238,7 +2655,30 @@ async def _add_order_event(
     )
 
 
+async def _safe_add_order_event(
+    db,
+    order_id: str,
+    actor_id: str | None,
+    event_type: str,
+    from_status: str | None,
+    to_status: str | None,
+    notes: str = "",
+    metadata: dict | None = None,
+) -> None:
+    try:
+        await _add_order_event(db, order_id, actor_id, event_type, from_status, to_status, notes, metadata)
+    except Exception:
+        log.exception(
+            "Restaurant order event insert failed order_id=%s event_type=%s from_status=%s to_status=%s",
+            order_id,
+            event_type,
+            from_status,
+            to_status,
+        )
+
+
 async def _notify_restaurant_owner(db, order, actor_id: str, event_type: str) -> None:
+    order = _order_row(order)
     owner_id = str(order["restaurant_owner_id"]) if order.get("restaurant_owner_id") else None
     if not owner_id:
         return
@@ -2289,6 +2729,7 @@ async def _safe_order_notification(notification, order, label: str) -> None:
 
 
 async def _notify_restaurant_customer(db, order, actor_id: str, event_type: str, to_status: str) -> None:
+    order = _order_row(order)
     customer_id = str(order["customer_user_id"]) if order.get("customer_user_id") else None
     if not customer_id:
         return
@@ -2339,6 +2780,7 @@ async def _record_restaurant_notification(
     message: str,
     metadata: dict,
 ) -> None:
+    order = _order_row(order)
     await db.execute(
         """
         INSERT INTO restaurant_notifications
@@ -2366,6 +2808,7 @@ async def _send_order_email_to_user(
     data: dict,
     order,
 ) -> None:
+    order = _order_row(order)
     to_email = (email or "").strip()
     if not to_email:
         log.info("No email available for restaurant order notification user_id=%s order_id=%s", user_id, order["id"])

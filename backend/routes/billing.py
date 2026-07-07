@@ -29,6 +29,27 @@ def _stripe():
     return _s
 
 
+def _stripe_to_plain(value):
+    if isinstance(value, dict):
+        return {k: _stripe_to_plain(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_stripe_to_plain(v) for v in value]
+    try:
+        converter = object.__getattribute__(value, "to_dict_recursive")
+    except Exception:
+        converter = None
+    if callable(converter):
+        try:
+            return _stripe_to_plain(converter())
+        except Exception:
+            pass
+    try:
+        data = object.__getattribute__(value, "_data")
+    except Exception:
+        return value
+    return _stripe_to_plain(data)
+
+
 # ── GET /api/billing/status ───────────────────────────────────────────────────
 @router.get("/status")
 async def billing_status(current_user: CurrentUser, db=Depends(get_db)):
@@ -235,8 +256,9 @@ async def stripe_webhook(request: Request):
         log.warning(f"Stripe webhook signature failed: {e}")
         raise HTTPException(400, "Invalid signature")
 
+    event = _stripe_to_plain(event)
     etype = event["type"]
-    data  = event["data"]["object"]
+    data  = _stripe_to_plain(event["data"]["object"])
     log.info(f"Stripe webhook: {etype}")
 
     pool = get_pool()
@@ -263,8 +285,13 @@ async def stripe_webhook(request: Request):
 # ── Webhook helpers ───────────────────────────────────────────────────────────
 
 async def _handle_checkout_completed(db, session: dict):
-    user_id = session.get("metadata", {}).get("user_id")
-    plan    = session.get("metadata", {}).get("plan", "pro")
+    session = _stripe_to_plain(session)
+    metadata = session.get("metadata") or {}
+    if metadata.get("kind") == "restaurant_order":
+        log.info("Ignoring restaurant checkout session in billing webhook session_id=%s", session.get("id"))
+        return
+    user_id = metadata.get("user_id")
+    plan    = metadata.get("plan", "pro")
     sub_id  = session.get("subscription")
     if not user_id:
         log.warning("checkout.session.completed missing user_id metadata")

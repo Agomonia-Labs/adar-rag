@@ -10,7 +10,7 @@ import AdminDashboard  from './components/AdminDashboard.jsx';
 import HealthcarePanel from './components/HealthcarePanel.jsx';
 import RestaurantPanel from './components/RestaurantPanel.jsx';
 import { ToastContainer } from './components/Toast.jsx';
-import { getMe }       from './services/api.js';
+import { getMe, getWorkspace }       from './services/api.js';
 import { LANGUAGES, getLanguage, getStrings } from './i18n.js';
 
 export default function App() {
@@ -71,6 +71,35 @@ export default function App() {
       .catch(() => localStorage.clear())
       .finally(() => setChecking(false));
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const params = new URLSearchParams(window.location.search);
+    const returnWorkspaceId = params.get('workspace_id');
+    const storedWorkspaceId = localStorage.getItem('active_workspace_id');
+    const workspaceId = returnWorkspaceId || storedWorkspaceId;
+    if (!workspaceId) return;
+    getWorkspace(workspaceId)
+      .then(ws => {
+        setActiveWorkspace(ws);
+        if (params.get('restaurant_payment')) {
+          setShowRestaurantPanel(true);
+          setTab('documents');
+        }
+      })
+      .catch(() => {
+        localStorage.removeItem('active_workspace_id');
+        setActiveWorkspace(null);
+      });
+  }, [user]);
+
+  useEffect(() => {
+    if (activeWorkspace?.id) {
+      localStorage.setItem('active_workspace_id', activeWorkspace.id);
+    } else {
+      localStorage.removeItem('active_workspace_id');
+    }
+  }, [activeWorkspace?.id]);
 
   const handleLogin = data => {
     localStorage.setItem('token',     data.access_token);

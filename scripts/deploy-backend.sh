@@ -84,6 +84,9 @@ fi
 if gcloud secrets describe docintel-stripe-secret-key --project="$PROJECT_ID" &>/dev/null; then
   SECRETS+=("STRIPE_SECRET_KEY=docintel-stripe-secret-key:latest")
   SECRETS+=("STRIPE_WEBHOOK_SECRET=docintel-stripe-webhook-secret:latest")
+  if gcloud secrets describe docintel-stripe-restaurant-webhook-secret --project="$PROJECT_ID" &>/dev/null; then
+    SECRETS+=("STRIPE_RESTAURANT_WEBHOOK_SECRET=docintel-stripe-restaurant-webhook-secret:latest")
+  fi
   SECRETS+=("STRIPE_PRO_PRICE_ID=docintel-stripe-pro-price-id:latest")
   SECRETS+=("STRIPE_ENTERPRISE_PRICE_ID=docintel-stripe-enterprise-price-id:latest")
   echo "  Stripe Billing: enabled"

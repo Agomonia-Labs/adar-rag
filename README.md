@@ -264,9 +264,11 @@ Features:
 - Menu recommendations ranked by menu match, price, rating, feedback volume, verified-order signals, and intent-specific sentiment such as value, portion, freshness, wait time, and accuracy.
 - Conversational text and speech menu search.
 - Add menu items from chat to carryout cart.
-- Place carryout order.
+- Pay and place carryout orders through Stripe Checkout.
+- Return customers to the same workspace after payment completion or cancellation.
 - Restaurant owner queue.
 - Accept, reject, ready-for-pickup, and complete order states.
+- Refund-on-reject for paid orders before the order is marked rejected.
 - Customer order history.
 - Email notification with itemized breakdown.
 - Workspace and owner-email scoped RBAC.
@@ -283,8 +285,12 @@ Ordering rules:
 
 - Carryout only.
 - Orders are scoped to the workspace where the restaurant/menu was saved.
+- Paid carryout orders use Stripe Checkout and are submitted to the restaurant queue after successful payment webhook processing.
+- Stripe restaurant sessions use `metadata.kind=restaurant_order` so restaurant payments are separated from subscription billing webhooks.
+- Payment return URLs include the active `workspace_id`, so customers land back in the same workspace instead of personal workspace.
 - Restaurant owners see only matching restaurant-email orders, unless they are workspace owners.
 - Customers can view their own carryout orders in the active workspace.
+- If a restaurant owner rejects a paid order, DocIntel attempts a Stripe refund first and records refund status, refund id, refund time, and any refund error.
 - Customer feedback is scoped to the active workspace and restaurant.
 - Feedback tied to an accessible order is marked as verified.
 - Dismissed feedback is excluded from visible aggregate ratings.
@@ -585,13 +591,15 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 7. Use menu search or Compare Menus.
 8. Ask food/menu questions in chat using text or voice.
 9. Add matching menu items to cart.
-10. Place carryout order.
-11. Restaurant owner/staff accepts, rejects, marks ready, or completes the order.
-12. Customer submits restaurant/menu feedback from a menu row or carryout order item using typed text, recorded voice, or uploaded audio.
-13. DocIntel suggests a rating and tags from semantic sentiment, while the customer can override before submit.
-14. Verified order feedback updates restaurant and menu-item rating badges.
-15. Restaurant owner reviews feedback in the Feedback tab and can acknowledge, respond, resolve, or dismiss.
-16. Customers use Recommend to see ranked menu options based on match, price, ratings, verified feedback, and sentiment signals.
+10. Review cart and pay through Stripe Checkout.
+11. Stripe webhook marks the order paid/submitted and returns the customer to the same workspace.
+12. Restaurant owner/staff accepts, rejects, marks ready, or completes the order.
+13. If a paid order is rejected, DocIntel issues a Stripe refund before marking the order rejected.
+14. Customer submits restaurant/menu feedback from a menu row or carryout order item using typed text, recorded voice, or uploaded audio.
+15. DocIntel suggests a rating and tags from semantic sentiment, while the customer can override before submit.
+16. Verified order feedback updates restaurant and menu-item rating badges.
+17. Restaurant owner reviews feedback in the Feedback tab and can acknowledge, respond, resolve, or dismiss.
+18. Customers use Recommend to see ranked menu options based on match, price, ratings, verified feedback, and sentiment signals.
 
 ## Deployment
 
@@ -655,6 +663,9 @@ MAX_FILE_SIZE_MB
 GMAIL_USER
 GMAIL_APP_PASSWORD
 EMAIL_FROM_NAME
+STRIPE_SECRET_KEY
+STRIPE_WEBHOOK_SECRET
+STRIPE_RESTAURANT_WEBHOOK_SECRET
 RESTAURANT_SCRIBE_MAX_MB
 RESTAURANT_TRANSCRIPTION_MAX_OUTPUT_TOKENS
 RESTAURANT_TRANSCRIPT_WINDOW_CHARS
@@ -718,10 +729,14 @@ For production:
 4. Verify HNSW/vector indexes after embedding model dimension changes.
 5. Apply restaurant feedback migration when enabling customer ratings:
    `scripts/20260702_restaurant_feedback_mvp_migration.sql`.
-5. Never change `EMBEDDING_DIM` without re-embedding existing documents.
-6. Validate RBAC and workspace visibility with owner, editor, and viewer users.
-7. Validate restaurant owner-email order scoping before enabling carryout order processing.
-8. Validate healthcare trace/PHI retention policies before production healthcare pilots.
+6. Apply restaurant payment migration when enabling paid carryout checkout:
+   `scripts/20260706_restaurant_order_payments_migration.sql`.
+7. Never change `EMBEDDING_DIM` without re-embedding existing documents.
+8. Validate RBAC and workspace visibility with owner, editor, and viewer users.
+9. Validate restaurant owner-email order scoping before enabling carryout order processing.
+10. Validate Stripe restaurant webhook delivery with a live or test `checkout.session.completed` event and confirm `payment_status=paid`.
+11. Validate refund-on-reject with a small test order before enabling live restaurant payments.
+12. Validate healthcare trace/PHI retention policies before production healthcare pilots.
 
 ## Configuration Reference
 
@@ -742,6 +757,9 @@ For production:
 | `GMAIL_USER` | Gmail user for email notifications |
 | `GMAIL_APP_PASSWORD` | Gmail app password |
 | `EMAIL_FROM_NAME` | Display name for outbound email |
+| `STRIPE_SECRET_KEY` | Stripe secret key for billing and restaurant checkout |
+| `STRIPE_WEBHOOK_SECRET` | Stripe billing webhook signing secret |
+| `STRIPE_RESTAURANT_WEBHOOK_SECRET` | Optional restaurant payment webhook signing secret; falls back to `STRIPE_WEBHOOK_SECRET` |
 | `RESTAURANT_*` | Restaurant scribe/transcript extraction limits |
 
 ## Repository Structure
