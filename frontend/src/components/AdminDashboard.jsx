@@ -10,6 +10,7 @@ const fmtN     = n => (n||0).toLocaleString();
 const STATUS_COLOR = { embedded:'#4ade80', chunked:'#60a5fa', chunking:'#fbbf24', embedding:'#fbbf24', uploading:'#94a3b8', error:'#f87171' };
 
 export default function AdminDashboard() {
+  const isMobile = useIsMobile();
   const [stats,  setStats]  = useState(null);
   const [users,  setUsers]  = useState([]);
   const [docs,   setDocs]   = useState([]);
@@ -59,15 +60,15 @@ export default function AdminDashboard() {
   const openTrace   = async(id)      => { try{setTraceDetail(await fetchTrace(id));}catch(e){setError(e.message);} };
 
   return (
-    <div style={s.wrap}>
-      <div style={s.pageHdr}>
+    <div style={{...s.wrap, ...(isMobile ? s.wrapMobile : {})}}>
+      <div style={{...s.pageHdr, ...(isMobile ? s.pageHdrMobile : {})}}>
         <div><h2 style={s.pageTitle}>⚙ Admin Dashboard</h2><p style={s.pageSub}>System-wide visibility and controls</p></div>
-        <button style={s.refreshBtn} onClick={load} disabled={loading}>{loading?'…':'↻ Refresh'}</button>
+        <button style={{...s.refreshBtn, ...(isMobile ? s.refreshBtnMobile : {})}} onClick={load} disabled={loading}>{loading?'…':'↻ Refresh'}</button>
       </div>
 
       {error && <div style={s.errBanner}>{error}</div>}
 
-      <div style={s.tabRow}>
+      <div style={{...s.tabRow, ...(isMobile ? s.tabRowMobile : {})}}>
         {[['overview','📊 Overview'],['users','👥 Users'],['documents','📂 Documents'],['audit','🔍 Audit Log'],['traces','🧭 Traces']].map(([k,lbl])=>(
           <button key={k} style={{...s.subTab,...(tab===k?s.subTabOn:{})}} onClick={()=>{
               setTab(k);
@@ -75,7 +76,7 @@ export default function AdminDashboard() {
               if (k==='documents' && !docs.length) fetchAdminDocuments().then(setDocs).catch(()=>{});
               if (k==='traces') loadTraces();
             }}>
-            {lbl}
+            <span>{lbl}</span>
             {k==='users'     && <span style={s.tabCount}>{users.length}</span>}
             {k==='documents' && <span style={s.tabCount}>{docs.length}</span>}
             {k==='traces'    && traces.length>0 && <span style={s.tabCount}>{traces.length}</span>}
@@ -88,13 +89,13 @@ export default function AdminDashboard() {
       {/* Overview */}
       {!loading && tab==='overview' && stats && (
         <div>
-          <div style={s.statsGrid}>
-            <StatCard icon="👥" label="Total users"   value={fmtN(stats.total_users)}   sub={`${stats.total_admins} admin`}   color="#60a5fa"/>
-            <StatCard icon="📂" label="Documents"     value={fmtN(stats.total_docs)}    sub={`${stats.error_docs} errors`}    color="#4ade80"/>
-            <StatCard icon="⚡" label="Embedded"       value={fmtN(stats.embedded_docs)} sub={`${stats.chunked_docs} chunked`} color="#fbbf24"/>
-            <StatCard icon="🧠" label="Vector chunks" value={fmtN(stats.total_vectors)} sub={fmtBytes(stats.total_bytes)}    color="#c084fc"/>
+          <div style={{...s.statsGrid, ...(isMobile ? s.statsGridMobile : {})}}>
+            <StatCard compact={isMobile} icon="👥" label="Total users"   value={fmtN(stats.total_users)}   sub={`${stats.total_admins} admin`}   color="#60a5fa"/>
+            <StatCard compact={isMobile} icon="📂" label="Documents"     value={fmtN(stats.total_docs)}    sub={`${stats.error_docs} errors`}    color="#4ade80"/>
+            <StatCard compact={isMobile} icon="⚡" label="Embedded"       value={fmtN(stats.embedded_docs)} sub={`${stats.chunked_docs} chunked`} color="#fbbf24"/>
+            <StatCard compact={isMobile} icon="🧠" label="Vector chunks" value={fmtN(stats.total_vectors)} sub={fmtBytes(stats.total_bytes)}    color="#c084fc"/>
           </div>
-          <div style={s.section}>
+          <div style={{...s.section, ...(isMobile ? s.sectionMobile : {})}}>
             <h3 style={s.secTitle}>Recent documents</h3>
             <DocsTable docs={docs.slice(0,8)} showUser onDelete={deleteDoc}/>
           </div>
@@ -103,7 +104,7 @@ export default function AdminDashboard() {
 
       {/* Users */}
       {!loading && tab==='users' && (
-        <div style={s.section}>
+        <div style={{...s.section, ...(isMobile ? s.sectionMobile : {})}}>
           <h3 style={s.secTitle}>All users ({users.length})</h3>
           <div style={s.tableWrap}>
             <table style={s.table}>
@@ -152,15 +153,15 @@ export default function AdminDashboard() {
 
       {/* Documents */}
       {!loading && tab==='documents' && (
-        <div style={s.section}>
+        <div style={{...s.section, ...(isMobile ? s.sectionMobile : {})}}>
           <h3 style={s.secTitle}>All documents ({docs.length})</h3>
           <DocsTable docs={docs} showUser onDelete={deleteDoc}/>
         </div>
       )}
       {tab === 'audit' && (
-        <div style={s.section}>
+        <div style={{...s.section, ...(isMobile ? s.sectionMobile : {})}}>
           <h3 style={s.secTitle}>Audit Log</h3>
-          <div style={{padding:'12px 16px',display:'flex',gap:8,alignItems:'center',borderBottom:'1px solid var(--b1)',flexWrap:'wrap'}}>
+          <div style={{...s.filterBar, ...(isMobile ? s.filterBarMobile : {})}}>
             <select value={auditFilter} onChange={e=>{setAuditFilter(e.target.value);getAuditLog(200,e.target.value).then(setAudit).catch(()=>{});}}
               style={{fontSize:12,padding:'5px 8px',background:'var(--s3)',color:'var(--tx)',border:'1px solid var(--b2)',borderRadius:'var(--r)',cursor:'pointer'}}>
               <option value="">All actions</option>
@@ -172,7 +173,7 @@ export default function AdminDashboard() {
             </select>
             <button onClick={()=>getAuditLog(200,auditFilter).then(setAudit).catch(()=>{})}
               style={{fontSize:12,padding:'5px 10px',background:'var(--s3)',color:'var(--muted2)',border:'1px solid var(--b2)',borderRadius:'var(--r)',cursor:'pointer'}}>↻ Refresh</button>
-            <span style={{fontSize:12,color:'var(--muted2)',marginLeft:'auto'}}>{audit.length} events</span>
+            <span style={{fontSize:12,color:'var(--muted2)',marginLeft:isMobile ? 0 : 'auto'}}>{audit.length} events</span>
           </div>
           <div style={{overflowX:'auto'}}>
             <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
@@ -204,9 +205,9 @@ export default function AdminDashboard() {
         </div>
       )}
       {tab === 'traces' && (
-        <div style={s.section}>
+        <div style={{...s.section, ...(isMobile ? s.sectionMobile : {})}}>
           <h3 style={s.secTitle}>Request Traces</h3>
-          <div style={{padding:'12px 16px',display:'flex',gap:8,alignItems:'center',borderBottom:'1px solid var(--b1)',flexWrap:'wrap'}}>
+          <div style={{...s.filterBar, ...(isMobile ? s.filterBarMobile : {})}}>
             <button onClick={loadTraces} disabled={traceLoading}
               style={{fontSize:12,padding:'5px 10px',background:'var(--s3)',color:'var(--muted2)',border:'1px solid var(--b2)',borderRadius:'var(--r)',cursor:'pointer'}}>{traceLoading?'… Loading':'↻ Refresh'}</button>
             <input
@@ -231,7 +232,7 @@ export default function AdminDashboard() {
                 tables: {(traceSummary.tables||[]).join(', ') || 'none'} · total rows: {traceSummary.trace_count ?? 0}
               </span>
             )}
-            <span style={{fontSize:12,color:'var(--muted2)',marginLeft:'auto'}}>{filteredTraces.length} / {traces.length} questions</span>
+            <span style={{fontSize:12,color:'var(--muted2)',marginLeft:isMobile ? 0 : 'auto'}}>{filteredTraces.length} / {traces.length} questions</span>
           </div>
           {traceSummary?.message && <div style={s.warnBanner}>{traceSummary.message}</div>}
           {!traceLoading && traceSummary?.ready && traces.length===0 && (
@@ -244,8 +245,8 @@ export default function AdminDashboard() {
               No questions match the current trace filters.
             </div>
           )}
-          <div style={{display:'grid',gridTemplateColumns:'minmax(420px,1fr) minmax(360px,.9fr)',minHeight:360}}>
-            <div style={{overflowX:'auto',borderRight:'1px solid var(--b1)'}}>
+          <div style={{...s.traceLayout, ...(isMobile ? s.traceLayoutMobile : {})}}>
+            <div style={{overflowX:'auto',borderRight:isMobile ? 'none' : '1px solid var(--b1)', borderBottom:isMobile ? '1px solid var(--b1)' : 'none'}}>
               <table style={s.table}>
                 <thead><tr>{['Question','Time','Type','Status'].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
                 <tbody>
@@ -283,7 +284,9 @@ function TraceDetail({ data, traceCount = 0, loading = false }) {
       </p>
     </div>
   );
-  const { trace, spans, llm_events } = data;
+  const trace = data.trace || {};
+  const spans = Array.isArray(data.spans) ? data.spans : [];
+  const llmEvents = Array.isArray(data.llm_events) ? data.llm_events : [];
   return (
     <div style={s.traceDetail}>
       <div style={{fontSize:11,color:'var(--muted2)',marginBottom:4}}>Trace</div>
@@ -309,7 +312,7 @@ function TraceDetail({ data, traceCount = 0, loading = false }) {
         </div>
       ))}
       <h4 style={s.traceHdr}>LLM / Tool Events</h4>
-      {llm_events.map(ev=>(
+      {llmEvents.map(ev=>(
         <div key={ev.event_id} style={s.traceBox}>
           <div style={{display:'flex',justifyContent:'space-between',gap:8}}>
             <strong style={{color:'#c084fc',fontSize:12}}>{ev.operation}</strong>
@@ -357,13 +360,13 @@ function DocsTable({ docs, showUser, onDelete }) {
   );
 }
 
-function StatCard({ icon, label, value, sub, color }) {
+function StatCard({ icon, label, value, sub, color, compact = false }) {
   return (
-    <div style={s.statCard}>
-      <div style={{fontSize:28,marginBottom:8}}>{icon}</div>
-      <div style={{fontSize:28,fontWeight:800,color}}>{value}</div>
-      <div style={{fontSize:13,color:'var(--tx2)',marginTop:4,fontWeight:500}}>{label}</div>
-      <div style={{fontSize:11,color:'var(--muted2)',marginTop:2}}>{sub}</div>
+    <div style={{...s.statCard, ...(compact ? s.statCardCompact : {})}}>
+      <div style={{fontSize:compact ? 17 : 28,marginBottom:compact ? 2 : 8}}>{icon}</div>
+      <div style={{fontSize:compact ? 18 : 28,fontWeight:800,color,lineHeight:1.05}}>{value}</div>
+      <div style={{fontSize:compact ? 11 : 13,color:'var(--tx2)',marginTop:compact ? 2 : 4,fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{label}</div>
+      <div style={{fontSize:compact ? 10 : 11,color:'var(--muted2)',marginTop:compact ? 1 : 2,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{sub}</div>
     </div>
   );
 }
@@ -379,29 +382,40 @@ function ABtn({ children, onClick, danger }) {
 
 const s = {
   wrap:       { padding:'1.5rem', maxWidth:1100, margin:'0 auto' },
+  wrapMobile: { padding:'10px 8px 14px', maxWidth:'100%', boxSizing:'border-box' },
   pageHdr:    { display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'1.5rem' },
+  pageHdrMobile:{ flexDirection:'column', alignItems:'stretch', gap:8, marginBottom:10 },
   pageTitle:  { fontSize:20, fontWeight:800, marginBottom:4, color:'var(--tx)' },
   pageSub:    { fontSize:13, color:'var(--muted2)' },
   refreshBtn: { padding:'7px 14px', fontSize:12, fontWeight:500, background:'transparent', border:'1px solid var(--b2)', color:'var(--muted2)', borderRadius:'var(--r)', cursor:'pointer' },
+  refreshBtnMobile:{ alignSelf:'flex-start', padding:'6px 10px' },
   errBanner:  { background:'rgba(248,113,113,.1)', color:'var(--red)', border:'1px solid rgba(248,113,113,.25)', borderRadius:'var(--r)', padding:'10px 14px', fontSize:13, marginBottom:'1rem' },
   warnBanner: { background:'rgba(248,113,113,.08)', color:'#f87171', borderBottom:'1px solid rgba(248,113,113,.2)', padding:'10px 16px', fontSize:12 },
   infoBanner: { background:'rgba(96,165,250,.08)', color:'#60a5fa', borderBottom:'1px solid rgba(96,165,250,.18)', padding:'10px 16px', fontSize:12 },
   tabRow:     { display:'flex', gap:4, marginBottom:'1.5rem', borderBottom:'1px solid var(--b1)' },
-  subTab:     { padding:'8px 16px', fontSize:13, background:'none', border:'none', color:'var(--muted2)', cursor:'pointer', borderBottom:'2px solid transparent', marginBottom:-1, display:'flex', alignItems:'center', gap:6, fontWeight:500 },
+  tabRowMobile:{ overflowX:'auto', overflowY:'hidden', WebkitOverflowScrolling:'touch', scrollbarWidth:'none', marginBottom:10, paddingBottom:1 },
+  subTab:     { padding:'8px 16px', fontSize:13, background:'none', border:'none', color:'var(--muted2)', cursor:'pointer', borderBottom:'2px solid transparent', marginBottom:-1, display:'flex', alignItems:'center', gap:6, fontWeight:500, whiteSpace:'nowrap', flexShrink:0 },
   subTabOn:   { color:'#4ade80', borderBottomColor:'#4ade80', fontWeight:700 },
   tabCount:   { fontSize:10, padding:'1px 6px', borderRadius:20, background:'var(--s3)', color:'var(--muted2)' },
   statsGrid:  { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'1rem', marginBottom:'2rem' },
+  statsGridMobile:{ gridTemplateColumns:'repeat(2, minmax(0,1fr))', gap:6, marginBottom:8 },
   statCard:   { background:'var(--s2)', border:'1px solid var(--b1)', borderRadius:'var(--rl)', padding:'1.25rem', textAlign:'center' },
+  statCardCompact:{ padding:'8px 6px', borderRadius:9, minHeight:0 },
   section:    { background:'var(--s2)', border:'1px solid var(--b1)', borderRadius:'var(--rl)', overflow:'hidden' },
+  sectionMobile:{ borderRadius:9 },
   secTitle:   { padding:'1rem 1.25rem', fontSize:14, fontWeight:700, borderBottom:'1px solid var(--b1)', color:'var(--tx)' },
   tableWrap:  { overflowX:'auto' },
-  table:      { width:'100%', borderCollapse:'collapse', fontSize:12.5 },
+  table:      { width:'100%', minWidth:760, borderCollapse:'collapse', fontSize:12.5 },
   th:         { padding:'10px 12px', textAlign:'left', fontSize:11, fontWeight:600, color:'var(--muted2)', textTransform:'uppercase', letterSpacing:'.4px', borderBottom:'1px solid var(--b1)', background:'var(--s3)', whiteSpace:'nowrap' },
   tr:         { borderBottom:'1px solid var(--b1)' },
   td:         { padding:'10px 12px', color:'var(--tx2)', verticalAlign:'middle' },
   ellipsis:   { overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', display:'block' },
+  filterBar:  { padding:'12px 16px', display:'flex', gap:8, alignItems:'center', borderBottom:'1px solid var(--b1)', flexWrap:'wrap' },
+  filterBarMobile:{ padding:'9px 10px', alignItems:'stretch' },
   traceSearch:{ minWidth:220, flex:'1 1 260px', maxWidth:360, fontSize:12, padding:'5px 9px', background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:'var(--r)', outline:'none' },
   traceSelect:{ fontSize:12, padding:'5px 8px', background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:'var(--r)', cursor:'pointer' },
+  traceLayout:{ display:'grid', gridTemplateColumns:'minmax(420px,1fr) minmax(360px,.9fr)', minHeight:360 },
+  traceLayoutMobile:{ gridTemplateColumns:'1fr', minHeight:0 },
   traceRowOn: { background:'rgba(74,222,128,.08)', boxShadow:'inset 3px 0 0 #4ade80' },
   tracePill:  { padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:700, background:'rgba(96,165,250,.1)', color:'#60a5fa' },
   traceDetail:{ padding:16, overflow:'auto', maxHeight:620 },
@@ -412,3 +426,20 @@ const s = {
   tracePre:   { margin:'8px 0 0', whiteSpace:'pre-wrap', wordBreak:'break-word', maxHeight:180, overflow:'auto', color:'var(--muted2)', fontSize:10.5, lineHeight:1.45 },
   ctr:        { textAlign:'center', padding:'3rem', color:'var(--muted2)' },
 };
+
+function useIsMobile(breakpoint = 760) {
+  const get = () => typeof window !== 'undefined' && window.innerWidth <= breakpoint;
+  const [mobile, setMobile] = useState(get);
+
+  useEffect(() => {
+    const onResize = () => setMobile(get());
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, [breakpoint]);
+
+  return mobile;
+}
