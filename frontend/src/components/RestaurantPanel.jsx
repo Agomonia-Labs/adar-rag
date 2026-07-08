@@ -764,11 +764,6 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
             </div>
           </section>
         )}
-        {isMobile && (
-          <button type="button" style={s.mobileCloseBar} onClick={onClose}>
-            Close restaurant panel
-          </button>
-        )}
       </div>
     </div>
   );
@@ -1334,7 +1329,6 @@ const s = {
   subtitle:{ margin:'5px 0 0', color:'var(--muted2)', fontSize:13 },
   close:{ background:'transparent', color:'var(--muted2)', border:'1px solid var(--b2)', borderRadius:7, minWidth:40, width:40, height:40, cursor:'pointer', fontSize:24, flexShrink:0 },
   closeMobile:{ position:'fixed', top:'max(10px, env(safe-area-inset-top))', right:10, zIndex:6000, background:'#0b1711', color:'#f0fdf4', border:'1px solid rgba(74,222,128,.35)', boxShadow:'0 10px 28px rgba(0,0,0,.45)' },
-  mobileCloseBar:{ position:'fixed', left:12, right:12, bottom:'max(12px, env(safe-area-inset-bottom))', zIndex:6000, border:'1px solid rgba(74,222,128,.45)', background:'#16a34a', color:'#06130a', borderRadius:9, padding:'11px 14px', fontSize:14, fontWeight:900, boxShadow:'0 14px 40px rgba(0,0,0,.5)', cursor:'pointer' },
   tabs:{ display:'flex', gap:6, padding:'10px 16px', borderBottom:'1px solid rgba(74,222,128,.1)' },
   tabsMobile:{ overflowX:'auto', WebkitOverflowScrolling:'touch', padding:'8px 10px' },
   tab:{ border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx2)', borderRadius:7, padding:'8px 12px', cursor:'pointer', fontWeight:700 },

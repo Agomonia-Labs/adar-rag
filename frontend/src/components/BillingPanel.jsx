@@ -241,9 +241,6 @@ export default function BillingPanel({ onClose }) {
             </>
           )}
         </div>
-        <button type="button" style={s.mobileCloseBar} onClick={onClose}>
-          Close plans
-        </button>
       </div>
     </div>
   );
@@ -254,5 +251,4 @@ const s = {
   panel:    { width:'min(440px,95vw)', height:'100%', background:'var(--s1)', borderLeft:'1px solid var(--b2)', display:'flex', flexDirection:'column', boxShadow:'-8px 0 32px rgba(0,0,0,.4)' },
   hdr:      { display:'flex', justifyContent:'space-between', alignItems:'flex-start', padding:'1.25rem', borderBottom:'1px solid var(--b1)', background:'var(--s2)', flexShrink:0 },
   closeBtn: { position:'fixed', top:'max(10px, env(safe-area-inset-top))', right:10, zIndex:6000, background:'var(--s2)', border:'1px solid rgba(192,132,252,.38)', color:'var(--tx)', cursor:'pointer', fontSize:20, width:40, height:40, borderRadius:8, boxShadow:'0 10px 28px rgba(0,0,0,.45)' },
-  mobileCloseBar:{ position:'fixed', left:12, right:12, bottom:'max(12px, env(safe-area-inset-bottom))', zIndex:6000, border:'1px solid rgba(192,132,252,.5)', background:'#c084fc', color:'#111827', borderRadius:9, padding:'11px 14px', fontSize:14, fontWeight:900, boxShadow:'0 14px 40px rgba(0,0,0,.5)', cursor:'pointer' },
 };
