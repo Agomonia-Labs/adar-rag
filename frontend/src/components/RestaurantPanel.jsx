@@ -34,6 +34,7 @@ const LANGUAGES = [
 const RECORDING_SEGMENT_MS = 180000;
 
 export default function RestaurantPanel({ workspaceId = null, activeWorkspace = null, onClose }) {
+  const isMobile = useIsMobile();
   const [tab, setTab] = useState('scribe');
   const [title, setTitle] = useState('');
   const [language, setLanguage] = useState('en-US');
@@ -583,16 +584,16 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
 
   return (
     <div style={s.backdrop}>
-      <div style={s.modal}>
-        <header style={s.header}>
-          <div>
+      <div style={{...s.modal, ...(isMobile ? s.modalMobile : {})}}>
+        <header style={{...s.header, ...(isMobile ? s.headerMobile : {})}}>
+          <div style={isMobile ? s.headerTextMobile : undefined}>
             <h2 style={s.title}>Restaurant Menu Scribe & Carryout Orders</h2>
             <p style={s.subtitle}>Record a restaurant owner conversation, extract profile/menu data, approve it, then compare menus across restaurants.</p>
           </div>
-          <button style={s.close} onClick={onClose}>×</button>
+          <button style={{...s.close, ...(isMobile ? s.closeMobile : {})}} onClick={onClose} aria-label="Close restaurant panel">×</button>
         </header>
 
-        <nav style={s.tabs}>
+        <nav style={{...s.tabs, ...(isMobile ? s.tabsMobile : {})}}>
           {tabs.map(([key, label]) => (
             <button key={key} style={{...s.tab, ...(tab===key?s.tabActive:{})}} onClick={() => { setError(''); setTab(key); }}>{label}</button>
           ))}
@@ -601,9 +602,9 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
         {error && <div style={s.error}>{error}</div>}
 
         {tab === 'scribe' && (
-          <section style={s.body}>
+          <section style={{...s.body, ...(isMobile ? s.bodyMobile : {})}}>
             <div style={s.status}>{statusText}</div>
-            <div style={s.grid2}>
+            <div style={{...s.grid2, ...(isMobile ? s.grid1 : {})}}>
               <label style={s.field}>Intake title<input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Optional restaurant/menu title" /></label>
               <label style={s.field}>Spoken language<select value={language} onChange={e=>setLanguage(e.target.value)}>{LANGUAGES.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}</select></label>
             </div>
@@ -621,7 +622,7 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
               <div style={s.review}>
                 <TranscriptBox transcript={packet?.conversation_transcript?.transcript_text || ''} meta={packet?.conversation_transcript || {}} />
                 <h3 style={s.h3}>Review And Approve</h3>
-                <div style={s.grid2}>
+                <div style={{...s.grid2, ...(isMobile ? s.grid1 : {})}}>
                   {['name','cuisine_type','address','phone','email','website'].map(key => (
                     <label key={key} style={s.field}>
                       {labelize(key)}{key === 'email' ? ' *' : ''}
@@ -663,9 +664,9 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
         )}
 
         {tab === 'restaurants' && (
-          <section style={s.body}>
+          <section style={{...s.body, ...(isMobile ? s.bodyMobile : {})}}>
             <div style={s.actions}><button style={s.secondaryBtn} onClick={loadRestaurants}>Refresh</button></div>
-            <div style={s.restaurantGrid}>
+            <div style={{...s.restaurantGrid, ...(isMobile ? s.restaurantGridMobile : {})}}>
               <div style={s.list}>
                 {restaurants.map(r => (
                   <button key={r.id} style={{...s.restaurantRow, ...(selected===r.id?s.selected:{})}} onClick={()=>openRestaurant(r.id)}>
@@ -699,15 +700,15 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
         )}
 
         {tab === 'compare' && (
-          <section style={s.body}>
-            <div style={s.searchBar}>
+          <section style={{...s.body, ...(isMobile ? s.bodyMobile : {})}}>
+            <div style={{...s.searchBar, ...(isMobile ? s.searchBarMobile : {})}}>
               <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Search menu, restaurant, description" />
               <button style={s.secondaryBtn} onClick={runSearch}>Search</button>
               <input value={compareQuery} onChange={e=>setCompareQuery(e.target.value)} placeholder="Compare item, e.g. chicken biryani" />
               <button style={s.primary} onClick={runCompare}>Compare prices</button>
               <button style={s.secondaryBtn} onClick={runRecommend}>Recommend</button>
             </div>
-            <div style={s.orderLayout}>
+            <div style={{...s.orderLayout, ...(isMobile ? s.orderLayoutMobile : {})}}>
               <MenuTable items={recommendRows.length ? recommendRows : compareRows.length ? compareRows : searchRows} onAdd={addCartItem} onFeedback={startFeedback} />
               <CarryoutCart
                 cart={cart}
@@ -725,8 +726,8 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
         )}
 
         {tab === 'orders' && (
-          <section style={s.body}>
-            <div style={s.detailHead}>
+          <section style={{...s.body, ...(isMobile ? s.bodyMobile : {})}}>
+            <div style={{...s.detailHead, ...(isMobile ? s.detailHeadMobile : {})}}>
               <h3 style={s.h3}>{canProcessRestaurantOrders ? 'Carryout Order Processing' : 'My Carryout Orders'}</h3>
               <div style={s.actionsTight}>
                 {canProcessRestaurantOrders && (
@@ -742,7 +743,7 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
                 <button style={s.secondaryBtn} onClick={loadOrders}>Refresh</button>
               </div>
             </div>
-            <div style={s.orderGrid}>
+            <div style={{...s.orderGrid, ...(isMobile ? s.orderGridMobile : {})}}>
               {canProcessRestaurantOrders && <OrderList title="Restaurant owner queue" orders={ownerOrders} owner onAction={ownerAction} busy={busy} />}
               <OrderList title="My carryout orders" orders={myOrders} onFeedback={startFeedback} />
             </div>
@@ -750,8 +751,8 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
         )}
 
         {tab === 'feedback' && (
-          <section style={s.body}>
-            <div style={s.grid2}>
+          <section style={{...s.body, ...(isMobile ? s.bodyMobile : {})}}>
+            <div style={{...s.grid2, ...(isMobile ? s.grid1 : {})}}>
               <FeedbackForm draft={feedbackDraft} setDraft={setFeedbackDraft} busy={busy} language={language} onSubmit={submitFeedbackDraft} />
               <FeedbackList
                 title={canProcessRestaurantOrders && ownerFeedback.length ? 'Restaurant feedback queue' : 'My feedback'}
@@ -762,6 +763,11 @@ export default function RestaurantPanel({ workspaceId = null, activeWorkspace = 
               />
             </div>
           </section>
+        )}
+        {isMobile && (
+          <button type="button" style={s.mobileCloseBar} onClick={onClose}>
+            Close restaurant panel
+          </button>
         )}
       </div>
     </div>
@@ -1283,6 +1289,21 @@ function RatingBadge({ item = {} }) {
   );
 }
 
+function useIsMobile(breakpoint = 760) {
+  const get = () => typeof window !== 'undefined' && window.innerWidth <= breakpoint;
+  const [mobile, setMobile] = useState(get);
+  useEffect(() => {
+    const onResize = () => setMobile(get());
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, [breakpoint]);
+  return mobile;
+}
+
 function normalizePacket(packet) {
   const p = packet || {};
   return {
@@ -1303,16 +1324,23 @@ function labelize(key) {
 }
 
 const s = {
-  backdrop:{ position:'fixed', inset:0, background:'rgba(0,0,0,.65)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', padding:20 },
+  backdrop:{ position:'fixed', inset:0, background:'rgba(0,0,0,.65)', zIndex:5000, display:'flex', alignItems:'center', justifyContent:'center', padding:20 },
   modal:{ width:'min(1180px, 96vw)', height:'min(880px, 92vh)', background:'#0b1711', color:'var(--tx)', border:'1px solid rgba(74,222,128,.22)', borderRadius:10, boxShadow:'0 22px 70px rgba(0,0,0,.55)', display:'flex', flexDirection:'column', overflow:'hidden' },
+  modalMobile:{ width:'100vw', height:'100dvh', borderRadius:0, border:'none' },
   header:{ display:'flex', justifyContent:'space-between', gap:16, padding:'18px 20px', borderBottom:'1px solid rgba(74,222,128,.14)' },
+  headerMobile:{ position:'sticky', top:0, zIndex:20, padding:'12px 14px', gap:10, alignItems:'flex-start', background:'#0b1711' },
+  headerTextMobile:{ minWidth:0, paddingRight:46 },
   title:{ margin:0, fontSize:20 },
   subtitle:{ margin:'5px 0 0', color:'var(--muted2)', fontSize:13 },
-  close:{ background:'transparent', color:'var(--muted2)', border:'1px solid var(--b2)', borderRadius:7, width:34, height:34, cursor:'pointer', fontSize:22 },
+  close:{ background:'transparent', color:'var(--muted2)', border:'1px solid var(--b2)', borderRadius:7, minWidth:40, width:40, height:40, cursor:'pointer', fontSize:24, flexShrink:0 },
+  closeMobile:{ position:'fixed', top:'max(10px, env(safe-area-inset-top))', right:10, zIndex:6000, background:'#0b1711', color:'#f0fdf4', border:'1px solid rgba(74,222,128,.35)', boxShadow:'0 10px 28px rgba(0,0,0,.45)' },
+  mobileCloseBar:{ position:'fixed', left:12, right:12, bottom:'max(12px, env(safe-area-inset-bottom))', zIndex:6000, border:'1px solid rgba(74,222,128,.45)', background:'#16a34a', color:'#06130a', borderRadius:9, padding:'11px 14px', fontSize:14, fontWeight:900, boxShadow:'0 14px 40px rgba(0,0,0,.5)', cursor:'pointer' },
   tabs:{ display:'flex', gap:6, padding:'10px 16px', borderBottom:'1px solid rgba(74,222,128,.1)' },
+  tabsMobile:{ overflowX:'auto', WebkitOverflowScrolling:'touch', padding:'8px 10px' },
   tab:{ border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx2)', borderRadius:7, padding:'8px 12px', cursor:'pointer', fontWeight:700 },
   tabActive:{ background:'rgba(74,222,128,.14)', color:'#4ade80', borderColor:'rgba(74,222,128,.35)' },
   body:{ padding:16, overflow:'auto', flex:1 },
+  bodyMobile:{ padding:10 },
   status:{ padding:'10px 12px', border:'1px solid rgba(74,222,128,.2)', background:'rgba(74,222,128,.08)', color:'#86efac', borderRadius:7, marginBottom:14, fontSize:13, fontWeight:700 },
   grid2:{ display:'grid', gridTemplateColumns:'repeat(2, minmax(0,1fr))', gap:12 },
   grid1:{ display:'grid', gridTemplateColumns:'1fr', gap:10 },
@@ -1335,11 +1363,13 @@ const s = {
   table:{ width:'100%', borderCollapse:'collapse', fontSize:12 },
   iconBtn:{ border:'1px solid var(--b2)', background:'transparent', color:'#fecaca', borderRadius:6, cursor:'pointer' },
   restaurantGrid:{ display:'grid', gridTemplateColumns:'320px 1fr', gap:14, minHeight:420 },
+  restaurantGridMobile:{ gridTemplateColumns:'1fr', minHeight:0 },
   list:{ border:'1px solid var(--b2)', borderRadius:8, overflow:'auto' },
   restaurantRow:{ display:'flex', flexDirection:'column', gap:3, width:'100%', padding:12, textAlign:'left', background:'transparent', border:'none', borderBottom:'1px solid var(--b2)', color:'var(--tx)', cursor:'pointer' },
   selected:{ background:'rgba(74,222,128,.1)' },
   detail:{ border:'1px solid var(--b2)', borderRadius:8, padding:14, overflow:'auto' },
   detailHead:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, marginBottom:10 },
+  detailHeadMobile:{ alignItems:'flex-start', flexDirection:'column' },
   actionsTight:{ display:'flex', alignItems:'center', gap:8 },
   tagRow:{ display:'flex', gap:6, flexWrap:'wrap', margin:'10px 0' },
   tagBtn:{ border:'1px solid var(--b2)', background:'transparent', color:'var(--muted2)', borderRadius:20, padding:'5px 9px', cursor:'pointer', fontSize:12 },
@@ -1356,8 +1386,10 @@ const s = {
   muted:{ color:'var(--muted2)', fontSize:13 },
   micro:{ color:'var(--muted2)', fontSize:11, lineHeight:1.35, marginTop:3, wordBreak:'break-word' },
   searchBar:{ display:'grid', gridTemplateColumns:'1.2fr auto 1.2fr auto', gap:10, alignItems:'center', marginBottom:12 },
+  searchBarMobile:{ gridTemplateColumns:'1fr', gap:8 },
   empty:{ textAlign:'center', color:'var(--muted2)', padding:20 },
   orderLayout:{ display:'grid', gridTemplateColumns:'minmax(0,1fr) 340px', gap:14, alignItems:'start' },
+  orderLayoutMobile:{ gridTemplateColumns:'1fr' },
   cart:{ border:'1px solid var(--b2)', borderRadius:8, background:'rgba(255,255,255,.02)', padding:12, position:'sticky', top:0 },
   cartItems:{ display:'flex', flexDirection:'column', gap:8, maxHeight:260, overflow:'auto', margin:'10px 0' },
   cartItem:{ display:'grid', gridTemplateColumns:'minmax(0,1fr) 58px 28px', gap:7, alignItems:'center', borderBottom:'1px solid var(--b2)', paddingBottom:8 },
@@ -1365,6 +1397,7 @@ const s = {
   fullInput:{ gridColumn:'1 / -1', background:'var(--s2)', border:'1px solid var(--b2)', color:'var(--tx)', borderRadius:6, padding:'8px' },
   cartTotal:{ display:'flex', justifyContent:'space-between', alignItems:'center', borderTop:'1px solid var(--b2)', borderBottom:'1px solid var(--b2)', padding:'9px 0', margin:'8px 0 12px', color:'var(--tx2)', fontSize:13 },
   orderGrid:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 },
+  orderGridMobile:{ gridTemplateColumns:'1fr' },
   orderList:{ border:'1px solid var(--b2)', borderRadius:8, padding:12, minHeight:300, overflow:'auto' },
   orderCard:{ border:'1px solid rgba(255,255,255,.08)', borderRadius:8, padding:11, background:'rgba(255,255,255,.025)', marginBottom:10 },
   orderItems:{ display:'flex', flexDirection:'column', gap:7, margin:'10px 0 12px', padding:'9px 10px', border:'1px solid var(--b2)', borderRadius:7, background:'rgba(255,255,255,.025)' },

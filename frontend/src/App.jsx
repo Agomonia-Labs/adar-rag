@@ -27,6 +27,7 @@ export default function App() {
   const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0);
   const [activeWorkspace,  setActiveWorkspace]  = useState(null);
   const [uiLang,           setUiLang]           = useState(() => localStorage.getItem('ui_lang') || 'en');
+  const isMobile = useIsMobile();
   const lang = getLanguage(uiLang);
   const t = getStrings(uiLang);
 
@@ -157,40 +158,58 @@ export default function App() {
         />
       )}
       <div style={s.shell}>
-        <header style={s.header}>
-          <div style={s.brand}>
+        <header style={{...s.header, ...(isMobile ? s.headerMobile : {})}}>
+          <div style={{...s.brand, ...(isMobile ? s.brandMobile : {})}}>
             <span style={{ fontSize:20 }}>🌿</span>
             <div>
               <div style={{ display:'flex', alignItems:'baseline', gap:5 }}>
                 <span style={s.brandB}>আদর</span>
                 <span style={s.brandE}>DocIntel</span>
               </div>
-              <span style={s.brandTag}>{t.brandTag}</span>
+              {!isMobile && <span style={s.brandTag}>{t.brandTag}</span>}
             </div>
+            {isMobile && (
+              <div style={s.mobileIdentity}>
+                <p style={s.mobileIdentityName}>{user.full_name||user.email}</p>
+                <p style={s.mobileIdentityEmail}>{user.email}</p>
+              </div>
+            )}
+            {isMobile && activeWorkspace && (
+              <span style={s.mobileWorkspacePill}>
+                🏢 {activeWorkspace.name.length > 18 ? activeWorkspace.name.slice(0, 17) + '...' : activeWorkspace.name}
+                <button
+                  type="button"
+                  onClick={() => setActiveWorkspace(null)}
+                  style={s.mobileWorkspaceClose}
+                  aria-label="Clear active workspace">
+                  ✕
+                </button>
+              </span>
+            )}
             {isAdmin && <span style={s.adminPill}>admin</span>}
           </div>
 
-          <nav style={s.tabs}>
+          <nav style={{...s.tabs, ...(isMobile ? s.tabsMobile : {})}}>
             {TABS.map(({ key, icon, label, disabled, title }) => (
               <button key={key} onClick={()=>!disabled&&setTab(key)} disabled={disabled} title={title}
-                style={{ ...s.tabBtn, ...(tab===key?s.tabActive:{}), ...(disabled?{opacity:.35,cursor:'not-allowed'}:{}), ...(key==='admin'?{color:tab==='admin'?'#4ade80':'#fbbf24'}:{}) }}>
+                style={{ ...s.tabBtn, ...(isMobile ? s.tabBtnMobile : {}), ...(tab===key?s.tabActive:{}), ...(disabled?{opacity:.35,cursor:'not-allowed'}:{}), ...(key==='admin'?{color:tab==='admin'?'#4ade80':'#fbbf24'}:{}) }}>
                 <span>{icon}</span>
-                <span>{label}</span>
+                <span>{isMobile && label.length > 10 ? label.slice(0, 9) + '...' : label}</span>
                 {key==='chat' && embeddedDocs.length>0 && <span style={s.badge}>{embeddedDocs.length}</span>}
               </button>
             ))}
           </nav>
 
-          <div style={s.userArea}>
+          <div style={{...s.userArea, ...(isMobile ? s.userAreaMobile : {}), ...(isMobile && showVerticals ? s.userAreaMenuOpen : {})}}>
             <div style={s.verticalWrap}>
               <button
-                style={s.verticalBtn}
+                style={{...s.verticalBtn, ...(isMobile ? s.compactBtn : {})}}
                 onClick={() => setShowVerticals(v => !v)}
                 title="Domain-specific workflows">
                 ◫ Verticals
               </button>
               {showVerticals && (
-                <div style={s.verticalMenu}>
+                <div style={{...s.verticalMenu, ...(isMobile ? s.verticalMenuMobile : {})}}>
                   <div style={s.verticalGroup}>
                     <div style={s.verticalGroupTitle}>Health Care</div>
                     <button
@@ -233,21 +252,23 @@ export default function App() {
                 </div>
               )}
             </div>
-            <div style={{ textAlign:'right' }}>
-              <p style={{ fontSize:13, fontWeight:600, color:'var(--tx)' }}>{user.full_name||user.email}</p>
-              <p style={{ fontSize:11, color:'var(--muted2)' }}>{user.email}</p>
-            </div>
-            {activeWorkspace && (
+            {!isMobile && (
+              <div style={{ textAlign:'right' }}>
+                <p style={{ fontSize:13, fontWeight:600, color:'var(--tx)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{user.full_name||user.email}</p>
+                <p style={{ fontSize:11, color:'var(--muted2)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{user.email}</p>
+              </div>
+            )}
+            {activeWorkspace && !isMobile && (
               <span style={{ fontSize:11.5, padding:'3px 10px', borderRadius:20,
                              background:'rgba(74,222,128,.1)', color:'#4ade80',
                              border:'1px solid rgba(74,222,128,.25)', fontWeight:600 }}>
-                🏢 {activeWorkspace.name}
+                🏢 {isMobile && activeWorkspace.name.length > 14 ? activeWorkspace.name.slice(0, 13) + '...' : activeWorkspace.name}
                 <button onClick={() => setActiveWorkspace(null)}
                   style={{ background:'none', border:'none', color:'#4ade80', cursor:'pointer', marginLeft:4, fontSize:12 }}>✕</button>
               </span>
             )}
             <button
-              style={{ fontSize:12, padding:'5px 12px', background:'var(--s2)',
+              style={{ fontSize:12, padding:isMobile?'5px 9px':'5px 12px', background:'var(--s2)',
                        color:'var(--muted2)', border:'1px solid var(--b2)',
                        borderRadius:'var(--r)', cursor:'pointer' }}
               onClick={() => setShowUsage(true)}
@@ -255,7 +276,7 @@ export default function App() {
               📊 {t.usage}
             </button>
             <button
-              style={{ fontSize:12, padding:'5px 12px', background:'rgba(192,132,252,.1)',
+              style={{ fontSize:12, padding:isMobile?'5px 9px':'5px 12px', background:'rgba(192,132,252,.1)',
                        color:'#c084fc', border:'1px solid rgba(192,132,252,.3)',
                        borderRadius:'var(--r)', cursor:'pointer', fontWeight:600 }}
               onClick={() => setShowBilling(true)}
@@ -272,7 +293,7 @@ export default function App() {
                 {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.native}</option>)}
               </select>
             </label>
-            <button style={s.signOutBtn} onClick={handleLogout}>{t.signOut}</button>
+            <button style={{...s.signOutBtn, ...(isMobile ? s.compactBtn : {})}} onClick={handleLogout}>{t.signOut}</button>
           </div>
         </header>
 
@@ -294,23 +315,36 @@ export default function App() {
 }
 
 const s = {
-  shell:     { display:'flex', flexDirection:'column', height:'100vh' },
+  shell:     { display:'flex', flexDirection:'column', height:'100dvh', minHeight:'100vh', overflow:'hidden' },
   header:    { display:'flex', alignItems:'center', gap:16, padding:'10px 24px',
                background:'#0f1f0f', borderBottom:'1px solid rgba(74,222,128,.1)',
-               boxShadow:'0 1px 8px rgba(0,0,0,.4)', flexShrink:0 },
+               boxShadow:'0 1px 8px rgba(0,0,0,.4)', flexShrink:0, position:'relative', zIndex:1500 },
+  headerMobile:{ flexWrap:'wrap', alignItems:'stretch', gap:8, padding:'8px 10px' },
   brand:     { display:'flex', alignItems:'center', gap:10, flexShrink:0 },
+  brandMobile:{ minWidth:0, flex:'1 0 100%', gap:8 },
   brandB:    { fontFamily:"'Noto Sans Bengali','Kalpurush',sans-serif", fontSize:18, fontWeight:800, color:'#4ade80', letterSpacing:'-.5px' },
   brandE:    { fontSize:12, fontWeight:500, color:'#6b7280', letterSpacing:'1.5px' },
   brandTag:  { fontSize:9.5, color:'rgba(74,222,128,.5)', letterSpacing:'.4px', textTransform:'uppercase' },
+  mobileIdentity:{ minWidth:0, flex:'1 1 auto', paddingLeft:4 },
+  mobileIdentityName:{ fontSize:12, fontWeight:700, color:'var(--tx)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', lineHeight:1.2 },
+  mobileIdentityEmail:{ fontSize:10.5, color:'var(--muted2)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', lineHeight:1.2 },
+  mobileWorkspacePill:{ display:'inline-flex', alignItems:'center', gap:4, maxWidth:'42%', marginLeft:'auto', padding:'3px 7px', borderRadius:20, background:'rgba(74,222,128,.1)', color:'#4ade80', border:'1px solid rgba(74,222,128,.25)', fontSize:10.5, fontWeight:700, lineHeight:1.2, overflow:'hidden', whiteSpace:'nowrap', textOverflow:'ellipsis', flexShrink:0 },
+  mobileWorkspaceClose:{ background:'none', border:'none', color:'#4ade80', cursor:'pointer', marginLeft:2, fontSize:10, padding:0, minHeight:0 },
   adminPill: { fontSize:10, padding:'2px 8px', borderRadius:20, background:'rgba(251,191,36,.12)', color:'#fbbf24', fontWeight:600, border:'1px solid rgba(251,191,36,.25)' },
-  tabs:      { flex:1, display:'flex', alignItems:'center', gap:2, justifyContent:'center' },
+  tabs:      { flex:1, minWidth:0, display:'flex', alignItems:'center', gap:2, justifyContent:'center' },
+  tabsMobile:{ order:3, flex:'1 0 100%', justifyContent:'flex-start', overflowX:'auto', WebkitOverflowScrolling:'touch', paddingBottom:2 },
   tabBtn:    { display:'flex', alignItems:'center', gap:6, padding:'7px 16px', border:'none', background:'transparent', color:'#6b7280', cursor:'pointer', fontWeight:500, fontSize:13, borderRadius:'var(--r)', transition:'all .15s' },
+  tabBtnMobile:{ padding:'7px 10px', flexShrink:0, fontSize:12 },
   tabActive: { background:'rgba(74,222,128,.12)', color:'#4ade80', fontWeight:700 },
   badge:     { fontSize:10, padding:'2px 7px', borderRadius:20, background:'#15803d', color:'#fff', fontWeight:700 },
   userArea:  { display:'flex', alignItems:'center', gap:12, flexShrink:0 },
+  userAreaMobile:{ order:2, flex:'1 0 100%', gap:6, flexWrap:'nowrap', justifyContent:'flex-start', minWidth:0, overflowX:'auto', WebkitOverflowScrolling:'touch', paddingBottom:2 },
+  userAreaMenuOpen:{ overflow:'visible' },
+  userMini:{ textAlign:'left', flex:'0 0 auto', maxWidth:150, minWidth:118, overflow:'hidden' },
   verticalWrap:{ position:'relative', flexShrink:0 },
   verticalBtn:{ fontSize:12, padding:'5px 12px', background:'rgba(74,222,128,.08)', color:'#4ade80', border:'1px solid rgba(74,222,128,.28)', borderRadius:'var(--r)', cursor:'pointer', fontWeight:700 },
   verticalMenu:{ position:'absolute', top:'calc(100% + 8px)', right:0, width:230, background:'#0f1f0f', border:'1px solid rgba(74,222,128,.18)', borderRadius:8, boxShadow:'0 18px 48px rgba(0,0,0,.45)', padding:8, zIndex:80, display:'flex', flexDirection:'column', gap:8 },
+  verticalMenuMobile:{ position:'fixed', top:'max(10px, env(safe-area-inset-top))', left:10, right:10, width:'auto', maxHeight:'calc(100dvh - 20px)', overflowY:'auto', zIndex:9999, padding:10 },
   verticalGroup:{ display:'flex', flexDirection:'column', gap:5 },
   verticalGroupTitle:{ fontSize:10, color:'var(--muted2)', textTransform:'uppercase', letterSpacing:'.8px', fontWeight:800, padding:'2px 4px' },
   verticalItem:{ display:'flex', alignItems:'center', gap:8, width:'100%', padding:'8px 9px', background:'var(--s2)', border:'1px solid var(--b2)', color:'var(--tx)', borderRadius:7, cursor:'pointer', fontSize:12, fontWeight:700, textAlign:'left' },
@@ -318,5 +352,21 @@ const s = {
   langWrap:  { display:'flex', alignItems:'center', gap:5, padding:'4px 8px', border:'1px solid var(--b2)', borderRadius:'var(--r)', background:'var(--s2)' },
   langSelect:{ width:'auto', minWidth:78, padding:'2px 4px', border:'none', boxShadow:'none', background:'transparent', color:'var(--tx2)', fontSize:12, cursor:'pointer' },
   signOutBtn:{ padding:'6px 14px', fontSize:12, fontWeight:500, background:'transparent', border:'1px solid var(--b2)', color:'var(--muted2)', borderRadius:'var(--r)', cursor:'pointer', transition:'all .15s' },
+  compactBtn:{ padding:'5px 9px', fontSize:12 },
   content:   { flex:1, overflow:'hidden' },
 };
+
+function useIsMobile(breakpoint = 760) {
+  const get = () => typeof window !== 'undefined' && window.innerWidth <= breakpoint;
+  const [mobile, setMobile] = useState(get);
+  useEffect(() => {
+    const onResize = () => setMobile(get());
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, [breakpoint]);
+  return mobile;
+}

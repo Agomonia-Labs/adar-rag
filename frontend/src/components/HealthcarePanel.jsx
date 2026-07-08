@@ -210,6 +210,13 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
       return;
     }
     try {
+      if (recorderRef.current?.state && recorderRef.current.state !== 'inactive') {
+        recorderRef.current.stop();
+      }
+      recorderRef.current = null;
+      chunksRef.current = [];
+      stopMediaTracks(streamRef);
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = supportedAudioMimeType();
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
@@ -222,11 +229,18 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || mimeType || 'audio/webm' });
         chunksRef.current = [];
+        recorderRef.current = null;
+        setRecording(false);
+        stopMediaTracks(streamRef);
+        if (!blob.size) {
+          setRecordedAudio(null);
+          setRecordingStatus('');
+          toast('No audio was captured. Check microphone permission and try again.', 'error');
+          return;
+        }
         setRecordedAudio(blob);
         setAudioFile(null);
-        setRecording(false);
-        setRecordingStatus(`Recorded ${(blob.size / 1024 / 1024).toFixed(2)} MB conversation audio.`);
-        stopMediaTracks(streamRef);
+        setRecordingStatus(`Recorded ${(blob.size / 1024 / 1024).toFixed(2)} MB conversation audio. Click Run clinical scribe to upload and process.`);
       };
       recorder.start();
       setRecordedAudio(null);
@@ -243,6 +257,9 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
 
   const stopRecording = () => {
     if (recorderRef.current?.state === 'recording') {
+      try {
+        recorderRef.current.requestData?.();
+      } catch (_) {}
       recorderRef.current.stop();
     }
   };
@@ -463,7 +480,7 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
               />
             )}
             {!recording ? (
-              <button style={s.smallBtn} disabled={loading || !consentConfirmed} onClick={startRecording}>Record visit</button>
+              <button style={s.smallBtn} disabled={loading} onClick={startRecording}>Record visit</button>
             ) : (
               <button style={s.stopBtn} onClick={stopRecording}>Stop recording</button>
             )}
@@ -1111,7 +1128,7 @@ function formatChangeValue(value) {
 }
 
 const s = {
-  backdrop:{position:'fixed',inset:0,background:'rgba(0,0,0,.62)',zIndex:50,display:'flex',alignItems:'center',justifyContent:'center',padding:20},
+  backdrop:{position:'fixed',inset:0,background:'rgba(0,0,0,.62)',zIndex:5000,display:'flex',alignItems:'center',justifyContent:'center',padding:20},
   panel:{width:'min(1120px,96vw)',height:'min(92vh,920px)',overflow:'hidden',display:'flex',flexDirection:'column',background:'var(--s1)',border:'1px solid var(--b1)',borderRadius:8,boxShadow:'0 24px 80px rgba(0,0,0,.55)'},
   head:{display:'flex',justifyContent:'space-between',gap:16,padding:'16px 18px',borderBottom:'1px solid var(--b1)',background:'var(--s2)'},
   kicker:{fontSize:11,color:'#f87171',fontWeight:800,textTransform:'uppercase',letterSpacing:1.2},

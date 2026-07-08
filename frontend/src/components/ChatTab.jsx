@@ -86,6 +86,7 @@ function _downloadText(text, filename, mime) {
 
 export default function ChatTab({ embeddedDocs, activeWorkspace }) {
   const userId = localStorage.getItem('user_id') || 'default';
+  const isMobile = useIsMobile();
 
   const [sessions,        setSessions]        = useState([]);
   const [activeSession,   setActiveSession]   = useState(null);
@@ -137,6 +138,9 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
   useEffect(() => { if (!activeSession) setSelected(embeddedDocs.map(d => d.id)); }, [embeddedDocs.length]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, thinking]);
   useEffect(() => {
+    if (isMobile) setSidebarOpen(false);
+  }, [isMobile]);
+  useEffect(() => {
     setVoiceSupported(Boolean(window.SpeechRecognition || window.webkitSpeechRecognition));
     return () => {
       recognitionRef.current?.abort?.();
@@ -157,7 +161,10 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
   };
 
   const openSession = async (session) => {
-    if (activeSession?.id === session.id) return;
+    if (activeSession?.id === session.id) {
+      if (isMobile) setSidebarOpen(false);
+      return;
+    }
     setLoadingSession(true);
     setMessages([]);
     setSessionFeedback({});
@@ -175,7 +182,10 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
           : embeddedDocs.map(d => d.id)
       );
     } catch(e) { console.error('Failed to load session:', e); }
-    finally { setLoadingSession(false); }
+    finally {
+      setLoadingSession(false);
+      if (isMobile) setSidebarOpen(false);
+    }
   };
 
   const newSession = async () => {
@@ -186,6 +196,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
       setActiveSession(sess);
       setMessages([]);
       setSelected(docIds);
+      if (isMobile) setSidebarOpen(false);
     } catch(e) { console.error('Failed to create session:', e); }
   };
 
@@ -643,10 +654,21 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
     <div style={s.wrap}>
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
       {sidebarOpen && (
-        <div style={s.sidebar}>
+        <div style={{...s.sidebar, ...(isMobile ? s.sidebarMobile : {})}}>
           <div style={s.sidebarHdr}>
             <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx)' }}>History</span>
-            <button style={s.newBtn} onClick={newSession}>＋ New</button>
+            <div style={s.sidebarHdrActions}>
+              <button style={s.newBtn} onClick={newSession}>＋ New</button>
+              {isMobile && (
+                <button
+                  type="button"
+                  style={s.sidebarClose}
+                  onClick={() => setSidebarOpen(false)}
+                  aria-label="Close chat history">
+                  ×
+                </button>
+              )}
+            </div>
           </div>
           <div style={s.sessionList}>
             {loadingSessions ? (
@@ -677,7 +699,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
 
       {/* ── Main ────────────────────────────────────────────────────────── */}
       <div style={s.main}>
-        <div style={s.topBar}>
+        <div style={{...s.topBar, ...(isMobile ? s.topBarMobile : {})}}>
           <button style={s.sidebarToggle} onClick={() => setSidebarOpen(o => !o)}>
             {sidebarOpen ? '◀' : '▶ History'}
           </button>
@@ -693,7 +715,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
               );
             })}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
             <label style={s.privacy} title="Redact common PII from chat prompts and retrieved context before sending to the model">
               <input
                 type="checkbox"
@@ -708,7 +730,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
             {saving && <span style={{ fontSize: 10, color: 'var(--muted2)', opacity: .6 }}>saving…</span>}
             <span style={{ fontSize: 11, color: 'var(--muted2)' }}>{selected.length}/{embeddedDocs.length}</span>
             {activeSession && (
-              <span style={{ fontSize: 10.5, color: 'var(--muted2)', maxWidth: 120,
+              <span style={{ fontSize: 10.5, color: 'var(--muted2)', maxWidth: isMobile ? 90 : 120,
                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {activeSession.title}
               </span>
@@ -726,7 +748,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
           </div>
         </div>
 
-        <div style={s.msgs} role="log">
+        <div style={{...s.msgs, ...(isMobile ? s.msgsMobile : {})}} role="log">
           {loadingSession ? (
             <div style={s.centre}>
               <span style={{ fontSize: 24, animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span>
@@ -777,9 +799,10 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
           onRemoveItem={removeRestaurantCartItem}
           onDraft={createChatRestaurantDraft}
           onSubmit={submitChatRestaurantOrder}
+          isMobile={isMobile}
         />
 
-        <div style={s.inputBar}>
+        <div style={{...s.inputBar, ...(isMobile ? s.inputBarMobile : {})}}>
           <div style={s.inputWrap}>
             <input style={s.input} value={input}
               onChange={e => { setInput(e.target.value); if (voiceStatus) setVoiceStatus(''); }}
@@ -793,6 +816,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
             type="button"
             style={{
               ...s.voice,
+              ...(isMobile ? s.voiceMobile : {}),
               ...(listening || voiceMode === 'transcribing' ? s.voiceOn : {}),
               ...(!voiceSupported || thinking || !selected.length || loadingSession || voiceMode === 'transcribing' ? s.voiceOff : {}),
               ...(!voiceSupported && selected.length && !thinking && !loadingSession && voiceMode !== 'transcribing' ? { cursor:'pointer', opacity:.75 } : {}),
@@ -805,7 +829,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
             {voiceMode === 'transcribing' ? '…' : listening ? '■' : '🎙'}
           </button>
           <button
-            style={{ ...s.send, ...(input.trim() && !thinking && selected.length && !loadingSession ? s.sendOn : s.sendOff) }}
+            style={{ ...s.send, ...(isMobile ? s.sendMobile : {}), ...(input.trim() && !thinking && selected.length && !loadingSession ? s.sendOn : s.sendOff) }}
             onClick={send}
             disabled={!input.trim() || thinking || !selected.length || loadingSession}
           >➤</button>
@@ -1075,6 +1099,7 @@ function ChatRestaurantCart({
   onRemoveItem,
   onDraft,
   onSubmit,
+  isMobile = false,
 }) {
   const hasItems = Array.isArray(cart.items) && cart.items.length > 0;
   if (!hasItems && !order && !message) return null;
@@ -1092,20 +1117,20 @@ function ChatRestaurantCart({
     cuisine_type: '',
   };
   return (
-    <div style={s.chatCart}>
-      <div style={s.chatCartHead}>
+    <div style={{...s.chatCart, ...(isMobile ? s.chatCartMobile : {})}}>
+      <div style={{...s.chatCartHead, ...(isMobile ? s.chatCartHeadMobile : {})}}>
         <div>
           <strong>🛒 Carryout cart</strong>
           <span>{cart.restaurant_name || order?.restaurant_name || 'Restaurant order'}</span>
         </div>
         <strong>${Number(order?.subtotal ?? subtotal).toFixed(2)}</strong>
       </div>
-      <div style={s.cartRestaurantDetails}>
+      <div style={{...s.cartRestaurantDetails, ...(isMobile ? s.cartRestaurantDetailsMobile : {})}}>
         <div>
           <strong>Order will be placed to</strong>
           <span>{restaurant.name || 'Restaurant'}</span>
         </div>
-        <div style={s.cartRestaurantMeta}>
+        <div style={{...s.cartRestaurantMeta, ...(isMobile ? s.cartRestaurantMetaMobile : {})}}>
           {restaurant.id && <span>ID: {restaurant.id}</span>}
           {restaurant.cuisine_type && <span>{restaurant.cuisine_type}</span>}
           {restaurant.address && <span>{restaurant.address}</span>}
@@ -1116,7 +1141,7 @@ function ChatRestaurantCart({
       {hasItems && (
         <div style={s.chatCartItems}>
           {cart.items.map(item => (
-            <div key={item.id} style={s.chatCartItem}>
+            <div key={item.id} style={{...s.chatCartItem, ...(isMobile ? s.chatCartItemMobile : {})}}>
               <div>
                 <strong>{item.item_name}</strong>
                 <span>{item.price != null ? `$${Number(item.price).toFixed(2)}` : 'Price not set'}</span>
@@ -1130,7 +1155,7 @@ function ChatRestaurantCart({
               />
               <button style={s.removeBtn} onClick={() => onRemoveItem(item.id)} title="Remove item">×</button>
               <input
-                style={s.itemNote}
+                style={{...s.itemNote, ...(isMobile ? s.itemNoteMobile : {})}}
                 value={item.instructions || ''}
                 onChange={e => onUpdateItem(item.id, 'instructions', e.target.value)}
                 placeholder="Item notes"
@@ -1139,7 +1164,7 @@ function ChatRestaurantCart({
           ))}
         </div>
       )}
-      <div style={s.chatCartFields}>
+      <div style={{...s.chatCartFields, ...(isMobile ? s.chatCartFieldsMobile : {})}}>
         <input style={s.cartInput} value={customer.name} onChange={e=>onCustomer({ ...customer, name:e.target.value })} placeholder="Customer name" />
         <input style={s.cartInput} value={customer.phone} onChange={e=>onCustomer({ ...customer, phone:e.target.value })} placeholder="Phone" />
         <input style={s.cartInput} type="email" value={customer.email} onChange={e=>onCustomer({ ...customer, email:e.target.value })} placeholder="Email for order updates" />
@@ -1160,6 +1185,21 @@ function ChatRestaurantCart({
       </div>
     </div>
   );
+}
+
+function useIsMobile(breakpoint = 760) {
+  const get = () => typeof window !== 'undefined' && window.innerWidth <= breakpoint;
+  const [mobile, setMobile] = useState(get);
+  useEffect(() => {
+    const onResize = () => setMobile(get());
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, [breakpoint]);
+  return mobile;
 }
 
 function normalizeRestaurantOrderResponse(response) {
@@ -1408,7 +1448,10 @@ const s = {
   empty:         { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', textAlign:'center', padding:'2rem' },
   centre:        { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', textAlign:'center', gap:6 },
   sidebar:       { width:220, flexShrink:0, borderRight:'1px solid var(--b1)', display:'flex', flexDirection:'column', background:'var(--s1)' },
+  sidebarMobile: { position:'absolute', zIndex:20, inset:'0 auto 0 0', width:'min(82vw, 280px)', boxShadow:'12px 0 36px rgba(0,0,0,.42)' },
   sidebarHdr:    { display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 12px 8px', borderBottom:'1px solid var(--b1)', flexShrink:0 },
+  sidebarHdrActions:{ display:'flex', alignItems:'center', gap:7 },
+  sidebarClose:   { width:30, height:30, minHeight:30, border:'1px solid var(--b2)', background:'var(--s3)', color:'var(--tx)', borderRadius:7, cursor:'pointer', fontSize:20, lineHeight:1 },
   newBtn:        { fontSize:11.5, padding:'4px 10px', background:'#15803d', color:'#fff', border:'none', borderRadius:20, cursor:'pointer', fontWeight:700 },
   sessionList:   { flex:1, overflowY:'auto', padding:'6px 4px' },
   sidebarEmpty:  { fontSize:12, color:'var(--muted2)', textAlign:'center', padding:'1.5rem 1rem', lineHeight:1.6 },
@@ -1420,6 +1463,7 @@ const s = {
   sidebarMore:   { fontSize:10.5, color:'var(--muted2)', textAlign:'center', padding:'8px 6px' },
   main:          { flex:1, display:'flex', flexDirection:'column', overflow:'hidden' },
   topBar:        { display:'flex', alignItems:'center', gap:7, padding:'8px 12px', background:'var(--s1)', borderBottom:'1px solid var(--b1)', flexWrap:'wrap', flexShrink:0 },
+  topBarMobile:  { padding:'7px 8px', gap:6 },
   sidebarToggle: { fontSize:11.5, padding:'4px 8px', background:'var(--s3)', border:'1px solid var(--b2)', color:'var(--muted2)', borderRadius:6, cursor:'pointer', flexShrink:0 },
   privacy:       { display:'flex', alignItems:'center', gap:4, fontSize:10.5, color:'#fbbf24', border:'1px solid rgba(251,191,36,.25)', background:'rgba(251,191,36,.06)', padding:'3px 7px', borderRadius:20, cursor:'pointer', flexShrink:0 },
   chips:         { display:'flex', gap:5, flex:1, flexWrap:'wrap' },
@@ -1427,6 +1471,7 @@ const s = {
   chipOn:        { background:'rgba(74,222,128,.12)', color:'#4ade80', border:'1px solid rgba(74,222,128,.3)', fontWeight:700 },
   chipOff:       { background:'var(--s3)', color:'var(--muted2)', border:'1px solid var(--b2)' },
   msgs:          { flex:1, overflowY:'auto', padding:'1.25rem 1.5rem' },
+  msgsMobile:    { padding:'12px 10px' },
   welcome:       { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', textAlign:'center', padding:'2rem' },
   quick:         { fontSize:12, padding:'7px 14px', borderRadius:20, background:'var(--s2)', border:'1px solid var(--b2)', color:'var(--tx2)', cursor:'pointer' },
   row:           { display:'flex', alignItems:'flex-start', gap:10, marginBottom:'1.1rem', animation:'fadeUp .2s ease' },
@@ -1436,13 +1481,16 @@ const s = {
   bubUser:       { background:'#15803d', color:'#fff', borderBottomRightRadius:3 },
   bubAI:         { background:'var(--s2)', border:'1px solid var(--b1)', borderBottomLeftRadius:3, color:'var(--tx)' },
   inputBar:      { display:'flex', gap:8, padding:'10px 14px', borderTop:'1px solid var(--b1)', background:'var(--s1)', flexShrink:0 },
+  inputBarMobile:{ padding:'8px 10px', gap:6, alignItems:'flex-end' },
   inputWrap:     { flex:1, minWidth:0, display:'flex', flexDirection:'column', gap:5 },
   input:         { width:'100%', padding:'10px 14px', fontSize:13.5, background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:'var(--r)', color:'var(--tx)', outline:'none' },
   voice:         { width:40, height:40, border:'1px solid var(--b2)', borderRadius:'var(--r)', background:'var(--s3)', color:'var(--tx)', cursor:'pointer', fontSize:15, display:'flex', alignItems:'center', justifyContent:'center', transition:'all .15s', flexShrink:0 },
+  voiceMobile:   { width:38, height:38 },
   voiceOn:       { background:'rgba(220,38,38,.16)', border:'1px solid rgba(248,113,113,.45)', color:'#f87171', boxShadow:'0 0 0 3px rgba(248,113,113,.08)' },
   voiceOff:      { color:'var(--muted2)', opacity:.55, cursor:'not-allowed' },
   voiceStatus:   { color:'var(--muted2)', fontSize:10.5, lineHeight:1.25, paddingLeft:2 },
   send:          { padding:'10px 16px', border:'none', borderRadius:'var(--r)', cursor:'pointer', fontSize:16, transition:'all .15s', flexShrink:0 },
+  sendMobile:    { width:38, height:38, padding:0 },
   sendOn:        { background:'#15803d', color:'#fff' },
   sendOff:       { background:'var(--s3)', color:'var(--muted2)', cursor:'not-allowed' },
   srcToggle:     { background:'none', border:'none', cursor:'pointer', padding:'3px 0', display:'flex', alignItems:'center', gap:6 },
@@ -1460,15 +1508,22 @@ const s = {
   addToCartBtn:{ marginTop:'auto', border:'1px solid rgba(74,222,128,.35)', background:'rgba(74,222,128,.12)', color:'#86efac', borderRadius:7, padding:'6px 9px', cursor:'pointer', fontWeight:800 },
   addToCartBtnOff:{ opacity:.45, cursor:'not-allowed', color:'var(--muted2)', border:'1px solid var(--b2)', background:'var(--s3)' },
   chatCart:{ borderTop:'1px solid rgba(74,222,128,.18)', background:'rgba(6,19,10,.96)', padding:'10px 14px', flexShrink:0 },
+  chatCartMobile:{ padding:'9px 10px', maxHeight:'46dvh', overflowY:'auto' },
   chatCartHead:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, color:'var(--tx)', fontSize:13 },
+  chatCartHeadMobile:{ alignItems:'flex-start' },
   cartRestaurantDetails:{ marginTop:8, border:'1px solid rgba(74,222,128,.18)', background:'rgba(74,222,128,.055)', borderRadius:8, padding:'8px 10px', display:'flex', justifyContent:'space-between', gap:12, alignItems:'flex-start', flexWrap:'wrap', fontSize:12 },
+  cartRestaurantDetailsMobile:{ flexDirection:'column', gap:6 },
   cartRestaurantMeta:{ display:'flex', gap:8, flexWrap:'wrap', justifyContent:'flex-end', color:'var(--muted2)', fontSize:11, flex:'1 1 320px', overflowWrap:'anywhere' },
+  cartRestaurantMetaMobile:{ justifyContent:'flex-start', flex:'1 1 auto' },
   chatCartItems:{ display:'flex', flexDirection:'column', gap:7, marginTop:8, maxHeight:130, overflow:'auto' },
   chatCartItem:{ display:'grid', gridTemplateColumns:'minmax(140px, 1fr) 54px 30px minmax(120px, 1fr)', gap:7, alignItems:'center', fontSize:12 },
+  chatCartItemMobile:{ gridTemplateColumns:'minmax(0, 1fr) 58px 32px', alignItems:'start' },
   qty:{ width:'100%', background:'var(--s3)', border:'1px solid var(--b2)', color:'var(--tx)', borderRadius:6, padding:'6px 7px' },
   removeBtn:{ border:'1px solid rgba(248,113,113,.3)', background:'rgba(248,113,113,.08)', color:'#fecaca', borderRadius:6, cursor:'pointer', height:30 },
   itemNote:{ minWidth:0, background:'var(--s3)', border:'1px solid var(--b2)', color:'var(--tx)', borderRadius:6, padding:'7px 9px' },
+  itemNoteMobile:{ gridColumn:'1 / -1' },
   chatCartFields:{ display:'grid', gridTemplateColumns:'repeat(4, minmax(0, 1fr))', gap:7, marginTop:8 },
+  chatCartFieldsMobile:{ gridTemplateColumns:'1fr' },
   cartInput:{ minWidth:0, background:'var(--s3)', border:'1px solid var(--b2)', color:'var(--tx)', borderRadius:6, padding:'7px 9px' },
   chatCartActions:{ display:'flex', gap:8, marginTop:8, justifyContent:'flex-end', flexWrap:'wrap' },
   reviewBtn:{ border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx)', borderRadius:7, padding:'7px 11px', cursor:'pointer', fontWeight:800 },
