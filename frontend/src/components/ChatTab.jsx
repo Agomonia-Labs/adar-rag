@@ -93,6 +93,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [loadingSession,  setLoadingSession]  = useState(false);
   const [sidebarOpen,     setSidebarOpen]     = useState(true);
+  const [showMobileTools, setShowMobileTools] = useState(false);
 
   const [selected, setSelected] = useState([]);
   const [messages, setMessages] = useState([]);
@@ -139,6 +140,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, thinking]);
   useEffect(() => {
     if (isMobile) setSidebarOpen(false);
+    if (!isMobile) setShowMobileTools(false);
   }, [isMobile]);
   useEffect(() => {
     setVoiceSupported(Boolean(window.SpeechRecognition || window.webkitSpeechRecognition));
@@ -165,6 +167,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
       if (isMobile) setSidebarOpen(false);
       return;
     }
+    if (isMobile) setSidebarOpen(false);
     setLoadingSession(true);
     setMessages([]);
     setSessionFeedback({});
@@ -701,21 +704,30 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
       <div style={s.main}>
         <div style={{...s.topBar, ...(isMobile ? s.topBarMobile : {})}}>
           <button style={s.sidebarToggle} onClick={() => setSidebarOpen(o => !o)}>
-            {sidebarOpen ? '◀' : '▶ History'}
+            {isMobile ? 'History' : (sidebarOpen ? '◀' : '▶ History')}
           </button>
-          <div style={s.chips}>
+          <div style={{...s.chips, ...(isMobile ? s.chipsMobile : {})}}>
             {embeddedDocs.map(doc => {
               const on = selected.includes(doc.id);
               return (
                 <button key={doc.id} onClick={() => toggleDoc(doc.id)} title={doc.original_name}
-                  style={{ ...s.chip, ...(on ? s.chipOn : s.chipOff) }}>
-                  {doc.original_name.length > 20 ? doc.original_name.slice(0, 18) + '…' : doc.original_name}
+                  style={{ ...s.chip, ...(isMobile ? s.chipMobile : {}), ...(on ? s.chipOn : s.chipOff) }}>
+                  {doc.original_name.length > (isMobile ? 16 : 20) ? doc.original_name.slice(0, isMobile ? 14 : 18) + '…' : doc.original_name}
                   {on && <span style={{ marginLeft: 3, opacity: .7 }}>✓</span>}
                 </button>
               );
             })}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+          {isMobile && (
+            <button
+              type="button"
+              style={{...s.mobileToolsBtn, ...(showMobileTools ? s.mobileToolsBtnOn : {})}}
+              onClick={() => setShowMobileTools(v => !v)}
+              title="Chat options">
+              ⋯
+            </button>
+          )}
+          {!isMobile && <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
             <label style={s.privacy} title="Redact common PII from chat prompts and retrieved context before sending to the model">
               <input
                 type="checkbox"
@@ -724,6 +736,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
                   setRedactPii(e.target.checked);
                   localStorage.setItem('redact_pii_chat', e.target.checked ? '1' : '0');
                 }}
+                style={s.privacyCheckbox}
               />
               <span>PII</span>
             </label>
@@ -745,8 +758,44 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
                 ↓ Export
               </button>
             )}
-          </div>
+          </div>}
         </div>
+
+        {isMobile && showMobileTools && (
+          <div style={s.mobileToolsMenu}>
+            <div style={s.mobileToolsRow}>
+              <span style={s.mobileToolsMeta}>{selected.length}/{embeddedDocs.length} docs selected</span>
+              {saving && <span style={s.mobileToolsMeta}>saving…</span>}
+            </div>
+            {activeSession && (
+              <div style={s.mobileToolsSession} title={activeSession.title}>
+                {activeSession.title}
+              </div>
+            )}
+            <div style={s.mobileToolsRow}>
+              <label style={s.mobilePrivacy} title="Redact common PII from chat prompts and retrieved context before sending to the model">
+                <input
+                  type="checkbox"
+                  checked={redactPii}
+                  onChange={e=>{
+                    setRedactPii(e.target.checked);
+                    localStorage.setItem('redact_pii_chat', e.target.checked ? '1' : '0');
+                  }}
+                  style={s.privacyCheckbox}
+                />
+                <span>PII redaction</span>
+              </label>
+              {messages.length > 0 && activeSession && (
+                <button
+                  style={s.mobileExportBtn}
+                  title="Export chat as Markdown"
+                  onClick={() => exportChatAsMarkdown(activeSession, messages)}>
+                  ↓ Export
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         <div style={{...s.msgs, ...(isMobile ? s.msgsMobile : {})}} role="log">
           {loadingSession ? (
@@ -1448,7 +1497,7 @@ const s = {
   empty:         { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', textAlign:'center', padding:'2rem' },
   centre:        { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', textAlign:'center', gap:6 },
   sidebar:       { width:220, flexShrink:0, borderRight:'1px solid var(--b1)', display:'flex', flexDirection:'column', background:'var(--s1)' },
-  sidebarMobile: { position:'absolute', zIndex:20, inset:'0 auto 0 0', width:'min(82vw, 280px)', boxShadow:'12px 0 36px rgba(0,0,0,.42)' },
+  sidebarMobile: { position:'absolute', zIndex:80, inset:'0 auto 0 0', width:'min(82vw, 280px)', boxShadow:'12px 0 36px rgba(0,0,0,.42)' },
   sidebarHdr:    { display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 12px 8px', borderBottom:'1px solid var(--b1)', flexShrink:0 },
   sidebarHdrActions:{ display:'flex', alignItems:'center', gap:7 },
   sidebarClose:   { width:30, height:30, minHeight:30, border:'1px solid var(--b2)', background:'var(--s3)', color:'var(--tx)', borderRadius:7, cursor:'pointer', fontSize:20, lineHeight:1 },
@@ -1463,13 +1512,24 @@ const s = {
   sidebarMore:   { fontSize:10.5, color:'var(--muted2)', textAlign:'center', padding:'8px 6px' },
   main:          { flex:1, display:'flex', flexDirection:'column', overflow:'hidden' },
   topBar:        { display:'flex', alignItems:'center', gap:7, padding:'8px 12px', background:'var(--s1)', borderBottom:'1px solid var(--b1)', flexWrap:'wrap', flexShrink:0 },
-  topBarMobile:  { padding:'7px 8px', gap:6 },
+  topBarMobile:  { padding:'6px 8px', gap:5, flexWrap:'nowrap', minWidth:0 },
   sidebarToggle: { fontSize:11.5, padding:'4px 8px', background:'var(--s3)', border:'1px solid var(--b2)', color:'var(--muted2)', borderRadius:6, cursor:'pointer', flexShrink:0 },
   privacy:       { display:'flex', alignItems:'center', gap:4, fontSize:10.5, color:'#fbbf24', border:'1px solid rgba(251,191,36,.25)', background:'rgba(251,191,36,.06)', padding:'3px 7px', borderRadius:20, cursor:'pointer', flexShrink:0 },
-  chips:         { display:'flex', gap:5, flex:1, flexWrap:'wrap' },
+  privacyCheckbox:{ width:13, height:13, minWidth:13, minHeight:0, margin:0, padding:0, accentColor:'#fbbf24', boxSizing:'content-box' },
+  chips:         { display:'flex', gap:5, flex:1, minWidth:0, flexWrap:'nowrap', overflowX:'auto', overflowY:'hidden', WebkitOverflowScrolling:'touch', scrollbarWidth:'none', paddingBottom:1 },
+  chipsMobile:   { flexWrap:'nowrap' },
   chip:          { fontSize:11.5, padding:'3px 10px', borderRadius:20, cursor:'pointer', fontWeight:500, transition:'all .15s', border:'1px solid transparent', whiteSpace:'nowrap' },
+  chipMobile:    { fontSize:10.5, padding:'3px 8px', flex:'0 0 auto', maxWidth:145, overflow:'hidden', textOverflow:'ellipsis' },
   chipOn:        { background:'rgba(74,222,128,.12)', color:'#4ade80', border:'1px solid rgba(74,222,128,.3)', fontWeight:700 },
   chipOff:       { background:'var(--s3)', color:'var(--muted2)', border:'1px solid var(--b2)' },
+  mobileToolsBtn:{ width:28, height:28, minHeight:28, borderRadius:8, border:'1px solid var(--b2)', background:'var(--s3)', color:'var(--muted2)', fontSize:16, fontWeight:900, cursor:'pointer', lineHeight:1, flexShrink:0 },
+  mobileToolsBtnOn:{ color:'#4ade80', borderColor:'rgba(74,222,128,.35)', background:'rgba(74,222,128,.1)' },
+  mobileToolsMenu:{ display:'flex', flexDirection:'column', gap:6, padding:'7px 8px', borderBottom:'1px solid var(--b1)', background:'var(--s1)', boxShadow:'0 10px 24px rgba(0,0,0,.22)', flexShrink:0 },
+  mobileToolsRow:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 },
+  mobileToolsMeta:{ fontSize:10.5, color:'var(--muted2)', whiteSpace:'nowrap' },
+  mobileToolsSession:{ fontSize:11, color:'var(--tx2)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' },
+  mobilePrivacy:{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10.5, color:'#fbbf24', border:'1px solid rgba(251,191,36,.22)', background:'rgba(251,191,36,.05)', padding:'4px 7px', borderRadius:8, cursor:'pointer', flex:'0 0 auto' },
+  mobileExportBtn:{ fontSize:10.5, padding:'4px 8px', background:'transparent', border:'1px solid var(--b2)', color:'var(--muted2)', borderRadius:8, cursor:'pointer', flexShrink:0 },
   msgs:          { flex:1, overflowY:'auto', padding:'1.25rem 1.5rem' },
   msgsMobile:    { padding:'12px 10px' },
   welcome:       { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', textAlign:'center', padding:'2rem' },
