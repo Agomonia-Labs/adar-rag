@@ -83,7 +83,9 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
   const [filterType,  setFilterType]  = useState('');  // doc_type filter// date|name|size|status
   const [newTagName,  setNewTagName]  = useState('');
   const [showTagMgr,  setShowTagMgr]  = useState(false);
+  const [showMobileDocMenu, setShowMobileDocMenu] = useState(false);
   const [redactPiiOnUpload, setRedactPiiOnUpload] = useState(() => localStorage.getItem('redact_pii_upload') === '1');
+  const isMobile = useIsMobile();
 
   // Workspace role enforcement
   const wsRole    = activeWorkspace?.my_role || null;
@@ -182,45 +184,115 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
   const selDocs  = docs.filter(d=>selected.includes(d.id));
 
   return (
-    <div style={s.wrap}>
+    <div style={{...s.wrap, ...(isMobile ? s.wrapMobile : {})}}>
       {/* Stats bar */}
-      <div style={s.bar}>
-        <Stat v={total}    l="Total"    c="var(--tx)"   />
-        <Stat v={chunked}  l="Processed" c="var(--blue)" />
-        <Stat v={embedded} l="Embedded" c="var(--teal)" />
-        <div style={{flex:1}}/>
-        {selected.length===2 && (
-          <>
-            <button style={{...s.multiBtn,background:'rgba(96,165,250,.1)',color:'#60a5fa',borderColor:'rgba(96,165,250,.3)'}}
-              onClick={()=>setCompare({doc1:selDocs[0],doc2:selDocs[1]})}>
-              ⇄ Compare 2 docs
+      {isMobile ? (
+        <>
+          <div style={s.mobileBar}>
+            <span style={s.mobileStat}><strong>{total}</strong> Total</span>
+            <span style={s.mobileStat}><strong>{chunked}</strong> Processed</span>
+            <span style={s.mobileStat}><strong>{embedded}</strong> Embedded</span>
+            <div style={{flex:1}}/>
+            {canUpload && total<MAX_FILES ? (
+              <button style={s.mobileUploadBtn} onClick={()=>fileRef.current?.click()} disabled={busy}>
+                ⬆ {busy?'Uploading':'Upload'}
+              </button>
+            ) : (
+              <span style={s.mobileReadOnly}>👁 Read</span>
+            )}
+            <button
+              type="button"
+              style={{...s.mobileMenuBtn, ...(showMobileDocMenu ? s.mobileMenuBtnActive : {})}}
+              onClick={() => setShowMobileDocMenu(v => !v)}
+              title="Document workflow status">
+              ⋯
             </button>
-            <button style={{...s.multiBtn,background:'rgba(251,191,36,.1)',color:'#fbbf24',borderColor:'rgba(251,191,36,.3)'}}
-              onClick={()=>setLeasePanel({compareDocs:selDocs})}>
-              🏢 Lease compare
+          </div>
+
+          {showMobileDocMenu && (
+            <div style={s.mobileDocMenu}>
+              <div style={s.mobileDocMenuRow}>
+                <span>🔄 Chunking starts automatically</span>
+                <span>{MAX_FILES-total} slots left</span>
+              </div>
+              <div style={s.mobileDocMenuRow}>
+                <span>⚡ Embed generates vectors</span>
+                <span>📝 Summary after chunking</span>
+              </div>
+              {selected.length===2 && (
+                <div style={s.mobileDocActions}>
+                  <button style={{...s.multiBtn, ...s.mobileActionBtn, background:'rgba(96,165,250,.1)', color:'#60a5fa', borderColor:'rgba(96,165,250,.3)'}}
+                    onClick={()=>setCompare({doc1:selDocs[0],doc2:selDocs[1]})}>
+                    ⇄ Compare
+                  </button>
+                  <button style={{...s.multiBtn, ...s.mobileActionBtn, background:'rgba(251,191,36,.1)', color:'#fbbf24', borderColor:'rgba(251,191,36,.3)'}}
+                    onClick={()=>setLeasePanel({compareDocs:selDocs})}>
+                    🏢 Lease
+                  </button>
+                </div>
+              )}
+              {selected.length>=2 && (
+                <button style={{...s.multiBtn, ...s.mobileActionBtn}} onClick={()=>setSummary({documentIds:selected,docNames:selDocs.map(d=>d.original_name)})}>
+                  📝 Summarize {selected.length}
+                </button>
+              )}
+              {canUpload && (
+                <label onClick={e=>e.stopPropagation()} style={s.mobilePrivacyToggle}>
+                  <input
+                    type="checkbox"
+                    checked={redactPiiOnUpload}
+                    onChange={e=>{
+                      setRedactPiiOnUpload(e.target.checked);
+                      localStorage.setItem('redact_pii_upload', e.target.checked ? '1' : '0');
+                    }}
+                    style={s.mobilePrivacyCheckbox}
+                  />
+                  <span style={s.mobilePrivacyText}>Redact PII</span>
+                  <span style={s.mobilePrivacyHint}>before chunk/embed</span>
+                </label>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <div style={s.bar}>
+          <Stat v={total}    l="Total"    c="var(--tx)"   />
+          <Stat v={chunked}  l="Processed" c="var(--blue)" />
+          <Stat v={embedded} l="Embedded" c="var(--teal)" />
+          <div style={{flex:1}}/>
+          {selected.length===2 && (
+            <>
+              <button style={{...s.multiBtn,background:'rgba(96,165,250,.1)',color:'#60a5fa',borderColor:'rgba(96,165,250,.3)'}}
+                onClick={()=>setCompare({doc1:selDocs[0],doc2:selDocs[1]})}>
+                ⇄ Compare 2 docs
+              </button>
+              <button style={{...s.multiBtn,background:'rgba(251,191,36,.1)',color:'#fbbf24',borderColor:'rgba(251,191,36,.3)'}}
+                onClick={()=>setLeasePanel({compareDocs:selDocs})}>
+                🏢 Lease compare
+              </button>
+            </>
+          )}
+          {selected.length>=2 && (
+            <button style={s.multiBtn} onClick={()=>setSummary({documentIds:selected,docNames:selDocs.map(d=>d.original_name)})}>
+              📝 Summarize {selected.length} docs
             </button>
-          </>
-        )}
-        {selected.length>=2 && (
-          <button style={s.multiBtn} onClick={()=>setSummary({documentIds:selected,docNames:selDocs.map(d=>d.original_name)})}>
-            📝 Summarize {selected.length} docs
-          </button>
-        )}
-        {/* Upload button — hidden for workspace viewers */}
-        {canUpload && total<MAX_FILES && (
-          <button style={s.uploadBtn} onClick={()=>fileRef.current?.click()} disabled={busy}>
-            ⬆ {busy?'Uploading…':'Upload'}
-          </button>
-        )}
-        {!canUpload && (
-          <span style={{fontSize:11.5,padding:'3px 10px',borderRadius:20,background:'rgba(248,113,113,.08)',color:'#f87171',border:'1px solid rgba(248,113,113,.2)',fontWeight:600}}>
-            👁 Viewer — read only
-          </span>
-        )}
-      </div>
+          )}
+          {/* Upload button — hidden for workspace viewers */}
+          {canUpload && total<MAX_FILES && (
+            <button style={s.uploadBtn} onClick={()=>fileRef.current?.click()} disabled={busy}>
+              ⬆ {busy?'Uploading…':'Upload'}
+            </button>
+          )}
+          {!canUpload && (
+            <span style={{fontSize:11.5,padding:'3px 10px',borderRadius:20,background:'rgba(248,113,113,.08)',color:'#f87171',border:'1px solid rgba(248,113,113,.2)',fontWeight:600}}>
+              👁 Viewer — read only
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Drop zone — hidden for workspace viewers */}
-      {canUpload && total<MAX_FILES && (
+      {canUpload && total<MAX_FILES && !isMobile && (
         <div style={{...s.dz,...(drag?s.dzOn:{})}}
           onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)}
           onDrop={e=>{e.preventDefault();setDrag(false);handleFiles(e.dataTransfer.files);}}
@@ -245,11 +317,11 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
       <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.csv,.txt,.png,.jpg,.jpeg,.gif,.webp,.tiff"
         style={{display:'none'}} onChange={e=>{handleFiles(e.target.files);e.target.value='';}} />
 
-      <div style={s.hint}>
+      {!isMobile && <div style={s.hint}>
         <span>🔄 Chunking starts automatically.</span>
         <span>Click <strong style={{color:'#4ade80'}}>⚡ Embed</strong> to generate vectors.</span>
         <span>Click <strong style={{color:'#4ade80'}}>📝 Summary</strong> anytime after chunking.</span>
-      </div>
+      </div>}
 
       {/* ── Filter / Sort / Tag bar — single line ─────────────────────── */}
       <div style={{ display:'flex', gap:4, padding:'5px 10px', borderBottom:'1px solid var(--b1)', background:'var(--s2)', alignItems:'center', flexShrink:0, overflow:'hidden' }}>
@@ -484,6 +556,7 @@ function Stat({v,l,c}){ return <div style={{textAlign:'center',minWidth:50}}><di
 
 function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSummarize,onLease,onHealthcare,onRetry,onReclassify,onDelete,allTags=[],onTagAssign,onTagRemove}){
   const [conf,setConf]=useState(false);
+  const isMobile = useIsMobile();
   const cfg=STATUS[doc.status]||{strip:'#6b7280',bg:'rgba(107,114,128,.1)',color:'#6b7280',label:doc.status};
   const spin=['chunking','embedding','uploading'].includes(doc.status);
   const canSum=['chunked','embedding','embedded'].includes(doc.status);
@@ -491,20 +564,20 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
   const canHealthcare = ['medical_record','prescription','lab_report','clinical_notes','after_visit_summary','medication_list','discharge_summary','referral','imaging_report','prior_authorization','payer_policy','medical_policy'].includes(doc.doc_type) || doc.doc_domain === 'medical';
   return (
     <div style={{...s.card,...(selected?s.cardSel:{})}}>
-      <div style={s.cardInner}>
+      <div style={{...s.cardInner, ...(isMobile ? s.cardInnerMobile : {})}}>
         <div style={{...s.strip,background:cfg.strip}}/>
-        {canSum && <input type="checkbox" checked={selected} onChange={onSelect} style={{width:'auto',margin:'2px 0 0',accentColor:'#4ade80',cursor:'pointer',flexShrink:0}}/>}
-        <span style={{fontSize:22,flexShrink:0}}>{ICONS[doc.file_type||'?']||'📁'}</span>
+        {canSum && <input type="checkbox" checked={selected} onChange={onSelect} style={s.cardCheckbox}/>}
+        <span style={{fontSize:isMobile ? 18 : 22,flexShrink:0}}>{ICONS[doc.file_type||'?']||'📁'}</span>
         <div style={s.info}>
-          <p style={s.name} title={doc.original_name}>{doc.original_name}</p>
-          <div style={s.meta}>
+          <p style={{...s.name, ...(isMobile ? s.nameMobile : {})}} title={doc.original_name}>{doc.original_name}</p>
+          <div style={{...s.meta, ...(isMobile ? s.metaMobile : {})}}>
             <span style={{...s.badge2,background:cfg.bg,color:cfg.color,border:`1px solid ${cfg.strip}30`}}>
               {spin && <span style={{display:'inline-block',animation:'spin .8s linear infinite',marginRight:3}}>⟳</span>}
               {cfg.label}
             </span>
             {doc.workspace_id
-              ? <span style={{fontSize:9.5,padding:'1px 6px',borderRadius:20,background:'rgba(74,222,128,.1)',color:'#4ade80',border:'1px solid rgba(74,222,128,.2)',fontWeight:600}}>🏢 Workspace</span>
-              : <span style={{fontSize:9.5,padding:'1px 6px',borderRadius:20,background:'rgba(148,163,184,.06)',color:'#94a3b8',border:'1px solid rgba(148,163,184,.12)'}}>🏠 Personal</span>
+              ? <span style={{fontSize:9.5,padding:'1px 6px',borderRadius:20,background:'rgba(74,222,128,.1)',color:'#4ade80',border:'1px solid rgba(74,222,128,.2)',fontWeight:600,whiteSpace:'nowrap',flex:'0 0 auto'}}>🏢 Workspace</span>
+              : <span style={{fontSize:9.5,padding:'1px 6px',borderRadius:20,background:'rgba(148,163,184,.06)',color:'#94a3b8',border:'1px solid rgba(148,163,184,.12)',whiteSpace:'nowrap',flex:'0 0 auto'}}>🏠 Personal</span>
             }
             <span style={s.mt}>{(doc.file_type||'?').toUpperCase()}</span>
             <span style={s.mt}>🌐 {LANGUAGE_LABELS[doc.doc_language] || doc.doc_language || 'English'}</span>
@@ -525,15 +598,15 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
               };
               if (!doc.doc_type) return (
                 <span style={{ fontSize:9.5, padding:'1px 6px', borderRadius:20, fontWeight:600,
-                  background:'rgba(148,163,184,.08)', color:'#6b7280', border:'1px solid rgba(148,163,184,.2)' }}>
+                  background:'rgba(148,163,184,.08)', color:'#6b7280', border:'1px solid rgba(148,163,184,.2)', whiteSpace:'nowrap', flex:'0 0 auto' }}>
                   ⟳ Classifying
                 </span>
               );
               return (
                 <span title={`${domain} — click ↺ to re-classify`}
-                  style={{ display:'inline-flex', alignItems:'center', gap:3 }}>
+                  style={{ display:'inline-flex', alignItems:'center', gap:3, whiteSpace:'nowrap', flex:'0 0 auto' }}>
                   <span style={{ fontSize:9.5, padding:'1px 7px', borderRadius:20, fontWeight:600,
-                    background:`${color}18`, color, border:`1px solid ${color}35` }}>
+                    background:`${color}18`, color, border:`1px solid ${color}35`, whiteSpace:'nowrap' }}>
                     {icon} {DOC_TYPE_LABELS[doc.doc_type] || doc.doc_type}
                   </span>
                   <button type="button" onClick={reclass} title="Re-classify this document"
@@ -557,7 +630,7 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
       </div>
       {/* Tag chips */}
       {allTags.length > 0 && (
-        <div style={{ display:'flex', flexWrap:'wrap', gap:4, padding:'0 14px 7px', alignItems:'center' }}>
+        <div style={{ ...(isMobile ? s.tagRowMobile : s.tagRow) }}>
           {(doc.tags||[]).map(t => (
             <span key={t.id} style={{ display:'inline-flex', alignItems:'center', gap:2, padding:'1px 7px', borderRadius:20, fontSize:10.5, fontWeight:600, background:`${t.color}20`, color:t.color, border:`1px solid ${t.color}40` }}>
               {t.name}
@@ -576,41 +649,57 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
           )}
         </div>
       )}
-      <div style={s.footer}>
-        <Btn onClick={onViewSource} disabled={['uploading','chunking'].includes(doc.status)}>🔗 Source</Btn>
-        {canSum && <Btn onClick={onViewChunks}>📋 Chunks</Btn>}
-        {canSum && <Btn onClick={onSummarize} accent>📝 Summary</Btn>}
-        {canSum && canLease && <Btn onClick={onLease} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>🏢 Lease</Btn>}
-        {canSum && canHealthcare && <Btn onClick={onHealthcare} style={{color:'#f87171',borderColor:'rgba(248,113,113,.3)',background:'rgba(248,113,113,.08)'}}>⚕ Healthcare</Btn>}
-        {doc.status==='error'    && <Btn onClick={onRetry} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>↻ Retry</Btn>}
-        {doc.status==='chunked'  && <Btn onClick={onEmbed} primary>⚡ Embed</Btn>}
-        {doc.status==='embedded' && <Btn onClick={onEmbed}>↩ Re-embed</Btn>}
-        <div style={{flex:1}}/>
-        {!conf && <Btn onClick={()=>setConf(true)} danger>🗑 Delete</Btn>}
+      <div style={{...s.footer, ...(isMobile ? s.footerMobile : {})}}>
+        <Btn mobile={isMobile} onClick={onViewSource} disabled={['uploading','chunking'].includes(doc.status)}>🔗 Source</Btn>
+        {canSum && <Btn mobile={isMobile} onClick={onViewChunks}>📋 Chunks</Btn>}
+        {canSum && <Btn mobile={isMobile} onClick={onSummarize} accent>📝 Summary</Btn>}
+        {canSum && canLease && <Btn mobile={isMobile} onClick={onLease} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>🏢 Lease</Btn>}
+        {canSum && canHealthcare && <Btn mobile={isMobile} onClick={onHealthcare} style={{color:'#f87171',borderColor:'rgba(248,113,113,.3)',background:'rgba(248,113,113,.08)'}}>⚕ Healthcare</Btn>}
+        {doc.status==='error'    && <Btn mobile={isMobile} onClick={onRetry} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>↻ Retry</Btn>}
+        {doc.status==='chunked'  && <Btn mobile={isMobile} onClick={onEmbed} primary>⚡ Embed</Btn>}
+        {doc.status==='embedded' && <Btn mobile={isMobile} onClick={onEmbed}>↩ Re-embed</Btn>}
+        {!isMobile && <div style={{flex:1}}/>}
+        {!conf && <Btn mobile={isMobile} onClick={()=>setConf(true)} danger>🗑 Delete</Btn>}
       </div>
     </div>
   );
 }
 
-function Btn({children,onClick,primary,danger,accent,disabled,style}){
+function Btn({children,onClick,primary,danger,accent,disabled,style,mobile=false}){
   return <button onClick={onClick} disabled={disabled} style={{
-    display:'flex',alignItems:'center',gap:4,padding:'4px 10px',fontSize:11,fontWeight:500,borderRadius:6,cursor:disabled?'not-allowed':'pointer',
+    display:'flex',alignItems:'center',gap:4,padding:mobile?'4px 8px':'4px 10px',fontSize:mobile?10.5:11,fontWeight:500,borderRadius:6,cursor:disabled?'not-allowed':'pointer',
     border:primary?'none':accent?'1px solid rgba(74,222,128,.3)':danger?'1px solid rgba(248,113,113,.3)':'1px solid var(--b2)',
     background:primary?'#15803d':accent?'rgba(74,222,128,.1)':danger?'rgba(248,113,113,.08)':'transparent',
     color:primary?'#fff':accent?'#4ade80':danger?'var(--red)':'var(--muted2)',
-    opacity:disabled?.4:1,transition:'all .15s',
+    opacity:disabled?.4:1,transition:'all .15s',whiteSpace:'nowrap',flex:'0 0 auto',
     ...style,
   }}>{children}</button>;
 }
 
 const s={
   wrap:    {padding:'1.25rem 1.5rem',maxWidth:960,margin:'0 auto'},
+  wrapMobile:{padding:'8px 8px 12px',maxWidth:'100%',boxSizing:'border-box'},
   bar:     {display:'flex',alignItems:'center',gap:20,background:'var(--s2)',border:'1px solid var(--b1)',borderRadius:'var(--rl)',padding:'10px 18px',marginBottom:12,boxShadow:'0 2px 8px rgba(0,0,0,.3)'},
+  mobileBar:{display:'flex',alignItems:'center',gap:5,background:'var(--s2)',border:'1px solid var(--b1)',borderRadius:9,padding:'6px 7px',marginBottom:7,boxShadow:'0 2px 8px rgba(0,0,0,.25)',position:'sticky',top:0,zIndex:8},
+  mobileStat:{display:'inline-flex',alignItems:'baseline',gap:3,fontSize:10.5,color:'var(--muted2)',padding:'3px 5px',borderRadius:7,background:'rgba(255,255,255,.03)',border:'1px solid rgba(255,255,255,.05)',whiteSpace:'nowrap'},
+  mobileUploadBtn:{background:'#15803d',color:'#fff',border:'none',borderRadius:8,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer',boxShadow:'0 2px 8px rgba(21,128,61,.35)',whiteSpace:'nowrap'},
+  mobileReadOnly:{fontSize:10.5,padding:'4px 7px',borderRadius:8,background:'rgba(248,113,113,.08)',color:'#f87171',border:'1px solid rgba(248,113,113,.2)',fontWeight:700,whiteSpace:'nowrap'},
+  mobileMenuBtn:{width:28,height:28,borderRadius:8,border:'1px solid var(--b2)',background:'var(--s3)',color:'var(--muted2)',fontSize:16,fontWeight:900,cursor:'pointer',lineHeight:1},
+  mobileMenuBtnActive:{color:'#4ade80',borderColor:'rgba(74,222,128,.35)',background:'rgba(74,222,128,.1)'},
+  mobileDocMenu:{display:'flex',flexDirection:'column',gap:7,background:'var(--s2)',border:'1px solid var(--b1)',borderRadius:9,padding:9,margin:'-2px 0 7px',boxShadow:'0 10px 28px rgba(0,0,0,.28)'},
+  mobileDocMenuRow:{display:'flex',justifyContent:'space-between',gap:8,fontSize:11,color:'var(--muted2)',lineHeight:1.35},
+  mobileDocActions:{display:'flex',gap:6,flexWrap:'wrap'},
+  mobileActionBtn:{fontSize:11,padding:'5px 9px',borderRadius:8},
   uploadBtn:{background:'#15803d',color:'#fff',border:'none',borderRadius:20,padding:'6px 16px',fontSize:12,fontWeight:700,cursor:'pointer',letterSpacing:'.2px',boxShadow:'0 2px 8px rgba(21,128,61,.4)'},
   multiBtn:{background:'rgba(74,222,128,.1)',color:'#4ade80',border:'1px solid rgba(74,222,128,.25)',borderRadius:20,padding:'6px 14px',fontSize:12,fontWeight:600,cursor:'pointer'},
   dz:      {border:'1.5px dashed rgba(74,222,128,.3)',borderRadius:'var(--rl)',padding:'1.75rem',textAlign:'center',cursor:'pointer',background:'rgba(74,222,128,.04)',marginBottom:10,transition:'all .15s',display:'flex',flexDirection:'column',alignItems:'center'},
   dzOn:    {borderColor:'#4ade80',background:'rgba(74,222,128,.08)'},
   privacyToggle:{display:'flex',alignItems:'center',gap:6,marginTop:10,fontSize:11.5,color:'var(--tx2)',cursor:'pointer',padding:'5px 10px',border:'1px solid rgba(251,191,36,.25)',borderRadius:20,background:'rgba(251,191,36,.06)'},
+  mobilePrivacyToggle:{display:'grid',gridTemplateColumns:'18px auto 1fr',alignItems:'center',gap:6,width:'100%',boxSizing:'border-box',marginTop:0,fontSize:11,color:'var(--tx2)',cursor:'pointer',padding:'5px 7px',border:'1px solid rgba(251,191,36,.22)',borderRadius:8,background:'rgba(251,191,36,.045)'},
+  cardCheckbox:{width:14,height:14,minWidth:14,minHeight:0,margin:'2px 0 0',padding:0,accentColor:'#4ade80',cursor:'pointer',flex:'0 0 14px',boxSizing:'content-box'},
+  mobilePrivacyCheckbox:{width:14,height:14,minWidth:14,minHeight:0,margin:0,padding:0,accentColor:'#fbbf24',boxSizing:'content-box',flex:'0 0 14px'},
+  mobilePrivacyText:{fontWeight:800,color:'#fbbf24',whiteSpace:'nowrap'},
+  mobilePrivacyHint:{fontSize:10.5,color:'var(--muted2)',textAlign:'right',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},
   hint:    {display:'flex',gap:12,marginBottom:10,fontSize:11.5,color:'var(--muted2)',flexWrap:'wrap'},
   list:    {display:'flex',flexDirection:'column',gap:8},
   ctr:     {textAlign:'center',padding:'3rem',color:'var(--muted2)'},
@@ -618,13 +707,19 @@ const s={
   card:    {background:'var(--s2)',border:'1px solid var(--b1)',borderRadius:'var(--rl)',overflow:'hidden',transition:'border-color .15s',animation:'fadeUp .2s ease'},
   cardSel: {border:'1px solid rgba(74,222,128,.3)',background:'rgba(74,222,128,.04)'},
   cardInner:{display:'flex',alignItems:'flex-start',gap:10,padding:'11px 14px'},
+  cardInnerMobile:{gap:7,padding:'9px 9px 7px 10px'},
   strip:   {width:4,alignSelf:'stretch',borderRadius:2,flexShrink:0,margin:'-11px 0 -11px -14px',marginRight:4},
   info:    {flex:1,minWidth:0},
   name:    {fontSize:13.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:5,color:'var(--tx)'},
+  nameMobile:{fontSize:12.5,marginBottom:4},
   meta:    {display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'},
-  badge2:  {display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:20,fontSize:11,fontWeight:600},
-  mt:      {fontSize:11,color:'var(--muted2)'},
+  metaMobile:{flexWrap:'nowrap',overflowX:'auto',overflowY:'hidden',WebkitOverflowScrolling:'touch',paddingBottom:2,gap:4,scrollbarWidth:'none'},
+  badge2:  {display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:20,fontSize:11,fontWeight:600,whiteSpace:'nowrap',flex:'0 0 auto'},
+  mt:      {fontSize:11,color:'var(--muted2)',whiteSpace:'nowrap',flex:'0 0 auto'},
+  tagRow:{display:'flex',flexWrap:'wrap',gap:4,padding:'0 14px 7px',alignItems:'center'},
+  tagRowMobile:{display:'flex',flexWrap:'nowrap',gap:4,padding:'0 9px 6px',alignItems:'center',overflowX:'auto',overflowY:'hidden',WebkitOverflowScrolling:'touch',scrollbarWidth:'none'},
   footer:  {display:'flex',gap:5,padding:'7px 14px',borderTop:'1px solid var(--b1)',background:'rgba(0,0,0,.15)',flexWrap:'wrap'},
+  footerMobile:{flexWrap:'nowrap',overflowX:'auto',overflowY:'hidden',WebkitOverflowScrolling:'touch',padding:'6px 9px',gap:5,scrollbarWidth:'none'},
   conf:    {display:'flex',alignItems:'center',gap:8,marginTop:6,padding:'5px 8px',background:'rgba(248,113,113,.08)',borderRadius:6,border:'1px solid rgba(248,113,113,.2)',flexWrap:'wrap'},
   confY:   {padding:'2px 10px',fontSize:11.5,fontWeight:700,background:'#dc2626',color:'#fff',border:'none',borderRadius:5,cursor:'pointer'},
   confN:   {padding:'2px 10px',fontSize:11.5,background:'transparent',border:'1px solid var(--b2)',color:'var(--muted2)',borderRadius:5,cursor:'pointer'},
@@ -646,3 +741,18 @@ const s={
   workflowMissing:{background:'rgba(251,191,36,.1)',color:'#fbbf24',borderColor:'rgba(251,191,36,.25)'},
   leaseOpenHint:{fontSize:10,color:'var(--muted2)',whiteSpace:'nowrap'},
 };
+
+function useIsMobile(breakpoint = 760) {
+  const get = () => typeof window !== 'undefined' && window.innerWidth <= breakpoint;
+  const [mobile, setMobile] = useState(get);
+  useEffect(() => {
+    const onResize = () => setMobile(get());
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, [breakpoint]);
+  return mobile;
+}

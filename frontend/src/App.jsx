@@ -21,6 +21,7 @@ export default function App() {
   const [showUsage,        setShowUsage]        = useState(false);
   const [showBilling,      setShowBilling]      = useState(false);
   const [showVerticals,    setShowVerticals]    = useState(false);
+  const [showMainMenu,     setShowMainMenu]     = useState(false);
   const [showNewVisit,     setShowNewVisit]     = useState(false);
   const [showRestaurantPanel, setShowRestaurantPanel] = useState(false);
   const [openLeasePickerKey, setOpenLeasePickerKey] = useState(0);
@@ -102,6 +103,10 @@ export default function App() {
     }
   }, [activeWorkspace?.id]);
 
+  useEffect(() => {
+    if (!isMobile) setShowMainMenu(false);
+  }, [isMobile]);
+
   const handleLogin = data => {
     localStorage.setItem('token',     data.access_token);
     localStorage.setItem('user_role', data.role);
@@ -133,6 +138,33 @@ export default function App() {
     { key:'workspaces', icon:'🏢', label:t.workspaces, show:true },
     { key:'admin',     icon:'⚙', label:t.admin,      show:isAdmin },
   ].filter(t=>t.show);
+
+  const closeMenus = () => {
+    setShowMainMenu(false);
+    setShowVerticals(false);
+  };
+
+  const openTab = key => {
+    closeMenus();
+    setTab(key);
+  };
+
+  const openNewClinicalVisit = () => {
+    if (!canCreateWorkspaceContent) return;
+    closeMenus();
+    setShowNewVisit(true);
+  };
+
+  const openLeaseDocuments = () => {
+    closeMenus();
+    setTab('documents');
+    setOpenLeasePickerKey(k => k + 1);
+  };
+
+  const openRestaurantWorkflow = () => {
+    closeMenus();
+    setShowRestaurantPanel(true);
+  };
 
   return (
     <>
@@ -187,23 +219,36 @@ export default function App() {
               </span>
             )}
             {isAdmin && <span style={s.adminPill}>admin</span>}
+            {isMobile && (
+              <button
+                type="button"
+                style={s.mobileMenuBtn}
+                onClick={() => setShowMainMenu(v => !v)}
+                aria-expanded={showMainMenu}
+                aria-label="Open application menu">
+                ☰ Menu
+              </button>
+            )}
           </div>
 
-          <nav style={{...s.tabs, ...(isMobile ? s.tabsMobile : {})}}>
-            {TABS.map(({ key, icon, label, disabled, title }) => (
-              <button key={key} onClick={()=>!disabled&&setTab(key)} disabled={disabled} title={title}
-                style={{ ...s.tabBtn, ...(isMobile ? s.tabBtnMobile : {}), ...(tab===key?s.tabActive:{}), ...(disabled?{opacity:.35,cursor:'not-allowed'}:{}), ...(key==='admin'?{color:tab==='admin'?'#4ade80':'#fbbf24'}:{}) }}>
-                <span>{icon}</span>
-                <span>{isMobile && label.length > 10 ? label.slice(0, 9) + '...' : label}</span>
-                {key==='chat' && embeddedDocs.length>0 && <span style={s.badge}>{embeddedDocs.length}</span>}
-              </button>
-            ))}
-          </nav>
+          {!isMobile && (
+            <nav style={s.tabs}>
+              {TABS.map(({ key, icon, label, disabled, title }) => (
+                <button key={key} onClick={()=>!disabled&&openTab(key)} disabled={disabled} title={title}
+                  style={{ ...s.tabBtn, ...(tab===key?s.tabActive:{}), ...(disabled?{opacity:.35,cursor:'not-allowed'}:{}), ...(key==='admin'?{color:tab==='admin'?'#4ade80':'#fbbf24'}:{}) }}>
+                  <span>{icon}</span>
+                  <span>{label}</span>
+                  {key==='chat' && embeddedDocs.length>0 && <span style={s.badge}>{embeddedDocs.length}</span>}
+                </button>
+              ))}
+            </nav>
+          )}
 
-          <div style={{...s.userArea, ...(isMobile ? s.userAreaMobile : {}), ...(isMobile && showVerticals ? s.userAreaMenuOpen : {})}}>
+          {!isMobile && (
+          <div style={s.userArea}>
             <div style={s.verticalWrap}>
               <button
-                style={{...s.verticalBtn, ...(isMobile ? s.compactBtn : {})}}
+                style={s.verticalBtn}
                 onClick={() => setShowVerticals(v => !v)}
                 title="Domain-specific workflows">
                 ◫ Verticals
@@ -215,11 +260,7 @@ export default function App() {
                     <button
                       style={{...s.verticalItem, ...(!canCreateWorkspaceContent ? s.verticalItemDisabled : {})}}
                       disabled={!canCreateWorkspaceContent}
-                      onClick={() => {
-                        if (!canCreateWorkspaceContent) return;
-                        setShowVerticals(false);
-                        setShowNewVisit(true);
-                      }}>
+                      onClick={openNewClinicalVisit}>
                       <span>🎙</span>
                       <span>New clinical visit</span>
                     </button>
@@ -228,11 +269,7 @@ export default function App() {
                     <div style={s.verticalGroupTitle}>Lease</div>
                     <button
                       style={s.verticalItem}
-                      onClick={() => {
-                        setShowVerticals(false);
-                        setTab('documents');
-                        setOpenLeasePickerKey(k => k + 1);
-                      }}>
+                      onClick={openLeaseDocuments}>
                       <span>🏢</span>
                       <span>Open lease documents</span>
                     </button>
@@ -241,10 +278,7 @@ export default function App() {
                     <div style={s.verticalGroupTitle}>Restaurant</div>
                     <button
                       style={s.verticalItem}
-                      onClick={() => {
-                        setShowVerticals(false);
-                        setShowRestaurantPanel(true);
-                      }}>
+                      onClick={openRestaurantWorkflow}>
                       <span>🍽</span>
                       <span>Restaurant Menu Scribe & Carryout Orders</span>
                     </button>
@@ -252,17 +286,15 @@ export default function App() {
                 </div>
               )}
             </div>
-            {!isMobile && (
-              <div style={{ textAlign:'right' }}>
-                <p style={{ fontSize:13, fontWeight:600, color:'var(--tx)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{user.full_name||user.email}</p>
-                <p style={{ fontSize:11, color:'var(--muted2)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{user.email}</p>
-              </div>
-            )}
-            {activeWorkspace && !isMobile && (
+            <div style={{ textAlign:'right' }}>
+              <p style={{ fontSize:13, fontWeight:600, color:'var(--tx)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{user.full_name||user.email}</p>
+              <p style={{ fontSize:11, color:'var(--muted2)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{user.email}</p>
+            </div>
+            {activeWorkspace && (
               <span style={{ fontSize:11.5, padding:'3px 10px', borderRadius:20,
                              background:'rgba(74,222,128,.1)', color:'#4ade80',
                              border:'1px solid rgba(74,222,128,.25)', fontWeight:600 }}>
-                🏢 {isMobile && activeWorkspace.name.length > 14 ? activeWorkspace.name.slice(0, 13) + '...' : activeWorkspace.name}
+                🏢 {activeWorkspace.name}
                 <button onClick={() => setActiveWorkspace(null)}
                   style={{ background:'none', border:'none', color:'#4ade80', cursor:'pointer', marginLeft:4, fontSize:12 }}>✕</button>
               </span>
@@ -293,8 +325,83 @@ export default function App() {
                 {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.native}</option>)}
               </select>
             </label>
-            <button style={{...s.signOutBtn, ...(isMobile ? s.compactBtn : {})}} onClick={handleLogout}>{t.signOut}</button>
+            <button style={s.signOutBtn} onClick={handleLogout}>{t.signOut}</button>
           </div>
+          )}
+
+          {isMobile && showMainMenu && (
+            <div style={s.mobileMenu}>
+              <div style={s.mobileMenuHeader}>
+                <strong>Menu</strong>
+                <button type="button" style={s.mobileMenuClose} onClick={() => setShowMainMenu(false)} aria-label="Close menu">✕</button>
+              </div>
+
+              <section style={s.menuGroup}>
+                <div style={s.menuGroupTitle}>Navigate</div>
+                {TABS.map(({ key, icon, label, disabled, title }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    disabled={disabled}
+                    title={title}
+                    style={{...s.menuItem, ...(tab===key ? s.menuItemActive : {}), ...(disabled ? s.menuItemDisabled : {})}}
+                    onClick={() => !disabled && openTab(key)}>
+                    <span>{icon}</span>
+                    <span>{label}</span>
+                    {key==='chat' && embeddedDocs.length>0 && <span style={s.badge}>{embeddedDocs.length}</span>}
+                    {disabled && <small style={s.menuItemMeta}>{t.embedFirst}</small>}
+                  </button>
+                ))}
+              </section>
+
+              <section style={s.menuGroup}>
+                <div style={s.menuGroupTitle}>Vertical Workflows</div>
+                <button
+                  type="button"
+                  disabled={!canCreateWorkspaceContent}
+                  style={{...s.menuItem, ...(!canCreateWorkspaceContent ? s.menuItemDisabled : {})}}
+                  onClick={openNewClinicalVisit}>
+                  <span>🎙</span>
+                  <span>Health Care · New clinical visit</span>
+                </button>
+                <button type="button" style={s.menuItem} onClick={openLeaseDocuments}>
+                  <span>🏢</span>
+                  <span>Lease · Open lease documents</span>
+                </button>
+                <button type="button" style={s.menuItem} onClick={openRestaurantWorkflow}>
+                  <span>🍽</span>
+                  <span>Restaurant · Menu Scribe & Carryout Orders</span>
+                </button>
+              </section>
+
+              <section style={s.menuGroup}>
+                <div style={s.menuGroupTitle}>Account & Plan</div>
+                <button type="button" style={s.menuItem} onClick={() => { closeMenus(); setShowUsage(true); }}>
+                  <span>📊</span>
+                  <span>{t.usage}</span>
+                </button>
+                <button type="button" style={s.menuItem} onClick={() => { closeMenus(); setShowBilling(true); }}>
+                  <span>💳</span>
+                  <span>{t.plans}</span>
+                </button>
+                <label style={s.menuLangWrap} title={t.language}>
+                  <span>🌐</span>
+                  <span>{t.language}</span>
+                  <select
+                    value={lang.code}
+                    onChange={e => setUiLang(e.target.value)}
+                    aria-label={t.language}
+                    style={s.langSelect}>
+                    {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.native}</option>)}
+                  </select>
+                </label>
+                <button type="button" style={s.menuItem} onClick={handleLogout}>
+                  <span>↪</span>
+                  <span>{t.signOut}</span>
+                </button>
+              </section>
+            </div>
+          )}
         </header>
 
         <div style={s.content}>
@@ -330,6 +437,7 @@ const s = {
   mobileIdentityEmail:{ fontSize:10.5, color:'var(--muted2)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', lineHeight:1.2 },
   mobileWorkspacePill:{ display:'inline-flex', alignItems:'center', gap:4, maxWidth:'42%', marginLeft:'auto', padding:'3px 7px', borderRadius:20, background:'rgba(74,222,128,.1)', color:'#4ade80', border:'1px solid rgba(74,222,128,.25)', fontSize:10.5, fontWeight:700, lineHeight:1.2, overflow:'hidden', whiteSpace:'nowrap', textOverflow:'ellipsis', flexShrink:0 },
   mobileWorkspaceClose:{ background:'none', border:'none', color:'#4ade80', cursor:'pointer', marginLeft:2, fontSize:10, padding:0, minHeight:0 },
+  mobileMenuBtn:{ marginLeft:4, padding:'6px 10px', borderRadius:8, border:'1px solid rgba(74,222,128,.3)', background:'rgba(74,222,128,.1)', color:'#4ade80', fontSize:12, fontWeight:800, cursor:'pointer', flexShrink:0 },
   adminPill: { fontSize:10, padding:'2px 8px', borderRadius:20, background:'rgba(251,191,36,.12)', color:'#fbbf24', fontWeight:600, border:'1px solid rgba(251,191,36,.25)' },
   tabs:      { flex:1, minWidth:0, display:'flex', alignItems:'center', gap:2, justifyContent:'center' },
   tabsMobile:{ order:3, flex:'1 0 100%', justifyContent:'flex-start', overflowX:'auto', WebkitOverflowScrolling:'touch', paddingBottom:2 },
@@ -353,6 +461,16 @@ const s = {
   langSelect:{ width:'auto', minWidth:78, padding:'2px 4px', border:'none', boxShadow:'none', background:'transparent', color:'var(--tx2)', fontSize:12, cursor:'pointer' },
   signOutBtn:{ padding:'6px 14px', fontSize:12, fontWeight:500, background:'transparent', border:'1px solid var(--b2)', color:'var(--muted2)', borderRadius:'var(--r)', cursor:'pointer', transition:'all .15s' },
   compactBtn:{ padding:'5px 9px', fontSize:12 },
+  mobileMenu:{ position:'fixed', top:'max(64px, env(safe-area-inset-top))', left:10, right:10, maxHeight:'calc(100dvh - 78px)', overflowY:'auto', padding:10, background:'#0f1f0f', border:'1px solid rgba(74,222,128,.2)', borderRadius:10, boxShadow:'0 24px 70px rgba(0,0,0,.6)', zIndex:9999, display:'flex', flexDirection:'column', gap:10 },
+  mobileMenuHeader:{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'3px 2px 8px', color:'var(--tx)', borderBottom:'1px solid rgba(74,222,128,.12)' },
+  mobileMenuClose:{ width:30, height:30, borderRadius:8, border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx)', cursor:'pointer', fontWeight:800 },
+  menuGroup:{ display:'flex', flexDirection:'column', gap:6 },
+  menuGroupTitle:{ fontSize:10.5, color:'var(--muted2)', textTransform:'uppercase', letterSpacing:'.8px', fontWeight:900, padding:'2px 2px' },
+  menuItem:{ display:'flex', alignItems:'center', gap:9, width:'100%', minHeight:38, padding:'8px 10px', background:'var(--s2)', border:'1px solid var(--b2)', color:'var(--tx)', borderRadius:8, cursor:'pointer', fontSize:13, fontWeight:750, textAlign:'left' },
+  menuItemActive:{ borderColor:'rgba(74,222,128,.45)', background:'rgba(74,222,128,.13)', color:'#4ade80' },
+  menuItemDisabled:{ opacity:.45, cursor:'not-allowed' },
+  menuItemMeta:{ marginLeft:'auto', color:'var(--muted2)', fontSize:10.5, fontWeight:700 },
+  menuLangWrap:{ display:'flex', alignItems:'center', gap:9, minHeight:38, padding:'8px 10px', border:'1px solid var(--b2)', borderRadius:8, background:'var(--s2)', color:'var(--tx)', fontSize:13, fontWeight:750 },
   content:   { flex:1, overflow:'hidden' },
 };
 

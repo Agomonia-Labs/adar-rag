@@ -26,6 +26,7 @@ export default function WorkspacesTab({ currentUserId, onSwitchWorkspace, active
   const [editName,        setEditName]        = useState('');
   const [confirmDelete,   setConfirmDelete]   = useState(false);
   const [deleteInput,     setDeleteInput]     = useState('');
+  const isMobile = useIsMobile();
 
   useEffect(() => { load(); }, []);
 
@@ -115,9 +116,9 @@ export default function WorkspacesTab({ currentUserId, onSwitchWorkspace, active
   const isOwner = selected?.my_role === 'owner';
 
   return (
-    <div style={s.wrap}>
+    <div style={{...s.wrap, ...(isMobile ? s.wrapMobile : {})}}>
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
-      <div style={s.sidebar}>
+      <div style={{...s.sidebar, ...(isMobile ? s.sidebarMobile : {})}}>
         <div style={s.sidebarHdr}>
           <span style={{ fontSize:13, fontWeight:700, color:'var(--tx)' }}>Workspaces</span>
         </div>
@@ -148,7 +149,7 @@ export default function WorkspacesTab({ currentUserId, onSwitchWorkspace, active
         ))}
 
         {/* Create form — input stays visible, confirm appears below once name is typed */}
-        <div style={{ padding:'8px 10px', borderTop:'1px solid var(--b1)', marginTop:'auto' }}>
+        <div style={{ padding:'8px 10px', borderTop:'1px solid var(--b1)', marginTop:isMobile ? 4 : 'auto' }}>
           <div style={{ fontSize:11, color:'var(--muted2)', marginBottom:5, fontWeight:600 }}>New workspace</div>
           <input
             value={newName}
@@ -182,7 +183,7 @@ export default function WorkspacesTab({ currentUserId, onSwitchWorkspace, active
       </div>
 
       {/* ── Main ────────────────────────────────────────────────────────── */}
-      <div style={s.main}>
+      <div style={{...s.main, ...(isMobile ? s.mainMobile : {})}}>
         {error && (
           <div style={{ background:'rgba(248,113,113,.1)', color:'var(--red)', border:'1px solid rgba(248,113,113,.2)', borderRadius:'var(--r)', padding:'8px 12px', margin:'1rem', fontSize:13 }}>
             {error} <button onClick={()=>setError('')} style={{ background:'none', border:'none', color:'inherit', cursor:'pointer', float:'right' }}>✕</button>
@@ -206,11 +207,11 @@ export default function WorkspacesTab({ currentUserId, onSwitchWorkspace, active
         ) : (
           <>
             {/* Workspace header */}
-            <div style={s.hdr}>
+            <div style={{...s.hdr, ...(isMobile ? s.hdrMobile : {})}}>
               {editingName ? (
-                <form onSubmit={handleRename} style={{ display:'flex', gap:8, flex:1 }}>
+                <form onSubmit={handleRename} style={{ display:'flex', gap:8, flex:1, flexWrap:isMobile ? 'wrap' : 'nowrap' }}>
                   <input autoFocus value={editName} onChange={e=>setEditName(e.target.value)}
-                    style={{ flex:1, fontSize:17, fontWeight:700, padding:'4px 8px', background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:'var(--r)', color:'var(--tx)', outline:'none' }} />
+                    style={{ flex:1, minWidth:isMobile ? '100%' : 0, fontSize:17, fontWeight:700, padding:'4px 8px', background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:'var(--r)', color:'var(--tx)', outline:'none' }} />
                   <button type="submit" style={{ ...s.btn, background:'#15803d' }}>Save</button>
                   <button type="button" onClick={()=>setEditingName(false)} style={{ ...s.btn, background:'var(--s3)', color:'var(--muted2)' }}>Cancel</button>
                 </form>
@@ -222,7 +223,7 @@ export default function WorkspacesTab({ currentUserId, onSwitchWorkspace, active
                       {selected.members?.length} member{selected.members?.length !== 1 ? 's' : ''} · {selected.doc_count} documents · your role: <strong style={{ color:ROLE_COLOR[selected.my_role]?.color }}>{selected.my_role}</strong>
                     </p>
                   </div>
-                  <div style={{ display:'flex', gap:6, marginLeft:'auto' }}>
+                  <div style={{ display:'flex', gap:6, marginLeft:isMobile ? 0 : 'auto', flexWrap:'wrap', width:isMobile ? '100%' : 'auto' }}>
                     {isOwner && (
                       <>
                         <button onClick={()=>{ setEditName(selected.name); setEditingName(true); }} style={s.btn}>✏ Rename</button>
@@ -278,7 +279,7 @@ export default function WorkspacesTab({ currentUserId, onSwitchWorkspace, active
             {/* Members table */}
             <div style={s.section}>
               <p style={s.sectionTitle}>Members</p>
-              <div style={s.table}>
+              <div style={{...s.table, ...(isMobile ? s.tableMobile : {})}}>
                 <div style={s.tableHdr}>
                   <div style={{ flex:1 }}>Name / Email</div>
                   <div style={{ width:90 }}>Role</div>
@@ -369,18 +370,38 @@ export default function WorkspacesTab({ currentUserId, onSwitchWorkspace, active
 
 const s = {
   wrap:        { display:'flex', height:'100%', overflow:'hidden' },
+  wrapMobile:  { flexDirection:'column', overflow:'hidden' },
   sidebar:     { width:240, flexShrink:0, borderRight:'1px solid var(--b1)', display:'flex', flexDirection:'column', background:'var(--s1)', overflow:'hidden' },
+  sidebarMobile:{ width:'100%', maxHeight:'38dvh', borderRight:'none', borderBottom:'1px solid var(--b1)', overflowY:'auto', flexShrink:0 },
   sidebarHdr:  { padding:'12px 12px 8px', borderBottom:'1px solid var(--b1)', flexShrink:0 },
   wsItem:      { display:'flex', alignItems:'center', gap:8, padding:'8px 10px', cursor:'pointer', transition:'background .1s', borderRadius:6, margin:'0 4px 2px' },
   wsActive:    { background:'rgba(74,222,128,.08)', border:'1px solid rgba(74,222,128,.15)' },
   muted:       { fontSize:12, color:'var(--muted2)', padding:'8px 12px' },
   main:        { flex:1, display:'flex', flexDirection:'column', overflow:'auto' },
+  mainMobile:  { minHeight:0, width:'100%', overflowX:'hidden' },
   empty:       { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', padding:'2rem', textAlign:'center' },
   hdr:         { display:'flex', alignItems:'center', gap:12, padding:'1rem 1.25rem', borderBottom:'1px solid var(--b1)', background:'var(--s2)', flexWrap:'wrap', flexShrink:0 },
+  hdrMobile:   { alignItems:'stretch', padding:'12px 14px' },
   btn:         { fontSize:12, padding:'5px 12px', background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:'var(--r)', cursor:'pointer', fontWeight:500, flexShrink:0 },
   section:     { padding:'1rem 1.25rem', borderBottom:'1px solid var(--b1)' },
   sectionTitle:{ fontSize:12, fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:10 },
   table:       { borderRadius:'var(--r)', overflow:'hidden', border:'1px solid var(--b1)' },
+  tableMobile: { overflowX:'auto', WebkitOverflowScrolling:'touch' },
   tableHdr:    { display:'flex', gap:8, padding:'7px 10px', background:'var(--s3)', fontSize:11, fontWeight:700, color:'var(--muted2)', textTransform:'uppercase', letterSpacing:'.3px' },
   tableRow:    { display:'flex', gap:8, padding:'9px 10px', alignItems:'center', borderTop:'1px solid var(--b1)', background:'var(--s2)' },
 };
+
+function useIsMobile(breakpoint = 760) {
+  const get = () => typeof window !== 'undefined' && window.innerWidth <= breakpoint;
+  const [mobile, setMobile] = useState(get);
+  useEffect(() => {
+    const onResize = () => setMobile(get());
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, [breakpoint]);
+  return mobile;
+}

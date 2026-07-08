@@ -61,6 +61,13 @@ input,textarea,select{
   transition:border-color .15s,box-shadow .15s;
   font-size:13px;
 }
+input[type="checkbox"]{
+  width:auto;
+  min-height:0;
+  padding:0;
+  border-radius:3px;
+  box-shadow:none;
+}
 input::placeholder,textarea::placeholder{color:var(--muted2)}
 input:focus,textarea:focus,select:focus{
   border-color:var(--teal);
@@ -86,6 +93,13 @@ input:focus,textarea:focus,select:focus{
   input,textarea,select{
     font-size:16px;
     min-height:38px;
+  }
+
+  input[type="checkbox"]{
+    width:auto;
+    min-height:0;
+    padding:0;
+    font-size:13px;
   }
 
   button,label[role="button"]{
