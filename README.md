@@ -263,7 +263,10 @@ Features:
 - Rating badges in restaurant list, restaurant detail, menu search, menu compare, and recommendations.
 - Menu recommendations ranked by menu match, price, rating, feedback volume, verified-order signals, and intent-specific sentiment such as value, portion, freshness, wait time, and accuracy.
 - Conversational text and speech menu search.
-- Add menu items from chat to carryout cart.
+- Mobile-friendly restaurant comparison cards for price answers that would be too wide as tables on a phone.
+- Add menu items from structured chat answers to a collapsible carryout cart.
+- Cart item quantity updates, item removal, item notes, customer email capture, and order review.
+- Order review shows restaurant name, restaurant id, address, email, phone, menu item id, quantity, price, and itemized totals before checkout.
 - Pay and place carryout orders through Stripe Checkout.
 - Return customers to the same workspace after payment completion or cancellation.
 - Restaurant owner queue.
@@ -275,7 +278,7 @@ Features:
 
 Restaurant personas:
 
-- Food lover/customer: search menus, compare prices, ask using text or speech, place carryout orders, submit ratings, and review their own feedback history.
+- Food lover/customer: search menus, compare prices, ask using text or speech, add answer-backed menu rows to a collapsible cart, place carryout orders, submit ratings, and review their own feedback history.
 - Restaurant owner: scribe menus, review extracted menus, edit restaurant details, approve menu updates, process only orders for their matching restaurant email, and respond to customer feedback.
 - Restaurant staff: process carryout order queue for their restaurant.
 - Workspace owner: manage all restaurants in a workspace.
@@ -590,8 +593,8 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 6. Approve and save restaurant.
 7. Use menu search or Compare Menus.
 8. Ask food/menu questions in chat using text or voice.
-9. Add matching menu items to cart.
-10. Review cart and pay through Stripe Checkout.
+9. Add matching menu items from structured chat answers to the collapsible cart.
+10. Update quantity, remove items if needed, enter customer email/details, review restaurant and item IDs, and pay through Stripe Checkout.
 11. Stripe webhook marks the order paid/submitted and returns the customer to the same workspace.
 12. Restaurant owner/staff accepts, rejects, marks ready, or completes the order.
 13. If a paid order is rejected, DocIntel issues a Stripe refund before marking the order rejected.
@@ -818,7 +821,8 @@ Restaurant ordering/menu answers must use Restaurant DB context. If IDs are miss
 Cards are generated only from answer-visible IDs. If extra cards appear:
 
 - Confirm backend sends only action rows whose `menu_item_id` and `restaurant_id` appear in the final answer.
-- Confirm frontend uses structured `actions.restaurant_menu_items`, not markdown fallback parsing.
+- Confirm the frontend prefers structured `actions.restaurant_menu_items`, then falls back only to visible markdown rows that include `Restaurant ID` and `Menu Item ID`.
+- Confirm mobile comparison cards and desktop add cards show the same answer-visible restaurant/menu rows.
 
 ### Email Notifications Do Not Send
 
