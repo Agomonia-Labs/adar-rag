@@ -9,6 +9,8 @@ import {
   fetchHealthcareAgentRun,
   fetchLatestHealthcareAgentWorkflow,
   generateAfterVisitSummaryPdf,
+  listDocuments,
+  listWorkspaceDocuments,
   rerunHealthcareTranscriptionWorkflow,
   runHealthcareAgentWorkflow,
   runHealthcareTranscriptionWorkflow,
@@ -71,6 +73,9 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
   const [accessContexts, setAccessContexts] = useState({ clinical: null, priorAuth: null, scribe: null });
   const [selectedPersonas, setSelectedPersonas] = useState({ clinical: '', priorAuth: '', scribe: '' });
   const [changeHistories, setChangeHistories] = useState({ clinical: [], priorAuth: [], scribe: [] });
+  const [policyDocs, setPolicyDocs] = useState([]);
+  const [selectedPolicyIds, setSelectedPolicyIds] = useState([]);
+  const [policyDocsLoading, setPolicyDocsLoading] = useState(false);
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordedAudio, setRecordedAudio] = useState(null);
@@ -101,6 +106,8 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
       setAccessContexts({ clinical: null, priorAuth: null, scribe: null });
       setSelectedPersonas({ clinical: '', priorAuth: '', scribe: '' });
       setChangeHistories({ clinical: [], priorAuth: [], scribe: [] });
+      setPolicyDocs([]);
+      setSelectedPolicyIds([]);
       setActiveTab('scribe');
       return () => {
         alive = false;
@@ -114,6 +121,8 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
     setAccessContexts({ clinical: null, priorAuth: null, scribe: null });
     setSelectedPersonas({ clinical: '', priorAuth: '', scribe: '' });
     setChangeHistories({ clinical: [], priorAuth: [], scribe: [] });
+    setPolicyDocs([]);
+    setSelectedPolicyIds([]);
     setActiveTab(newVisit ? 'scribe' : 'clinical');
     Object.entries(WORKFLOWS).forEach(([key, cfg]) => {
       fetchLatestHealthcareAgentWorkflow(doc.id, cfg.workflowId)
@@ -134,6 +143,34 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
       stopMediaTracks(streamRef);
     };
   }, [doc?.id, newVisit]);
+
+  useEffect(() => {
+    let alive = true;
+    if (!doc?.id) return () => { alive = false; };
+    setPolicyDocsLoading(true);
+    const loader = doc.workspace_id ? listWorkspaceDocuments(doc.workspace_id) : listDocuments();
+    loader
+      .then(data => {
+        if (!alive) return;
+        const docs = Array.isArray(data) ? data : data.documents || [];
+        const candidates = docs
+          .filter(item => item.id !== doc.id)
+          .filter(item => ['payer_policy', 'medical_policy', 'prior_authorization'].includes(item.doc_type))
+          .filter(item => ['chunked', 'embedding', 'embedded'].includes(item.status))
+          .filter(item => !doc.workspace_id || item.workspace_id === doc.workspace_id)
+          .slice()
+          .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+        setPolicyDocs(candidates);
+        setSelectedPolicyIds(prev => prev.filter(id => candidates.some(item => item.id === id)));
+      })
+      .catch(() => {
+        if (alive) setPolicyDocs([]);
+      })
+      .finally(() => {
+        if (alive) setPolicyDocsLoading(false);
+      });
+    return () => { alive = false; };
+  }, [doc?.id, doc?.workspace_id]);
 
   const hydrateEditedPacket = (key, value) => {
     const packet = packetFromRun(value);
@@ -181,7 +218,7 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
     if (!doc?.id) return;
     setLoading(true);
     try {
-      const data = await runPriorAuthWorkflow(doc.id);
+      const data = await runPriorAuthWorkflow(doc.id, selectedPolicyIds);
       setActiveTab('priorAuth');
       updateRun('priorAuth', data);
       updateEval('priorAuth', null);
@@ -262,6 +299,12 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
       } catch (_) {}
       recorderRef.current.stop();
     }
+  };
+
+  const togglePolicyDoc = id => {
+    setSelectedPolicyIds(prev => (
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    ));
   };
 
   const handleAudioSelected = (file) => {
@@ -457,6 +500,34 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
           )}
           <span style={s.hint}>{doc?.id ? 'Assistive workflow only. Requires citations, PHI governance, and human approval.' : 'Brand-new visit mode creates a transcript document, embeds it, and saves the scribe packet for later chat.'}</span>
         </div>
+
+        {activeTab === 'priorAuth' && (
+          <div style={s.policyPicker}>
+            <div style={s.policyPickerHead}>
+              <strong>Payer policy documents</strong>
+              <span>{policyDocsLoading ? 'Loading...' : selectedPolicyIds.length ? `${selectedPolicyIds.length} selected` : 'Auto-pick latest if none selected'}</span>
+            </div>
+            {!policyDocs.length ? (
+              <div style={s.policyEmpty}>Upload and embed a payer policy, medical policy, or prior authorization guide in this workspace before running MVP1.</div>
+            ) : (
+              <div style={s.policyList}>
+                {policyDocs.slice(0, 8).map(item => (
+                  <label key={item.id} style={s.policyItem}>
+                    <input
+                      type="checkbox"
+                      checked={selectedPolicyIds.includes(item.id)}
+                      onChange={() => togglePolicyDoc(item.id)}
+                    />
+                    <span>
+                      <b>{item.original_name || item.name || item.id}</b>
+                      <small>{item.doc_type} · {item.status}</small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {activeTab === 'scribe' && (
           <div style={s.scribeTools}>
@@ -1146,6 +1217,11 @@ const s = {
   secondarySmall:{background:'var(--s3)',color:'var(--tx)',border:'1px solid var(--b2)',borderRadius:8,padding:'8px 12px',fontSize:12,fontWeight:800,cursor:'pointer'},
   reviewActions:{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'},
   hint:{fontSize:12,color:'var(--muted2)'},
+  policyPicker:{display:'flex',flexDirection:'column',gap:8,padding:'10px 18px',borderBottom:'1px solid var(--b1)',background:'rgba(37,99,235,.07)'},
+  policyPickerHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,fontSize:12,color:'var(--tx2)',flexWrap:'wrap'},
+  policyList:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:8},
+  policyItem:{display:'flex',alignItems:'flex-start',gap:8,border:'1px solid var(--b2)',background:'rgba(255,255,255,.035)',borderRadius:8,padding:9,fontSize:12,color:'var(--tx2)',cursor:'pointer'},
+  policyEmpty:{fontSize:12,color:'#fbbf24',border:'1px solid rgba(251,191,36,.24)',background:'rgba(251,191,36,.07)',borderRadius:8,padding:9},
   scribeTools:{display:'flex',alignItems:'center',gap:10,padding:'10px 18px',borderBottom:'1px solid var(--b1)',background:'rgba(4,120,87,.07)',flexWrap:'wrap'},
   checkLabel:{display:'inline-flex',alignItems:'center',gap:8,fontSize:12,color:'var(--tx2)',fontWeight:700},
   select:{background:'var(--s3)',border:'1px solid var(--b2)',borderRadius:8,color:'var(--tx)',padding:'7px 9px',fontSize:12},

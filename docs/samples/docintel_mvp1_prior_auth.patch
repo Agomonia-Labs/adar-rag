@@ -1,0 +1,493 @@
+diff --git a/docs/docintel_prior_auth_mvp1.md b/docs/docintel_prior_auth_mvp1.md
+new file mode 100644
+index 0000000..ed45684
+--- /dev/null
++++ b/docs/docintel_prior_auth_mvp1.md
+@@ -0,0 +1,65 @@
++# DocIntel MVP1 - Prior Authorization Assistant
++
++## What MVP1 Builds
++
++MVP1 turns a patient request packet plus payer policy document into a human-review prior authorization packet.
++
++Core flow:
++
++1. Classify the patient/request document.
++2. Extract requested service, diagnosis, clinical rationale, and urgency.
++3. Extract payer medical necessity criteria from policy documents.
++4. Map patient evidence to payer criteria with citations.
++5. Detect missing documentation and submission risks.
++6. Generate a prior authorization packet for human review.
++
++## Existing Implementation Used
++
++- Backend route: `POST /api/healthcare/{doc_id}/prior-auth-workflow`
++- Workflow config: `backend/config/agent_workflows/healthcare_prior_auth_phase1.json`
++- Agent tools: `backend/services/healthcare_agent_tools.py`
++- Intelligence prompts: `backend/services/healthcare_intelligence.py`
++- Frontend panel: `frontend/src/components/HealthcarePanel.jsx`
++
++## MVP1 Input Documents
++
++Use the files in `sample_documents/prior_auth_mvp1/`:
++
++- `mvp1_mri_lumbar_spine_patient_request_packet.md`
++- `mvp1_mri_lumbar_spine_payer_policy.md`
++- `mvp1_mri_lumbar_spine_missing_info_packet.md`
++
++## Demo Steps
++
++1. Start backend and frontend with the usual ADAR-RAG local or deployed setup.
++2. Upload `mvp1_mri_lumbar_spine_patient_request_packet.md`.
++3. Upload `mvp1_mri_lumbar_spine_payer_policy.md`.
++4. Wait until both documents are chunked or embedded.
++5. Re-classify if needed:
++   - Patient packet: `prior_authorization` or `medical_record`
++   - Policy document: `payer_policy`
++6. Open the patient packet from the Documents tab.
++7. Open Healthcare workflow.
++8. Choose `Prior auth workflow`.
++9. Select the payer policy document.
++10. Run the workflow.
++11. Review:
++   - Payer criteria
++   - Evidence map
++   - Missing items
++   - Submission risks
++   - Medical necessity narrative
++   - Next actions
++12. Save review draft or approve the packet only after human review.
++
++## Acceptance Criteria
++
++- User can upload patient and payer policy input documents.
++- User can run prior authorization workflow from HealthcarePanel.
++- User can select the payer policy document explicitly.
++- Output includes requested service, diagnoses, policy criteria, evidence map, gap list, narrative, and next actions.
++- Output contains guardrails stating that this is administrative assistance only and requires human review.
++
++## Safety Boundary
++
++This MVP does not submit to payer portals, guarantee coverage, make medical decisions, or replace clinician/coder/billing review. It prepares an evidence packet and flags missing information.
+diff --git a/frontend/src/components/HealthcarePanel.jsx b/frontend/src/components/HealthcarePanel.jsx
+index d3c8be1..233eab8 100644
+--- a/frontend/src/components/HealthcarePanel.jsx
++++ b/frontend/src/components/HealthcarePanel.jsx
+@@ -9,6 +9,8 @@ import {
+   fetchHealthcareAgentRun,
+   fetchLatestHealthcareAgentWorkflow,
+   generateAfterVisitSummaryPdf,
++  listDocuments,
++  listWorkspaceDocuments,
+   rerunHealthcareTranscriptionWorkflow,
+   runHealthcareAgentWorkflow,
+   runHealthcareTranscriptionWorkflow,
+@@ -71,6 +73,9 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
+   const [accessContexts, setAccessContexts] = useState({ clinical: null, priorAuth: null, scribe: null });
+   const [selectedPersonas, setSelectedPersonas] = useState({ clinical: '', priorAuth: '', scribe: '' });
+   const [changeHistories, setChangeHistories] = useState({ clinical: [], priorAuth: [], scribe: [] });
++  const [policyDocs, setPolicyDocs] = useState([]);
++  const [selectedPolicyIds, setSelectedPolicyIds] = useState([]);
++  const [policyDocsLoading, setPolicyDocsLoading] = useState(false);
+   const [consentConfirmed, setConsentConfirmed] = useState(false);
+   const [recording, setRecording] = useState(false);
+   const [recordedAudio, setRecordedAudio] = useState(null);
+@@ -101,6 +106,8 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
+       setAccessContexts({ clinical: null, priorAuth: null, scribe: null });
+       setSelectedPersonas({ clinical: '', priorAuth: '', scribe: '' });
+       setChangeHistories({ clinical: [], priorAuth: [], scribe: [] });
++      setPolicyDocs([]);
++      setSelectedPolicyIds([]);
+       setActiveTab('scribe');
+       return () => {
+         alive = false;
+@@ -114,6 +121,8 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
+     setAccessContexts({ clinical: null, priorAuth: null, scribe: null });
+     setSelectedPersonas({ clinical: '', priorAuth: '', scribe: '' });
+     setChangeHistories({ clinical: [], priorAuth: [], scribe: [] });
++    setPolicyDocs([]);
++    setSelectedPolicyIds([]);
+     setActiveTab(newVisit ? 'scribe' : 'clinical');
+     Object.entries(WORKFLOWS).forEach(([key, cfg]) => {
+       fetchLatestHealthcareAgentWorkflow(doc.id, cfg.workflowId)
+@@ -135,6 +144,34 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
+     };
+   }, [doc?.id, newVisit]);
+ 
++  useEffect(() => {
++    let alive = true;
++    if (!doc?.id) return () => { alive = false; };
++    setPolicyDocsLoading(true);
++    const loader = doc.workspace_id ? listWorkspaceDocuments(doc.workspace_id) : listDocuments();
++    loader
++      .then(data => {
++        if (!alive) return;
++        const docs = Array.isArray(data) ? data : data.documents || [];
++        const candidates = docs
++          .filter(item => item.id !== doc.id)
++          .filter(item => ['payer_policy', 'medical_policy', 'prior_authorization'].includes(item.doc_type))
++          .filter(item => ['chunked', 'embedding', 'embedded'].includes(item.status))
++          .filter(item => !doc.workspace_id || item.workspace_id === doc.workspace_id)
++          .slice()
++          .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
++        setPolicyDocs(candidates);
++        setSelectedPolicyIds(prev => prev.filter(id => candidates.some(item => item.id === id)));
++      })
++      .catch(() => {
++        if (alive) setPolicyDocs([]);
++      })
++      .finally(() => {
++        if (alive) setPolicyDocsLoading(false);
++      });
++    return () => { alive = false; };
++  }, [doc?.id, doc?.workspace_id]);
++
+   const hydrateEditedPacket = (key, value) => {
+     const packet = packetFromRun(value);
+     if (!packet) return;
+@@ -181,7 +218,7 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
+     if (!doc?.id) return;
+     setLoading(true);
+     try {
+-      const data = await runPriorAuthWorkflow(doc.id);
++      const data = await runPriorAuthWorkflow(doc.id, selectedPolicyIds);
+       setActiveTab('priorAuth');
+       updateRun('priorAuth', data);
+       updateEval('priorAuth', null);
+@@ -264,6 +301,12 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
+     }
+   };
+ 
++  const togglePolicyDoc = id => {
++    setSelectedPolicyIds(prev => (
++      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
++    ));
++  };
++
+   const handleAudioSelected = (file) => {
+     setAudioFile(file || null);
+     setRecordedAudio(null);
+@@ -458,6 +501,34 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
+           <span style={s.hint}>{doc?.id ? 'Assistive workflow only. Requires citations, PHI governance, and human approval.' : 'Brand-new visit mode creates a transcript document, embeds it, and saves the scribe packet for later chat.'}</span>
+         </div>
+ 
++        {activeTab === 'priorAuth' && (
++          <div style={s.policyPicker}>
++            <div style={s.policyPickerHead}>
++              <strong>Payer policy documents</strong>
++              <span>{policyDocsLoading ? 'Loading...' : selectedPolicyIds.length ? `${selectedPolicyIds.length} selected` : 'Auto-pick latest if none selected'}</span>
++            </div>
++            {!policyDocs.length ? (
++              <div style={s.policyEmpty}>Upload and embed a payer policy, medical policy, or prior authorization guide in this workspace before running MVP1.</div>
++            ) : (
++              <div style={s.policyList}>
++                {policyDocs.slice(0, 8).map(item => (
++                  <label key={item.id} style={s.policyItem}>
++                    <input
++                      type="checkbox"
++                      checked={selectedPolicyIds.includes(item.id)}
++                      onChange={() => togglePolicyDoc(item.id)}
++                    />
++                    <span>
++                      <b>{item.original_name || item.name || item.id}</b>
++                      <small>{item.doc_type} · {item.status}</small>
++                    </span>
++                  </label>
++                ))}
++              </div>
++            )}
++          </div>
++        )}
++
+         {activeTab === 'scribe' && (
+           <div style={s.scribeTools}>
+             <label style={s.checkLabel}>
+@@ -1146,6 +1217,11 @@ const s = {
+   secondarySmall:{background:'var(--s3)',color:'var(--tx)',border:'1px solid var(--b2)',borderRadius:8,padding:'8px 12px',fontSize:12,fontWeight:800,cursor:'pointer'},
+   reviewActions:{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'},
+   hint:{fontSize:12,color:'var(--muted2)'},
++  policyPicker:{display:'flex',flexDirection:'column',gap:8,padding:'10px 18px',borderBottom:'1px solid var(--b1)',background:'rgba(37,99,235,.07)'},
++  policyPickerHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,fontSize:12,color:'var(--tx2)',flexWrap:'wrap'},
++  policyList:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:8},
++  policyItem:{display:'flex',alignItems:'flex-start',gap:8,border:'1px solid var(--b2)',background:'rgba(255,255,255,.035)',borderRadius:8,padding:9,fontSize:12,color:'var(--tx2)',cursor:'pointer'},
++  policyEmpty:{fontSize:12,color:'#fbbf24',border:'1px solid rgba(251,191,36,.24)',background:'rgba(251,191,36,.07)',borderRadius:8,padding:9},
+   scribeTools:{display:'flex',alignItems:'center',gap:10,padding:'10px 18px',borderBottom:'1px solid var(--b1)',background:'rgba(4,120,87,.07)',flexWrap:'wrap'},
+   checkLabel:{display:'inline-flex',alignItems:'center',gap:8,fontSize:12,color:'var(--tx2)',fontWeight:700},
+   select:{background:'var(--s3)',border:'1px solid var(--b2)',borderRadius:8,color:'var(--tx)',padding:'7px 9px',fontSize:12},
+diff --git a/sample_documents/prior_auth_mvp1/README.md b/sample_documents/prior_auth_mvp1/README.md
+new file mode 100644
+index 0000000..98a0f5a
+--- /dev/null
++++ b/sample_documents/prior_auth_mvp1/README.md
+@@ -0,0 +1,32 @@
++# DocIntel MVP1 Prior Authorization Sample Inputs
++
++These synthetic files are for DocIntel MVP1 prior authorization demos and workflow testing. They contain no real patient information and must not be treated as medical advice, payer policy, or a coverage guarantee.
++
++## Upload Order
++
++1. Upload `mvp1_mri_lumbar_spine_patient_request_packet.md`.
++2. Upload `mvp1_mri_lumbar_spine_payer_policy.md`.
++3. Wait until both files are chunked or embedded.
++4. Open the patient request packet in Documents.
++5. Open Healthcare workflow, choose the Prior auth workflow tab, select the payer policy document, and run the workflow.
++
++## Expected MVP1 Output
++
++The prior authorization workflow should produce:
++
++- Requested service and diagnosis context.
++- Payer criteria extracted from the policy document.
++- Evidence map that links patient facts to policy criteria.
++- Missing-item and submission-risk list.
++- Human-review prior authorization packet with a medical necessity narrative.
++
++## Gap Test
++
++Use `mvp1_mri_lumbar_spine_missing_info_packet.md` as the patient document to confirm the workflow can identify missing conservative therapy dates, CPT code, and prior imaging evidence.
++
++## Recommended Document Types
++
++- Patient request packet: `prior_authorization` or `medical_record`.
++- Payer policy: `payer_policy`.
++
++If auto-classification picks the wrong type, use the document re-classify action before running the workflow.
+diff --git a/sample_documents/prior_auth_mvp1/manifest.json b/sample_documents/prior_auth_mvp1/manifest.json
+new file mode 100644
+index 0000000..9fa2010
+--- /dev/null
++++ b/sample_documents/prior_auth_mvp1/manifest.json
+@@ -0,0 +1,29 @@
++{
++  "version": "docintel-prior-auth-mvp1-v1",
++  "purpose": "Synthetic DocIntel MVP1 input package for prior authorization assistant demos and workflow testing.",
++  "workflow_id": "healthcare_prior_auth_phase1",
++  "files": [
++    {
++      "id": "mvp1_mri_lumbar_spine_patient_request_packet",
++      "file": "mvp1_mri_lumbar_spine_patient_request_packet.md",
++      "recommended_doc_type": "prior_authorization",
++      "role": "patient_request_document",
++      "description": "Complete synthetic patient packet for MRI lumbar spine prior authorization."
++    },
++    {
++      "id": "mvp1_mri_lumbar_spine_payer_policy",
++      "file": "mvp1_mri_lumbar_spine_payer_policy.md",
++      "recommended_doc_type": "payer_policy",
++      "role": "payer_policy_document",
++      "description": "Synthetic payer medical necessity policy for MRI lumbar spine."
++    },
++    {
++      "id": "mvp1_mri_lumbar_spine_missing_info_packet",
++      "file": "mvp1_mri_lumbar_spine_missing_info_packet.md",
++      "recommended_doc_type": "prior_authorization",
++      "role": "gap_test_patient_request_document",
++      "description": "Incomplete synthetic request packet for testing missing-item detection."
++    }
++  ],
++  "guardrail": "Synthetic demo data only. Human review is required before any payer submission."
++}
+diff --git a/sample_documents/prior_auth_mvp1/mvp1_mri_lumbar_spine_missing_info_packet.md b/sample_documents/prior_auth_mvp1/mvp1_mri_lumbar_spine_missing_info_packet.md
+new file mode 100644
+index 0000000..ef00f70
+--- /dev/null
++++ b/sample_documents/prior_auth_mvp1/mvp1_mri_lumbar_spine_missing_info_packet.md
+@@ -0,0 +1,51 @@
++# Prior Authorization Request Packet - MRI Lumbar Spine - Missing Info Variant
++
++Synthetic document for DocIntel MVP1 gap detection testing. This file contains no real patient information.
++
++## Patient and Encounter
++
++- Patient name: Avery Morgan
++- Date of birth: 1982-11-07
++- Member ID: DEMO-PA-10022
++- Encounter date: 2026-05-18
++- Ordering provider: Elena Ruiz, PA-C
++- Facility: Northlake Primary Care
++
++## Requested Service
++
++- Requested service: MRI lumbar spine
++- Diagnosis: low back pain with left leg pain
++- ICD-10 code: not documented
++- Requested urgency: routine
++
++## Clinical History
++
++Avery Morgan reports low back pain radiating into the left leg. Symptoms have been present for "several weeks." The patient reports intermittent tingling but no weakness.
++
++The patient denies bowel or bladder dysfunction and denies fever.
++
++## Physical Exam
++
++- Straight leg raise is positive on the left.
++- Strength is grossly intact.
++- Sensory testing was not fully documented.
++
++## Treatment Tried
++
++The note says the patient "tried medication and exercises" but does not list medication names, treatment dates, physical therapy dates, or response to treatment.
++
++## Prior Imaging
++
++Prior imaging was not attached or discussed.
++
++## Provider Assessment and Plan
++
++Assessment: Low back pain with possible radicular symptoms.
++
++Plan: MRI lumbar spine requested.
++
++Provider signature: not documented
++
++## Human Review Notes
++
++This variant should trigger missing documentation findings for CPT code, ICD-10 code, symptom duration, conservative treatment details, prior imaging, and provider signature.
+diff --git a/sample_documents/prior_auth_mvp1/mvp1_mri_lumbar_spine_patient_request_packet.md b/sample_documents/prior_auth_mvp1/mvp1_mri_lumbar_spine_patient_request_packet.md
+new file mode 100644
+index 0000000..c7be887
+--- /dev/null
++++ b/sample_documents/prior_auth_mvp1/mvp1_mri_lumbar_spine_patient_request_packet.md
+@@ -0,0 +1,62 @@
++# Prior Authorization Request Packet - MRI Lumbar Spine
++
++Synthetic document for DocIntel MVP1 workflow testing. This file contains no real patient information.
++
++## Patient and Encounter
++
++- Patient name: Jordan Taylor
++- Date of birth: 1978-04-18
++- Member ID: DEMO-PA-10021
++- Encounter date: 2026-05-14
++- Ordering provider: Priya Shah, MD
++- Facility: Evergreen Spine and Rehab Clinic
++- Encounter type: outpatient spine evaluation
++
++## Requested Service
++
++- Requested service: MRI lumbar spine without contrast
++- Requested CPT code: 72148
++- Diagnosis: Lumbar radiculopathy
++- ICD-10 code: M54.16
++- Requested urgency: routine
++- Target facility: Cascade Imaging Center
++
++## Clinical History
++
++Jordan Taylor reports low back pain radiating into the left posterior thigh and calf for approximately 9 weeks. Symptoms began after lifting a heavy box at work on 2026-03-10. Pain is worse with prolonged sitting and forward bending. The patient reports intermittent numbness in the left lateral foot.
++
++The patient denies fever, unexplained weight loss, cancer history, recent infection, intravenous drug use, saddle anesthesia, or bowel/bladder dysfunction.
++
++## Physical Exam
++
++- Lumbar range of motion is reduced with flexion.
++- Straight leg raise is positive on the left at 45 degrees.
++- Left ankle reflex is mildly reduced compared with right.
++- Motor strength is 5/5 in bilateral hip flexion, knee extension, ankle dorsiflexion, and great toe extension.
++- Sensation is decreased to light touch over the left lateral foot.
++- Gait is mildly antalgic.
++
++## Conservative Treatment Tried
++
++- NSAID therapy: naproxen 500 mg twice daily from 2026-03-16 to 2026-04-15 with partial temporary relief.
++- Activity modification: avoided lifting over 10 pounds from 2026-03-16 through present.
++- Home exercise program: lumbar stretching and core stabilization from 2026-03-20 through present.
++- Physical therapy: 6 visits from 2026-04-01 to 2026-05-10 focused on McKenzie extension, neural glides, and core stabilization.
++- Outcome: persistent radicular pain rated 7/10 despite conservative treatment.
++
++## Prior Imaging
++
++Lumbar spine X-ray dated 2026-04-05 showed mild degenerative disc disease at L4-L5 and L5-S1 without acute fracture. No prior lumbar MRI is available.
++
++## Provider Assessment and Plan
++
++Assessment: Persistent left lumbar radiculopathy with sensory change and positive straight leg raise after more than 6 weeks of conservative management.
++
++Plan: Order MRI lumbar spine without contrast to evaluate for disc herniation or nerve root compression. Results are expected to guide referral to spine specialist and determine whether epidural steroid injection or surgical consultation should be considered.
++
++Provider signature: Priya Shah, MD
++Signed date: 2026-05-14
++
++## Human Review Notes
++
++This is a synthetic sample. Prior authorization output must be reviewed by a qualified human before payer submission.
+diff --git a/sample_documents/prior_auth_mvp1/mvp1_mri_lumbar_spine_payer_policy.md b/sample_documents/prior_auth_mvp1/mvp1_mri_lumbar_spine_payer_policy.md
+new file mode 100644
+index 0000000..ccc2dea
+--- /dev/null
++++ b/sample_documents/prior_auth_mvp1/mvp1_mri_lumbar_spine_payer_policy.md
+@@ -0,0 +1,73 @@
++# Payer Medical Necessity Policy - MRI Lumbar Spine
++
++Synthetic payer policy for DocIntel MVP1 workflow testing. This is not an official payer policy, medical advice, or a coverage guarantee.
++
++## Policy Metadata
++
++- Policy ID: MVP1-IMG-MRI-LSPINE-2026
++- Service category: imaging
++- Service: MRI lumbar spine without contrast
++- CPT examples: 72148, 72149, 72158
++- ICD-10 examples: M54.16, M54.41, M54.42, M51.26, M48.06
++- Review type: prior authorization
++- Effective date for demo: 2026-01-01
++- Human approval required: yes
++
++## Approval Pathway A - Urgent or Red Flag Concern
++
++MRI lumbar spine may be medically necessary when the record documents at least one of the following:
++
++1. Severe or progressive neurologic deficit.
++2. Suspected cauda equina syndrome.
++3. New back pain with cancer history.
++4. Signs of infection, fever, immunosuppression, or intravenous drug use.
++5. Significant trauma with fracture concern.
++6. New bowel or bladder dysfunction related to back symptoms.
++
++## Approval Pathway B - Persistent Radiculopathy After Conservative Treatment
++
++MRI lumbar spine may be medically necessary when all of the following are documented:
++
++1. Low back pain with radicular symptoms.
++2. Symptoms persisted for at least 6 weeks.
++3. Conservative treatment was attempted unless contraindicated.
++4. Conservative treatment did not sufficiently improve symptoms.
++5. MRI results are expected to guide treatment, specialist referral, injection, or surgical planning.
++
++## Approval Pathway C - Pre-Procedure or Pre-Surgical Planning
++
++MRI lumbar spine may be medically necessary when all of the following are documented:
++
++1. Patient is being evaluated for spine surgery, epidural steroid injection, or another interventional procedure.
++2. Clinical note explains why updated imaging is needed.
++3. Prior imaging is unavailable, outdated, or insufficient for current planning.
++
++## Required Documentation
++
++- Patient name or member identifier.
++- Ordering provider and facility.
++- Requested CPT code.
++- Diagnosis and ICD-10 code.
++- Duration of symptoms.
++- Physical exam findings.
++- Neurologic findings if present.
++- Conservative treatment attempted, including dates and outcomes.
++- Medication, physical therapy, home exercise, activity modification, or other treatment history.
++- Prior imaging reports if available.
++- Provider statement explaining why MRI is needed now.
++- Provider signature and signed date.
++
++## Common Missing Items
++
++- Duration of symptoms not documented.
++- Conservative treatment history missing or lacks dates.
++- CPT code missing.
++- Diagnosis code missing.
++- No neurologic findings documented.
++- Prior imaging not attached or not mentioned.
++- Provider note unsigned.
++- Requested imaging body part does not match documented symptoms.
++
++## Output Guidance
++
++The prior authorization assistant should map each criterion to patient evidence and cite the patient or policy source. Use statuses `met`, `not_met`, `missing_evidence`, and `needs_clarification`. Do not infer facts that are not in the documents. The final packet must be marked for human review.

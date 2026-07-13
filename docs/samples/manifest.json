@@ -1,0 +1,29 @@
+{
+  "version": "docintel-prior-auth-mvp1-v1",
+  "purpose": "Synthetic DocIntel MVP1 input package for prior authorization assistant demos and workflow testing.",
+  "workflow_id": "healthcare_prior_auth_phase1",
+  "files": [
+    {
+      "id": "mvp_mri_lumbar_spine_patient_request_packet",
+      "file": "mvp_mri_lumbar_spine_patient_request_packet.md",
+      "recommended_doc_type": "prior_authorization",
+      "role": "patient_request_document",
+      "description": "Complete synthetic patient packet for MRI lumbar spine prior authorization."
+    },
+    {
+      "id": "mvp_mri_lumbar_spine_payer_policy",
+      "file": "mvp_mri_lumbar_spine_payer_policy.md",
+      "recommended_doc_type": "payer_policy",
+      "role": "payer_policy_document",
+      "description": "Synthetic payer medical necessity policy for MRI lumbar spine."
+    },
+    {
+      "id": "mvp_mri_lumbar_spine_missing_info_packet",
+      "file": "mvp_mri_lumbar_spine_missing_info_packet.md",
+      "recommended_doc_type": "prior_authorization",
+      "role": "gap_test_patient_request_document",
+      "description": "Incomplete synthetic request packet for testing missing-item detection."
+    }
+  ],
+  "guardrail": "Synthetic demo data only. Human review is required before any payer submission."
+}
