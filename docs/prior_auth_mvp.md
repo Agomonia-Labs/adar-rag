@@ -53,7 +53,7 @@ Use the files in `sample_documents/prior_auth_mvp1/`:
    - Medical necessity narrative
    - Next actions
 12. Click `AI recommend codes` if the request needs diagnosis, procedure, medication, or supply code candidates. The UI creates editable rows for ICD-10-CM, CPT, HCPCS, RxNorm, NDC, or lookup-needed items depending on what is present in the packet.
-13. A certified coder, billing specialist, or qualified reviewer should modify any `needs_lookup` rows, enter the final code, and mark valid coded rows as `coder_approved`. Only reviewed or approved rows with real codes are treated as ready for final packet use.
+13. A certified coder, billing specialist, or qualified reviewer should modify any `needs_lookup` rows, enter the final code, and use the row-level coder actions to approve, request changes, or reject each row. Only reviewed or `coder_approved` rows with real codes are treated as ready for final packet use.
 14. Generate the prior authorization packet PDF when the packet is ready for human review.
 15. If the packet is not ready, generate the missing information request PDF and send it to the care team/provider for completion.
 16. Save review draft or approve the packet only after human review.
@@ -68,6 +68,8 @@ Use the files in `sample_documents/prior_auth_mvp1/`:
 - User can generate a missing information request PDF when documentation is incomplete.
 - User can see a pre-prior-auth code readiness step before packet generation, with clear coder/CPT review required language.
 - User can ask AI to recommend generic candidate diagnosis, procedure, medication, and supply codes, edit the candidate rows, and preserve certified coder review status in the packet and PDFs.
+- User can perform row-level coder review with approve, needs-change, and reject actions.
+- Approved code rows preserve reviewer persona, workspace role, timestamp, modifier, units, laterality, place of service, payer rule match, and reference source.
 
 ## Prior Authorization PDF Packet Contents
 
@@ -85,6 +87,21 @@ The final prior authorization PDF should include these sections:
 10. Human Review Notice: administrative assistance, no medical advice, no coverage guarantee, and no payer submission without human approval.
 
 Approved code rows should suppress stale missing-code language in the PDF. For example, if a coder approves ICD-10-CM and CPT rows, the final PDF should not still say the ICD or CPT code is missing. Rows left as `needs_lookup` or `coder_review_required` stay as candidate-only and should remain in the missing/review story.
+
+## Coder Review Workflow V2
+
+The code review panel uses grouped cards instead of a wide table. It shows a readiness banner, counts for approved/lookup/needs-change/rejected rows, and grouped sections for diagnosis codes, procedure/service codes, medication/supply codes, and lookup-needed rows.
+
+Each code card supports row-level decisions:
+
+1. `Approve`: stamps the row as `coder_approved`, records reviewer persona/workspace role, and records `reviewed_at`.
+2. `Needs change`: keeps the row out of final packet coding and records that coder action is required.
+3. `Reject`: keeps the row out of final packet coding and records that the candidate should not be used.
+4. Manual edits: reviewer can update code, modifier, units, laterality, place of service, payer rule match, reference source, and reviewer note before approval.
+
+Simple fields are shown up front: code set, code, status, description, and reviewer note. Advanced coding details are hidden under an expandable section so coders do not need to horizontally scroll through many columns.
+
+The final PDF should show only rows with real codes and reviewed/approved status under Final Coder-Reviewed Codes. Candidate rows, rejected rows, and lookup-needed rows should remain part of the review story only.
 
 ## Safety Boundary
 

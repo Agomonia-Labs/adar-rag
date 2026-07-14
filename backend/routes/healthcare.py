@@ -2193,10 +2193,39 @@ def _describe_code_rows(rows: list[dict]) -> str:
         code_set = str(row.get("code_set") or "Code").strip()
         code = str(row.get("code") or "").strip()
         description = _clean_prior_auth_pdf_text(row.get("description") or "")
+        modifier = _clean_prior_auth_pdf_text(row.get("modifier") or "")
+        units = _clean_prior_auth_pdf_text(row.get("units") or "")
+        laterality = _clean_prior_auth_pdf_text(row.get("laterality") or "")
+        place_of_service = _clean_prior_auth_pdf_text(row.get("place_of_service") or "")
+        payer_rule_match = _clean_prior_auth_pdf_text(row.get("payer_rule_match") or "")
+        reference_source = _clean_prior_auth_pdf_text(row.get("reference_source") or "")
+        reviewed_by = _clean_prior_auth_pdf_text(row.get("reviewed_by") or "")
+        reviewed_at = _clean_prior_auth_pdf_text(row.get("reviewed_at") or "")
+        qualifiers = []
+        if modifier:
+            qualifiers.append(f"modifier {modifier}")
+        if units:
+            qualifiers.append(f"{units} unit{'s' if units != '1' else ''}")
+        if laterality:
+            qualifiers.append(f"laterality {laterality}")
+        if place_of_service:
+            qualifiers.append(f"place of service {place_of_service}")
+        if payer_rule_match:
+            qualifiers.append(f"payer rule match {payer_rule_match}")
+        if reference_source:
+            qualifiers.append(f"reference {reference_source}")
+        if reviewed_by or reviewed_at:
+            review_detail = "reviewed"
+            if reviewed_by:
+                review_detail += f" by {reviewed_by}"
+            if reviewed_at:
+                review_detail += f" at {reviewed_at}"
+            qualifiers.append(review_detail)
+        qualifier_text = f" ({'; '.join(qualifiers)})" if qualifiers else ""
         if code and description:
-            values.append(f"{code_set} {code} for {description}")
+            values.append(f"{code_set} {code} for {description}{qualifier_text}")
         elif code:
-            values.append(f"{code_set} {code}")
+            values.append(f"{code_set} {code}{qualifier_text}")
     return _natural_join(_compact_unique(values, 8))
 
 

@@ -3,7 +3,8 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { streamChat, listSessions, createSession, getSession,
          saveSessionMessages, deleteSession, submitFeedback,
          getSessionFeedback, transcribeVoice,
-         createRestaurantOrderDraft, createRestaurantOrderCheckout } from '../services/api.js';
+         createRestaurantOrderDraft, createRestaurantOrderCheckout,
+         updateSession } from '../services/api.js';
 import MarkdownRenderer from './MarkdownRenderer.jsx';
 import EvalBadges from './EvalBadges.jsx';
 
@@ -94,6 +95,8 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
   const [loadingSession,  setLoadingSession]  = useState(false);
   const [sidebarOpen,     setSidebarOpen]     = useState(true);
   const [showMobileTools, setShowMobileTools] = useState(false);
+  const [showDocPicker,   setShowDocPicker]   = useState(false);
+  const [docSearch,       setDocSearch]       = useState('');
 
   const [selected, setSelected] = useState([]);
   const [messages, setMessages] = useState([]);
@@ -227,7 +230,23 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
     }, 1500);
   }, []);
 
-  const toggleDoc = id => setSelected(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
+  const persistSelectedDocs = useCallback((documentIds) => {
+    if (!activeSession?.id) return;
+    updateSession(activeSession.id, { document_ids: documentIds }).catch(e => console.warn('Could not save chat document selection:', e));
+  }, [activeSession?.id]);
+
+  const updateSelectedDocs = useCallback((updater) => {
+    setSelected(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      setActiveSession(sess => sess ? { ...sess, document_ids: next } : sess);
+      persistSelectedDocs(next);
+      return next;
+    });
+  }, [persistSelectedDocs]);
+
+  const toggleDoc = id => updateSelectedDocs(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
+  const selectAllDocs = () => updateSelectedDocs(embeddedDocs.map(d => d.id));
+  const clearDocs = () => updateSelectedDocs([]);
 
   const stopListening = useCallback(() => {
     recognitionRef.current?.stop?.();
@@ -659,6 +678,7 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
   );
 
   const visibleSessions = sessions.slice(0, MAX_VISIBLE_SESSIONS);
+  const selectedDocs = embeddedDocs.filter(doc => selected.includes(doc.id));
 
   return (
     <div style={s.wrap}>
@@ -713,17 +733,19 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
           <button style={s.sidebarToggle} onClick={() => setSidebarOpen(o => !o)}>
             {isMobile ? 'History' : (sidebarOpen ? '◀' : '▶ History')}
           </button>
-          <div style={{...s.chips, ...(isMobile ? s.chipsMobile : {})}}>
-            {embeddedDocs.map(doc => {
-              const on = selected.includes(doc.id);
-              return (
-                <button key={doc.id} onClick={() => toggleDoc(doc.id)} title={doc.original_name}
-                  style={{ ...s.chip, ...(isMobile ? s.chipMobile : {}), ...(on ? s.chipOn : s.chipOff) }}>
-                  {doc.original_name.length > (isMobile ? 16 : 20) ? doc.original_name.slice(0, isMobile ? 14 : 18) + '…' : doc.original_name}
-                  {on && <span style={{ marginLeft: 3, opacity: .7 }}>✓</span>}
-                </button>
-              );
-            })}
+          <button
+            type="button"
+            style={{...s.docPickerBtn, ...(showDocPicker ? s.docPickerBtnOn : {})}}
+            onClick={() => setShowDocPicker(v => !v)}
+            title="Choose documents for this chat">
+            <span>Documents</span>
+            <strong>{selected.length}/{embeddedDocs.length}</strong>
+          </button>
+          <div style={{...s.selectedDocSummary, ...(isMobile ? s.selectedDocSummaryMobile : {})}}>
+            {selectedDocs.length ? selectedDocs.slice(0, isMobile ? 1 : 3).map(doc => (
+              <span key={doc.id} style={s.selectedDocPill} title={doc.original_name}>{shortDocName(doc.original_name, isMobile ? 18 : 26)}</span>
+            )) : <span style={s.noDocPill}>No documents selected</span>}
+            {selectedDocs.length > (isMobile ? 1 : 3) && <span style={s.moreDocPill}>+{selectedDocs.length - (isMobile ? 1 : 3)}</span>}
           </div>
           {isMobile && (
             <button
@@ -767,6 +789,20 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
             )}
           </div>}
         </div>
+
+        {showDocPicker && (
+          <DocumentPicker
+            docs={embeddedDocs}
+            selected={selected}
+            search={docSearch}
+            onSearch={setDocSearch}
+            onToggle={toggleDoc}
+            onSelectAll={selectAllDocs}
+            onClear={clearDocs}
+            onClose={() => setShowDocPicker(false)}
+            isMobile={isMobile}
+          />
+        )}
 
         {isMobile && showMobileTools && (
           <div style={s.mobileToolsMenu}>
@@ -896,6 +932,62 @@ export default function ChatTab({ embeddedDocs, activeWorkspace }) {
       </div>
     </div>
   );
+}
+
+function DocumentPicker({ docs, selected, search, onSearch, onToggle, onSelectAll, onClear, onClose, isMobile }) {
+  const query = String(search || '').trim().toLowerCase();
+  const filtered = docs.filter(doc => {
+    const name = String(doc.original_name || doc.filename || '').toLowerCase();
+    const type = String(doc.doc_type || doc.file_type || '').toLowerCase();
+    return !query || name.includes(query) || type.includes(query);
+  });
+  return (
+    <div style={{...s.docPicker, ...(isMobile ? s.docPickerMobile : {})}}>
+      <div style={s.docPickerHead}>
+        <div>
+          <strong>Choose chat documents</strong>
+          <span>{selected.length} selected · {docs.length} available</span>
+        </div>
+        <button type="button" style={s.docPickerClose} onClick={onClose}>×</button>
+      </div>
+      <div style={s.docPickerControls}>
+        <input
+          value={search}
+          onChange={e => onSearch(e.target.value)}
+          placeholder="Search documents..."
+          style={s.docSearch}
+        />
+        <button type="button" style={s.rowBtn} onClick={onSelectAll}>Select all</button>
+        <button type="button" style={s.rowBtn} onClick={onClear}>Clear</button>
+      </div>
+      <div style={s.docPickerList}>
+        {filtered.length ? filtered.map(doc => {
+          const checked = selected.includes(doc.id);
+          return (
+            <label key={doc.id} style={{...s.docPickerItem, ...(checked ? s.docPickerItemOn : {})}}>
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => onToggle(doc.id)}
+                style={s.docCheckbox}
+              />
+              <span style={s.docPickerText}>
+                <strong>{doc.original_name || doc.filename || doc.id}</strong>
+                <small>{[doc.doc_type, doc.file_type, doc.status].filter(Boolean).join(' · ') || 'Embedded document'}</small>
+              </span>
+            </label>
+          );
+        }) : (
+          <div style={s.docPickerEmpty}>No matching documents.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function shortDocName(name = '', max = 24) {
+  const text = String(name || 'Document');
+  return text.length > max ? `${text.slice(0, Math.max(4, max - 1))}…` : text;
 }
 
 // ── Message bubble ────────────────────────────────────────────────────────────
@@ -1618,6 +1710,7 @@ const s = {
   topBar:        { display:'flex', alignItems:'center', gap:7, padding:'8px 12px', background:'var(--s1)', borderBottom:'1px solid var(--b1)', flexWrap:'wrap', flexShrink:0 },
   topBarMobile:  { padding:'6px 8px', gap:5, flexWrap:'nowrap', minWidth:0 },
   sidebarToggle: { fontSize:11.5, padding:'4px 8px', background:'var(--s3)', border:'1px solid var(--b2)', color:'var(--muted2)', borderRadius:6, cursor:'pointer', flexShrink:0 },
+  rowBtn:        { fontSize:11.5, padding:'6px 9px', background:'var(--s3)', border:'1px solid var(--b2)', color:'var(--tx2)', borderRadius:8, cursor:'pointer', fontWeight:800, whiteSpace:'nowrap' },
   privacy:       { display:'flex', alignItems:'center', gap:4, fontSize:10.5, color:'#fbbf24', border:'1px solid rgba(251,191,36,.25)', background:'rgba(251,191,36,.06)', padding:'3px 7px', borderRadius:20, cursor:'pointer', flexShrink:0 },
   privacyCheckbox:{ width:13, height:13, minWidth:13, minHeight:0, margin:0, padding:0, accentColor:'#fbbf24', boxSizing:'content-box' },
   chips:         { display:'flex', gap:5, flex:1, minWidth:0, flexWrap:'nowrap', overflowX:'auto', overflowY:'hidden', WebkitOverflowScrolling:'touch', scrollbarWidth:'none', paddingBottom:1 },
@@ -1626,6 +1719,25 @@ const s = {
   chipMobile:    { fontSize:10.5, padding:'3px 8px', flex:'0 0 auto', maxWidth:145, overflow:'hidden', textOverflow:'ellipsis' },
   chipOn:        { background:'rgba(74,222,128,.12)', color:'#4ade80', border:'1px solid rgba(74,222,128,.3)', fontWeight:700 },
   chipOff:       { background:'var(--s3)', color:'var(--muted2)', border:'1px solid var(--b2)' },
+  docPickerBtn:  { display:'inline-flex', alignItems:'center', gap:7, border:'1px solid var(--b2)', background:'var(--s3)', color:'var(--tx)', borderRadius:8, padding:'5px 10px', fontSize:11.5, fontWeight:800, cursor:'pointer', flexShrink:0 },
+  docPickerBtnOn:{ borderColor:'rgba(74,222,128,.38)', background:'rgba(74,222,128,.1)', color:'#86efac' },
+  selectedDocSummary:{ display:'flex', alignItems:'center', gap:5, flex:1, minWidth:0, overflow:'hidden' },
+  selectedDocSummaryMobile:{ flex:'1 1 auto' },
+  selectedDocPill:{ fontSize:10.5, color:'#bae6fd', border:'1px solid rgba(125,211,252,.22)', background:'rgba(14,165,233,.07)', borderRadius:20, padding:'4px 8px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:190 },
+  noDocPill:{ fontSize:10.5, color:'#fbbf24', border:'1px solid rgba(251,191,36,.24)', background:'rgba(251,191,36,.06)', borderRadius:20, padding:'4px 8px', whiteSpace:'nowrap' },
+  moreDocPill:{ fontSize:10.5, color:'var(--muted2)', border:'1px solid var(--b2)', background:'rgba(255,255,255,.03)', borderRadius:20, padding:'4px 8px', whiteSpace:'nowrap' },
+  docPicker:{ flexShrink:0, borderBottom:'1px solid var(--b1)', background:'var(--s1)', padding:'10px 12px', display:'flex', flexDirection:'column', gap:9, boxShadow:'0 12px 30px rgba(0,0,0,.22)' },
+  docPickerMobile:{ padding:'9px 8px', maxHeight:'42vh', overflowY:'auto' },
+  docPickerHead:{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:10, fontSize:12, color:'var(--tx2)' },
+  docPickerClose:{ width:28, height:28, border:'1px solid var(--b2)', background:'var(--s3)', color:'var(--tx)', borderRadius:7, cursor:'pointer', fontSize:18, lineHeight:1, flexShrink:0 },
+  docPickerControls:{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' },
+  docSearch:{ flex:'1 1 220px', minWidth:0, background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:8, color:'var(--tx)', padding:'8px 10px', fontSize:12 },
+  docPickerList:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))', gap:7, maxHeight:260, overflowY:'auto', paddingRight:2 },
+  docPickerItem:{ display:'flex', gap:8, alignItems:'flex-start', border:'1px solid var(--b2)', background:'rgba(255,255,255,.03)', borderRadius:8, padding:'8px 9px', cursor:'pointer', minWidth:0 },
+  docPickerItemOn:{ borderColor:'rgba(74,222,128,.34)', background:'rgba(74,222,128,.08)' },
+  docCheckbox:{ marginTop:2, accentColor:'#22c55e', flexShrink:0 },
+  docPickerText:{ display:'flex', flexDirection:'column', gap:3, minWidth:0, fontSize:12, color:'var(--tx)' },
+  docPickerEmpty:{ fontSize:12, color:'var(--muted2)', padding:12, border:'1px dashed var(--b2)', borderRadius:8 },
   mobileToolsBtn:{ width:28, height:28, minHeight:28, borderRadius:8, border:'1px solid var(--b2)', background:'var(--s3)', color:'var(--muted2)', fontSize:16, fontWeight:900, cursor:'pointer', lineHeight:1, flexShrink:0 },
   mobileToolsBtnOn:{ color:'#4ade80', borderColor:'rgba(74,222,128,.35)', background:'rgba(74,222,128,.1)' },
   mobileToolsMenu:{ display:'flex', flexDirection:'column', gap:6, padding:'7px 8px', borderBottom:'1px solid var(--b1)', background:'var(--s1)', boxShadow:'0 10px 24px rgba(0,0,0,.22)', flexShrink:0 },

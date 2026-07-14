@@ -725,6 +725,8 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
                   onGeneratePriorAuthPdf={generatePriorAuthPdf}
                   onGenerateMissingInfoPdf={generateMissingInfoPdf}
                   loading={loading}
+                  reviewerPersona={selectedPersona}
+                  accessContext={accessContext}
                 />
               ) : activeTab === 'scribe' ? (
                 <ClinicalScribePacket packet={packet} onPatch={updatePacket} onGenerateAvsPdf={generateAvsPdf} loading={loading} />
@@ -787,8 +789,9 @@ function ClinicalPacket({ packet, onPatch }) {
   );
 }
 
-function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMissingInfoPdf, loading }) {
+function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMissingInfoPdf, loading, reviewerPersona, accessContext }) {
   const codeReadiness = buildCodeReadiness(packet);
+  const reviewer = buildCoderReviewer(reviewerPersona, accessContext);
   const recommendCodes = () => {
     onPatch(['code_recommendations'], generateCodeRecommendations(packet));
   };
@@ -797,17 +800,10 @@ function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMi
     onPatch(['code_recommendations','candidates'], rows.map(row => {
       const missingCode = !row.code || row.code === 'needs_lookup';
       const nextStatus = status === 'coder_approved' && missingCode ? 'coder_review_required' : status;
-      return {
-        ...row,
-        review_status: nextStatus,
-        reviewer_note: row.reviewer_note || (
-          nextStatus === 'coder_approved'
-            ? 'Certified coder/billing reviewer approved for packet use.'
-            : missingCode ? 'Enter final code before approving for packet use.' : ''
-        ),
-      };
+      return applyCodeReviewStatus(row, nextStatus, reviewer, missingCode);
     }));
   };
+  const updateCodeRows = rows => onPatch(['code_recommendations','candidates'], rows);
   return (
     <>
       <PatientContext packet={packet} onPatch={onPatch} />
@@ -833,7 +829,7 @@ function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMi
         <section style={s.subSection}>
           <div style={s.tableHead}>
             <div>
-              <div style={s.tableTitle}>AI code recommendations</div>
+              <div style={s.tableTitle}>Coder review workflow</div>
               <div style={s.meta}>AI fills candidate diagnosis, procedure, medication, and supply code rows. Certified coder must approve or edit before final packet use.</div>
             </div>
             <div style={s.inlineActions}>
@@ -842,11 +838,10 @@ function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMi
               <button type="button" style={s.rowBtn} disabled={!packet.code_recommendations?.candidates?.length} onClick={() => markCodeRows('coder_review_required')}>Needs coder review</button>
             </div>
           </div>
-          <Rows
+          <CoderReviewPanel
             rows={packet.code_recommendations?.candidates || []}
-            cols={['code_set','code','description','basis','confidence','review_status','reviewer_note']}
-            editable
-            onChange={rows => onPatch(['code_recommendations','candidates'], rows)}
+            onChange={updateCodeRows}
+            reviewer={reviewer}
           />
         </section>
         <EditableText value={packet.prior_auth_packet?.medical_necessity_narrative || packet.prior_auth_packet?.packet_summary || ''} onChange={value => onPatch(['prior_auth_packet','medical_necessity_narrative'], value)} placeholder="Prior authorization narrative..." />
@@ -880,6 +875,157 @@ function CodeReadinessPanel({ readiness }) {
       </div>
       <div style={s.notice}>{readiness.notice}</div>
     </div>
+  );
+}
+
+function CoderReviewPanel({ rows, onChange, reviewer }) {
+  const updateCell = (index, col, value) => {
+    const next = rows.map((row, i) => i === index ? { ...row, [col]: normalizeCellValue(col, value) } : row);
+    onChange?.(next);
+  };
+  const addRow = () => onChange?.([...rows, codeCandidate('CPT/HCPCS', 'needs_lookup', 'Manual code review item', 'Added by reviewer.', 0.4)]);
+  const deleteRow = index => onChange?.(rows.filter((_, i) => i !== index));
+  const setStatus = (index, status) => {
+    const next = rows.map((row, i) => {
+      if (i !== index) return row;
+      const missingCode = !row.code || row.code === 'needs_lookup';
+      const nextStatus = status === 'coder_approved' && missingCode ? 'coder_review_required' : status;
+      return applyCodeReviewStatus(row, nextStatus, reviewer, missingCode);
+    });
+    onChange?.(next);
+  };
+  const summary = codeReviewSummary(rows);
+  const groups = groupCodeRows(rows);
+  if (!rows.length) {
+    return (
+      <div style={s.codeEmpty}>
+        <strong>No code rows yet</strong>
+        <span>Generate AI recommendations or add a manual row for coder review.</span>
+        <button type="button" style={s.rowBtn} onClick={addRow}>Add manual row</button>
+      </div>
+    );
+  }
+  return (
+    <div style={s.codePanel}>
+      <div style={summary.ready ? s.codeSummaryReady : s.codeSummaryReview}>
+        <div>
+          <strong>{summary.ready ? 'Ready for packet' : 'Coder review needed'}</strong>
+          <p>{summary.ready ? 'Required diagnosis and procedure/service codes are approved.' : 'Approve required coded rows before using them as final packet codes.'}</p>
+        </div>
+        <div style={s.codeCounts}>
+          <span>{summary.approved} approved</span>
+          <span>{summary.lookup} lookup</span>
+          <span>{summary.needsChange} needs change</span>
+          <span>{summary.rejected} rejected</span>
+        </div>
+      </div>
+      {groups.map(group => (
+        <section key={group.key} style={s.codeGroup}>
+          <div style={s.codeGroupHead}>
+            <strong>{group.label}</strong>
+            <span>{group.items.length} row{group.items.length === 1 ? '' : 's'}</span>
+          </div>
+          <div style={s.codeCards}>
+            {group.items.map(({ row, index }) => (
+              <CodeReviewCard
+                key={`${row.code_set || 'code'}-${row.code || 'lookup'}-${index}`}
+                row={row}
+                index={index}
+                updateCell={updateCell}
+                setStatus={setStatus}
+                deleteRow={deleteRow}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
+      <button type="button" style={s.rowBtn} onClick={addRow}>Add manual row</button>
+    </div>
+  );
+}
+
+function CodeReviewCard({ row, index, updateCell, setStatus, deleteRow }) {
+  const missingCode = !row.code || row.code === 'needs_lookup';
+  const status = row.review_status || 'coder_review_required';
+  return (
+    <article style={missingCode ? s.codeCardWarn : s.codeCard}>
+      <div style={s.codeCardTop}>
+        <div style={s.codeIdentity}>
+          <span style={s.codeSetPill}>{row.code_set || 'Code'}</span>
+          <input value={row.code || ''} onChange={e => updateCell(index, 'code', e.target.value)} style={missingCode ? s.codeInputWarn : s.codeInput} placeholder="needs_lookup" />
+        </div>
+        <span style={statusStyle(status)}>{statusLabel(status)}</span>
+      </div>
+      {missingCode && <div style={s.lookupWarning}>Coder must enter a final code before approval.</div>}
+      <div style={s.codeMainGrid}>
+        <label style={s.compactField}>Code set
+          <select value={row.code_set || 'CPT/HCPCS'} onChange={e => updateCell(index, 'code_set', e.target.value)} style={s.compactSelect}>
+            <option value="ICD-10-CM">ICD-10-CM</option>
+            <option value="CPT">CPT</option>
+            <option value="HCPCS">HCPCS</option>
+            <option value="CPT/HCPCS">CPT/HCPCS</option>
+            <option value="RxNorm">RxNorm</option>
+            <option value="NDC">NDC</option>
+            <option value="RxNorm/NDC">RxNorm/NDC</option>
+          </select>
+        </label>
+        <label style={s.compactField}>Status
+          <select value={status} onChange={e => setStatus(index, e.target.value)} style={s.compactSelect}>
+            <option value="coder_review_required">Needs review</option>
+            <option value="needs_change">Needs change</option>
+            <option value="coder_approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+        </label>
+      </div>
+      <label style={s.compactField}>Description
+        <textarea value={row.description || ''} onChange={e => updateCell(index, 'description', e.target.value)} style={s.compactText} rows={2} />
+      </label>
+      <label style={s.compactField}>Reviewer note
+        <textarea value={row.reviewer_note || ''} onChange={e => updateCell(index, 'reviewer_note', e.target.value)} style={s.compactText} rows={2} />
+      </label>
+      <details style={s.codeDetails}>
+        <summary>Advanced coding details</summary>
+        <div style={s.advancedGrid}>
+          <label style={s.compactField}>Modifier<input value={row.modifier || ''} onChange={e => updateCell(index, 'modifier', e.target.value)} style={s.compactInput} /></label>
+          <label style={s.compactField}>Units<input value={row.units || ''} onChange={e => updateCell(index, 'units', e.target.value)} style={s.compactInput} /></label>
+          <label style={s.compactField}>Laterality
+            <select value={row.laterality || ''} onChange={e => updateCell(index, 'laterality', e.target.value)} style={s.compactSelect}>
+              <option value="">Not applicable</option>
+              <option value="left">left</option>
+              <option value="right">right</option>
+              <option value="bilateral">bilateral</option>
+            </select>
+          </label>
+          <label style={s.compactField}>Place of service
+            <select value={row.place_of_service || ''} onChange={e => updateCell(index, 'place_of_service', e.target.value)} style={s.compactSelect}>
+              <option value="">Not selected</option>
+              <option value="office">office</option>
+              <option value="outpatient hospital">outpatient hospital</option>
+              <option value="ambulatory surgical center">ambulatory surgical center</option>
+              <option value="home">home</option>
+              <option value="inpatient hospital">inpatient hospital</option>
+            </select>
+          </label>
+          <label style={s.compactField}>Reference source<input value={row.reference_source || ''} onChange={e => updateCell(index, 'reference_source', e.target.value)} style={s.compactInput} /></label>
+          <label style={s.compactField}>Payer rule match<input value={row.payer_rule_match || ''} onChange={e => updateCell(index, 'payer_rule_match', e.target.value)} style={s.compactInput} /></label>
+          <label style={s.compactField}>Basis<textarea value={row.basis || ''} onChange={e => updateCell(index, 'basis', e.target.value)} style={s.compactText} rows={2} /></label>
+          <label style={s.compactField}>Confidence<input value={String(row.confidence ?? '')} onChange={e => updateCell(index, 'confidence', e.target.value)} style={s.compactInput} /></label>
+        </div>
+      </details>
+      {(row.reviewed_by || row.reviewed_at) && (
+        <div style={s.reviewStamp}>
+          {row.reviewed_by && <span>{row.reviewed_by}</span>}
+          {row.reviewed_at && <span>{new Date(row.reviewed_at).toLocaleString()}</span>}
+        </div>
+      )}
+      <div style={s.codeActions}>
+        <button type="button" style={s.approveBtn} onClick={() => setStatus(index, 'coder_approved')}>Approve</button>
+        <button type="button" style={s.rowBtn} onClick={() => setStatus(index, 'needs_change')}>Needs change</button>
+        <button type="button" style={s.rejectBtn} onClick={() => setStatus(index, 'rejected')}>Reject</button>
+        <button type="button" style={s.deleteBtn} onClick={() => deleteRow(index)}>Remove</button>
+      </div>
+    </article>
   );
 }
 
@@ -1302,9 +1448,17 @@ function codeCandidate(codeSet, code, description, basis, confidence) {
     code,
     description,
     basis,
+    modifier: '',
+    units: '',
+    laterality: '',
+    place_of_service: '',
+    reference_source: '',
+    payer_rule_match: '',
     confidence,
     review_status: 'coder_review_required',
     reviewer_note: '',
+    reviewed_by: '',
+    reviewed_at: '',
   };
 }
 
@@ -1322,7 +1476,7 @@ function mergeCodeCandidates(candidates, existingRows) {
   const existingByKey = new Map((existingRows || []).map(row => [`${row.code_set}:${row.code}:${row.description}`.toLowerCase(), row]));
   const merged = candidates.map(row => {
     const existing = existingByKey.get(`${row.code_set}:${row.code}:${row.description}`.toLowerCase());
-    return existing ? { ...row, review_status: existing.review_status || row.review_status, reviewer_note: existing.reviewer_note || row.reviewer_note } : row;
+    return existing ? { ...row, ...existing } : row;
   });
   (existingRows || []).forEach(row => {
     const key = `${row.code_set}:${row.code}:${row.description}`.toLowerCase();
@@ -1331,6 +1485,90 @@ function mergeCodeCandidates(candidates, existingRows) {
     }
   });
   return merged;
+}
+
+function codeReviewSummary(rows) {
+  const approved = rows.filter(isCoderApprovedCode).length;
+  const lookup = rows.filter(row => !row.code || row.code === 'needs_lookup').length;
+  const needsChange = rows.filter(row => row.review_status === 'needs_change').length;
+  const rejected = rows.filter(row => row.review_status === 'rejected').length;
+  const approvedIcd = rows.some(row => isCoderApprovedCode(row) && row.code_set === 'ICD-10-CM');
+  const approvedProcedure = rows.some(row => isCoderApprovedCode(row) && ['CPT','HCPCS','CPT/HCPCS'].includes(row.code_set));
+  return { approved, lookup, needsChange, rejected, ready: approvedIcd && approvedProcedure };
+}
+
+function groupCodeRows(rows) {
+  const groups = [
+    { key: 'diagnosis', label: 'Diagnosis codes', items: [] },
+    { key: 'procedure', label: 'Procedure / service codes', items: [] },
+    { key: 'medication', label: 'Medication / supply codes', items: [] },
+    { key: 'lookup', label: 'Lookup needed', items: [] },
+  ];
+  rows.forEach((row, index) => {
+    const item = { row, index };
+    if (!row.code || row.code === 'needs_lookup') {
+      groups[3].items.push(item);
+    } else if (row.code_set === 'ICD-10-CM') {
+      groups[0].items.push(item);
+    } else if (['CPT','HCPCS','CPT/HCPCS'].includes(row.code_set)) {
+      groups[1].items.push(item);
+    } else {
+      groups[2].items.push(item);
+    }
+  });
+  return groups.filter(group => group.items.length);
+}
+
+function statusLabel(status) {
+  if (status === 'coder_approved') return 'Approved';
+  if (status === 'needs_change') return 'Needs change';
+  if (status === 'rejected') return 'Rejected';
+  return 'Needs review';
+}
+
+function statusStyle(status) {
+  if (status === 'coder_approved') return s.statusApproved;
+  if (status === 'needs_change') return s.statusChange;
+  if (status === 'rejected') return s.statusRejected;
+  return s.statusReview;
+}
+
+function buildCoderReviewer(reviewerPersona, accessContext) {
+  const persona = reviewerPersona || accessContext?.default_persona || 'coder_reviewer';
+  const role = accessContext?.workspace_role || 'workspace_role_unknown';
+  return {
+    label: `${persona} (${role})`,
+    persona,
+    role,
+  };
+}
+
+function applyCodeReviewStatus(row, status, reviewer, missingCode = false) {
+  const now = new Date().toISOString();
+  const stampStatus = ['coder_approved', 'needs_change', 'rejected'].includes(status);
+  const defaultNotes = [
+    'Certified coder/billing reviewer approved for packet use.',
+    'Enter final code before approving for packet use.',
+    'Coder requested a code change before packet use.',
+    'Coder rejected this candidate for packet use.',
+    'Coder review required before packet use.',
+  ];
+  const generatedNote = (
+    status === 'coder_approved'
+      ? 'Certified coder/billing reviewer approved for packet use.'
+      : missingCode ? 'Enter final code before approving for packet use.'
+      : status === 'needs_change' ? 'Coder requested a code change before packet use.'
+      : status === 'rejected' ? 'Coder rejected this candidate for packet use.'
+      : 'Coder review required before packet use.'
+  );
+  const note = !row.reviewer_note || defaultNotes.includes(row.reviewer_note) ? generatedNote : row.reviewer_note;
+  return {
+    ...row,
+    review_status: status,
+    reviewer_note: note,
+    reviewed_by: stampStatus ? reviewer.label : '',
+    reviewed_at: stampStatus ? now : '',
+  };
 }
 
 function buildCodeReadiness(packet) {
@@ -1626,6 +1864,39 @@ const s = {
   linkBtn:{background:'transparent',border:'none',color:'#7dd3fc',fontSize:12,fontWeight:800,cursor:'pointer',padding:0},
   deleteBtn:{background:'transparent',border:'1px solid rgba(248,113,113,.28)',color:'#fca5a5',borderRadius:7,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'},
   cellInput:{width:'100%',minWidth:120,background:'rgba(0,0,0,.12)',border:'1px solid transparent',borderRadius:6,color:'var(--tx2)',fontSize:12,lineHeight:1.4,padding:6,resize:'vertical'},
+  cellSelect:{width:'100%',minWidth:145,background:'rgba(0,0,0,.12)',border:'1px solid var(--b2)',borderRadius:6,color:'var(--tx2)',fontSize:12,lineHeight:1.4,padding:6},
+  rowActionStack:{display:'flex',flexDirection:'column',gap:6,minWidth:116},
+  approveBtn:{background:'rgba(74,222,128,.12)',border:'1px solid rgba(74,222,128,.34)',color:'#bbf7d0',borderRadius:7,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'},
+  rejectBtn:{background:'rgba(248,113,113,.12)',border:'1px solid rgba(248,113,113,.34)',color:'#fecaca',borderRadius:7,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'},
+  codePanel:{display:'flex',flexDirection:'column',gap:12},
+  codeEmpty:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.03)',borderRadius:8,padding:14,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap',fontSize:12,color:'var(--tx2)'},
+  codeSummaryReady:{border:'1px solid rgba(74,222,128,.28)',background:'rgba(74,222,128,.08)',borderRadius:8,padding:12,display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'},
+  codeSummaryReview:{border:'1px solid rgba(251,191,36,.28)',background:'rgba(251,191,36,.08)',borderRadius:8,padding:12,display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'},
+  codeCounts:{display:'flex',gap:7,flexWrap:'wrap',fontSize:11,color:'var(--tx2)'},
+  codeGroup:{display:'flex',flexDirection:'column',gap:8},
+  codeGroupHead:{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',fontSize:12,color:'var(--tx2)',borderBottom:'1px solid var(--b1)',paddingBottom:6},
+  codeCards:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:10},
+  codeCard:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.035)',borderRadius:8,padding:12,display:'flex',flexDirection:'column',gap:10,minWidth:0},
+  codeCardWarn:{border:'1px solid rgba(251,191,36,.32)',background:'rgba(251,191,36,.065)',borderRadius:8,padding:12,display:'flex',flexDirection:'column',gap:10,minWidth:0},
+  codeCardTop:{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap'},
+  codeIdentity:{display:'flex',alignItems:'center',gap:8,minWidth:0,flex:'1 1 180px'},
+  codeSetPill:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#bae6fd',border:'1px solid rgba(125,211,252,.26)',background:'rgba(14,165,233,.09)',borderRadius:20,padding:'4px 7px',whiteSpace:'nowrap'},
+  codeInput:{minWidth:0,flex:'1 1 110px',background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:7,color:'var(--tx)',fontWeight:900,padding:'7px 8px',fontSize:13},
+  codeInputWarn:{minWidth:0,flex:'1 1 110px',background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.34)',borderRadius:7,color:'#fde68a',fontWeight:900,padding:'7px 8px',fontSize:13},
+  statusApproved:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#bbf7d0',background:'rgba(74,222,128,.1)',border:'1px solid rgba(74,222,128,.3)',borderRadius:20,padding:'4px 8px'},
+  statusChange:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#fde68a',background:'rgba(251,191,36,.1)',border:'1px solid rgba(251,191,36,.3)',borderRadius:20,padding:'4px 8px'},
+  statusRejected:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#fecaca',background:'rgba(248,113,113,.1)',border:'1px solid rgba(248,113,113,.3)',borderRadius:20,padding:'4px 8px'},
+  statusReview:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#bfdbfe',background:'rgba(96,165,250,.1)',border:'1px solid rgba(96,165,250,.3)',borderRadius:20,padding:'4px 8px'},
+  lookupWarning:{fontSize:12,color:'#fbbf24',border:'1px solid rgba(251,191,36,.24)',background:'rgba(251,191,36,.07)',borderRadius:8,padding:'7px 8px'},
+  codeMainGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8},
+  compactField:{display:'flex',flexDirection:'column',gap:5,fontSize:11,fontWeight:800,color:'var(--muted2)'},
+  compactInput:{background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:7,color:'var(--tx)',padding:'7px 8px',fontSize:12,width:'100%'},
+  compactSelect:{background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:7,color:'var(--tx)',padding:'7px 8px',fontSize:12,width:'100%'},
+  compactText:{background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:7,color:'var(--tx)',padding:'7px 8px',fontSize:12,lineHeight:1.45,width:'100%',resize:'vertical'},
+  codeDetails:{border:'1px solid var(--b1)',borderRadius:8,padding:9,background:'rgba(0,0,0,.12)',fontSize:12,color:'var(--tx2)'},
+  advancedGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8,marginTop:10},
+  reviewStamp:{display:'flex',gap:8,flexWrap:'wrap',fontSize:11,color:'var(--muted2)',borderTop:'1px solid var(--b1)',paddingTop:8},
+  codeActions:{display:'flex',gap:7,flexWrap:'wrap'},
   tableWrap:{overflowX:'auto',border:'1px solid var(--b2)',borderRadius:8,background:'rgba(0,0,0,.16)'},
   table:{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:760},
   th:{textAlign:'left',textTransform:'capitalize',fontSize:11,fontWeight:800,color:'var(--tx)',background:'rgba(255,255,255,.06)',borderRight:'1px solid var(--b2)',borderBottom:'1px solid var(--b2)',padding:'8px 10px',verticalAlign:'top',whiteSpace:'nowrap'},
