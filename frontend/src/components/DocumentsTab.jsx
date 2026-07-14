@@ -299,7 +299,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
           onClick={()=>fileRef.current?.click()} role="button" tabIndex={0}>
           <div style={{fontSize:30,marginBottom:6}}>⬆</div>
           <p style={{fontWeight:600,fontSize:13,color:'#4ade80'}}>{drag?'Drop to upload':'Drop files or click to upload'}</p>
-          <p style={{fontSize:11,color:'var(--muted2)',marginTop:3}}>PDF · DOCX · CSV · Images · TXT &nbsp;·&nbsp; {MAX_FILES-total} slots remaining</p>
+          <p style={{fontSize:11,color:'var(--muted2)',marginTop:3}}>PDF · DOCX · CSV · Images · TXT · MD &nbsp;·&nbsp; {MAX_FILES-total} slots remaining</p>
           <label onClick={e=>e.stopPropagation()} style={s.privacyToggle}>
             <input
               type="checkbox"
@@ -314,7 +314,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
         </div>
       )}
 
-      <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.csv,.txt,.png,.jpg,.jpeg,.gif,.webp,.tiff"
+      <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.csv,.txt,.md,.markdown,.png,.jpg,.jpeg,.gif,.webp,.tiff"
         style={{display:'none'}} onChange={e=>{handleFiles(e.target.files);e.target.value='';}} />
 
       {!isMobile && <div style={s.hint}>
