@@ -352,119 +352,6 @@ async def generate_prior_auth_packet_pdf_artifact(
     }
 
 
-@router.post("/agent-runs/{run_id}/missing-info-request/pdf")
-async def generate_prior_auth_missing_info_pdf_artifact(
-    run_id: str,
-    request: Request,
-    current_user: CurrentUser,
-    db=Depends(get_db),
-):
-    user_id = str(current_user["id"])
-    run = await get_accessible_vertical_run(db, run_id, user_id)
-    if run.get("vertical") != HEALTHCARE_VERTICAL or run.get("workflow_id") != PRIOR_AUTH_WORKFLOW_ID:
-        raise HTTPException(404, "Prior authorization run not found")
-    if run.get("status") not in ("pending_approval", "approved"):
-        raise HTTPException(400, f"Run is not ready for missing information request generation: {run.get('status')}")
-
-    workspace_id = str(run["workspace_id"]) if run.get("workspace_id") else None
-    workspace_role = await get_workspace_role(
-        db,
-        workspace_id,
-        user_id,
-        str(run["user_id"]) if run.get("user_id") else None,
-    )
-    if workspace_role not in ("owner", "editor"):
-        raise HTTPException(403, "Requires owner or editor role to generate a missing information request PDF")
-
-    result = _json(run.get("result_data")) or {}
-    packet = result.get("review_packet") or result.get("approved_packet") or result
-    gaps = packet.get("gap_detection") or {}
-    next_actions = (packet.get("prior_auth_packet") or {}).get("next_actions") or []
-    if not gaps.get("missing_items") and not next_actions:
-        raise HTTPException(400, "No missing information or next actions are available for this run.")
-
-    doc_id = str(uuid.uuid4())
-    owner_id = user_id
-    title = _missing_info_request_title(packet, run_id)
-    filename = _safe_filename(title, suffix=".pdf")
-    source_path = gcs.source_path(owner_id, doc_id, filename)
-    request_text = _format_missing_info_request_text(packet, run_id)
-    pdf_bytes = _render_missing_info_request_pdf(title, request_text)
-
-    await gcs.upload_bytes(source_path, pdf_bytes, "application/pdf")
-    await db.execute(
-        """
-        INSERT INTO documents
-          (id, user_id, workspace_id, filename, original_name, file_type, file_size,
-           gcs_source_path, gcs_chunks_dir, status, doc_type, doc_domain, doc_language, classified_at, doc_metadata)
-        VALUES ($1,$2,$3,$4,$5,'pdf',$6,$7,$8,'chunking','prior_authorization','medical','en',NOW(),$9::jsonb)
-        """,
-        doc_id,
-        owner_id,
-        workspace_id,
-        filename,
-        title,
-        len(pdf_bytes),
-        source_path,
-        gcs.chunks_dir(owner_id, doc_id),
-        json.dumps({
-            "source_kind": "healthcare_prior_auth_missing_info_request_pdf",
-            "source_run_id": run_id,
-            "source_document_id": str(run["document_id"]),
-            "generated_from": "prior_authorization_missing_info_request",
-        }),
-    )
-    await log_event(db, owner_id, "upload", metadata={
-        "doc_id": doc_id,
-        "filename": filename,
-        "file_size": len(pdf_bytes),
-        "file_type": "healthcare_prior_auth_missing_info_request_pdf",
-        "source_kind": "healthcare_prior_auth_missing_info_request_pdf",
-        "run_id": run_id,
-    })
-    await _persist_generated_prior_auth_document(
-        db,
-        doc_id=doc_id,
-        user_id=owner_id,
-        workspace_id=workspace_id,
-        run_id=run_id,
-        source_document_id=str(run["document_id"]),
-        filename=filename,
-        source_path=source_path,
-        text=request_text,
-        source_kind="healthcare_prior_auth_missing_info_request_pdf",
-        artifact_key="prior_auth_missing_info_request_artifact",
-    )
-    await audit(
-        db,
-        user_id=user_id,
-        action="healthcare_prior_auth_missing_info_request_pdf_generate",
-        resource_type="document",
-        resource_id=doc_id,
-        metadata={"run_id": run_id, "source_document_id": str(run["document_id"]), "workspace_role": workspace_role},
-        ip_address=ip_from(request),
-        user_agent=ua_from(request),
-    )
-    download_url = None
-    try:
-        download_url = await gcs.get_signed_url(source_path)
-    except Exception:
-        log.warning("Could not create signed URL for missing info request doc_id=%s", doc_id, exc_info=True)
-    return {
-        "ok": True,
-        "run_id": run_id,
-        "download_url": download_url,
-        "document": {
-            "doc_id": doc_id,
-            "filename": filename,
-            "original_name": title,
-            "file_type": "pdf",
-            "status": "embedded",
-            "gcs_source_path": source_path,
-        },
-    }
-
-
 @router.post("/workspaces/{workspace_id}/personas")
 async def set_healthcare_workspace_personas(
     workspace_id: str,
@@ -1734,49 +1621,20 @@ async def _persist_prior_auth_packet_document(
     source_path: str,
     text: str,
 ) -> None:
-    await _persist_generated_prior_auth_document(
-        db,
-        doc_id=doc_id,
-        user_id=user_id,
-        workspace_id=workspace_id,
-        run_id=run_id,
-        source_document_id=source_document_id,
-        filename=filename,
-        source_path=source_path,
-        text=text,
-        source_kind="healthcare_prior_auth_packet_pdf",
-        artifact_key="prior_auth_packet_artifact",
-    )
-
-
-async def _persist_generated_prior_auth_document(
-    db,
-    *,
-    doc_id: str,
-    user_id: str,
-    workspace_id: str | None,
-    run_id: str,
-    source_document_id: str,
-    filename: str,
-    source_path: str,
-    text: str,
-    source_kind: str,
-    artifact_key: str,
-) -> None:
     clean_text = sanitize_text_for_storage(text)
     doc_meta = {
         "document_id": doc_id,
         "user_id": user_id,
         "filename": filename,
         "file_type": "pdf",
-        "source_kind": source_kind,
+        "source_kind": "healthcare_prior_auth_packet_pdf",
         "workflow_id": PRIOR_AUTH_WORKFLOW_ID,
         "run_id": run_id,
         "source_document_id": source_document_id,
     }
     chunks = chunk_text(clean_text, doc_meta=doc_meta)
     if not chunks:
-        raise HealthcareIntelligenceError("Generated prior authorization artifact produced no chunks")
+        raise HealthcareIntelligenceError("Prior authorization packet produced no chunks")
     for chunk in chunks:
         await gcs.upload_text(gcs.chunk_path(user_id, doc_id, chunk.index), chunk.text)
     now = datetime.now(timezone.utc).isoformat()
@@ -1788,7 +1646,7 @@ async def _persist_generated_prior_auth_document(
             "file_type": "pdf",
             "total_chunks": len(chunks),
             "created_at": now,
-            "source_kind": source_kind,
+            "source_kind": "healthcare_prior_auth_packet_pdf",
             "workflow_id": PRIOR_AUTH_WORKFLOW_ID,
             "run_id": run_id,
             "source_document_id": source_document_id,
@@ -1799,7 +1657,7 @@ async def _persist_generated_prior_auth_document(
                 "word_count": c.word_count,
                 "char_count": c.char_count,
                 "gcs_path": gcs.chunk_path(user_id, doc_id, c.index),
-                "source_kind": source_kind,
+                "source_kind": "healthcare_prior_auth_packet_pdf",
                 "run_id": run_id,
                 "source_document_id": source_document_id,
             }
@@ -1818,7 +1676,7 @@ async def _persist_generated_prior_auth_document(
         """,
         doc_id,
         len(chunks),
-        json.dumps({artifact_key: {"run_id": run_id, "chunk_count": len(chunks), "source_path": source_path}}),
+        json.dumps({"prior_auth_packet_artifact": {"run_id": run_id, "chunk_count": len(chunks), "source_path": source_path}}),
     )
     await check_and_log_daily_event(
         db,
@@ -1826,7 +1684,7 @@ async def _persist_generated_prior_auth_document(
         "embedding",
         "max_embeds_day",
         quantity=len(chunks),
-        metadata={"doc_id": doc_id, "chunk_count": len(chunks), "source_kind": source_kind},
+        metadata={"doc_id": doc_id, "chunk_count": len(chunks), "source_kind": "healthcare_prior_auth_packet_pdf"},
     )
     await delete_document_vectors(doc_id)
     for chunk in chunks:
@@ -1850,66 +1708,6 @@ def _prior_auth_title(packet: dict, run_id: str) -> str:
     patient = ((_field_value(context, "patient_name") or "Patient").strip() or "Patient")
     requested = ((request.get("requested_item") or {}).get("value") or "Prior Authorization Packet").strip()
     return f"Prior Authorization Packet - {patient} - {requested} - {run_id[:8]}"
-
-
-def _missing_info_request_title(packet: dict, run_id: str) -> str:
-    context = packet.get("patient_context") or {}
-    request = packet.get("prior_auth_request") or {}
-    patient = ((_field_value(context, "patient_name") or "Patient").strip() or "Patient")
-    requested = ((request.get("requested_item") or {}).get("value") or "Prior Authorization").strip()
-    return f"Missing Information Request - {patient} - {requested} - {run_id[:8]}"
-
-
-def _format_missing_info_request_text(packet: dict, run_id: str) -> str:
-    request = packet.get("prior_auth_request") or {}
-    gaps = packet.get("gap_detection") or {}
-    prior_packet = packet.get("prior_auth_packet") or {}
-    context = packet.get("patient_context") or {}
-    patient_name = _field_value(context, "patient_name")
-    requested_item = _nested_field_value(request.get("requested_item"))
-    missing_items = _missing_info_items_by_priority(gaps.get("missing_items"))
-    high_priority = _natural_join(missing_items["high"]) if missing_items["high"] else ""
-    additional = _natural_join(missing_items["other"]) if missing_items["other"] else ""
-    next_actions = _summarize_next_actions(prior_packet.get("next_actions"))
-    decision = _humanize_prior_auth_decision(prior_packet.get("recommended_decision"))
-
-    missing_paragraph = (
-        f"To complete the prior authorization review for {requested_item}, please provide {high_priority}."
-        if high_priority else
-        f"To complete the prior authorization review for {requested_item}, please provide the missing clinical and administrative details identified during review."
-    )
-    if additional:
-        missing_paragraph += f" Additional helpful information includes {additional}."
-
-    lines = [
-        "MISSING INFORMATION REQUEST",
-        "",
-        "Request Summary",
-        (
-            f"This request concerns {patient_name}, date of birth {_field_value(context, 'date_of_birth')}, "
-            f"for {requested_item}. The prior authorization packet was reviewed and is not yet ready for payer submission."
-        ),
-        "",
-        "Information Needed",
-        missing_paragraph,
-        "",
-        "Why This Is Needed",
-        (
-            "The payer review may require complete service codes, diagnosis details, symptom duration, conservative treatment history, "
-            "and a provider statement explaining why the requested service is needed now. Without these details, the request may be delayed, "
-            "returned for more information, or denied for incomplete documentation."
-        ),
-        "",
-        "Recommended Follow-Up",
-        next_actions,
-        "",
-        "Submission Readiness",
-        decision,
-        "",
-        "Review Notice",
-        "This request is an administrative documentation aid. A qualified human reviewer should confirm the requested items before payer submission.",
-    ]
-    return sanitize_text_for_storage("\n".join(lines))
 
 
 def _format_prior_auth_packet_text(packet: dict, run_id: str) -> str:
@@ -2036,9 +1834,17 @@ def _summarize_clinical_story(request: dict, evidence: dict) -> str:
 
 
 def _summarize_missing_evidence(items) -> str:
-    grouped = _missing_info_items_by_priority(items)
-    high = grouped["high"]
-    other = grouped["other"]
+    high = []
+    other = []
+    for item in _dict_items(items):
+        missing = _clean_prior_auth_pdf_text(item.get("item") or "")
+        priority = str(item.get("priority") or "").lower()
+        if not missing:
+            continue
+        if priority == "high":
+            high.append(missing)
+        else:
+            other.append(missing)
     if high or other:
         parts = []
         if high:
@@ -2047,22 +1853,6 @@ def _summarize_missing_evidence(items) -> str:
             parts.append(f"Additional items to clarify include {_natural_join(_compact_unique(other, 4))}")
         return _sentence_from_fragments(parts)
     return "No missing evidence was identified, but human review is still required before submission."
-
-
-def _missing_info_items_by_priority(items) -> dict[str, list[str]]:
-    grouped = {"high": [], "other": []}
-    for item in _dict_items(items):
-        missing = _clean_prior_auth_pdf_text(item.get("item") or "")
-        priority = str(item.get("priority") or "").lower()
-        if not missing:
-            continue
-        if priority == "high":
-            grouped["high"].append(missing)
-        else:
-            grouped["other"].append(missing)
-    grouped["high"] = _compact_unique(grouped["high"], 6)
-    grouped["other"] = _compact_unique(grouped["other"], 5)
-    return grouped
 
 
 def _summarize_submission_risks(items) -> str:
@@ -2205,50 +1995,6 @@ def _render_prior_auth_packet_pdf(title: str, text: str) -> bytes:
                 else:
                     story.append(para)
         doc.build(story, onFirstPage=_prior_auth_pdf_footer, onLaterPages=_prior_auth_pdf_footer)
-        return buffer.getvalue()
-    except Exception:
-        return _render_minimal_pdf(title, text)
-
-
-def _render_missing_info_request_pdf(title: str, text: str) -> bytes:
-    try:
-        from reportlab.lib.pagesizes import LETTER
-        from reportlab.lib.styles import getSampleStyleSheet
-        from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer
-
-        buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=LETTER, rightMargin=46, leftMargin=46, topMargin=42, bottomMargin=48)
-        styles = _avs_pdf_styles(getSampleStyleSheet())
-        story = _missing_info_pdf_header(title, styles)
-
-        section_titles = {
-            "MISSING INFORMATION REQUEST",
-            "Request Summary",
-            "Information Needed",
-            "Why This Is Needed",
-            "Recommended Follow-Up",
-            "Submission Readiness",
-            "Review Notice",
-        }
-        pending_heading = None
-        for line in text.splitlines():
-            clean = line.strip()
-            if not clean:
-                story.append(Spacer(1, 8))
-                continue
-            if clean == "MISSING INFORMATION REQUEST":
-                continue
-            if clean in section_titles:
-                pending_heading = Paragraph(_xml_escape(clean), styles["SectionHeading"])
-            else:
-                paragraph_style = styles["NoticeBody"] if pending_heading and pending_heading.getPlainText() == "Review Notice" else styles["Body"]
-                para = Paragraph(_xml_escape(clean), paragraph_style)
-                if pending_heading:
-                    story.append(KeepTogether([pending_heading, Spacer(1, 5), para]))
-                    pending_heading = None
-                else:
-                    story.append(para)
-        doc.build(story, onFirstPage=_missing_info_pdf_footer, onLaterPages=_missing_info_pdf_footer)
         return buffer.getvalue()
     except Exception:
         return _render_minimal_pdf(title, text)
@@ -2535,16 +2281,6 @@ def _prior_auth_pdf_header(title: str, styles) -> list:
     )
 
 
-def _missing_info_pdf_header(title: str, styles) -> list:
-    return _healthcare_pdf_header(
-        title,
-        styles,
-        document_title="Missing Information Request",
-        document_subtitle="Care team follow-up request",
-        brand_tag="Document Intelligence | Prior Authorization",
-    )
-
-
 def _healthcare_pdf_header(title: str, styles, *, document_title: str, document_subtitle: str, brand_tag: str) -> list:
     from reportlab.lib import colors
     from reportlab.graphics.shapes import Circle, Drawing, Line
@@ -2630,14 +2366,6 @@ def _prior_auth_pdf_footer(canvas, doc):
         canvas,
         doc,
         "Generated by Adar DocIntel Prior Authorization Assistant. Human review required before payer submission.",
-    )
-
-
-def _missing_info_pdf_footer(canvas, doc):
-    _healthcare_pdf_footer(
-        canvas,
-        doc,
-        "Generated by Adar DocIntel Prior Authorization Assistant. Human review required before requesting or submitting information.",
     )
 
 

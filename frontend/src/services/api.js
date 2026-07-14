@@ -460,6 +460,22 @@ export async function generateAfterVisitSummaryPdf(runId) {
   }));
 }
 
+export async function generatePriorAuthPacketPdf(runId) {
+  return handleRes(await fetch(`${LONG_BASE}/healthcare/agent-runs/${runId}/prior-auth-packet/pdf`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({}),
+  }));
+}
+
+export async function generatePriorAuthMissingInfoPdf(runId) {
+  return handleRes(await fetch(`${LONG_BASE}/healthcare/agent-runs/${runId}/missing-info-request/pdf`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({}),
+  }));
+}
+
 // ── Agent workflow evaluations ───────────────────────────────────────────────
 export async function evaluateAgentWorkflow(vertical, runId, { persist = true } = {}) {
   return handleRes(await fetch(`${BASE}/agent-evals/${vertical}/runs/${runId}`, {

@@ -9,6 +9,8 @@ import {
   fetchHealthcareAgentRun,
   fetchLatestHealthcareAgentWorkflow,
   generateAfterVisitSummaryPdf,
+  generatePriorAuthMissingInfoPdf,
+  generatePriorAuthPacketPdf,
   listDocuments,
   listWorkspaceDocuments,
   rerunHealthcareTranscriptionWorkflow,
@@ -431,6 +433,64 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
     }
   };
 
+  const generatePriorAuthPdf = async () => {
+    const key = 'priorAuth';
+    const agentRun = runs[key];
+    if (!agentRun?.run_id) return;
+    setLoading(true);
+    try {
+      const reviewPacket = editedPackets[key] || packetFromRun(agentRun) || {};
+      const draft = await saveHealthcareReviewDraft(agentRun.run_id, {
+        reviewPacket,
+        notes: approvalNotes[key] || '',
+        persona: selectedPersonas[key] || accessContexts[key]?.default_persona || '',
+      });
+      updateRun(key, draft);
+      await refreshChangeHistory(key, draft.run_id);
+      const data = await generatePriorAuthPacketPdf(agentRun.run_id);
+      if (data.document) {
+        onCreated?.(data.document);
+      }
+      if (data.download_url) {
+        window.open(data.download_url, '_blank', 'noopener,noreferrer');
+      }
+      toast('Prior authorization packet PDF generated, saved, chunked, and embedded', 'success');
+    } catch (e) {
+      toast(e.message || 'Could not generate prior authorization packet PDF', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generateMissingInfoPdf = async () => {
+    const key = 'priorAuth';
+    const agentRun = runs[key];
+    if (!agentRun?.run_id) return;
+    setLoading(true);
+    try {
+      const reviewPacket = editedPackets[key] || packetFromRun(agentRun) || {};
+      const draft = await saveHealthcareReviewDraft(agentRun.run_id, {
+        reviewPacket,
+        notes: approvalNotes[key] || '',
+        persona: selectedPersonas[key] || accessContexts[key]?.default_persona || '',
+      });
+      updateRun(key, draft);
+      await refreshChangeHistory(key, draft.run_id);
+      const data = await generatePriorAuthMissingInfoPdf(agentRun.run_id);
+      if (data.document) {
+        onCreated?.(data.document);
+      }
+      if (data.download_url) {
+        window.open(data.download_url, '_blank', 'noopener,noreferrer');
+      }
+      toast('Missing information request PDF generated, saved, chunked, and embedded', 'success');
+    } catch (e) {
+      toast(e.message || 'Could not generate missing information request PDF', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   async function refreshAccessContext(key, runId, alive = true) {
     if (!runId) return null;
     try {
@@ -659,7 +719,13 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
               <ChangeHistory changes={changeHistories[activeTab] || []} />
 
               {activeTab === 'priorAuth' ? (
-                <PriorAuthPacket packet={packet} onPatch={updatePacket} />
+                <PriorAuthPacket
+                  packet={packet}
+                  onPatch={updatePacket}
+                  onGeneratePriorAuthPdf={generatePriorAuthPdf}
+                  onGenerateMissingInfoPdf={generateMissingInfoPdf}
+                  loading={loading}
+                />
               ) : activeTab === 'scribe' ? (
                 <ClinicalScribePacket packet={packet} onPatch={updatePacket} onGenerateAvsPdf={generateAvsPdf} loading={loading} />
               ) : (
@@ -721,16 +787,33 @@ function ClinicalPacket({ packet, onPatch }) {
   );
 }
 
-function PriorAuthPacket({ packet, onPatch }) {
+function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMissingInfoPdf, loading }) {
   return (
     <>
       <PatientContext packet={packet} onPatch={onPatch} />
       <section style={s.section}>
-        <h3 style={s.h3}>Prior Authorization Packet</h3>
+        <div style={s.sectionHead}>
+          <h3 style={s.h3}>Prior Authorization Packet</h3>
+          <button
+            type="button"
+            style={s.pdfBtn}
+            disabled={loading || !packet.prior_auth_packet}
+            onClick={onGeneratePriorAuthPdf}>
+            Generate packet PDF
+          </button>
+          <button
+            type="button"
+            style={s.secondarySmall}
+            disabled={loading || !packet.gap_detection}
+            onClick={onGenerateMissingInfoPdf}>
+            Missing info request
+          </button>
+        </div>
         <EditableText value={packet.prior_auth_packet?.medical_necessity_narrative || packet.prior_auth_packet?.packet_summary || ''} onChange={value => onPatch(['prior_auth_packet','medical_necessity_narrative'], value)} placeholder="Prior authorization narrative..." />
         <div style={s.meta}>Decision: {packet.prior_auth_packet?.recommended_decision || 'needs review'}</div>
         <Rows rows={packet.policy_documents || []} cols={['document_name','doc_type','document_id']} title="Policy documents used" />
         <Rows rows={packet.policy_criteria?.criteria || []} cols={['criterion_id','criterion','required','category','source']} title="Payer criteria" editable onChange={rows => onPatch(['policy_criteria','criteria'], rows)} />
+        <Rows rows={packet.prior_auth_packet?.criteria_checklist || []} cols={['criterion','status','evidence','source']} title="Criteria checklist" editable onChange={rows => onPatch(['prior_auth_packet','criteria_checklist'], rows)} />
         <Rows rows={packet.evidence_map?.criteria_matches || []} cols={['criterion_id','status','patient_evidence','policy_source','patient_source','confidence']} title="Criteria evidence map" editable onChange={rows => onPatch(['evidence_map','criteria_matches'], rows)} />
         <Rows rows={packet.gap_detection?.missing_items || []} cols={['item','reason','priority','source']} title="Missing items" editable onChange={rows => onPatch(['gap_detection','missing_items'], rows)} />
         <Rows rows={packet.gap_detection?.submission_risks || []} cols={['risk','priority','recommended_action']} title="Submission risks" editable onChange={rows => onPatch(['gap_detection','submission_risks'], rows)} />

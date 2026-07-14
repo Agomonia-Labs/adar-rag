@@ -50,7 +50,9 @@ Use the files in `sample_documents/prior_auth_mvp1/`:
    - Submission risks
    - Medical necessity narrative
    - Next actions
-12. Save review draft or approve the packet only after human review.
+12. Generate the prior authorization packet PDF when the packet is ready for human review.
+13. If the packet is not ready, generate the missing information request PDF and send it to the care team/provider for completion.
+14. Save review draft or approve the packet only after human review.
 
 ## Acceptance Criteria
 
@@ -59,6 +61,7 @@ Use the files in `sample_documents/prior_auth_mvp1/`:
 - User can select the payer policy document explicitly.
 - Output includes requested service, diagnoses, policy criteria, evidence map, gap list, narrative, and next actions.
 - Output contains guardrails stating that this is administrative assistance only and requires human review.
+- User can generate a missing information request PDF when documentation is incomplete.
 
 ## Safety Boundary
 
