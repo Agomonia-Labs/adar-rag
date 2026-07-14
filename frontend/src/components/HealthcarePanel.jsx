@@ -788,6 +788,26 @@ function ClinicalPacket({ packet, onPatch }) {
 }
 
 function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMissingInfoPdf, loading }) {
+  const codeReadiness = buildCodeReadiness(packet);
+  const recommendCodes = () => {
+    onPatch(['code_recommendations'], generateCodeRecommendations(packet));
+  };
+  const markCodeRows = status => {
+    const rows = packet.code_recommendations?.candidates || [];
+    onPatch(['code_recommendations','candidates'], rows.map(row => {
+      const missingCode = !row.code || row.code === 'needs_lookup';
+      const nextStatus = status === 'coder_approved' && missingCode ? 'coder_review_required' : status;
+      return {
+        ...row,
+        review_status: nextStatus,
+        reviewer_note: row.reviewer_note || (
+          nextStatus === 'coder_approved'
+            ? 'Certified coder/billing reviewer approved for packet use.'
+            : missingCode ? 'Enter final code before approving for packet use.' : ''
+        ),
+      };
+    }));
+  };
   return (
     <>
       <PatientContext packet={packet} onPatch={onPatch} />
@@ -809,6 +829,26 @@ function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMi
             Missing info request
           </button>
         </div>
+        <CodeReadinessPanel readiness={codeReadiness} />
+        <section style={s.subSection}>
+          <div style={s.tableHead}>
+            <div>
+              <div style={s.tableTitle}>AI code recommendations</div>
+              <div style={s.meta}>AI fills candidate diagnosis, procedure, medication, and supply code rows. Certified coder must approve or edit before final packet use.</div>
+            </div>
+            <div style={s.inlineActions}>
+              <button type="button" style={s.rowBtn} onClick={recommendCodes}>AI recommend codes</button>
+              <button type="button" style={s.rowBtn} disabled={!packet.code_recommendations?.candidates?.length} onClick={() => markCodeRows('coder_approved')}>Approve coded rows</button>
+              <button type="button" style={s.rowBtn} disabled={!packet.code_recommendations?.candidates?.length} onClick={() => markCodeRows('coder_review_required')}>Needs coder review</button>
+            </div>
+          </div>
+          <Rows
+            rows={packet.code_recommendations?.candidates || []}
+            cols={['code_set','code','description','basis','confidence','review_status','reviewer_note']}
+            editable
+            onChange={rows => onPatch(['code_recommendations','candidates'], rows)}
+          />
+        </section>
         <EditableText value={packet.prior_auth_packet?.medical_necessity_narrative || packet.prior_auth_packet?.packet_summary || ''} onChange={value => onPatch(['prior_auth_packet','medical_necessity_narrative'], value)} placeholder="Prior authorization narrative..." />
         <div style={s.meta}>Decision: {packet.prior_auth_packet?.recommended_decision || 'needs review'}</div>
         <Rows rows={packet.policy_documents || []} cols={['document_name','doc_type','document_id']} title="Policy documents used" />
@@ -820,6 +860,26 @@ function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMi
         <Rows rows={packet.prior_auth_packet?.next_actions || []} cols={['action','owner','priority']} title="Next actions" editable onChange={rows => onPatch(['prior_auth_packet','next_actions'], rows)} />
       </section>
     </>
+  );
+}
+
+function CodeReadinessPanel({ readiness }) {
+  return (
+    <div style={s.codeReadiness}>
+      <div style={s.codeReadinessHead}>
+        <strong>Code readiness</strong>
+        <span style={readiness.ready ? s.readyPill : s.reviewPill}>{readiness.ready ? 'Ready for coder review' : 'Needs coding review'}</span>
+      </div>
+      <div style={s.codeGrid}>
+        {readiness.items.map(item => (
+          <div key={item.label} style={s.codeItem}>
+            <b>{item.label}</b>
+            <span>{item.value}</span>
+          </div>
+        ))}
+      </div>
+      <div style={s.notice}>{readiness.notice}</div>
+    </div>
   );
 }
 
@@ -1127,6 +1187,226 @@ function ChangeHistory({ changes }) {
   );
 }
 
+function generateCodeRecommendations(packet) {
+  const request = packet.prior_auth_request || {};
+  const requestedItem = request.requested_item?.value || '';
+  const existingRows = packet.code_recommendations?.candidates || [];
+  const packetText = collectPacketText(packet).join(' ');
+  const candidates = [
+    ...diagnosisCodeCandidates(request),
+    ...serviceCodeCandidates(requestedItem, request.service_category, packetText),
+    ...medicationCodeCandidates(packet),
+    ...explicitCodeCandidates(packetText),
+  ];
+  return {
+    generated_at: new Date().toISOString(),
+    guardrail: 'AI-recommended candidate codes only. Certified coder or qualified billing reviewer must validate final ICD/CPT/HCPCS/RxNorm/NDC codes using current licensed references before payer submission.',
+    candidates: mergeCodeCandidates(dedupeCodeCandidates(candidates), existingRows),
+  };
+}
+
+function diagnosisCodeCandidates(request) {
+  const candidates = [];
+  const diagnoses = Array.isArray(request.diagnoses) ? request.diagnoses : [];
+  diagnoses.forEach(item => {
+    const description = item.description || item.indication || item.value || 'Diagnosis or indication';
+    if (item.code) {
+      candidates.push(codeCandidate('ICD-10-CM', item.code, description, 'Extracted diagnosis code from clinical/request packet.', item.confidence ?? 0.78));
+    } else if (description) {
+      candidates.push(codeCandidate('ICD-10-CM', 'needs_lookup', description, 'Diagnosis or indication is present, but ICD-10-CM code needs coder lookup/validation.', 0.45));
+    }
+  });
+  if (!candidates.length && (request.summary || request.clinical_rationale?.length)) {
+    candidates.push(codeCandidate('ICD-10-CM', 'needs_lookup', 'Diagnosis / indication needs coding review', 'Clinical rationale exists, but a diagnosis code was not extracted.', 0.35));
+  }
+  return candidates;
+}
+
+function serviceCodeCandidates(requestedItem, serviceCategory, packetText) {
+  const description = requestedItem || serviceCategory || 'Requested service/procedure';
+  const candidates = [];
+  const cptCodes = extractCodes(packetText, /\b(?:CPT|procedure code|service code)[:#\s-]*(\d{5})\b/gi, 'CPT');
+  const hcpcsCodes = extractCodes(packetText, /\b(?:HCPCS|supply code)[:#\s-]*([A-Z]\d{4})\b/gi, 'HCPCS');
+  cptCodes.forEach(code => candidates.push(codeCandidate('CPT', code, description, 'Extracted from explicit CPT/procedure code text in packet.', 0.78)));
+  hcpcsCodes.forEach(code => candidates.push(codeCandidate('HCPCS', code, description, 'Extracted from explicit HCPCS/supply code text in packet.', 0.78)));
+  if (!candidates.length && description) {
+    candidates.push(codeCandidate('CPT/HCPCS', 'needs_lookup', description, 'Requested service is present; coder should select CPT/HCPCS based on order, payer rule, and current code reference.', 0.4));
+  }
+  return candidates;
+}
+
+function medicationCodeCandidates(packet) {
+  const meds = [
+    ...(packet.medication_review?.medications || []),
+    ...(packet.medications || []),
+    ...(packet.prior_auth_request?.medications || []),
+  ];
+  return meds
+    .map(item => {
+      const name = item.name || item.medication || item.drug_name || item.value || '';
+      if (!name) return null;
+      const existing = item.ndc || item.rxnorm || item.code || '';
+      const codeSet = item.ndc ? 'NDC' : item.rxnorm ? 'RxNorm' : 'RxNorm/NDC';
+      return codeCandidate(
+        codeSet,
+        existing || 'needs_lookup',
+        [name, item.dose, item.route, item.frequency].filter(Boolean).join(' ') || name,
+        existing ? 'Extracted medication code from packet.' : 'Medication is present; pharmacy/coder should validate RxNorm or NDC when needed by payer.',
+        existing ? 0.75 : 0.38
+      );
+    })
+    .filter(Boolean);
+}
+
+function explicitCodeCandidates(text) {
+  const candidates = [];
+  extractCodes(text, /\b(?:ICD-?10(?:-CM)?|diagnosis code)[:#\s-]*([A-TV-Z][0-9][0-9AB](?:\.[0-9A-TV-Z]{1,4})?)\b/gi, 'ICD-10-CM')
+    .forEach(code => candidates.push(codeCandidate('ICD-10-CM', code, 'Diagnosis code found in packet text', 'Extracted from explicit ICD/diagnosis code text.', 0.78)));
+  extractCodes(text, /\b(?:CPT|procedure code|service code)[:#\s-]*(\d{5})\b/gi, 'CPT')
+    .forEach(code => candidates.push(codeCandidate('CPT', code, 'Procedure code found in packet text', 'Extracted from explicit CPT/procedure code text.', 0.78)));
+  extractCodes(text, /\b(?:HCPCS|supply code)[:#\s-]*([A-Z]\d{4})\b/gi, 'HCPCS')
+    .forEach(code => candidates.push(codeCandidate('HCPCS', code, 'HCPCS code found in packet text', 'Extracted from explicit HCPCS/supply code text.', 0.78)));
+  extractCodes(text, /\b(?:NDC)[:#\s-]*(\d{4,5}-\d{3,4}-\d{1,2})\b/gi, 'NDC')
+    .forEach(code => candidates.push(codeCandidate('NDC', code, 'Medication NDC found in packet text', 'Extracted from explicit NDC text.', 0.78)));
+  return candidates;
+}
+
+function extractCodes(text, pattern) {
+  const codes = [];
+  String(text || '').replace(pattern, (_, code) => {
+    if (code) codes.push(String(code).toUpperCase());
+    return _;
+  });
+  return codes;
+}
+
+function collectPacketText(value, collected = []) {
+  if (value == null) return collected;
+  if (typeof value === 'string' || typeof value === 'number') {
+    collected.push(String(value));
+    return collected;
+  }
+  if (Array.isArray(value)) {
+    value.forEach(item => collectPacketText(item, collected));
+    return collected;
+  }
+  if (typeof value === 'object') {
+    Object.values(value).forEach(item => collectPacketText(item, collected));
+  }
+  return collected;
+}
+
+function codeCandidate(codeSet, code, description, basis, confidence) {
+  return {
+    code_set: codeSet,
+    code,
+    description,
+    basis,
+    confidence,
+    review_status: 'coder_review_required',
+    reviewer_note: '',
+  };
+}
+
+function dedupeCodeCandidates(candidates) {
+  const seen = new Set();
+  return candidates.filter(item => {
+    const key = `${item.code_set}:${item.code}:${item.description}`.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function mergeCodeCandidates(candidates, existingRows) {
+  const existingByKey = new Map((existingRows || []).map(row => [`${row.code_set}:${row.code}:${row.description}`.toLowerCase(), row]));
+  const merged = candidates.map(row => {
+    const existing = existingByKey.get(`${row.code_set}:${row.code}:${row.description}`.toLowerCase());
+    return existing ? { ...row, review_status: existing.review_status || row.review_status, reviewer_note: existing.reviewer_note || row.reviewer_note } : row;
+  });
+  (existingRows || []).forEach(row => {
+    const key = `${row.code_set}:${row.code}:${row.description}`.toLowerCase();
+    if (!merged.some(item => `${item.code_set}:${item.code}:${item.description}`.toLowerCase() === key)) {
+      merged.push(row);
+    }
+  });
+  return merged;
+}
+
+function buildCodeReadiness(packet) {
+  const request = packet.prior_auth_request || {};
+  const diagnoses = Array.isArray(request.diagnoses) ? request.diagnoses : [];
+  const diagnosisCodes = diagnoses.map(item => item?.code).filter(Boolean);
+  const codeCandidates = packet.code_recommendations?.candidates || [];
+  const approvedCodes = codeCandidates.filter(isCoderApprovedCode);
+  const icdCandidates = codeCandidates.filter(item => item.code_set === 'ICD-10-CM' && item.code && item.code !== 'needs_lookup');
+  const procedureCandidates = codeCandidates.filter(item => ['CPT','HCPCS','CPT/HCPCS'].includes(item.code_set) && item.code && item.code !== 'needs_lookup');
+  const approvedIcd = approvedCodes.filter(item => item.code_set === 'ICD-10-CM');
+  const approvedProcedure = approvedCodes.filter(item => ['CPT','HCPCS','CPT/HCPCS'].includes(item.code_set));
+  const approvedMedication = approvedCodes.filter(item => ['RxNorm','NDC','RxNorm/NDC'].includes(item.code_set));
+  const reviewedCodes = codeCandidates.filter(item => {
+    const status = String(item.review_status || '').toLowerCase();
+    return status.includes('approved') || status.includes('reviewed');
+  });
+  const missingItems = packet.gap_detection?.missing_items || [];
+  const missingText = missingItems.map(item => `${item.item || ''} ${item.reason || ''}`).join(' ').toLowerCase();
+  const requestedItem = request.requested_item?.value || 'requested service not found';
+  const serviceCategory = request.service_category || 'unknown';
+  const procedureDetails = describeProcedureDetails(requestedItem, serviceCategory);
+  const hasCptGap = missingText.includes('cpt');
+  const hasIcdGap = missingText.includes('icd') || missingText.includes('diagnosis code');
+  const ready = approvedIcd.length > 0 && approvedProcedure.length > 0;
+  return {
+    ready,
+    items: [
+      {
+        label: 'ICD-10-CM',
+        value: approvedIcd.length
+          ? `Coder approved: ${approvedIcd.map(item => item.code).join(', ')}`
+          : icdCandidates.length
+          ? `AI candidate${icdCandidates.length === 1 ? '' : 's'} need approval: ${icdCandidates.map(item => item.code).join(', ')}`
+          : diagnosisCodes.length ? `Extracted candidate${diagnosisCodes.length === 1 ? '' : 's'}: ${diagnosisCodes.join(', ')}` : 'Missing or not confirmed',
+      },
+      {
+        label: 'CPT / HCPCS',
+        value: approvedProcedure.length
+          ? `Coder approved: ${approvedProcedure.map(item => item.code).join(', ')}`
+          : procedureCandidates.length
+          ? `AI candidate${procedureCandidates.length === 1 ? '' : 's'} need approval: ${procedureCandidates.map(item => item.code).join(', ')}`
+          : hasCptGap ? 'Missing from order/request' : 'Needs coder lookup/validation',
+      },
+      {
+        label: 'Medication / supply',
+        value: approvedMedication.length
+          ? `Coder approved: ${approvedMedication.map(item => item.code).join(', ')}`
+          : codeCandidates.some(item => ['RxNorm','NDC','RxNorm/NDC'].includes(item.code_set)) ? 'Medication code candidates need approval' : procedureDetails,
+      },
+      {
+        label: 'Coder review',
+        value: reviewedCodes.length ? `${reviewedCodes.length} code row${reviewedCodes.length === 1 ? '' : 's'} marked reviewed/approved` : 'Approve or edit code rows before generating final packet',
+      },
+    ],
+    notice: 'Code readiness is a pre-prior-auth review step. AI-recommended values are candidates only. Edit rows as needed and mark coder_approved before final packet use.',
+  };
+}
+
+function isCoderApprovedCode(item) {
+  const status = String(item.review_status || '').toLowerCase();
+  return item.code && item.code !== 'needs_lookup' && (status.includes('approved') || status.includes('reviewed'));
+}
+
+function describeProcedureDetails(requestedItem, serviceCategory) {
+  const text = String(requestedItem || '').toLowerCase();
+  const details = [];
+  if (text.includes('mri')) details.push('MRI');
+  if (text.includes('lumbar')) details.push('lumbar spine');
+  if (text.includes('with and without contrast')) details.push('with and without contrast');
+  else if (text.includes('without contrast')) details.push('without contrast');
+  else if (text.includes('with contrast')) details.push('with contrast');
+  else if (text.includes('mri')) details.push('contrast status needs confirmation');
+  return details.length ? details.join(' · ') : `Confirm procedure details for ${serviceCategory || 'requested service'}`;
+}
+
 function buildReadiness(activeTab, packet, run, evaluation) {
   const context = packet.patient_context || {};
   const contextCount = ['patient_name','encounter_date','provider','encounter_type'].filter(k => context[k]?.value).length;
@@ -1299,6 +1579,7 @@ const s = {
   approve:{background:'#2563eb',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:12,fontWeight:800,cursor:'pointer'},
   secondarySmall:{background:'var(--s3)',color:'var(--tx)',border:'1px solid var(--b2)',borderRadius:8,padding:'8px 12px',fontSize:12,fontWeight:800,cursor:'pointer'},
   reviewActions:{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'},
+  inlineActions:{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'},
   hint:{fontSize:12,color:'var(--muted2)'},
   policyPicker:{display:'flex',flexDirection:'column',gap:8,padding:'10px 18px',borderBottom:'1px solid var(--b1)',background:'rgba(37,99,235,.07)'},
   policyPickerHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,fontSize:12,color:'var(--tx2)',flexWrap:'wrap'},
@@ -1361,6 +1642,13 @@ const s = {
   recs:{marginTop:10,display:'flex',flexDirection:'column',gap:6},
   rec:{fontSize:12,color:'var(--tx2)',border:'1px solid rgba(251,191,36,.2)',background:'rgba(251,191,36,.06)',borderRadius:8,padding:'7px 9px'},
   notice:{fontSize:12,color:'#fbbf24',border:'1px solid rgba(251,191,36,.24)',background:'rgba(251,191,36,.07)',borderRadius:8,padding:10,marginBottom:10},
+  subSection:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.025)',borderRadius:8,padding:12,margin:'10px 0 12px'},
+  codeReadiness:{border:'1px solid rgba(14,165,233,.24)',background:'rgba(14,165,233,.06)',borderRadius:8,padding:12,margin:'10px 0 12px',display:'flex',flexDirection:'column',gap:10},
+  codeReadinessHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,fontSize:13,color:'var(--tx)',flexWrap:'wrap'},
+  readyPill:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#4ade80',background:'rgba(74,222,128,.1)',border:'1px solid rgba(74,222,128,.28)',borderRadius:20,padding:'3px 8px'},
+  reviewPill:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#fbbf24',background:'rgba(251,191,36,.1)',border:'1px solid rgba(251,191,36,.28)',borderRadius:20,padding:'3px 8px'},
+  codeGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:8},
+  codeItem:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.035)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:5,fontSize:12,color:'var(--tx2)'},
   historyList:{display:'flex',flexDirection:'column',gap:8},
   historyItem:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.03)',borderRadius:8,padding:10},
   historyTop:{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',fontSize:12},

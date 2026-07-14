@@ -1867,11 +1867,14 @@ def _format_missing_info_request_text(packet: dict, run_id: str) -> str:
     context = packet.get("patient_context") or {}
     patient_name = _field_value(context, "patient_name")
     requested_item = _nested_field_value(request.get("requested_item"))
-    missing_items = _missing_info_items_by_priority(gaps.get("missing_items"))
+    effective_missing = _effective_missing_items(packet)
+    missing_items = _missing_info_items_by_priority(effective_missing)
     high_priority = _natural_join(missing_items["high"]) if missing_items["high"] else ""
     additional = _natural_join(missing_items["other"]) if missing_items["other"] else ""
     next_actions = _summarize_next_actions(prior_packet.get("next_actions"))
     decision = _humanize_prior_auth_decision(prior_packet.get("recommended_decision"))
+    code_readiness = _prior_auth_code_readiness_summary(packet)
+    code_actions = _prior_auth_code_action_summary(packet)
 
     missing_paragraph = (
         f"To complete the prior authorization review for {requested_item}, please provide {high_priority}."
@@ -1892,6 +1895,12 @@ def _format_missing_info_request_text(packet: dict, run_id: str) -> str:
         "",
         "Information Needed",
         missing_paragraph,
+        "",
+        "Code Readiness",
+        code_readiness,
+        "",
+        "Code Review Actions",
+        code_actions,
         "",
         "Why This Is Needed",
         (
@@ -1923,10 +1932,14 @@ def _format_prior_auth_packet_text(packet: dict, run_id: str) -> str:
     diagnoses = _summarize_diagnoses(request.get("diagnoses"))
     criteria_review = _summarize_prior_auth_readiness(prior_packet.get("criteria_checklist"), evidence.get("criteria_matches"))
     clinical_story = _summarize_clinical_story(request, evidence)
-    missing_story = _summarize_missing_evidence(gaps.get("missing_items"))
+    effective_missing = _effective_missing_items(packet)
+    missing_story = _summarize_missing_evidence(effective_missing)
     risk_story = _summarize_submission_risks(gaps.get("submission_risks"))
     next_actions = _summarize_next_actions(prior_packet.get("next_actions"))
     decision = _humanize_prior_auth_decision(prior_packet.get("recommended_decision"))
+    code_readiness = _prior_auth_code_readiness_summary(packet)
+    final_codes = _prior_auth_final_codes_summary(packet)
+    readiness_lead = _prior_auth_packet_readiness_lead(packet)
     medical_necessity = _clean_prior_auth_pdf_text(
         prior_packet.get("medical_necessity_narrative")
         or prior_packet.get("packet_summary")
@@ -1950,9 +1963,15 @@ def _format_prior_auth_packet_text(packet: dict, run_id: str) -> str:
         "",
         "Key Points Summary",
         (
-            f"The request has partial clinical support, but the packet is not yet ready for payer submission. "
-            f"{criteria_review} {missing_story} {decision}"
+            f"{readiness_lead} "
+            f"{criteria_review} {code_readiness} {missing_story} {decision}"
         ),
+        "",
+        "Final Coder-Reviewed Codes",
+        final_codes,
+        "",
+        "Code Readiness",
+        code_readiness,
         "",
         "What Is Missing",
         missing_story,
@@ -1984,6 +2003,249 @@ def _summarize_diagnoses(items) -> str:
     if diagnoses:
         return f"The documented diagnosis or indication is {_natural_join(diagnoses)}."
     return "The diagnosis or indication was not clearly documented in the available packet."
+
+
+def _prior_auth_code_readiness_summary(packet: dict) -> str:
+    request = packet.get("prior_auth_request") or {}
+    gaps = packet.get("gap_detection") or {}
+    recommendations = packet.get("code_recommendations") or {}
+    code_candidates = _dict_items(recommendations.get("candidates"))
+    approved_candidates = [
+        item for item in code_candidates
+        if _is_coder_approved_code(item)
+    ]
+    approved_icd = _compact_unique([
+        str(item.get("code") or "").strip()
+        for item in approved_candidates
+        if str(item.get("code_set") or "").upper() == "ICD-10-CM"
+    ], 6)
+    approved_procedure = _compact_unique([
+        str(item.get("code") or "").strip()
+        for item in approved_candidates
+        if str(item.get("code_set") or "").upper() in {"CPT", "HCPCS", "CPT/HCPCS"}
+    ], 6)
+    approved_medication = _compact_unique([
+        str(item.get("code") or "").strip()
+        for item in approved_candidates
+        if str(item.get("code_set") or "").upper() in {"RXNORM", "NDC", "RXNORM/NDC"}
+    ], 6)
+    icd_ai_candidates = _compact_unique([
+        str(item.get("code") or "").strip()
+        for item in code_candidates
+        if str(item.get("code_set") or "").upper() == "ICD-10-CM"
+        and item.get("code")
+        and item.get("code") != "needs_lookup"
+    ], 6)
+    procedure_ai_candidates = _compact_unique([
+        str(item.get("code") or "").strip()
+        for item in code_candidates
+        if str(item.get("code_set") or "").upper() in {"CPT", "HCPCS", "CPT/HCPCS"}
+        and item.get("code")
+        and item.get("code") != "needs_lookup"
+    ], 6)
+    reviewed_candidates = [
+        item for item in code_candidates
+        if any(term in str(item.get("review_status") or "").lower() for term in ("reviewed", "approved"))
+    ]
+    diagnoses = _dict_items(request.get("diagnoses"))
+    diagnosis_codes = _compact_unique([
+        str(item.get("code") or "").strip()
+        for item in diagnoses
+        if item.get("code")
+    ], 5)
+    requested_item = _nested_field_value(request.get("requested_item"))
+    service_category = str(request.get("service_category") or "unknown").lower()
+    gap_text = " ".join(
+        _clean_prior_auth_pdf_text(item.get("item") or "")
+        for item in _dict_items(gaps.get("missing_items"))
+    ).lower()
+
+    if approved_icd:
+        icd_sentence = f"Coder-approved ICD-10-CM codes for packet use are {_natural_join(approved_icd)}."
+    elif icd_ai_candidates:
+        icd_sentence = f"AI-recommended ICD-10-CM candidates are {_natural_join(icd_ai_candidates)}."
+    elif diagnosis_codes:
+        icd_sentence = f"Diagnosis code candidates are present in the packet: {_natural_join(diagnosis_codes)}."
+    else:
+        icd_sentence = "Diagnosis coding is not ready because the packet does not contain a confirmed ICD-10-CM code."
+    procedure_detail = _procedure_detail_summary(requested_item, service_category)
+    if approved_procedure:
+        cpt_sentence = f"Coder-approved CPT/HCPCS codes for packet use are {_natural_join(approved_procedure)}."
+    elif procedure_ai_candidates:
+        cpt_sentence = (
+            f"AI-recommended CPT/HCPCS candidates are {_natural_join(procedure_ai_candidates)}. "
+            "These procedure codes still require coder review against licensed CPT/HCPCS references, payer rules, and the signed order."
+        )
+    elif "cpt" in gap_text:
+        cpt_sentence = "Procedure coding is not ready because the CPT code is missing from the available order or request."
+    else:
+        cpt_sentence = (
+            "Procedure coding has enough service text for candidate review, but final CPT selection still requires coder review "
+            "against licensed CPT content, payer rules, and the signed order."
+        )
+    medication_sentence = (
+        f"Coder-approved medication or supply code candidates are {_natural_join(approved_medication)}."
+        if approved_medication else
+        ""
+    )
+    review_sentence = (
+        f"{len(reviewed_candidates)} code candidate row{' has' if len(reviewed_candidates) == 1 else 's have'} been marked reviewed or approved."
+        if reviewed_candidates else
+        "No AI-recommended code candidate has been marked coder-reviewed yet."
+    )
+    return (
+        f"{icd_sentence} {procedure_detail} {cpt_sentence} {medication_sentence} {review_sentence} "
+        "DocIntel should treat any AI-recommended ICD, CPT, HCPCS, RxNorm, or NDC value as a candidate only. "
+        "A certified coder, billing specialist, or other qualified reviewer must confirm final codes before payer submission."
+    )
+
+
+def _prior_auth_final_codes_summary(packet: dict) -> str:
+    final_rows = _approved_code_rows_by_set(packet)
+    if not any(final_rows.values()):
+        return (
+            "No final coder-approved code set has been added yet. The packet may contain AI-recommended candidate rows, "
+            "but those rows should not be treated as final billing or payer-submission codes until a certified coder, "
+            "billing specialist, or qualified reviewer edits and approves them."
+        )
+    parts = []
+    if final_rows["diagnosis"]:
+        parts.append(f"Diagnosis coding is finalized for packet use with {_describe_code_rows(final_rows['diagnosis'])}")
+    if final_rows["procedure"]:
+        parts.append(f"Procedure, service, or supply coding is finalized for packet use with {_describe_code_rows(final_rows['procedure'])}")
+    if final_rows["medication"]:
+        parts.append(f"Medication coding is finalized for packet use with {_describe_code_rows(final_rows['medication'])}")
+    return (
+        f"{_sentence_from_fragments(parts)} These codes were marked reviewed or approved in the code recommendation table. "
+        "They should still be handled as human-reviewed administrative coding support, not as a coverage guarantee."
+    )
+
+
+def _prior_auth_code_action_summary(packet: dict) -> str:
+    recommendations = packet.get("code_recommendations") or {}
+    rows = _dict_items(recommendations.get("candidates"))
+    lookup_rows = [
+        row for row in rows
+        if str(row.get("code") or "").strip() in {"", "needs_lookup"}
+    ]
+    unapproved_rows = [
+        row for row in rows
+        if str(row.get("code") or "").strip() not in {"", "needs_lookup"} and not _is_coder_approved_code(row)
+    ]
+    if not rows:
+        return (
+            "No AI code recommendation rows are available yet. Generate code recommendations, then have the certified coder "
+            "enter or approve the diagnosis, procedure, medication, and supply codes needed for submission."
+        )
+    if not lookup_rows and not unapproved_rows:
+        return (
+            "All populated code rows have been marked reviewed or approved. The final prior authorization packet can use those rows "
+            "as the human-reviewed code set while keeping the required administrative review notice."
+        )
+    parts = []
+    if lookup_rows:
+        descriptions = _compact_unique([
+            _clean_prior_auth_pdf_text(row.get("description") or row.get("basis") or row.get("code_set") or "code lookup")
+            for row in lookup_rows
+        ], 5)
+        parts.append(f"enter final codes for {_natural_join(descriptions)}")
+    if unapproved_rows:
+        descriptions = _compact_unique([
+            f"{row.get('code_set') or 'Code'} {row.get('code') or ''}".strip()
+            for row in unapproved_rows
+        ], 5)
+        parts.append(f"review and approve {_natural_join(descriptions)}")
+    return (
+        f"Before final packet generation, the coder should {_natural_join(parts)}. "
+        "Rows left as needs_lookup or coder_review_required will remain candidate-only and should not be presented as final codes."
+    )
+
+
+def _prior_auth_packet_readiness_lead(packet: dict) -> str:
+    final_rows = _approved_code_rows_by_set(packet)
+    effective_missing = _effective_missing_items(packet)
+    has_core_codes = bool(final_rows["diagnosis"] and final_rows["procedure"])
+    if has_core_codes and not effective_missing:
+        return "The request has clinical support and coder-approved diagnosis and procedure codes for human review before payer submission."
+    if has_core_codes:
+        return "The request has coder-approved diagnosis and procedure codes, but some non-code documentation items still need human review."
+    return "The request has partial clinical support, but code review or documentation is still needed before payer submission."
+
+
+def _approved_code_rows_by_set(packet: dict) -> dict[str, list[dict]]:
+    recommendations = packet.get("code_recommendations") or {}
+    rows = [row for row in _dict_items(recommendations.get("candidates")) if _is_coder_approved_code(row)]
+    grouped = {"diagnosis": [], "procedure": [], "medication": []}
+    for row in rows:
+        code_set = str(row.get("code_set") or "").upper()
+        if code_set == "ICD-10-CM":
+            grouped["diagnosis"].append(row)
+        elif code_set in {"CPT", "HCPCS", "CPT/HCPCS"}:
+            grouped["procedure"].append(row)
+        elif code_set in {"RXNORM", "NDC", "RXNORM/NDC"}:
+            grouped["medication"].append(row)
+    return grouped
+
+
+def _describe_code_rows(rows: list[dict]) -> str:
+    values = []
+    for row in rows:
+        code_set = str(row.get("code_set") or "Code").strip()
+        code = str(row.get("code") or "").strip()
+        description = _clean_prior_auth_pdf_text(row.get("description") or "")
+        if code and description:
+            values.append(f"{code_set} {code} for {description}")
+        elif code:
+            values.append(f"{code_set} {code}")
+    return _natural_join(_compact_unique(values, 8))
+
+
+def _is_coder_approved_code(item: dict) -> bool:
+    status = str(item.get("review_status") or "").lower()
+    code = str(item.get("code") or "").strip()
+    return bool(code and code != "needs_lookup" and ("approved" in status or "reviewed" in status))
+
+
+def _effective_missing_items(packet: dict) -> list[dict]:
+    gaps = packet.get("gap_detection") or {}
+    missing_items = _dict_items(gaps.get("missing_items"))
+    recommendations = packet.get("code_recommendations") or {}
+    candidates = _dict_items(recommendations.get("candidates"))
+    approved_sets = {str(item.get("code_set") or "").upper() for item in candidates if _is_coder_approved_code(item)}
+    has_icd = "ICD-10-CM" in approved_sets
+    has_procedure = bool({"CPT", "HCPCS", "CPT/HCPCS"} & approved_sets)
+    has_medication = bool({"RXNORM", "NDC", "RXNORM/NDC"} & approved_sets)
+    filtered = []
+    for item in missing_items:
+        text = _clean_prior_auth_pdf_text(item.get("item") or item.get("reason") or "").lower()
+        if has_icd and ("icd" in text or "diagnosis code" in text):
+            continue
+        if has_procedure and ("cpt" in text or "hcpcs" in text or "procedure code" in text or "service code" in text):
+            continue
+        if has_medication and ("rxnorm" in text or "ndc" in text or "medication code" in text or "drug code" in text):
+            continue
+        filtered.append(item)
+    return filtered
+
+
+def _procedure_detail_summary(requested_item: str, service_category: str) -> str:
+    text = str(requested_item or "").lower()
+    details = []
+    if "mri" in text:
+        details.append("MRI")
+    if "lumbar" in text:
+        details.append("lumbar spine")
+    if "without contrast" in text:
+        details.append("without contrast")
+    elif "with and without contrast" in text:
+        details.append("with and without contrast")
+    elif "with contrast" in text:
+        details.append("with contrast")
+    elif "mri" in text:
+        details.append("contrast status needs confirmation")
+    if details:
+        return f"The requested procedure text indicates {_natural_join(details)}."
+    return f"The requested service is categorized as {service_category}, but the procedure details should be confirmed before code selection."
 
 
 def _summarize_prior_auth_readiness(criteria_items, match_items) -> str:
@@ -2170,6 +2432,8 @@ def _render_prior_auth_packet_pdf(title: str, text: str) -> bytes:
             "Request Overview",
             "Clinical Story",
             "Key Points Summary",
+            "Final Coder-Reviewed Codes",
+            "Code Readiness",
             "What Is Missing",
             "Medical Necessity Draft",
             "Submission Readiness",
@@ -2225,6 +2489,8 @@ def _render_missing_info_request_pdf(title: str, text: str) -> bytes:
             "MISSING INFORMATION REQUEST",
             "Request Summary",
             "Information Needed",
+            "Code Readiness",
+            "Code Review Actions",
             "Why This Is Needed",
             "Recommended Follow-Up",
             "Submission Readiness",

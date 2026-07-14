@@ -44,15 +44,19 @@ Use the files in `sample_documents/prior_auth_mvp1/`:
 9. Select the payer policy document.
 10. Run the workflow.
 11. Review:
+   - Code readiness for ICD-10-CM and CPT/HCPCS candidate review
+   - AI code recommendations, then edit each candidate row as needed
    - Payer criteria
    - Evidence map
    - Missing items
    - Submission risks
    - Medical necessity narrative
    - Next actions
-12. Generate the prior authorization packet PDF when the packet is ready for human review.
-13. If the packet is not ready, generate the missing information request PDF and send it to the care team/provider for completion.
-14. Save review draft or approve the packet only after human review.
+12. Click `AI recommend codes` if the request needs diagnosis, procedure, medication, or supply code candidates. The UI creates editable rows for ICD-10-CM, CPT, HCPCS, RxNorm, NDC, or lookup-needed items depending on what is present in the packet.
+13. A certified coder, billing specialist, or qualified reviewer should modify any `needs_lookup` rows, enter the final code, and mark valid coded rows as `coder_approved`. Only reviewed or approved rows with real codes are treated as ready for final packet use.
+14. Generate the prior authorization packet PDF when the packet is ready for human review.
+15. If the packet is not ready, generate the missing information request PDF and send it to the care team/provider for completion.
+16. Save review draft or approve the packet only after human review.
 
 ## Acceptance Criteria
 
@@ -62,6 +66,25 @@ Use the files in `sample_documents/prior_auth_mvp1/`:
 - Output includes requested service, diagnoses, policy criteria, evidence map, gap list, narrative, and next actions.
 - Output contains guardrails stating that this is administrative assistance only and requires human review.
 - User can generate a missing information request PDF when documentation is incomplete.
+- User can see a pre-prior-auth code readiness step before packet generation, with clear coder/CPT review required language.
+- User can ask AI to recommend generic candidate diagnosis, procedure, medication, and supply codes, edit the candidate rows, and preserve certified coder review status in the packet and PDFs.
+
+## Prior Authorization PDF Packet Contents
+
+The final prior authorization PDF should include these sections:
+
+1. Request Overview: patient, requested service, urgency, encounter date, provider, and facility.
+2. Clinical Story: diagnosis or indication plus the clinical rationale found in the uploaded documents.
+3. Key Points Summary: payer criteria support, coding readiness, missing documentation, and submission readiness.
+4. Final Coder-Reviewed Codes: only rows marked reviewed or `coder_approved` with real codes. This section should show ICD-10-CM, CPT/HCPCS, RxNorm, or NDC codes when approved by the coder.
+5. Code Readiness: AI candidates, coder review status, and the reminder that AI-recommended codes are candidate-only until approved.
+6. What Is Missing: remaining non-code documentation gaps, plus unresolved code gaps if rows still have `needs_lookup`.
+7. Medical Necessity Draft: paragraph-style support for the requested service.
+8. Submission Readiness: remaining submission risks and the recommended decision.
+9. Next Actions: human follow-up steps.
+10. Human Review Notice: administrative assistance, no medical advice, no coverage guarantee, and no payer submission without human approval.
+
+Approved code rows should suppress stale missing-code language in the PDF. For example, if a coder approves ICD-10-CM and CPT rows, the final PDF should not still say the ICD or CPT code is missing. Rows left as `needs_lookup` or `coder_review_required` stay as candidate-only and should remain in the missing/review story.
 
 ## Safety Boundary
 
