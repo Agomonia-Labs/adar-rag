@@ -271,6 +271,13 @@ async def generate_prior_auth_packet_pdf_artifact(
     prior_packet = packet.get("prior_auth_packet") or {}
     if not prior_packet or not (prior_packet.get("packet_summary") or prior_packet.get("medical_necessity_narrative")):
         raise HTTPException(400, "No prior authorization packet is available. Run the prior authorization workflow first.")
+    blocking_items = _prior_auth_blocking_readiness_items(packet)
+    if blocking_items:
+        raise HTTPException(
+            400,
+            "Prior authorization packet is not ready. Resolve or override required checklist items first: "
+            + ", ".join(item["label"] for item in blocking_items),
+        )
 
     doc_id = str(uuid.uuid4())
     owner_id = user_id
@@ -1939,6 +1946,7 @@ def _format_prior_auth_packet_text(packet: dict, run_id: str) -> str:
     decision = _humanize_prior_auth_decision(prior_packet.get("recommended_decision"))
     code_readiness = _prior_auth_code_readiness_summary(packet)
     final_codes = _prior_auth_final_codes_summary(packet)
+    readiness_checklist = _prior_auth_readiness_checklist_summary(packet)
     readiness_lead = _prior_auth_packet_readiness_lead(packet)
     medical_necessity = _clean_prior_auth_pdf_text(
         prior_packet.get("medical_necessity_narrative")
@@ -1969,6 +1977,9 @@ def _format_prior_auth_packet_text(packet: dict, run_id: str) -> str:
         "",
         "Final Coder-Reviewed Codes",
         final_codes,
+        "",
+        "Readiness Checklist",
+        readiness_checklist,
         "",
         "Code Readiness",
         code_readiness,
@@ -2098,6 +2109,87 @@ def _prior_auth_code_readiness_summary(packet: dict) -> str:
         "DocIntel should treat any AI-recommended ICD, CPT, HCPCS, RxNorm, or NDC value as a candidate only. "
         "A certified coder, billing specialist, or other qualified reviewer must confirm final codes before payer submission."
     )
+
+
+def _prior_auth_readiness_checklist(packet: dict) -> list[dict]:
+    request = packet.get("prior_auth_request") or {}
+    prior_packet = packet.get("prior_auth_packet") or {}
+    policy_docs = _dict_items(packet.get("policy_documents"))
+    policy_criteria = packet.get("policy_criteria") or {}
+    evidence_map = packet.get("evidence_map") or {}
+    gaps = packet.get("gap_detection") or {}
+    overrides = packet.get("prior_auth_readiness_overrides") or {}
+    approved_rows = [
+        row for row in _dict_items((packet.get("code_recommendations") or {}).get("candidates"))
+        if _is_coder_approved_code(row)
+    ]
+    approved_icd = any(str(row.get("code_set") or "").upper() == "ICD-10-CM" for row in approved_rows)
+    approved_procedure = any(str(row.get("code_set") or "").upper() in {"CPT", "HCPCS", "CPT/HCPCS"} for row in approved_rows)
+    diagnoses = _dict_items(request.get("diagnoses"))
+    requested_item = _nested_field_value(request.get("requested_item"))
+    has_requested_item = bool(requested_item and requested_item != "Not found")
+    has_diagnosis = any(item.get("code") or item.get("description") or item.get("value") for item in diagnoses)
+    criteria = _dict_items(policy_criteria.get("criteria"))
+    evidence_matches = _dict_items(evidence_map.get("criteria_matches"))
+    missing_items = _effective_missing_items(packet)
+    has_medical_necessity = bool(prior_packet.get("medical_necessity_narrative") or prior_packet.get("packet_summary"))
+    items = [
+        _readiness_item("requested_service", "Requested service", has_requested_item, "Service/procedure is identified, including order details when available."),
+        _readiness_item("diagnosis_icd", "Diagnosis / ICD-10-CM", has_diagnosis and approved_icd, "Diagnosis is present and ICD-10-CM code is coder-approved."),
+        _readiness_item("procedure_code", "Procedure / service coding", approved_procedure, "CPT/HCPCS code, modifier, units, laterality, and place of service are reviewed when relevant."),
+        _readiness_item("payer_policy", "Payer policy", bool(policy_docs), f"{len(policy_docs)} payer policy document{'s' if len(policy_docs) != 1 else ''} selected."),
+        _readiness_item("criteria_mapping", "Criteria mapping", bool(criteria and evidence_matches), f"{len(criteria)} criteria and {len(evidence_matches)} evidence match{'es' if len(evidence_matches) != 1 else ''} found."),
+        _readiness_item("missing_evidence", "Missing evidence", not missing_items, f"{len(missing_items)} missing item{'s' if len(missing_items) != 1 else ''} remain."),
+        _readiness_item("medical_necessity", "Medical necessity narrative", has_medical_necessity, "Medical necessity narrative is available for human review."),
+        _readiness_item("human_review", "Human review", bool(prior_packet.get("recommended_decision")), "Reviewer should save draft and approve packet after checklist completion.", required=False),
+    ]
+    return [_apply_readiness_override(item, overrides.get(item["key"])) for item in items]
+
+
+def _readiness_item(key: str, label: str, ready: bool, detail: str, required: bool = True) -> dict:
+    return {
+        "key": key,
+        "label": label,
+        "required": required,
+        "detail": detail,
+        "status": "ready" if ready else "blocked" if required else "needs_review",
+    }
+
+
+def _apply_readiness_override(item: dict, override) -> dict:
+    if not override or item.get("status") == "ready":
+        return item
+    updated = dict(item)
+    updated["status"] = "overridden"
+    reason = _clean_prior_auth_pdf_text((override or {}).get("reason") or "")
+    if reason:
+        updated["detail"] = f"{updated['detail']} Override reason: {reason}."
+    return updated
+
+
+def _prior_auth_blocking_readiness_items(packet: dict) -> list[dict]:
+    return [
+        item for item in _prior_auth_readiness_checklist(packet)
+        if item.get("required") and item.get("status") == "blocked"
+    ]
+
+
+def _prior_auth_readiness_checklist_summary(packet: dict) -> str:
+    items = _prior_auth_readiness_checklist(packet)
+    parts = []
+    for item in items:
+        status = str(item.get("status") or "needs_review").replace("_", " ")
+        label = item.get("label") or "Checklist item"
+        detail = _clean_prior_auth_pdf_text(item.get("detail") or "")
+        parts.append(f"{label} is {status}. {detail}")
+    blocking = [item for item in items if item.get("required") and item.get("status") == "blocked"]
+    if blocking:
+        parts.append(
+            "The final packet should not be generated until blocked required items are resolved or explicitly overridden by a qualified reviewer."
+        )
+    else:
+        parts.append("All required readiness checklist items are ready or explicitly overridden for final packet generation.")
+    return " ".join(parts)
 
 
 def _prior_auth_final_codes_summary(packet: dict) -> str:
@@ -2462,6 +2554,7 @@ def _render_prior_auth_packet_pdf(title: str, text: str) -> bytes:
             "Clinical Story",
             "Key Points Summary",
             "Final Coder-Reviewed Codes",
+            "Readiness Checklist",
             "Code Readiness",
             "What Is Missing",
             "Medical Necessity Draft",

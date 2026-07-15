@@ -54,9 +54,10 @@ Use the files in `sample_documents/prior_auth_mvp1/`:
    - Next actions
 12. Click `AI recommend codes` if the request needs diagnosis, procedure, medication, or supply code candidates. The UI creates editable rows for ICD-10-CM, CPT, HCPCS, RxNorm, NDC, or lookup-needed items depending on what is present in the packet.
 13. A certified coder, billing specialist, or qualified reviewer should modify any `needs_lookup` rows, enter the final code, and use the row-level coder actions to approve, request changes, or reject each row. Only reviewed or `coder_approved` rows with real codes are treated as ready for final packet use.
-14. Generate the prior authorization packet PDF when the packet is ready for human review.
-15. If the packet is not ready, generate the missing information request PDF and send it to the care team/provider for completion.
-16. Save review draft or approve the packet only after human review.
+14. Use the Prior Auth Case Tracker to assign an owner, choose submission channel, track packet contents, and move the case from draft to ready/submitted/pending/approved/denied/appeal status.
+15. Generate the prior authorization packet PDF when the packet is ready for human review.
+16. If the packet is not ready, generate the missing information request PDF and send it to the care team/provider for completion.
+17. Save review draft or approve the packet only after human review.
 
 ## Acceptance Criteria
 
@@ -70,6 +71,10 @@ Use the files in `sample_documents/prior_auth_mvp1/`:
 - User can ask AI to recommend generic candidate diagnosis, procedure, medication, and supply codes, edit the candidate rows, and preserve certified coder review status in the packet and PDFs.
 - User can perform row-level coder review with approve, needs-change, and reject actions.
 - Approved code rows preserve reviewer persona, workspace role, timestamp, modifier, units, laterality, place of service, payer rule match, and reference source.
+- User can see a prior authorization readiness checklist before final PDF generation.
+- Final prior authorization packet PDF generation is blocked until required checklist items are ready or explicitly overridden with a reviewer reason.
+- User can track case owner, payer, member ID, submission channel, payer reference number, follow-up dates, decision, submission packet contents, and status history.
+- Final prior authorization packet PDF includes a case tracker and submission status section.
 
 ## Prior Authorization PDF Packet Contents
 
@@ -79,12 +84,13 @@ The final prior authorization PDF should include these sections:
 2. Clinical Story: diagnosis or indication plus the clinical rationale found in the uploaded documents.
 3. Key Points Summary: payer criteria support, coding readiness, missing documentation, and submission readiness.
 4. Final Coder-Reviewed Codes: only rows marked reviewed or `coder_approved` with real codes. This section should show ICD-10-CM, CPT/HCPCS, RxNorm, or NDC codes when approved by the coder.
-5. Code Readiness: AI candidates, coder review status, and the reminder that AI-recommended codes are candidate-only until approved.
-6. What Is Missing: remaining non-code documentation gaps, plus unresolved code gaps if rows still have `needs_lookup`.
-7. Medical Necessity Draft: paragraph-style support for the requested service.
-8. Submission Readiness: remaining submission risks and the recommended decision.
-9. Next Actions: human follow-up steps.
-10. Human Review Notice: administrative assistance, no medical advice, no coverage guarantee, and no payer submission without human approval.
+5. Case Tracker and Submission Status: owner, payer, submission channel, reference number, follow-up timing, decision, and tracked packet contents.
+6. Code Readiness: AI candidates, coder review status, and the reminder that AI-recommended codes are candidate-only until approved.
+7. What Is Missing: remaining non-code documentation gaps, plus unresolved code gaps if rows still have `needs_lookup`.
+8. Medical Necessity Draft: paragraph-style support for the requested service.
+9. Submission Readiness: remaining submission risks and the recommended decision.
+10. Next Actions: human follow-up steps.
+11. Human Review Notice: administrative assistance, no medical advice, no coverage guarantee, and no payer submission without human approval.
 
 Approved code rows should suppress stale missing-code language in the PDF. For example, if a coder approves ICD-10-CM and CPT rows, the final PDF should not still say the ICD or CPT code is missing. Rows left as `needs_lookup` or `coder_review_required` stay as candidate-only and should remain in the missing/review story.
 
@@ -102,6 +108,44 @@ Each code card supports row-level decisions:
 Simple fields are shown up front: code set, code, status, description, and reviewer note. Advanced coding details are hidden under an expandable section so coders do not need to horizontally scroll through many columns.
 
 The final PDF should show only rows with real codes and reviewed/approved status under Final Coder-Reviewed Codes. Candidate rows, rejected rows, and lookup-needed rows should remain part of the review story only.
+
+## Prior Auth Readiness Checklist
+
+The readiness checklist is the final gate before generating the prior authorization packet PDF. Required items must be `Ready` or `Overridden`; otherwise the Generate Packet PDF action is disabled in the UI and rejected by the backend endpoint.
+
+Checklist items:
+
+1. Requested service: service/procedure is identified and order details are clear.
+2. Diagnosis / ICD-10-CM: diagnosis or indication is present and ICD-10-CM is coder-approved.
+3. Procedure / service coding: CPT/HCPCS is coder-approved, with modifier, units, laterality, and place of service reviewed when relevant.
+4. Payer policy: at least one payer policy document is selected.
+5. Criteria mapping: payer criteria and patient evidence mapping are available.
+6. Missing evidence: missing clinical/admin items are resolved or explicitly overridden.
+7. Medical necessity narrative: narrative is generated and ready for human review.
+8. Human review: reviewer decision/status is available; this is tracked as a review item rather than a hard blocker.
+
+Overrides should include a reason and reviewer metadata. Overridden items are included in the generated PDF readiness section so the packet remains auditable.
+
+## Prior Auth Case Tracker + Submission Status
+
+The case tracker turns a generated packet into an operational work item. It is stored inside the review packet as `prior_auth_case`, so it travels with the run, review draft, audit history, and final PDF without requiring a new database table for MVP.
+
+Tracked fields:
+
+1. Case status: `draft`, `ready_to_submit`, `submitted`, `pending_payer`, `approved`, `denied`, `appeal_needed`, or `closed`.
+2. Case owner, payer name, member/policy ID, priority, submission channel, and destination.
+3. Payer reference or authorization number.
+4. Submitted date, next follow-up date, expected decision date, payer decision, and decision date.
+5. Submission packet contents: packet PDF, order, encounter note, payer policy, imaging/lab attachments, or other documents.
+6. Status history with reviewer, timestamp, and note for each transition.
+
+Recommended operational flow:
+
+1. Keep status as `draft` while extracting evidence, resolving missing items, and completing coder review.
+2. Move to `ready_to_submit` after checklist blockers are resolved or overridden and the final packet is generated.
+3. Move to `submitted` when the packet is sent to the payer and record the channel, destination, reference number, and submitted date.
+4. Move to `pending_payer` while waiting for payer decision or additional information request.
+5. Move to `approved`, `denied`, or `appeal_needed` when a decision arrives. If denied, upload the denial letter and use it to drive the next appeal workflow.
 
 ## Safety Boundary
 

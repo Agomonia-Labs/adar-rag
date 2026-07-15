@@ -568,7 +568,7 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
         <div style={{...s.strip,background:cfg.strip}}/>
         {canSum && <input type="checkbox" checked={selected} onChange={onSelect} style={s.cardCheckbox}/>}
         <span style={{fontSize:isMobile ? 18 : 22,flexShrink:0}}>{ICONS[doc.file_type||'?']||'📁'}</span>
-        <div style={s.info}>
+        <div style={{...s.info, ...(isMobile ? s.infoMobile : {})}}>
           <p style={{...s.name, ...(isMobile ? s.nameMobile : {})}} title={doc.original_name}>{doc.original_name}</p>
           <div style={{...s.meta, ...(isMobile ? s.metaMobile : {})}}>
             <span style={{...s.badge2,background:cfg.bg,color:cfg.color,border:`1px solid ${cfg.strip}30`}}>
@@ -710,8 +710,9 @@ const s={
   cardInnerMobile:{gap:7,padding:'9px 9px 7px 10px'},
   strip:   {width:4,alignSelf:'stretch',borderRadius:2,flexShrink:0,margin:'-11px 0 -11px -14px',marginRight:4},
   info:    {flex:1,minWidth:0},
+  infoMobile:{minWidth:0,overflow:'hidden'},
   name:    {fontSize:13.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:5,color:'var(--tx)'},
-  nameMobile:{fontSize:12.5,marginBottom:4},
+  nameMobile:{fontSize:12.5,marginBottom:4,whiteSpace:'normal',textOverflow:'clip',overflow:'visible',overflowWrap:'anywhere',wordBreak:'break-word',lineHeight:1.35,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical'},
   meta:    {display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'},
   metaMobile:{flexWrap:'nowrap',overflowX:'auto',overflowY:'hidden',WebkitOverflowScrolling:'touch',paddingBottom:2,gap:4,scrollbarWidth:'none'},
   badge2:  {display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:20,fontSize:11,fontWeight:600,whiteSpace:'nowrap',flex:'0 0 auto'},

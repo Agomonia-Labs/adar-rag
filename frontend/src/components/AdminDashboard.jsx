@@ -97,7 +97,7 @@ export default function AdminDashboard() {
           </div>
           <div style={{...s.section, ...(isMobile ? s.sectionMobile : {})}}>
             <h3 style={s.secTitle}>Recent documents</h3>
-            <DocsTable docs={docs.slice(0,8)} showUser onDelete={deleteDoc}/>
+            <DocsTable docs={docs.slice(0,8)} showUser onDelete={deleteDoc} mobile={isMobile}/>
           </div>
         </div>
       )}
@@ -106,48 +106,13 @@ export default function AdminDashboard() {
       {!loading && tab==='users' && (
         <div style={{...s.section, ...(isMobile ? s.sectionMobile : {})}}>
           <h3 style={s.secTitle}>All users ({users.length})</h3>
-          <div style={s.tableWrap}>
-            <table style={s.table}>
-              <thead><tr>{['Name','Email','Role','Tier','Docs','Embedded','Joined','Actions'].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
-              <tbody>
-                {users.map(u=>(
-                  <tr key={u.id} style={s.tr}>
-                    <td style={s.td}>{u.full_name||'—'}</td>
-                    <td style={s.td}><span style={{color:'#60a5fa',fontSize:12}}>{u.email}</span></td>
-                    <td style={s.td}><span style={{padding:'2px 8px',borderRadius:20,fontSize:11,fontWeight:600,background:u.role==='admin'?'rgba(96,165,250,.12)':'rgba(255,255,255,.05)',color:u.role==='admin'?'#60a5fa':'var(--muted2)',border:`1px solid ${u.role==='admin'?'rgba(96,165,250,.25)':'var(--b2)'}`}}>{u.role}</span></td>
-                    <td style={s.td}>
-                      <select
-                        value={u.tier || 'free'}
-                        onChange={e => {
-                          const newTier = e.target.value;
-                          // Optimistic update first so dropdown stays responsive
-                          setUsers(prev => prev.map(x => x.id===u.id ? {...x, tier: newTier} : x));
-                          setUserTier(u.id, newTier)
-                            .then(() => console.log('Tier updated to', newTier))
-                            .catch(err => {
-                              // Revert on error
-                              setUsers(prev => prev.map(x => x.id===u.id ? {...x, tier: u.tier||'free'} : x));
-                              alert('Failed to update tier: ' + err.message);
-                            });
-                        }}
-                        style={{fontSize:11,background:'var(--s3)',color:'var(--tx)',border:'1px solid var(--b2)',borderRadius:4,padding:'2px 6px',cursor:'pointer'}}>
-                        <option value="free">Free</option>
-                        <option value="pro">Pro</option>
-                        <option value="enterprise">Enterprise</option>
-                      </select>
-                    </td>
-                    <td style={{...s.td,textAlign:'center'}}>{fmtN(u.doc_count)}</td>
-                    <td style={{...s.td,textAlign:'center'}}>{fmtN(u.embedded_count)}</td>
-                    <td style={s.td}>{fmtDate(u.created_at)}</td>
-                    <td style={s.td}>
-                      <ABtn onClick={()=>roleToggle(u.id,u.role)}>{u.role==='admin'?'↓ Demote':'↑ Promote'}</ABtn>
-                      <ABtn danger onClick={()=>deleteUser(u.id,u.email)}>🗑 Delete</ABtn>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <UsersList
+            users={users}
+            mobile={isMobile}
+            setUsers={setUsers}
+            onRole={roleToggle}
+            onDelete={deleteUser}
+          />
         </div>
       )}
 
@@ -155,7 +120,7 @@ export default function AdminDashboard() {
       {!loading && tab==='documents' && (
         <div style={{...s.section, ...(isMobile ? s.sectionMobile : {})}}>
           <h3 style={s.secTitle}>All documents ({docs.length})</h3>
-          <DocsTable docs={docs} showUser onDelete={deleteDoc}/>
+          <DocsTable docs={docs} showUser onDelete={deleteDoc} mobile={isMobile}/>
         </div>
       )}
       {tab === 'audit' && (
@@ -175,6 +140,9 @@ export default function AdminDashboard() {
               style={{fontSize:12,padding:'5px 10px',background:'var(--s3)',color:'var(--muted2)',border:'1px solid var(--b2)',borderRadius:'var(--r)',cursor:'pointer'}}>↻ Refresh</button>
             <span style={{fontSize:12,color:'var(--muted2)',marginLeft:isMobile ? 0 : 'auto'}}>{audit.length} events</span>
           </div>
+          {isMobile ? (
+            <AuditCards rows={audit} />
+          ) : (
           <div style={{overflowX:'auto'}}>
             <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
               <thead><tr>
@@ -202,6 +170,7 @@ export default function AdminDashboard() {
               </tbody>
             </table>
           </div>
+          )}
         </div>
       )}
       {tab === 'traces' && (
@@ -214,14 +183,14 @@ export default function AdminDashboard() {
               value={traceQuestionFilter}
               onChange={e=>setTraceQuestionFilter(e.target.value)}
               placeholder="Filter by question..."
-              style={s.traceSearch}
+              style={{...s.traceSearch, ...(isMobile ? s.traceSearchMobile : {})}}
             />
-            <select value={traceTypeFilter} onChange={e=>setTraceTypeFilter(e.target.value)} style={s.traceSelect}>
+            <select value={traceTypeFilter} onChange={e=>setTraceTypeFilter(e.target.value)} style={{...s.traceSelect, ...(isMobile ? s.traceSelectMobile : {})}}>
               <option value="">All types</option>
               <option value="chat">chat</option>
               <option value="voice_chat">voice_chat</option>
             </select>
-            <select value={traceStatusFilter} onChange={e=>setTraceStatusFilter(e.target.value)} style={s.traceSelect}>
+            <select value={traceStatusFilter} onChange={e=>setTraceStatusFilter(e.target.value)} style={{...s.traceSelect, ...(isMobile ? s.traceSelectMobile : {})}}>
               <option value="">All statuses</option>
               <option value="success">success</option>
               <option value="error">error</option>
@@ -246,7 +215,10 @@ export default function AdminDashboard() {
             </div>
           )}
           <div style={{...s.traceLayout, ...(isMobile ? s.traceLayoutMobile : {})}}>
-            <div style={{overflowX:'auto',borderRight:isMobile ? 'none' : '1px solid var(--b1)', borderBottom:isMobile ? '1px solid var(--b1)' : 'none'}}>
+            <div style={{overflowX:isMobile ? 'visible' : 'auto',borderRight:isMobile ? 'none' : '1px solid var(--b1)', borderBottom:isMobile ? '1px solid var(--b1)' : 'none'}}>
+              {isMobile ? (
+                <TraceCards traces={filteredTraces} activeTraceId={traceDetail?.trace?.trace_id} onOpen={openTrace} />
+              ) : (
               <table style={s.table}>
                 <thead><tr>{['Question','Time','Type','Status'].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
                 <tbody>
@@ -263,8 +235,9 @@ export default function AdminDashboard() {
                   ))}
                 </tbody>
               </table>
+              )}
             </div>
-            <TraceDetail data={traceDetail} traceCount={filteredTraces.length} loading={traceLoading}/>
+            <TraceDetail data={traceDetail} traceCount={filteredTraces.length} loading={traceLoading} mobile={isMobile}/>
           </div>
         </div>
       )}
@@ -272,9 +245,83 @@ export default function AdminDashboard() {
   );
 }
 
-function TraceDetail({ data, traceCount = 0, loading = false }) {
+function UsersList({ users, mobile, setUsers, onRole, onDelete }) {
+  const updateTier = (u, newTier) => {
+    setUsers(prev => prev.map(x => x.id===u.id ? {...x, tier: newTier} : x));
+    setUserTier(u.id, newTier)
+      .catch(err => {
+        setUsers(prev => prev.map(x => x.id===u.id ? {...x, tier: u.tier||'free'} : x));
+        alert('Failed to update tier: ' + err.message);
+      });
+  };
+  if (mobile) {
+    return (
+      <div style={s.cardList}>
+        {users.map(u => (
+          <article key={u.id} style={s.mobileCard}>
+            <div style={s.mobileCardHead}>
+              <div style={s.mobileTitleBlock}>
+                <strong style={s.mobileTitle}>{u.full_name || 'Unnamed user'}</strong>
+                <span style={s.mobileSub}>{u.email}</span>
+              </div>
+              <RolePill role={u.role} />
+            </div>
+            <div style={s.mobileKvGrid}>
+              <KV label="Docs" value={fmtN(u.doc_count)} />
+              <KV label="Embedded" value={fmtN(u.embedded_count)} />
+              <KV label="Joined" value={fmtDate(u.created_at)} />
+              <label style={s.mobileField}>Tier
+                <select value={u.tier || 'free'} onChange={e => updateTier(u, e.target.value)} style={s.mobileSelect}>
+                  <option value="free">Free</option>
+                  <option value="pro">Pro</option>
+                  <option value="enterprise">Enterprise</option>
+                </select>
+              </label>
+            </div>
+            <div style={s.mobileActions}>
+              <ABtn onClick={()=>onRole(u.id,u.role)}>{u.role==='admin'?'Demote':'Promote'}</ABtn>
+              <ABtn danger onClick={()=>onDelete(u.id,u.email)}>Delete</ABtn>
+            </div>
+          </article>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div style={s.tableWrap}>
+      <table style={s.table}>
+        <thead><tr>{['Name','Email','Role','Tier','Docs','Embedded','Joined','Actions'].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+        <tbody>
+          {users.map(u=>(
+            <tr key={u.id} style={s.tr}>
+              <td style={s.td}>{u.full_name||'—'}</td>
+              <td style={s.td}><span style={{color:'#60a5fa',fontSize:12}}>{u.email}</span></td>
+              <td style={s.td}><RolePill role={u.role} /></td>
+              <td style={s.td}>
+                <select value={u.tier || 'free'} onChange={e => updateTier(u, e.target.value)} style={s.tierSelect}>
+                  <option value="free">Free</option>
+                  <option value="pro">Pro</option>
+                  <option value="enterprise">Enterprise</option>
+                </select>
+              </td>
+              <td style={{...s.td,textAlign:'center'}}>{fmtN(u.doc_count)}</td>
+              <td style={{...s.td,textAlign:'center'}}>{fmtN(u.embedded_count)}</td>
+              <td style={s.td}>{fmtDate(u.created_at)}</td>
+              <td style={s.td}>
+                <ABtn onClick={()=>onRole(u.id,u.role)}>{u.role==='admin'?'↓ Demote':'↑ Promote'}</ABtn>
+                <ABtn danger onClick={()=>onDelete(u.id,u.email)}>🗑 Delete</ABtn>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TraceDetail({ data, traceCount = 0, loading = false, mobile = false }) {
   if (!data) return (
-    <div style={s.traceDetail}>
+    <div style={{...s.traceDetail, ...(mobile ? s.traceDetailMobile : {})}}>
       <p style={{color:'var(--muted2)',fontSize:13}}>
         {loading
           ? 'Loading trace data…'
@@ -288,7 +335,7 @@ function TraceDetail({ data, traceCount = 0, loading = false }) {
   const spans = Array.isArray(data.spans) ? data.spans : [];
   const llmEvents = Array.isArray(data.llm_events) ? data.llm_events : [];
   return (
-    <div style={s.traceDetail}>
+    <div style={{...s.traceDetail, ...(mobile ? s.traceDetailMobile : {})}}>
       <div style={{fontSize:11,color:'var(--muted2)',marginBottom:4}}>Trace</div>
       <div style={{fontFamily:'monospace',fontSize:11,color:'#60a5fa',wordBreak:'break-all',marginBottom:12}}>{trace.trace_id}</div>
       <div style={s.traceQuestion}>
@@ -328,7 +375,34 @@ function TraceDetail({ data, traceCount = 0, loading = false }) {
   );
 }
 
-function DocsTable({ docs, showUser, onDelete }) {
+function DocsTable({ docs, showUser, onDelete, mobile = false }) {
+  if (mobile) {
+    return (
+      <div style={s.cardList}>
+        {docs.map(d => (
+          <article key={d.id} style={s.mobileCard}>
+            <div style={s.mobileCardHead}>
+              <div style={s.mobileTitleBlock}>
+                <strong style={s.mobileTitle}>{d.original_name || d.filename || 'Untitled document'}</strong>
+                {showUser && <span style={s.mobileSub}>{d.user_email || 'No user email'}</span>}
+              </div>
+              <StatusText status={d.status} />
+            </div>
+            <div style={s.mobileKvGrid}>
+              <KV label="Scope" value={d.workspace_name ? `Workspace: ${d.workspace_name}` : 'Personal'} />
+              <KV label="Type" value={(d.file_type || '?').toUpperCase()} />
+              <KV label="Size" value={fmtBytes(d.file_size)} />
+              <KV label="Chunks" value={fmtN(d.chunk_count)} />
+              <KV label="Created" value={fmtDate(d.created_at)} />
+            </div>
+            <div style={s.mobileActions}>
+              <ABtn danger onClick={()=>onDelete(d.id,d.original_name)}>Delete</ABtn>
+            </div>
+          </article>
+        ))}
+      </div>
+    );
+  }
   return (
     <div style={s.tableWrap}>
       <table style={s.table}>
@@ -358,6 +432,68 @@ function DocsTable({ docs, showUser, onDelete }) {
       </table>
     </div>
   );
+}
+
+function AuditCards({ rows }) {
+  return (
+    <div style={s.cardList}>
+      {rows.map(row => (
+        <article key={row.id} style={s.mobileCard}>
+          <div style={s.mobileCardHead}>
+            <div style={s.mobileTitleBlock}>
+              <strong style={s.mobileTitle}>{row.action}</strong>
+              <span style={s.mobileSub}>{row.user_email || 'No user email'}</span>
+            </div>
+            <span style={s.auditPill}>{fmtDate(row.created_at)}</span>
+          </div>
+          <div style={s.mobileKvGrid}>
+            <KV label="Time" value={new Date(row.created_at).toLocaleString()} />
+            <KV label="Resource" value={row.resource_type ? `${row.resource_type} ${row.resource_id ? row.resource_id.slice(0,8) : ''}` : '—'} />
+            <KV label="IP" value={row.ip_address || '—'} />
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function TraceCards({ traces, activeTraceId, onOpen }) {
+  return (
+    <div style={s.cardList}>
+      {traces.map(t => (
+        <button key={t.trace_id} type="button" style={{...s.traceCardBtn, ...(activeTraceId===t.trace_id ? s.traceCardBtnOn : {})}} onClick={()=>onOpen(t.trace_id)}>
+          <strong style={s.mobileTitle}>{t.input_text_preview || '(no question preview)'}</strong>
+          <span style={s.mobileSub}>{t.trace_id}</span>
+          <div style={s.mobileKvGrid}>
+            <KV label="Time" value={fmtDT(t.started_at)} />
+            <KV label="Type" value={t.request_type} />
+            <KV label="Status" value={t.status} color={t.status==='success'?'#4ade80':t.status==='error'?'#f87171':'#fbbf24'} />
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function KV({ label, value, color }) {
+  return (
+    <div style={s.kv}>
+      <span>{label}</span>
+      <strong style={color ? { color } : null}>{value || '—'}</strong>
+    </div>
+  );
+}
+
+function RolePill({ role }) {
+  return (
+    <span style={{padding:'2px 8px',borderRadius:20,fontSize:11,fontWeight:600,background:role==='admin'?'rgba(96,165,250,.12)':'rgba(255,255,255,.05)',color:role==='admin'?'#60a5fa':'var(--muted2)',border:`1px solid ${role==='admin'?'rgba(96,165,250,.25)':'var(--b2)'}`}}>
+      {role}
+    </span>
+  );
+}
+
+function StatusText({ status }) {
+  return <span style={{color:STATUS_COLOR[status]||'var(--muted2)',fontSize:12,fontWeight:700}}>{status || 'unknown'}</span>;
 }
 
 function StatCard({ icon, label, value, sub, color, compact = false }) {
@@ -413,17 +549,35 @@ const s = {
   filterBar:  { padding:'12px 16px', display:'flex', gap:8, alignItems:'center', borderBottom:'1px solid var(--b1)', flexWrap:'wrap' },
   filterBarMobile:{ padding:'9px 10px', alignItems:'stretch' },
   traceSearch:{ minWidth:220, flex:'1 1 260px', maxWidth:360, fontSize:12, padding:'5px 9px', background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:'var(--r)', outline:'none' },
+  traceSearchMobile:{ minWidth:0, flex:'1 1 100%', maxWidth:'none', fontSize:16, minHeight:38 },
   traceSelect:{ fontSize:12, padding:'5px 8px', background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:'var(--r)', cursor:'pointer' },
+  traceSelectMobile:{ flex:'1 1 calc(50% - 4px)', minWidth:0, fontSize:16, minHeight:38 },
   traceLayout:{ display:'grid', gridTemplateColumns:'minmax(420px,1fr) minmax(360px,.9fr)', minHeight:360 },
   traceLayoutMobile:{ gridTemplateColumns:'1fr', minHeight:0 },
   traceRowOn: { background:'rgba(74,222,128,.08)', boxShadow:'inset 3px 0 0 #4ade80' },
   tracePill:  { padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:700, background:'rgba(96,165,250,.1)', color:'#60a5fa' },
   traceDetail:{ padding:16, overflow:'auto', maxHeight:620 },
+  traceDetailMobile:{ padding:10, maxHeight:'none', overflow:'visible' },
   traceQuestion:{ background:'rgba(74,222,128,.07)', border:'1px solid rgba(74,222,128,.18)', borderRadius:'var(--r)', padding:10, marginBottom:12 },
   traceGrid:  { display:'grid', gridTemplateColumns:'80px 1fr', gap:'5px 10px', fontSize:12, color:'var(--muted2)', marginBottom:14 },
   traceHdr:   { color:'var(--tx)', fontSize:13, margin:'16px 0 8px' },
   traceBox:   { background:'var(--s3)', border:'1px solid var(--b1)', borderRadius:'var(--r)', padding:10, marginBottom:8 },
   tracePre:   { margin:'8px 0 0', whiteSpace:'pre-wrap', wordBreak:'break-word', maxHeight:180, overflow:'auto', color:'var(--muted2)', fontSize:10.5, lineHeight:1.45 },
+  cardList:   { display:'flex', flexDirection:'column', gap:9, padding:10 },
+  mobileCard: { border:'1px solid var(--b1)', background:'rgba(255,255,255,.035)', borderRadius:9, padding:10, display:'flex', flexDirection:'column', gap:9, minWidth:0 },
+  mobileCardHead:{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:10 },
+  mobileTitleBlock:{ minWidth:0, display:'flex', flexDirection:'column', gap:3 },
+  mobileTitle:{ color:'var(--tx)', fontSize:13, lineHeight:1.35, overflowWrap:'anywhere' },
+  mobileSub:{ color:'var(--muted2)', fontSize:11, lineHeight:1.35, overflowWrap:'anywhere' },
+  mobileKvGrid:{ display:'grid', gridTemplateColumns:'repeat(2,minmax(0,1fr))', gap:7 },
+  kv:{ border:'1px solid var(--b1)', background:'rgba(0,0,0,.12)', borderRadius:8, padding:'7px 8px', minWidth:0, display:'flex', flexDirection:'column', gap:2, fontSize:11, color:'var(--muted2)' },
+  mobileField:{ display:'flex', flexDirection:'column', gap:4, fontSize:11, color:'var(--muted2)', fontWeight:700 },
+  mobileSelect:{ minHeight:36, fontSize:16, background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:8, padding:'6px 8px' },
+  mobileActions:{ display:'flex', gap:7, flexWrap:'wrap', justifyContent:'flex-end' },
+  tierSelect:{ fontSize:11, background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:4, padding:'2px 6px', cursor:'pointer' },
+  auditPill:{ fontSize:10, padding:'3px 7px', borderRadius:20, background:'rgba(96,165,250,.1)', color:'#60a5fa', border:'1px solid rgba(96,165,250,.2)', whiteSpace:'nowrap' },
+  traceCardBtn:{ width:'100%', textAlign:'left', border:'1px solid var(--b1)', background:'rgba(255,255,255,.035)', color:'var(--tx)', borderRadius:9, padding:10, display:'flex', flexDirection:'column', gap:8, cursor:'pointer' },
+  traceCardBtnOn:{ background:'rgba(74,222,128,.08)', borderColor:'rgba(74,222,128,.28)', boxShadow:'inset 3px 0 0 #4ade80' },
   ctr:        { textAlign:'center', padding:'3rem', color:'var(--muted2)' },
 };
 

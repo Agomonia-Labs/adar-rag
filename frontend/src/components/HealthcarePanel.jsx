@@ -49,6 +49,17 @@ const WORKFLOWS = {
   },
 };
 
+const PRIOR_AUTH_CASE_STATUSES = [
+  { value: 'draft', label: 'Draft', description: 'Case is being prepared before submission.' },
+  { value: 'ready_to_submit', label: 'Ready', description: 'Packet is complete and ready for payer submission.' },
+  { value: 'submitted', label: 'Submitted', description: 'Packet was submitted to the payer.' },
+  { value: 'pending_payer', label: 'Pending payer', description: 'Waiting on payer review or additional request.' },
+  { value: 'approved', label: 'Approved', description: 'Payer approved the requested service.' },
+  { value: 'denied', label: 'Denied', description: 'Payer denied the request and denial details should be captured.' },
+  { value: 'appeal_needed', label: 'Appeal/P2P', description: 'Appeal or peer-to-peer review is needed.' },
+  { value: 'closed', label: 'Closed', description: 'Case is complete and closed.' },
+];
+
 function supportedAudioMimeType() {
   if (!window.MediaRecorder?.isTypeSupported) return '';
   return [
@@ -791,7 +802,10 @@ function ClinicalPacket({ packet, onPatch }) {
 
 function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMissingInfoPdf, loading, reviewerPersona, accessContext }) {
   const codeReadiness = buildCodeReadiness(packet);
+  const readinessChecklist = buildPriorAuthReadinessChecklist(packet);
   const reviewer = buildCoderReviewer(reviewerPersona, accessContext);
+  const caseTracker = buildPriorAuthCaseTracker(packet);
+  const finalPacketBlocked = readinessChecklist.items.some(item => item.required && item.status === 'blocked');
   const recommendCodes = () => {
     onPatch(['code_recommendations'], generateCodeRecommendations(packet));
   };
@@ -804,6 +818,55 @@ function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMi
     }));
   };
   const updateCodeRows = rows => onPatch(['code_recommendations','candidates'], rows);
+  const setReadinessOverride = (item, override) => {
+    const current = packet.prior_auth_readiness_overrides || {};
+    if (!override) {
+      const next = { ...current };
+      delete next[item.key];
+      onPatch(['prior_auth_readiness_overrides'], next);
+      return;
+    }
+    onPatch(['prior_auth_readiness_overrides', item.key], {
+      reason: current[item.key]?.reason || '',
+      reviewed_by: reviewer.label,
+      reviewed_at: new Date().toISOString(),
+    });
+  };
+  const setOverrideReason = (item, reason) => {
+    onPatch(['prior_auth_readiness_overrides', item.key], {
+      ...(packet.prior_auth_readiness_overrides?.[item.key] || {}),
+      reason,
+      reviewed_by: packet.prior_auth_readiness_overrides?.[item.key]?.reviewed_by || reviewer.label,
+      reviewed_at: packet.prior_auth_readiness_overrides?.[item.key]?.reviewed_at || new Date().toISOString(),
+    });
+  };
+  const patchCase = value => onPatch(['prior_auth_case'], stampPriorAuthCase(value, reviewer));
+  const updateCaseField = (field, value) => patchCase({ ...caseTracker, [field]: value });
+  const moveCaseStatus = (status, note = '') => {
+    patchCase(transitionPriorAuthCaseStatus(caseTracker, status, note, reviewer));
+  };
+  const updateSubmissionDoc = (index, field, value) => {
+    const docs = caseTracker.submission_documents || [];
+    patchCase({
+      ...caseTracker,
+      submission_documents: docs.map((row, i) => i === index ? { ...row, [field]: value } : row),
+    });
+  };
+  const addSubmissionDoc = () => {
+    patchCase({
+      ...caseTracker,
+      submission_documents: [
+        ...(caseTracker.submission_documents || []),
+        { type: 'attachment', name: '', document_id: '', status: 'planned' },
+      ],
+    });
+  };
+  const removeSubmissionDoc = index => {
+    patchCase({
+      ...caseTracker,
+      submission_documents: (caseTracker.submission_documents || []).filter((_, i) => i !== index),
+    });
+  };
   return (
     <>
       <PatientContext packet={packet} onPatch={onPatch} />
@@ -813,7 +876,8 @@ function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMi
           <button
             type="button"
             style={s.pdfBtn}
-            disabled={loading || !packet.prior_auth_packet}
+            disabled={loading || !packet.prior_auth_packet || finalPacketBlocked}
+            title={finalPacketBlocked ? 'Resolve or override required checklist items before generating final PDF' : 'Generate prior authorization packet PDF'}
             onClick={onGeneratePriorAuthPdf}>
             Generate packet PDF
           </button>
@@ -825,6 +889,20 @@ function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMi
             Missing info request
           </button>
         </div>
+        <PriorAuthCaseTracker
+          tracker={caseTracker}
+          onField={updateCaseField}
+          onStatus={moveCaseStatus}
+          onDoc={updateSubmissionDoc}
+          onAddDoc={addSubmissionDoc}
+          onRemoveDoc={removeSubmissionDoc}
+        />
+        <PriorAuthReadinessChecklist
+          checklist={readinessChecklist}
+          overrides={packet.prior_auth_readiness_overrides || {}}
+          onOverride={setReadinessOverride}
+          onReason={setOverrideReason}
+        />
         <CodeReadinessPanel readiness={codeReadiness} />
         <section style={s.subSection}>
           <div style={s.tableHead}>
@@ -875,6 +953,206 @@ function CodeReadinessPanel({ readiness }) {
       </div>
       <div style={s.notice}>{readiness.notice}</div>
     </div>
+  );
+}
+
+function PriorAuthCaseTracker({ tracker, onField, onStatus, onDoc, onAddDoc, onRemoveDoc }) {
+  const statusMeta = priorAuthStatusMeta(tracker.status);
+  const docs = tracker.submission_documents || [];
+  const history = tracker.status_history || [];
+  return (
+    <section style={s.caseTracker}>
+      <div style={s.caseTrackerHead}>
+        <div style={s.readinessChecklistTitle}>
+          <strong>Prior auth case tracker</strong>
+          <span>{statusMeta.description}</span>
+        </div>
+        <span style={statusMeta.style}>{statusMeta.label}</span>
+      </div>
+      <div style={s.statusRail}>
+        {PRIOR_AUTH_CASE_STATUSES.map(item => (
+          <button
+            key={item.value}
+            type="button"
+            style={tracker.status === item.value ? s.statusStepActive : s.statusStep}
+            onClick={() => onStatus(item.value, `Moved to ${item.label}`)}>
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <div style={s.caseGrid}>
+        <label style={s.compactField}>Case owner
+          <input style={s.compactInput} value={tracker.owner || ''} onChange={e => onField('owner', e.target.value)} placeholder="Prior auth specialist" />
+        </label>
+        <label style={s.compactField}>Payer
+          <input style={s.compactInput} value={tracker.payer_name || ''} onChange={e => onField('payer_name', e.target.value)} placeholder="Payer name" />
+        </label>
+        <label style={s.compactField}>Member / policy ID
+          <input style={s.compactInput} value={tracker.member_id || ''} onChange={e => onField('member_id', e.target.value)} placeholder="Member ID" />
+        </label>
+        <label style={s.compactField}>Priority
+          <select style={s.compactSelect} value={tracker.priority || 'routine'} onChange={e => onField('priority', e.target.value)}>
+            <option value="routine">Routine</option>
+            <option value="urgent">Urgent</option>
+            <option value="expedited">Expedited</option>
+          </select>
+        </label>
+        <label style={s.compactField}>Submission channel
+          <select style={s.compactSelect} value={tracker.submission_channel || 'not_selected'} onChange={e => onField('submission_channel', e.target.value)}>
+            <option value="not_selected">Not selected</option>
+            <option value="payer_portal">Payer portal</option>
+            <option value="fax">Fax</option>
+            <option value="phone">Phone</option>
+            <option value="e_submit">Electronic submission</option>
+            <option value="mail">Mail</option>
+          </select>
+        </label>
+        <label style={s.compactField}>Portal / fax / destination
+          <input style={s.compactInput} value={tracker.submission_destination || ''} onChange={e => onField('submission_destination', e.target.value)} placeholder="Portal URL, fax, queue, or payer contact" />
+        </label>
+        <label style={s.compactField}>Payer reference #
+          <input style={s.compactInput} value={tracker.payer_reference_number || ''} onChange={e => onField('payer_reference_number', e.target.value)} placeholder="Auth/case/reference number" />
+        </label>
+        <label style={s.compactField}>Submitted date
+          <input type="date" style={s.compactInput} value={tracker.submitted_at || ''} onChange={e => onField('submitted_at', e.target.value)} />
+        </label>
+        <label style={s.compactField}>Next follow-up
+          <input type="date" style={s.compactInput} value={tracker.next_follow_up_at || ''} onChange={e => onField('next_follow_up_at', e.target.value)} />
+        </label>
+        <label style={s.compactField}>Expected decision
+          <input type="date" style={s.compactInput} value={tracker.expected_decision_by || ''} onChange={e => onField('expected_decision_by', e.target.value)} />
+        </label>
+        <label style={s.compactField}>Decision
+          <select style={s.compactSelect} value={tracker.decision || 'pending'} onChange={e => onField('decision', e.target.value)}>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="denied">Denied</option>
+            <option value="partial_approval">Partial approval</option>
+            <option value="withdrawn">Withdrawn</option>
+          </select>
+        </label>
+        <label style={s.compactField}>Decision date
+          <input type="date" style={s.compactInput} value={tracker.decision_date || ''} onChange={e => onField('decision_date', e.target.value)} />
+        </label>
+      </div>
+      <label style={s.compactField}>Status note
+        <textarea
+          style={s.compactText}
+          rows={2}
+          value={tracker.status_note || ''}
+          onChange={e => onField('status_note', e.target.value)}
+          placeholder="Submission note, payer call summary, denial reason, or follow-up instructions..."
+        />
+      </label>
+      <div style={s.statusActions}>
+        <button type="button" style={s.rowBtn} onClick={() => onStatus('ready_to_submit', 'Packet marked ready to submit')}>Ready to submit</button>
+        <button type="button" style={s.rowBtn} onClick={() => onStatus('submitted', 'Packet submitted to payer')}>Submitted</button>
+        <button type="button" style={s.rowBtn} onClick={() => onStatus('pending_payer', 'Waiting on payer decision')}>Pending payer</button>
+        <button type="button" style={s.approveBtn} onClick={() => onStatus('approved', 'Payer approved the request')}>Approved</button>
+        <button type="button" style={s.rejectBtn} onClick={() => onStatus('denied', 'Payer denied the request')}>Denied</button>
+        <button type="button" style={s.rowBtn} onClick={() => onStatus('appeal_needed', 'Appeal or peer-to-peer review needed')}>Appeal/P2P</button>
+      </div>
+      <div style={s.caseColumns}>
+        <section style={s.caseSubPanel}>
+          <div style={s.tableHead}>
+            <div>
+              <div style={s.tableTitle}>Submission packet contents</div>
+              <div style={s.meta}>Track what will be sent or what was sent to the payer.</div>
+            </div>
+            <button type="button" style={s.rowBtn} onClick={onAddDoc}>Add item</button>
+          </div>
+          {!docs.length ? (
+            <div style={s.emptyLine}>No submission items tracked yet.</div>
+          ) : docs.map((row, index) => (
+            <div key={`${row.type || 'doc'}-${index}`} style={s.submissionDocRow}>
+              <select style={s.compactSelect} value={row.type || 'attachment'} onChange={e => onDoc(index, 'type', e.target.value)}>
+                <option value="prior_auth_packet">Prior auth packet</option>
+                <option value="order">Order</option>
+                <option value="encounter_note">Encounter note</option>
+                <option value="payer_policy">Payer policy</option>
+                <option value="imaging_report">Imaging report</option>
+                <option value="lab">Lab</option>
+                <option value="attachment">Attachment</option>
+              </select>
+              <input style={s.compactInput} value={row.name || ''} onChange={e => onDoc(index, 'name', e.target.value)} placeholder="Document name" />
+              <input style={s.compactInput} value={row.document_id || ''} onChange={e => onDoc(index, 'document_id', e.target.value)} placeholder="Document ID" />
+              <select style={s.compactSelect} value={row.status || 'planned'} onChange={e => onDoc(index, 'status', e.target.value)}>
+                <option value="planned">Planned</option>
+                <option value="included">Included</option>
+                <option value="sent">Sent</option>
+                <option value="missing">Missing</option>
+              </select>
+              <button type="button" style={s.deleteBtn} onClick={() => onRemoveDoc(index)}>Remove</button>
+            </div>
+          ))}
+        </section>
+        <section style={s.caseSubPanel}>
+          <div style={s.tableTitle}>Status history</div>
+          {!history.length ? (
+            <div style={s.emptyLine}>No status changes yet.</div>
+          ) : history.slice().reverse().map((item, index) => (
+            <div key={`${item.status || 'status'}-${item.updated_at || index}`} style={s.historyMini}>
+              <strong>{priorAuthStatusMeta(item.status).label}</strong>
+              <span>{item.note || 'Status updated'}</span>
+              <small>{item.updated_by || 'Reviewer'} · {formatDateTime(item.updated_at)}</small>
+            </div>
+          ))}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function PriorAuthReadinessChecklist({ checklist, overrides, onOverride, onReason }) {
+  return (
+    <section style={checklist.blocked ? s.readinessChecklistBlocked : s.readinessChecklist}>
+      <div style={s.readinessChecklistHead}>
+        <div style={s.readinessChecklistTitle}>
+          <strong>Prior auth readiness checklist</strong>
+          <span>{checklist.ready ? 'Ready for final packet generation' : 'Resolve or override required items before final PDF'}</span>
+        </div>
+        <span style={checklist.ready ? s.readyPill : s.reviewPill}>
+          {checklist.ready ? 'Ready' : `${checklist.blockedCount} blocked`}
+        </span>
+      </div>
+      <div style={s.readinessItems}>
+        {checklist.items.map(item => {
+          const override = overrides[item.key] || null;
+          return (
+            <div key={item.key} style={item.status === 'blocked' ? s.readinessItemBlocked : s.readinessItem}>
+              <div style={s.readinessItemTop}>
+                <span style={readinessStatusStyle(item.status)}>{readinessStatusLabel(item.status)}</span>
+                {item.required && <span style={s.requiredPill}>Required</span>}
+              </div>
+              <strong>{item.label}</strong>
+              <p>{item.detail}</p>
+              {item.status === 'blocked' || item.status === 'overridden' ? (
+                <div style={s.overrideBox}>
+                  <label style={s.compactField}>Override reason
+                    <textarea
+                      value={override?.reason || ''}
+                      onChange={e => onReason(item, e.target.value)}
+                      placeholder="Explain why this can proceed despite the checklist item..."
+                      style={s.compactText}
+                      rows={2}
+                    />
+                  </label>
+                  <div style={s.overrideActions}>
+                    {item.status === 'blocked' ? (
+                      <button type="button" style={s.rowBtn} onClick={() => onOverride(item, true)}>Override</button>
+                    ) : (
+                      <button type="button" style={s.deleteBtn} onClick={() => onOverride(item, false)}>Remove override</button>
+                    )}
+                    {override?.reviewed_by && <span>{override.reviewed_by}</span>}
+                    {override?.reviewed_at && <span>{new Date(override.reviewed_at).toLocaleString()}</span>}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -1487,6 +1765,199 @@ function mergeCodeCandidates(candidates, existingRows) {
   return merged;
 }
 
+function buildPriorAuthReadinessChecklist(packet) {
+  const request = packet.prior_auth_request || {};
+  const priorPacket = packet.prior_auth_packet || {};
+  const policyDocs = packet.policy_documents || [];
+  const criteria = packet.policy_criteria?.criteria || [];
+  const evidenceMatches = packet.evidence_map?.criteria_matches || [];
+  const missingItems = packet.gap_detection?.missing_items || [];
+  const overrides = packet.prior_auth_readiness_overrides || {};
+  const requestedItem = request.requested_item?.value || '';
+  const approvedCodes = packet.code_recommendations?.candidates?.filter(isCoderApprovedCode) || [];
+  const approvedIcd = approvedCodes.some(row => row.code_set === 'ICD-10-CM');
+  const approvedProcedure = approvedCodes.some(row => ['CPT','HCPCS','CPT/HCPCS'].includes(row.code_set));
+  const hasDiagnosis = (request.diagnoses || []).some(item => item.code || item.description || item.value);
+  const hasMedicalNecessity = Boolean(priorPacket.medical_necessity_narrative || priorPacket.packet_summary);
+  const unresolvedMissing = missingItems.filter(item => String(item.priority || '').toLowerCase() === 'high' || item.item);
+  const baseItems = [
+    priorAuthReadinessItem('requested_service', 'Requested service', Boolean(requestedItem && requestedItem !== 'Not found'), 'Service/procedure is identified, including order details when available.', true),
+    priorAuthReadinessItem('diagnosis_icd', 'Diagnosis / ICD-10-CM', hasDiagnosis && approvedIcd, hasDiagnosis ? 'Diagnosis is present; ICD-10-CM must be coder-approved.' : 'Diagnosis or clinical indication is missing.', true),
+    priorAuthReadinessItem('procedure_code', 'Procedure / service coding', approvedProcedure, 'CPT/HCPCS code, modifier, units, laterality, and place of service should be reviewed when relevant.', true),
+    priorAuthReadinessItem('payer_policy', 'Payer policy', policyDocs.length > 0, policyDocs.length ? `${policyDocs.length} payer policy document${policyDocs.length === 1 ? '' : 's'} selected.` : 'Select at least one payer policy document.', true),
+    priorAuthReadinessItem('criteria_mapping', 'Criteria mapping', criteria.length > 0 && evidenceMatches.length > 0, `${criteria.length} criteria and ${evidenceMatches.length} evidence match${evidenceMatches.length === 1 ? '' : 'es'} found.`, true),
+    priorAuthReadinessItem('missing_evidence', 'Missing evidence', unresolvedMissing.length === 0, unresolvedMissing.length ? `${unresolvedMissing.length} missing item${unresolvedMissing.length === 1 ? '' : 's'} still need resolution or override.` : 'No unresolved missing evidence items remain.', true),
+    priorAuthReadinessItem('medical_necessity', 'Medical necessity narrative', hasMedicalNecessity, hasMedicalNecessity ? 'Medical necessity narrative is available for human review.' : 'Generate or edit the medical necessity narrative.', true),
+    priorAuthReadinessItem('human_review', 'Human review', Boolean(priorPacket.recommended_decision), 'Reviewer should save draft and approve packet after checklist completion.', false),
+  ].map(item => applyReadinessOverride(item, overrides[item.key]));
+  const blockedCount = baseItems.filter(item => item.required && item.status === 'blocked').length;
+  return { items: baseItems, blocked: blockedCount > 0, blockedCount, ready: blockedCount === 0 };
+}
+
+function priorAuthReadinessItem(key, label, ready, detail, required = true) {
+  return {
+    key,
+    label,
+    required,
+    detail,
+    status: ready ? 'ready' : required ? 'blocked' : 'needs_review',
+  };
+}
+
+function buildPriorAuthCaseTracker(packet) {
+  const existing = packet.prior_auth_case || {};
+  const request = packet.prior_auth_request || {};
+  const policyDocs = packet.policy_documents || [];
+  const context = packet.patient_context || {};
+  const requestedItem = fieldValue(request.requested_item);
+  const urgency = fieldValue(request.urgency) || 'routine';
+  const firstPolicy = policyDocs[0] || {};
+  const seedDocs = [];
+  if (packet.prior_auth_packet) {
+    seedDocs.push({
+      type: 'prior_auth_packet',
+      name: 'Prior authorization packet PDF',
+      document_id: existing.packet_document_id || '',
+      status: existing.packet_document_id ? 'included' : 'planned',
+    });
+  }
+  if (requestedItem) {
+    seedDocs.push({
+      type: 'order',
+      name: `${requestedItem} order/request`,
+      document_id: '',
+      status: 'planned',
+    });
+  }
+  policyDocs.slice(0, 3).forEach(item => {
+    seedDocs.push({
+      type: 'payer_policy',
+      name: item.document_name || item.original_name || item.name || 'Payer policy',
+      document_id: item.document_id || item.id || '',
+      status: 'included',
+    });
+  });
+  const submissionDocs = Array.isArray(existing.submission_documents) && existing.submission_documents.length
+    ? existing.submission_documents
+    : seedDocs;
+  const status = existing.status || 'draft';
+  return {
+    case_id: existing.case_id || `PA-${Date.now().toString(36).toUpperCase()}`,
+    status,
+    status_note: existing.status_note || '',
+    payer_name: existing.payer_name || firstPolicy.payer_name || firstPolicy.document_name || '',
+    member_id: existing.member_id || fieldValue(context.member_id) || '',
+    owner: existing.owner || '',
+    priority: existing.priority || urgency,
+    requested_service: existing.requested_service || requestedItem,
+    submission_channel: existing.submission_channel || 'not_selected',
+    submission_destination: existing.submission_destination || '',
+    payer_reference_number: existing.payer_reference_number || '',
+    submitted_at: normalizeDateInput(existing.submitted_at),
+    next_follow_up_at: normalizeDateInput(existing.next_follow_up_at),
+    expected_decision_by: normalizeDateInput(existing.expected_decision_by),
+    decision: existing.decision || (['approved','denied'].includes(status) ? status : 'pending'),
+    decision_date: normalizeDateInput(existing.decision_date),
+    denial_reason: existing.denial_reason || '',
+    packet_document_id: existing.packet_document_id || '',
+    submission_documents: submissionDocs,
+    status_history: Array.isArray(existing.status_history) ? existing.status_history : [],
+    last_updated_by: existing.last_updated_by || '',
+    last_updated_at: existing.last_updated_at || '',
+  };
+}
+
+function stampPriorAuthCase(value, reviewer) {
+  return {
+    ...value,
+    last_updated_by: reviewer?.label || value.last_updated_by || '',
+    last_updated_at: new Date().toISOString(),
+  };
+}
+
+function transitionPriorAuthCaseStatus(tracker, status, note, reviewer) {
+  const now = new Date().toISOString();
+  const next = {
+    ...tracker,
+    status,
+    status_note: note || tracker.status_note || '',
+    last_updated_by: reviewer?.label || '',
+    last_updated_at: now,
+    status_history: [
+      ...(tracker.status_history || []),
+      {
+        status,
+        note: note || '',
+        updated_by: reviewer?.label || '',
+        updated_at: now,
+      },
+    ],
+  };
+  if (status === 'submitted' && !next.submitted_at) next.submitted_at = todayInputValue();
+  if (status === 'approved' || status === 'denied') {
+    next.decision = status;
+    if (!next.decision_date) next.decision_date = todayInputValue();
+  }
+  return next;
+}
+
+function priorAuthStatusMeta(status) {
+  const item = PRIOR_AUTH_CASE_STATUSES.find(row => row.value === status) || PRIOR_AUTH_CASE_STATUSES[0];
+  const style = status === 'approved'
+    ? s.statusApproved
+    : status === 'denied'
+    ? s.statusRejected
+    : status === 'appeal_needed'
+    ? s.statusChange
+    : ['submitted', 'pending_payer', 'ready_to_submit'].includes(status)
+    ? s.statusReview
+    : s.readyPill;
+  return { ...item, style };
+}
+
+function normalizeDateInput(value) {
+  if (!value) return '';
+  const text = String(value);
+  return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : '';
+}
+
+function todayInputValue() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function formatDateTime(value) {
+  if (!value) return 'No timestamp';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
+
+function fieldValue(value) {
+  if (!value) return '';
+  if (typeof value === 'object') return value.value || value.text || value.label || '';
+  return value;
+}
+
+function applyReadinessOverride(item, override) {
+  if (!override) return item;
+  if (item.status === 'ready') return item;
+  return { ...item, status: 'overridden', detail: `${item.detail} Override: ${override.reason || 'No reason provided.'}` };
+}
+
+function readinessStatusLabel(status) {
+  if (status === 'ready') return 'Ready';
+  if (status === 'overridden') return 'Overridden';
+  if (status === 'blocked') return 'Blocked';
+  return 'Needs review';
+}
+
+function readinessStatusStyle(status) {
+  if (status === 'ready') return s.statusApproved;
+  if (status === 'overridden') return s.statusChange;
+  if (status === 'blocked') return s.statusRejected;
+  return s.statusReview;
+}
+
 function codeReviewSummary(rows) {
   const approved = rows.filter(isCoderApprovedCode).length;
   const lookup = rows.filter(row => !row.code || row.code === 'needs_lookup').length;
@@ -1914,6 +2385,29 @@ const s = {
   rec:{fontSize:12,color:'var(--tx2)',border:'1px solid rgba(251,191,36,.2)',background:'rgba(251,191,36,.06)',borderRadius:8,padding:'7px 9px'},
   notice:{fontSize:12,color:'#fbbf24',border:'1px solid rgba(251,191,36,.24)',background:'rgba(251,191,36,.07)',borderRadius:8,padding:10,marginBottom:10},
   subSection:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.025)',borderRadius:8,padding:12,margin:'10px 0 12px'},
+  readinessChecklist:{border:'1px solid rgba(74,222,128,.24)',background:'rgba(74,222,128,.055)',borderRadius:8,padding:12,margin:'10px 0 12px',display:'flex',flexDirection:'column',gap:10},
+  readinessChecklistBlocked:{border:'1px solid rgba(248,113,113,.28)',background:'rgba(248,113,113,.06)',borderRadius:8,padding:12,margin:'10px 0 12px',display:'flex',flexDirection:'column',gap:10},
+  readinessChecklistHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,flexWrap:'wrap',fontSize:13,color:'var(--tx)'},
+  readinessChecklistTitle:{display:'flex',flexDirection:'column',gap:3},
+  readinessItems:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(230px,1fr))',gap:9},
+  readinessItem:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.035)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:7,fontSize:12,color:'var(--tx2)'},
+  readinessItemBlocked:{border:'1px solid rgba(248,113,113,.3)',background:'rgba(248,113,113,.075)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:7,fontSize:12,color:'var(--tx2)'},
+  readinessItemTop:{display:'flex',alignItems:'center',gap:6,justifyContent:'space-between',flexWrap:'wrap'},
+  requiredPill:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#fbbf24',border:'1px solid rgba(251,191,36,.26)',background:'rgba(251,191,36,.08)',borderRadius:20,padding:'3px 7px'},
+  overrideBox:{display:'flex',flexDirection:'column',gap:7,borderTop:'1px solid var(--b1)',paddingTop:7},
+  overrideActions:{display:'flex',gap:7,alignItems:'center',flexWrap:'wrap',fontSize:11,color:'var(--muted2)'},
+  caseTracker:{border:'1px solid rgba(59,130,246,.25)',background:'rgba(59,130,246,.055)',borderRadius:8,padding:12,margin:'10px 0 12px',display:'flex',flexDirection:'column',gap:12},
+  caseTrackerHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,flexWrap:'wrap',fontSize:13,color:'var(--tx)'},
+  statusRail:{display:'flex',gap:7,overflowX:'auto',paddingBottom:2},
+  statusStep:{flex:'0 0 auto',background:'rgba(255,255,255,.04)',border:'1px solid var(--b2)',color:'var(--tx2)',borderRadius:20,padding:'6px 9px',fontSize:11,fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'},
+  statusStepActive:{flex:'0 0 auto',background:'rgba(96,165,250,.16)',border:'1px solid rgba(96,165,250,.45)',color:'#bfdbfe',borderRadius:20,padding:'6px 9px',fontSize:11,fontWeight:900,cursor:'pointer',whiteSpace:'nowrap'},
+  caseGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:9},
+  statusActions:{display:'flex',gap:7,alignItems:'center',flexWrap:'wrap'},
+  caseColumns:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:10},
+  caseSubPanel:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.03)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:8,minWidth:0},
+  submissionDocRow:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(135px,1fr))',gap:7,alignItems:'center'},
+  historyMini:{border:'1px solid var(--b1)',background:'rgba(0,0,0,.12)',borderRadius:8,padding:8,display:'flex',flexDirection:'column',gap:3,fontSize:12,color:'var(--tx2)'},
+  emptyLine:{fontSize:12,color:'var(--muted2)',border:'1px dashed var(--b2)',borderRadius:8,padding:10},
   codeReadiness:{border:'1px solid rgba(14,165,233,.24)',background:'rgba(14,165,233,.06)',borderRadius:8,padding:12,margin:'10px 0 12px',display:'flex',flexDirection:'column',gap:10},
   codeReadinessHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,fontSize:13,color:'var(--tx)',flexWrap:'wrap'},
   readyPill:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#4ade80',background:'rgba(74,222,128,.1)',border:'1px solid rgba(74,222,128,.28)',borderRadius:20,padding:'3px 8px'},
