@@ -1613,11 +1613,11 @@ function ChangeHistory({ changes }) {
 
 function generateCodeRecommendations(packet) {
   const request = packet.prior_auth_request || {};
-  const requestedItem = request.requested_item?.value || '';
+  const requestedItem = fieldValue(request.requested_item);
   const existingRows = packet.code_recommendations?.candidates || [];
   const packetText = collectPacketText(packet).join(' ');
   const candidates = [
-    ...diagnosisCodeCandidates(request),
+    ...diagnosisCodeCandidates(request, packetText),
     ...serviceCodeCandidates(requestedItem, request.service_category, packetText),
     ...medicationCodeCandidates(packet),
     ...explicitCodeCandidates(packetText),
@@ -1629,7 +1629,7 @@ function generateCodeRecommendations(packet) {
   };
 }
 
-function diagnosisCodeCandidates(request) {
+function diagnosisCodeCandidates(request, packetText = '') {
   const candidates = [];
   const diagnoses = Array.isArray(request.diagnoses) ? request.diagnoses : [];
   diagnoses.forEach(item => {
@@ -1637,9 +1637,14 @@ function diagnosisCodeCandidates(request) {
     if (item.code) {
       candidates.push(codeCandidate('ICD-10-CM', item.code, description, 'Extracted diagnosis code from clinical/request packet.', item.confidence ?? 0.78));
     } else if (description) {
-      candidates.push(codeCandidate('ICD-10-CM', 'needs_lookup', description, 'Diagnosis or indication is present, but ICD-10-CM code needs coder lookup/validation.', 0.45));
+      const inferred = inferredDiagnosisCodeCandidates(description);
+      if (inferred.length) candidates.push(...inferred);
+      else candidates.push(codeCandidate('ICD-10-CM', 'needs_lookup', description, 'Diagnosis or indication is present, but ICD-10-CM code needs coder lookup/validation.', 0.45));
     }
   });
+  if (!candidates.some(row => row.code && row.code !== 'needs_lookup')) {
+    candidates.push(...inferredDiagnosisCodeCandidates(packetText));
+  }
   if (!candidates.length && (request.summary || request.clinical_rationale?.length)) {
     candidates.push(codeCandidate('ICD-10-CM', 'needs_lookup', 'Diagnosis / indication needs coding review', 'Clinical rationale exists, but a diagnosis code was not extracted.', 0.35));
   }
@@ -1653,6 +1658,9 @@ function serviceCodeCandidates(requestedItem, serviceCategory, packetText) {
   const hcpcsCodes = extractCodes(packetText, /\b(?:HCPCS|supply code)[:#\s-]*([A-Z]\d{4})\b/gi, 'HCPCS');
   cptCodes.forEach(code => candidates.push(codeCandidate('CPT', code, description, 'Extracted from explicit CPT/procedure code text in packet.', 0.78)));
   hcpcsCodes.forEach(code => candidates.push(codeCandidate('HCPCS', code, description, 'Extracted from explicit HCPCS/supply code text in packet.', 0.78)));
+  if (!candidates.length) {
+    candidates.push(...inferredServiceCodeCandidates(`${description} ${packetText}`));
+  }
   if (!candidates.length && description) {
     candidates.push(codeCandidate('CPT/HCPCS', 'needs_lookup', description, 'Requested service is present; coder should select CPT/HCPCS based on order, payer rule, and current code reference.', 0.4));
   }
@@ -1693,6 +1701,39 @@ function explicitCodeCandidates(text) {
   extractCodes(text, /\b(?:NDC)[:#\s-]*(\d{4,5}-\d{3,4}-\d{1,2})\b/gi, 'NDC')
     .forEach(code => candidates.push(codeCandidate('NDC', code, 'Medication NDC found in packet text', 'Extracted from explicit NDC text.', 0.78)));
   return candidates;
+}
+
+function inferredDiagnosisCodeCandidates(text) {
+  const value = String(text || '').toLowerCase();
+  const rows = [];
+  if (/(radiculopathy|radicular|sciatica|leg pain|radiating pain)/i.test(value)) {
+    rows.push(codeCandidate('ICD-10-CM', 'M54.16', 'Lumbar radiculopathy / radicular low back pain', 'AI-inferred diagnosis candidate from clinical indication text. Coder must validate before use.', 0.55));
+  }
+  if (/(low back pain|lower back pain|lumbar pain|back pain)/i.test(value)) {
+    rows.push(codeCandidate('ICD-10-CM', 'M54.50', 'Low back pain, unspecified', 'AI-inferred diagnosis candidate from clinical indication text. Coder must validate specificity before use.', 0.52));
+  }
+  if (/(spinal stenosis|lumbar stenosis)/i.test(value)) {
+    rows.push(codeCandidate('ICD-10-CM', 'M48.061', 'Spinal stenosis, lumbar region without neurogenic claudication', 'AI-inferred diagnosis candidate from clinical indication text. Coder must validate specificity before use.', 0.5));
+  }
+  return rows;
+}
+
+function inferredServiceCodeCandidates(text) {
+  const value = String(text || '').toLowerCase();
+  const rows = [];
+  if (/mri/.test(value) && /(lumbar|l-spine|l spine|lower back)/.test(value)) {
+    const hasWithout = /(without contrast|w\/o contrast|wo contrast|no contrast)/.test(value);
+    const hasWithAndWithout = /(with and without contrast|w\/wo contrast|w and wo contrast)/.test(value);
+    const hasWith = /(with contrast|w contrast)/.test(value);
+    const code = hasWithAndWithout ? '72158' : hasWith && !hasWithout ? '72149' : '72148';
+    const contrast = hasWithAndWithout ? 'with and without contrast' : hasWith && !hasWithout ? 'with contrast' : 'without contrast';
+    rows.push(codeCandidate('CPT', code, `MRI lumbar spine ${contrast}`, 'AI-inferred CPT candidate from requested service text. Coder must validate order, contrast, payer rule, and current CPT reference before use.', 0.56));
+  } else if (/mri/.test(value) && /(cervical|c-spine|c spine|neck)/.test(value)) {
+    rows.push(codeCandidate('CPT', '72141', 'MRI cervical spine without contrast', 'AI-inferred CPT candidate from requested service text. Coder must validate contrast and current CPT reference before use.', 0.5));
+  } else if (/mri/.test(value) && /(brain|head)/.test(value)) {
+    rows.push(codeCandidate('CPT', '70551', 'MRI brain without contrast', 'AI-inferred CPT candidate from requested service text. Coder must validate contrast and current CPT reference before use.', 0.5));
+  }
+  return rows;
 }
 
 function extractCodes(text, pattern) {
@@ -1758,7 +1799,14 @@ function mergeCodeCandidates(candidates, existingRows) {
   });
   (existingRows || []).forEach(row => {
     const key = `${row.code_set}:${row.code}:${row.description}`.toLowerCase();
-    if (!merged.some(item => `${item.code_set}:${item.code}:${item.description}`.toLowerCase() === key)) {
+    const hasExact = merged.some(item => `${item.code_set}:${item.code}:${item.description}`.toLowerCase() === key);
+    const hasBetterCandidate = row.code === 'needs_lookup' && merged.some(item => (
+      item.code_set === row.code_set
+      && item.code
+      && item.code !== 'needs_lookup'
+      && String(item.description || '').toLowerCase() === String(row.description || '').toLowerCase()
+    ));
+    if (!hasExact && !hasBetterCandidate) {
       merged.push(row);
     }
   });
