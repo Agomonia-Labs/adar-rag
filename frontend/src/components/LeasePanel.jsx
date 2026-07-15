@@ -224,49 +224,9 @@ function AbstractView({ data }) {
   if (!data) {
     return <div style={s.empty}>No lease abstract yet. Run extraction to create structured lease fields, critical dates, clause flags, and risks.</div>;
   }
-  const fields = data.fields || {};
   return (
     <div style={s.body}>
-      <section style={s.section}>
-        <h3 style={s.h3}>Summary</h3>
-        <p style={s.summary}>{data.summary || 'No summary returned.'}</p>
-        <div style={s.meta}>
-          Kind: {data.document_kind || 'unknown'} · Confidence: {Math.round((data.confidence || 0) * 100)}%
-          {data.agent_source && ` · Source: ${data.agent_source}`}
-          {data.agent_source_status && ` (${data.agent_source_status})`}
-        </div>
-      </section>
-
-      <section style={s.section}>
-        <h3 style={s.h3}>Lease Abstract</h3>
-        <div style={s.grid}>
-          {Object.entries(FIELD_LABELS).map(([key,label]) => {
-            const item = fields[key] || {};
-            return (
-              <div key={key} style={s.field}>
-                <strong>{label}</strong>
-                <span>{item.value || 'Not found'}</span>
-                <small>{item.source || 'not found'} · {Math.round((item.confidence || 0) * 100)}%</small>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      <section style={s.section}>
-        <h3 style={s.h3}>Critical Dates</h3>
-        <Rows rows={data.critical_dates || []} cols={['date_type','date_value','description','responsible_party','source']} />
-      </section>
-
-      <section style={s.section}>
-        <h3 style={s.h3}>Clause Flags</h3>
-        <Rows rows={data.clause_flags || []} cols={['clause_type','status','risk_level','finding','source']} />
-      </section>
-
-      <section style={s.section}>
-        <h3 style={s.h3}>Risk Flags</h3>
-        <Rows rows={data.risk_flags || []} cols={['risk_level','finding','source','recommended_review']} />
-      </section>
+      <LeaseTabs packet={data} />
     </div>
   );
 }
@@ -337,65 +297,121 @@ function AgentWorkflowView({ run, abstract, evaluation, approvalNotes, onNotes, 
         )}
       </section>
 
-      <section style={s.section}>
-        <div style={s.workflowHead}>
-          <div>
-            <h3 style={s.h3}>Summary</h3>
-            <p style={s.summary}>{packet.summary || run.result?.obligation_checklist?.summary || 'No summary returned yet.'}</p>
-            <div style={s.meta}>Run: {run.run_id} · Status: {run.status} · Version: {run.workflow_version}</div>
+      <LeaseTabs
+        packet={packet}
+        obligations={obligations}
+        run={run}
+        canApprove={canApprove}
+        approvalNotes={approvalNotes}
+        onNotes={onNotes}
+        onApprove={onApprove}
+        loading={loading}
+      />
+    </div>
+  );
+}
+
+function LeaseTabs({ packet, obligations = null, run = null, canApprove = false, approvalNotes = '', onNotes = null, onApprove = null, loading = false }) {
+  const [leaseTab, setLeaseTab] = useState('summary');
+  const fields = packet.fields || {};
+  const obligationRows = obligations || packet.obligation_checklist?.obligations || [];
+  const tabItems = [
+    ['summary', 'Summary'],
+    ['abstract', 'Lease Abstract'],
+    ['dates', 'Critical Dates'],
+    ['obligations', 'Obligation Checklist'],
+    ['clauses', 'Clause Flags'],
+    ['risks', 'Risk Flags'],
+  ];
+  return (
+    <>
+      <div style={s.leaseTabs}>
+        {tabItems.map(([key, label]) => (
+          <button key={key} type="button" style={leaseTab === key ? s.leaseTabActive : s.leaseTab} onClick={() => setLeaseTab(key)}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {leaseTab === 'summary' && (
+        <section style={s.section}>
+          <div style={s.workflowHead}>
+            <div>
+              <h3 style={s.h3}>Summary</h3>
+              <p style={s.summary}>{packet.summary || 'No summary returned.'}</p>
+              {run ? (
+                <div style={s.meta}>Run: {run.run_id} · Status: {run.status} · Version: {run.workflow_version}</div>
+              ) : (
+                <div style={s.meta}>
+                  Kind: {packet.document_kind || 'unknown'} · Confidence: {Math.round((packet.confidence || 0) * 100)}%
+                  {packet.agent_source && ` · Source: ${packet.agent_source}`}
+                  {packet.agent_source_status && ` (${packet.agent_source_status})`}
+                </div>
+              )}
+            </div>
+            {canApprove && (
+              <button style={s.approve} disabled={loading} onClick={onApprove}>
+                Save approved abstract
+              </button>
+            )}
           </div>
           {canApprove && (
-            <button style={s.approve} disabled={loading} onClick={onApprove}>
-              Save approved abstract
-            </button>
+            <textarea
+              value={approvalNotes}
+              onChange={e=>onNotes?.(e.target.value)}
+              placeholder="Approval notes…"
+              style={s.notes}
+            />
           )}
-        </div>
-        {canApprove && (
-          <textarea
-            value={approvalNotes}
-            onChange={e=>onNotes(e.target.value)}
-            placeholder="Approval notes…"
-            style={s.notes}
-          />
-        )}
-      </section>
+        </section>
+      )}
 
-      <section style={s.section}>
-        <h3 style={s.h3}>Lease Abstract</h3>
-        <div style={s.grid}>
-          {Object.entries(FIELD_LABELS).map(([key,label]) => {
-            const item = packet.fields?.[key] || {};
-            return (
-              <div key={key} style={s.field}>
-                <strong>{label}</strong>
-                <span>{item.value || 'Not found'}</span>
-                <small>{item.source || 'not found'} · {Math.round((item.confidence || 0) * 100)}%</small>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+      {leaseTab === 'abstract' && (
+        <section style={s.section}>
+          <h3 style={s.h3}>Lease Abstract</h3>
+          <div style={s.grid}>
+            {Object.entries(FIELD_LABELS).map(([key,label]) => {
+              const item = fields[key] || {};
+              return (
+                <div key={key} style={s.field}>
+                  <strong>{label}</strong>
+                  <span style={s.fieldValue}>{item.value || 'Not found'}</span>
+                  <small>{item.source || 'not found'} · {Math.round((item.confidence || 0) * 100)}%</small>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
-      <section style={s.section}>
-        <h3 style={s.h3}>Critical Dates</h3>
-        <Rows rows={packet.critical_dates || []} cols={['date_type','date_value','description','responsible_party','source']} />
-      </section>
+      {leaseTab === 'dates' && (
+        <section style={s.section}>
+          <h3 style={s.h3}>Critical Dates</h3>
+          <Rows rows={packet.critical_dates || []} cols={['date_type','date_value','description','responsible_party','source']} />
+        </section>
+      )}
 
-      <section style={s.section}>
-        <h3 style={s.h3}>Obligation Checklist</h3>
-        <Rows rows={obligations} cols={['title','party','category','priority','due_date','status','approved','source']} />
-      </section>
+      {leaseTab === 'obligations' && (
+        <section style={s.section}>
+          <h3 style={s.h3}>Obligation Checklist</h3>
+          <Rows rows={obligationRows} cols={['title','party','category','priority','due_date','status','approved','source']} />
+        </section>
+      )}
 
-      <section style={s.section}>
-        <h3 style={s.h3}>Clause Flags</h3>
-        <Rows rows={packet.clause_flags || []} cols={['clause_type','status','risk_level','finding','source']} />
-      </section>
+      {leaseTab === 'clauses' && (
+        <section style={s.section}>
+          <h3 style={s.h3}>Clause Flags</h3>
+          <Rows rows={packet.clause_flags || []} cols={['clause_type','status','risk_level','finding','source']} />
+        </section>
+      )}
 
-      <section style={s.section}>
-        <h3 style={s.h3}>Risk Flags</h3>
-        <Rows rows={packet.risk_flags || []} cols={['risk_level','finding','source','recommended_review']} />
-      </section>
-    </div>
+      {leaseTab === 'risks' && (
+        <section style={s.section}>
+          <h3 style={s.h3}>Risk Flags</h3>
+          <Rows rows={packet.risk_flags || []} cols={['risk_level','finding','source','recommended_review']} />
+        </section>
+      )}
+    </>
   );
 }
 
@@ -471,7 +487,29 @@ function CompareEmpty() {
 }
 
 function Rows({ rows, cols }) {
+  const isMobile = useIsMobile();
   if (!rows.length) return <div style={s.emptySmall}>None found.</div>;
+  if (isMobile) {
+    return (
+      <div style={s.mobileRowCards}>
+        {rows.map((row, i) => (
+          <article key={i} style={s.mobileRowCard}>
+            <div style={s.mobileRowHead}>
+              <strong>{mobileRowTitle(row, cols, i)}</strong>
+            </div>
+            <div style={s.mobileRowFields}>
+              {cols.map(c => (
+                <div key={c} style={s.mobileRowField}>
+                  <span>{c.replaceAll('_',' ')}</span>
+                  <strong style={s.mobileRowValue}>{formatCellValue(row[c])}</strong>
+                </div>
+              ))}
+            </div>
+          </article>
+        ))}
+      </div>
+    );
+  }
   return (
     <div style={s.tableWrap}>
       <table style={s.table}>
@@ -480,12 +518,45 @@ function Rows({ rows, cols }) {
         </thead>
         <tbody>
           {rows.map((row,i) => (
-            <tr key={i}>{cols.map(c => <td key={c} style={s.td}>{String(row[c] ?? '')}</td>)}</tr>
+            <tr key={i}>{cols.map(c => <td key={c} style={s.td}>{formatCellValue(row[c])}</td>)}</tr>
           ))}
         </tbody>
       </table>
     </div>
   );
+}
+
+function mobileRowTitle(row, cols, index) {
+  const firstValue = cols.map(col => row[col]).find(value => value != null && formatCellValue(value) !== '—');
+  return firstValue ? formatCellValue(firstValue) : `Row ${index + 1}`;
+}
+
+function formatCellValue(value) {
+  if (value == null || value === '') return '—';
+  if (Array.isArray(value)) return value.length ? value.map(formatCellValue).join(', ') : '—';
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function useIsMobile(breakpoint = 760) {
+  const get = () => typeof window !== 'undefined' && window.innerWidth <= breakpoint;
+  const [mobile, setMobile] = useState(get);
+  useEffect(() => {
+    const onResize = () => setMobile(get());
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, [breakpoint]);
+  return mobile;
 }
 
 const s = {
@@ -505,15 +576,25 @@ const s = {
   body:{padding:18,display:'flex',flexDirection:'column',gap:16},
   bodyCompact:{padding:'14px 18px 0',display:'flex',flexDirection:'column',gap:12},
   section:{border:'1px solid var(--b1)',background:'var(--s2)',borderRadius:8,padding:14},
+  leaseTabs:{display:'flex',gap:6,alignItems:'center',overflowX:'auto',WebkitOverflowScrolling:'touch',border:'1px solid var(--b1)',background:'rgba(255,255,255,.025)',borderRadius:8,padding:6},
+  leaseTab:{flex:'0 0 auto',background:'transparent',border:'1px solid transparent',color:'var(--tx2)',borderRadius:7,padding:'7px 10px',fontSize:12,fontWeight:900,cursor:'pointer',whiteSpace:'nowrap'},
+  leaseTabActive:{flex:'0 0 auto',background:'rgba(74,222,128,.13)',border:'1px solid rgba(74,222,128,.36)',color:'#bbf7d0',borderRadius:7,padding:'7px 10px',fontSize:12,fontWeight:900,cursor:'pointer',whiteSpace:'nowrap'},
   h3:{fontSize:14,margin:'0 0 10px'},
   summary:{fontSize:13,lineHeight:1.65,color:'var(--tx)'},
   meta:{fontSize:11,color:'var(--muted2)',marginTop:8},
   grid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:10},
   field:{border:'1px solid var(--b1)',borderRadius:8,padding:10,background:'rgba(255,255,255,.03)',display:'flex',flexDirection:'column',gap:5},
+  fieldValue:{color:'#f8fafc',fontSize:13,lineHeight:1.5,whiteSpace:'pre-wrap',overflowWrap:'anywhere',wordBreak:'break-word'},
   tableWrap:{overflowX:'auto',border:'1px solid var(--b2)',borderRadius:8,background:'rgba(0,0,0,.16)'},
-  table:{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:760},
+  table:{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:900},
   th:{textAlign:'left',textTransform:'capitalize',fontSize:11,fontWeight:800,color:'var(--tx)',background:'rgba(255,255,255,.06)',borderRight:'1px solid var(--b2)',borderBottom:'1px solid var(--b2)',padding:'8px 10px',verticalAlign:'top',whiteSpace:'nowrap'},
-  td:{color:'var(--tx2)',borderRight:'1px solid var(--b2)',borderBottom:'1px solid var(--b2)',padding:'8px 10px',verticalAlign:'top',lineHeight:1.45,minWidth:110,maxWidth:320,whiteSpace:'normal',overflowWrap:'anywhere'},
+  td:{color:'var(--tx2)',borderRight:'1px solid var(--b2)',borderBottom:'1px solid var(--b2)',padding:'10px 12px',verticalAlign:'top',lineHeight:1.55,minWidth:140,maxWidth:520,whiteSpace:'pre-wrap',overflowWrap:'anywhere',wordBreak:'break-word'},
+  mobileRowCards:{display:'flex',flexDirection:'column',gap:9},
+  mobileRowCard:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.035)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:9,minWidth:0},
+  mobileRowHead:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:8,color:'var(--tx)',fontSize:12,lineHeight:1.45,overflowWrap:'anywhere',wordBreak:'break-word'},
+  mobileRowFields:{display:'grid',gridTemplateColumns:'1fr',gap:7},
+  mobileRowField:{display:'flex',flexDirection:'column',gap:5,border:'1px solid var(--b1)',background:'rgba(0,0,0,.12)',borderRadius:7,padding:'8px 9px',fontSize:11,color:'var(--muted2)',textTransform:'capitalize',minWidth:0},
+  mobileRowValue:{display:'block',color:'#f8fafc',fontSize:12,fontWeight:700,lineHeight:1.5,textTransform:'none',whiteSpace:'pre-wrap',overflowWrap:'anywhere',wordBreak:'break-word'},
   workflowHead:{display:'flex',justifyContent:'space-between',gap:12,alignItems:'flex-start',flexWrap:'wrap'},
   steps:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(210px,1fr))',gap:8,marginTop:10},
   step:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.03)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:4},

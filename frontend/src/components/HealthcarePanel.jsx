@@ -89,6 +89,7 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
   const [policyDocs, setPolicyDocs] = useState([]);
   const [selectedPolicyIds, setSelectedPolicyIds] = useState([]);
   const [policyDocsLoading, setPolicyDocsLoading] = useState(false);
+  const [policyPickerOpen, setPolicyPickerOpen] = useState(false);
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordedAudio, setRecordedAudio] = useState(null);
@@ -535,53 +536,59 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
   const accessContext = accessContexts[activeTab];
   const selectedPersona = selectedPersonas[activeTab] || accessContext?.default_persona || '';
   const summaryText = workflowSummary(activeTab, packet);
+  const isMobile = useIsMobile();
 
   return (
-    <div style={s.backdrop}>
-      <div style={s.panel}>
-        <div style={s.head}>
-          <div>
+    <div style={{...s.backdrop, ...(isMobile ? s.backdropMobile : {})}}>
+      <div style={{...s.panel, ...(isMobile ? s.panelMobile : {})}}>
+        <div style={{...s.head, ...(isMobile ? s.headMobile : {})}}>
+          <div style={isMobile ? s.headTextMobile : undefined}>
             <div style={s.kicker}>Healthcare / Clinical Document Intelligence</div>
-            <h2 style={s.title}>{doc?.id ? `Healthcare workflow: ${doc.original_name}` : 'New clinical visit transcription'}</h2>
+            <h2 style={{...s.title, ...(isMobile ? s.titleMobile : {})}}>{doc?.id ? `Healthcare workflow: ${doc.original_name}` : 'New clinical visit transcription'}</h2>
           </div>
           <button style={s.close} onClick={onClose}>x</button>
         </div>
 
-        <div style={s.actions}>
-          <div style={s.tabs}>
+        <div style={{...s.actions, ...(isMobile ? s.actionsMobile : {})}}>
+          <div style={{...s.tabs, ...(isMobile ? s.tabsMobile : {})}}>
             {Object.entries(WORKFLOWS).filter(([key]) => doc?.id || key === 'scribe').map(([key, cfg]) => (
-              <button key={key} style={activeTab === key ? s.tabActive : s.tab} onClick={() => setActiveTab(key)}>
+              <button key={key} style={{...(activeTab === key ? s.tabActive : s.tab), ...(isMobile ? s.tabMobile : {})}} onClick={() => setActiveTab(key)}>
                 {cfg.label}
                 {runs[key]?.status && <span style={s.tabStatus}>{runs[key].status}</span>}
               </button>
             ))}
           </div>
           {activeTab === 'clinical' ? (
-            <button style={s.primary} disabled={loading || !['chunked','embedding','embedded'].includes(doc?.status)} onClick={runWorkflow}>
+            <button style={{...s.primary, ...(isMobile ? s.topRunButtonMobile : {})}} disabled={loading || !['chunked','embedding','embedded'].includes(doc?.status)} onClick={runWorkflow}>
               {loading ? 'Running...' : runs.clinical ? 'Re-run clinical workflow' : 'Run clinical workflow'}
             </button>
           ) : activeTab === 'priorAuth' ? (
-            <button style={s.secondary} disabled={loading || !['chunked','embedding','embedded'].includes(doc?.status)} onClick={runPriorAuth}>
+            <button style={{...s.secondary, ...(isMobile ? s.topRunButtonMobile : {})}} disabled={loading || !['chunked','embedding','embedded'].includes(doc?.status)} onClick={runPriorAuth}>
               {loading ? 'Running...' : runs.priorAuth ? 'Re-run prior auth workflow' : 'Run prior auth workflow'}
             </button>
           ) : (
-            <button style={s.scribeButton} disabled={loading || recording || (!(audioFile || recordedAudio) && !runs.scribe) || ((audioFile || recordedAudio) && !consentConfirmed)} onClick={runScribe}>
+            <button style={{...s.scribeButton, ...(isMobile ? s.topRunButtonMobile : {})}} disabled={loading || recording || (!(audioFile || recordedAudio) && !runs.scribe) || ((audioFile || recordedAudio) && !consentConfirmed)} onClick={runScribe}>
               {loading ? 'Running...' : runs.scribe ? 'Re-run clinical scribe' : 'Run clinical scribe'}
             </button>
           )}
-          <span style={s.hint}>{doc?.id ? 'Assistive workflow only. Requires citations, PHI governance, and human approval.' : 'Brand-new visit mode creates a transcript document, embeds it, and saves the scribe packet for later chat.'}</span>
+          {!isMobile && <span style={s.hint}>{doc?.id ? 'Assistive workflow only. Requires citations, PHI governance, and human approval.' : 'Brand-new visit mode creates a transcript document, embeds it, and saves the scribe packet for later chat.'}</span>}
         </div>
 
         {activeTab === 'priorAuth' && (
-          <div style={s.policyPicker}>
+          <div style={{...s.policyPicker, ...(isMobile ? s.policyPickerMobile : {})}}>
             <div style={s.policyPickerHead}>
               <strong>Payer policy documents</strong>
               <span>{policyDocsLoading ? 'Loading...' : selectedPolicyIds.length ? `${selectedPolicyIds.length} selected` : 'Auto-pick latest if none selected'}</span>
+              {isMobile && (
+                <button type="button" style={s.policyToggle} onClick={() => setPolicyPickerOpen(prev => !prev)}>
+                  {policyPickerOpen ? 'Hide' : 'Select'}
+                </button>
+              )}
             </div>
-            {!policyDocs.length ? (
+            {(!isMobile || policyPickerOpen) && (!policyDocs.length ? (
               <div style={s.policyEmpty}>Upload and embed a payer policy, medical policy, or prior authorization guide in this workspace before running MVP1.</div>
             ) : (
-              <div style={s.policyList}>
+              <div style={{...s.policyList, ...(isMobile ? s.policyListMobile : {})}}>
                 {policyDocs.slice(0, 8).map(item => (
                   <label key={item.id} style={s.policyItem}>
                     <input
@@ -596,7 +603,7 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
                   </label>
                 ))}
               </div>
-            )}
+            ))}
           </div>
         )}
 
@@ -660,9 +667,9 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
           </div>
         )}
 
-        <div style={s.scroll}>
+        <div style={{...s.scroll, ...(isMobile ? s.scrollMobile : {})}}>
           {!agentRun ? <div style={s.empty}>{activeConfig.empty}</div> : (
-            <div style={s.body}>
+            <div style={{...s.body, ...(isMobile ? s.bodyMobile : {})}}>
               <section style={s.section}>
                 <h3 style={s.h3}>Agent Steps</h3>
                 <div style={s.steps}>
@@ -717,17 +724,18 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
                   onPersonaChange={value => setSelectedPersonas(prev => ({ ...prev, [activeTab]: value }))}
                 />
                 {agentRun.status === 'pending_approval' && (
-                  <textarea
+                  <ExpandableTextarea
+                    title="Approval notes"
                     value={approvalNotes[activeTab] || ''}
-                    onChange={e=>setApprovalNotes(prev => ({ ...prev, [activeTab]: e.target.value }))}
+                    onChange={value=>setApprovalNotes(prev => ({ ...prev, [activeTab]: value }))}
                     placeholder="Approval notes..."
-                    style={s.notes}
+                    inputStyle={s.notes}
+                    rows={3}
                   />
                 )}
               </section>
 
               <WorkbenchOverview activeTab={activeTab} packet={packet} run={agentRun} evaluation={agentEvaluation} />
-              <ChangeHistory changes={changeHistories[activeTab] || []} />
 
               {activeTab === 'priorAuth' ? (
                 <PriorAuthPacket
@@ -738,12 +746,15 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
                   loading={loading}
                   reviewerPersona={selectedPersona}
                   accessContext={accessContext}
+                  changeHistory={changeHistories[activeTab] || []}
                 />
               ) : activeTab === 'scribe' ? (
                 <ClinicalScribePacket packet={packet} onPatch={updatePacket} onGenerateAvsPdf={generateAvsPdf} loading={loading} />
               ) : (
-                <ClinicalPacket packet={packet} onPatch={updatePacket} />
+                <ClinicalPacket packet={packet} onPatch={updatePacket} changeHistory={changeHistories[activeTab] || []} />
               )}
+
+              {activeTab === 'scribe' && <ChangeHistory changes={changeHistories[activeTab] || []} />}
             </div>
           )}
         </div>
@@ -752,60 +763,113 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
   );
 }
 
-function ClinicalPacket({ packet, onPatch }) {
+function ClinicalPacket({ packet, onPatch, changeHistory = [] }) {
+  const [clinicalTab, setClinicalTab] = useState('summary');
   return (
     <>
       <PatientContext packet={packet} onPatch={onPatch} />
 
-      <section style={s.section}>
-        <h3 style={s.h3}>Clinical Summary</h3>
-        <EditableText value={packet.clinical_summary?.summary || ''} onChange={value => onPatch(['clinical_summary','summary'], value)} placeholder="Clinical summary..." />
-        <Rows rows={packet.clinical_summary?.diagnoses_or_assessments_mentioned || []} cols={['text','source','confidence']} title="Assessments mentioned" editable onChange={rows => onPatch(['clinical_summary','diagnoses_or_assessments_mentioned'], rows)} />
-        <Rows rows={packet.clinical_summary?.plan || []} cols={['item','source','confidence']} title="Plan" editable onChange={rows => onPatch(['clinical_summary','plan'], rows)} />
-        <Rows rows={packet.clinical_summary?.patient_instructions || []} cols={['instruction','source','confidence']} title="Patient instructions" editable onChange={rows => onPatch(['clinical_summary','patient_instructions'], rows)} />
-      </section>
+      <div style={s.priorAuthSubTabs}>
+        {[
+          ['summary', 'Clinical Summary'],
+          ['assessments', 'Assessments mentioned'],
+          ['plan', 'Plan'],
+          ['instructions', 'Patient instructions'],
+          ['labs', 'Lab Results'],
+          ['medications', 'Medication Review'],
+          ['followups', 'Follow-Ups / Care Gaps'],
+          ['risks', 'Risk & Safety Flags'],
+          ['governance', 'PHI / Governance'],
+          ['history', 'Field-Level Change History'],
+        ].map(([key, label]) => (
+          <button key={key} type="button" style={clinicalTab === key ? s.priorAuthSubTabActive : s.priorAuthSubTab} onClick={() => setClinicalTab(key)}>
+            {label}
+          </button>
+        ))}
+      </div>
 
-      <section style={s.section}>
-        <h3 style={s.h3}>Lab Results</h3>
-        <EditableText value={packet.lab_results?.summary || ''} onChange={value => onPatch(['lab_results','summary'], value)} placeholder="Lab summary..." />
-        <Rows rows={packet.lab_results?.lab_results || []} cols={['test_name','result_value','unit','reference_range','abnormal_flag','collection_date','source']} editable onChange={rows => onPatch(['lab_results','lab_results'], rows)} />
-      </section>
+      {clinicalTab === 'summary' && (
+        <section style={s.section}>
+          <h3 style={s.h3}>Clinical Summary</h3>
+          <EditableText value={packet.clinical_summary?.summary || ''} onChange={value => onPatch(['clinical_summary','summary'], value)} placeholder="Clinical summary..." />
+        </section>
+      )}
 
-      <section style={s.section}>
-        <h3 style={s.h3}>Medication Review</h3>
-        <Rows rows={packet.medication_review?.medications || []} cols={['name','dose','route','frequency','start_date','stop_date','prescriber','source']} title="Medications" editable onChange={rows => onPatch(['medication_review','medications'], rows)} />
-        <Rows rows={packet.medication_review?.review_flags || []} cols={['priority','finding','source','recommended_review']} title="Review flags" editable onChange={rows => onPatch(['medication_review','review_flags'], rows)} />
-      </section>
+      {clinicalTab === 'assessments' && (
+        <section style={s.section}>
+          <Rows rows={packet.clinical_summary?.diagnoses_or_assessments_mentioned || []} cols={['text','source','confidence']} title="Assessments mentioned" editable onChange={rows => onPatch(['clinical_summary','diagnoses_or_assessments_mentioned'], rows)} />
+        </section>
+      )}
 
-      <section style={s.section}>
-        <h3 style={s.h3}>Follow-Ups / Care Gaps</h3>
-        <Rows rows={packet.care_gaps?.follow_ups || []} cols={['task','due_date','responsible_party','priority','source']} title="Follow-ups" editable onChange={rows => onPatch(['care_gaps','follow_ups'], rows)} />
-        <Rows rows={packet.care_gaps?.pending_items || []} cols={['item','priority','source']} title="Pending items" editable onChange={rows => onPatch(['care_gaps','pending_items'], rows)} />
-        <Rows rows={packet.care_gaps?.care_gaps || []} cols={['gap','source','recommended_review']} title="Care gaps" editable onChange={rows => onPatch(['care_gaps','care_gaps'], rows)} />
-      </section>
+      {clinicalTab === 'plan' && (
+        <section style={s.section}>
+          <Rows rows={packet.clinical_summary?.plan || []} cols={['item','source','confidence']} title="Plan" editable onChange={rows => onPatch(['clinical_summary','plan'], rows)} />
+        </section>
+      )}
 
-      <section style={s.section}>
-        <h3 style={s.h3}>Risk & Safety Flags</h3>
-        <Rows rows={packet.risk_safety?.risk_flags || []} cols={['risk_level','category','finding','source','recommended_review']} editable onChange={rows => onPatch(['risk_safety','risk_flags'], rows)} />
-      </section>
+      {clinicalTab === 'instructions' && (
+        <section style={s.section}>
+          <Rows rows={packet.clinical_summary?.patient_instructions || []} cols={['instruction','source','confidence']} title="Patient instructions" editable onChange={rows => onPatch(['clinical_summary','patient_instructions'], rows)} />
+        </section>
+      )}
 
-      <section style={s.section}>
-        <h3 style={s.h3}>PHI / Governance</h3>
-        <EditableText value={packet.phi_governance?.summary || ''} onChange={value => onPatch(['phi_governance','summary'], value)} placeholder="Governance summary..." />
-        <div style={s.meta}>PHI categories: {(packet.phi_governance?.phi_categories || []).join(', ') || 'none listed'}</div>
-        <Rows rows={packet.phi_governance?.redaction_recommendations || []} cols={['field','recommendation','reason','source']} title="Redaction recommendations" editable onChange={rows => onPatch(['phi_governance','redaction_recommendations'], rows)} />
-        <Rows rows={packet.phi_governance?.governance_notes || []} cols={['control','note']} title="Governance notes" editable onChange={rows => onPatch(['phi_governance','governance_notes'], rows)} />
-      </section>
+      {clinicalTab === 'labs' && (
+        <section style={s.section}>
+          <h3 style={s.h3}>Lab Results</h3>
+          <EditableText value={packet.lab_results?.summary || ''} onChange={value => onPatch(['lab_results','summary'], value)} placeholder="Lab summary..." />
+          <Rows rows={packet.lab_results?.lab_results || []} cols={['test_name','result_value','unit','reference_range','abnormal_flag','collection_date','source']} editable onChange={rows => onPatch(['lab_results','lab_results'], rows)} />
+        </section>
+      )}
+
+      {clinicalTab === 'medications' && (
+        <section style={s.section}>
+          <h3 style={s.h3}>Medication Review</h3>
+          <Rows rows={packet.medication_review?.medications || []} cols={['name','dose','route','frequency','start_date','stop_date','prescriber','source']} title="Medications" editable onChange={rows => onPatch(['medication_review','medications'], rows)} />
+          <Rows rows={packet.medication_review?.review_flags || []} cols={['priority','finding','source','recommended_review']} title="Review flags" editable onChange={rows => onPatch(['medication_review','review_flags'], rows)} />
+        </section>
+      )}
+
+      {clinicalTab === 'followups' && (
+        <section style={s.section}>
+          <h3 style={s.h3}>Follow-Ups / Care Gaps</h3>
+          <Rows rows={packet.care_gaps?.follow_ups || []} cols={['task','due_date','responsible_party','priority','source']} title="Follow-ups" editable onChange={rows => onPatch(['care_gaps','follow_ups'], rows)} />
+          <Rows rows={packet.care_gaps?.pending_items || []} cols={['item','priority','source']} title="Pending items" editable onChange={rows => onPatch(['care_gaps','pending_items'], rows)} />
+          <Rows rows={packet.care_gaps?.care_gaps || []} cols={['gap','source','recommended_review']} title="Care gaps" editable onChange={rows => onPatch(['care_gaps','care_gaps'], rows)} />
+        </section>
+      )}
+
+      {clinicalTab === 'risks' && (
+        <section style={s.section}>
+          <Rows rows={packet.risk_safety?.risk_flags || []} cols={['risk_level','category','finding','source','recommended_review']} title="Risk & Safety Flags" editable onChange={rows => onPatch(['risk_safety','risk_flags'], rows)} />
+        </section>
+      )}
+
+      {clinicalTab === 'governance' && (
+        <section style={s.section}>
+          <h3 style={s.h3}>PHI / Governance</h3>
+          <EditableText value={packet.phi_governance?.summary || ''} onChange={value => onPatch(['phi_governance','summary'], value)} placeholder="Governance summary..." />
+          <div style={s.meta}>PHI categories: {(packet.phi_governance?.phi_categories || []).join(', ') || 'none listed'}</div>
+          <Rows rows={packet.phi_governance?.redaction_recommendations || []} cols={['field','recommendation','reason','source']} title="Redaction recommendations" editable onChange={rows => onPatch(['phi_governance','redaction_recommendations'], rows)} />
+          <Rows rows={packet.phi_governance?.governance_notes || []} cols={['control','note']} title="Governance notes" editable onChange={rows => onPatch(['phi_governance','governance_notes'], rows)} />
+        </section>
+      )}
+
+      {clinicalTab === 'history' && <ChangeHistory changes={changeHistory} />}
     </>
   );
 }
 
-function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMissingInfoPdf, loading, reviewerPersona, accessContext }) {
+function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMissingInfoPdf, loading, reviewerPersona, accessContext, changeHistory = [] }) {
+  const [priorAuthTab, setPriorAuthTab] = useState('packet');
+  const [packetTab, setPacketTab] = useState('overview');
+  const [expandedField, setExpandedField] = useState(null);
   const codeReadiness = buildCodeReadiness(packet);
   const readinessChecklist = buildPriorAuthReadinessChecklist(packet);
   const reviewer = buildCoderReviewer(reviewerPersona, accessContext);
   const caseTracker = buildPriorAuthCaseTracker(packet);
   const finalPacketBlocked = readinessChecklist.items.some(item => item.required && item.status === 'blocked');
+  const narrativeText = packet.prior_auth_packet?.medical_necessity_narrative || packet.prior_auth_packet?.packet_summary || '';
+  const decisionText = packet.prior_auth_packet?.recommended_decision || 'needs review';
   const recommendCodes = () => {
     onPatch(['code_recommendations'], generateCodeRecommendations(packet));
   };
@@ -870,25 +934,15 @@ function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMi
   return (
     <>
       <PatientContext packet={packet} onPatch={onPatch} />
-      <section style={s.section}>
-        <div style={s.sectionHead}>
-          <h3 style={s.h3}>Prior Authorization Packet</h3>
-          <button
-            type="button"
-            style={s.pdfBtn}
-            disabled={loading || !packet.prior_auth_packet || finalPacketBlocked}
-            title={finalPacketBlocked ? 'Resolve or override required checklist items before generating final PDF' : 'Generate prior authorization packet PDF'}
-            onClick={onGeneratePriorAuthPdf}>
-            Generate packet PDF
-          </button>
-          <button
-            type="button"
-            style={s.secondarySmall}
-            disabled={loading || !packet.gap_detection}
-            onClick={onGenerateMissingInfoPdf}>
-            Missing info request
-          </button>
-        </div>
+      <div style={s.priorAuthSubTabs}>
+        <button type="button" style={priorAuthTab === 'packet' ? s.priorAuthSubTabActive : s.priorAuthSubTab} onClick={() => setPriorAuthTab('packet')}>
+          Packet
+        </button>
+        <button type="button" style={priorAuthTab === 'case' ? s.priorAuthSubTabActive : s.priorAuthSubTab} onClick={() => setPriorAuthTab('case')}>
+          Case tracker
+        </button>
+      </div>
+      {priorAuthTab === 'case' ? (
         <PriorAuthCaseTracker
           tracker={caseTracker}
           onField={updateCaseField}
@@ -897,41 +951,137 @@ function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMi
           onAddDoc={addSubmissionDoc}
           onRemoveDoc={removeSubmissionDoc}
         />
-        <PriorAuthReadinessChecklist
-          checklist={readinessChecklist}
-          overrides={packet.prior_auth_readiness_overrides || {}}
-          onOverride={setReadinessOverride}
-          onReason={setOverrideReason}
-        />
-        <CodeReadinessPanel readiness={codeReadiness} />
-        <section style={s.subSection}>
-          <div style={s.tableHead}>
-            <div>
-              <div style={s.tableTitle}>Coder review workflow</div>
-              <div style={s.meta}>AI fills candidate diagnosis, procedure, medication, and supply code rows. Certified coder must approve or edit before final packet use.</div>
+      ) : (
+      <>
+        <div style={s.priorAuthSubTabs}>
+          {[
+            ['overview', 'Overview'],
+            ['payerCriteria', 'Payer criteria'],
+            ['checklist', 'Checklist'],
+            ['evidence', 'Evidence map'],
+            ['missing', 'Missing items'],
+            ['actions', 'Next actions'],
+            ['history', 'Change history'],
+          ].map(([key, label]) => (
+            <button key={key} type="button" style={packetTab === key ? s.priorAuthSubTabActive : s.priorAuthSubTab} onClick={() => setPacketTab(key)}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {packetTab === 'overview' && (
+          <section style={s.section}>
+            <div style={s.sectionHead}>
+              <h3 style={s.h3}>Prior Authorization Packet</h3>
+              <button
+                type="button"
+                style={s.pdfBtn}
+                disabled={loading || !packet.prior_auth_packet || finalPacketBlocked}
+                title={finalPacketBlocked ? 'Resolve or override required checklist items before generating final PDF' : 'Generate prior authorization packet PDF'}
+                onClick={onGeneratePriorAuthPdf}>
+                Generate packet PDF
+              </button>
+              <button
+                type="button"
+                style={s.secondarySmall}
+                disabled={loading || !packet.gap_detection}
+                onClick={onGenerateMissingInfoPdf}>
+                Missing info request
+              </button>
             </div>
-            <div style={s.inlineActions}>
-              <button type="button" style={s.rowBtn} onClick={recommendCodes}>AI recommend codes</button>
-              <button type="button" style={s.rowBtn} disabled={!packet.code_recommendations?.candidates?.length} onClick={() => markCodeRows('coder_approved')}>Approve coded rows</button>
-              <button type="button" style={s.rowBtn} disabled={!packet.code_recommendations?.candidates?.length} onClick={() => markCodeRows('coder_review_required')}>Needs coder review</button>
+            <PriorAuthReadinessChecklist
+              checklist={readinessChecklist}
+              overrides={packet.prior_auth_readiness_overrides || {}}
+              onOverride={setReadinessOverride}
+              onReason={setOverrideReason}
+            />
+            <CodeReadinessPanel readiness={codeReadiness} />
+            <section style={s.subSection}>
+              <div style={s.tableHead}>
+                <div>
+                  <div style={s.tableTitle}>Coder review workflow</div>
+                  <div style={s.meta}>AI fills candidate diagnosis, procedure, medication, and supply code rows. Certified coder must approve or edit before final packet use.</div>
+                </div>
+                <div style={s.inlineActions}>
+                  <button type="button" style={s.rowBtn} onClick={recommendCodes}>AI recommend codes</button>
+                  <button type="button" style={s.rowBtn} disabled={!packet.code_recommendations?.candidates?.length} onClick={() => markCodeRows('coder_approved')}>Approve coded rows</button>
+                  <button type="button" style={s.rowBtn} disabled={!packet.code_recommendations?.candidates?.length} onClick={() => markCodeRows('coder_review_required')}>Needs coder review</button>
+                </div>
+              </div>
+              <CoderReviewPanel
+                rows={packet.code_recommendations?.candidates || []}
+                onChange={updateCodeRows}
+                reviewer={reviewer}
+              />
+            </section>
+            <div style={s.expandableField}>
+              <div style={s.expandableFieldHead}>
+                <strong>Prior authorization narrative</strong>
+                <button type="button" style={s.rowBtn} onClick={() => setExpandedField('narrative')}>Expand</button>
+              </div>
+              <EditableText value={narrativeText} onChange={value => onPatch(['prior_auth_packet','medical_necessity_narrative'], value)} placeholder="Prior authorization narrative..." />
+              {expandedField === 'narrative' && (
+                <ExpandedTextEditor
+                  title="Prior authorization narrative"
+                  value={narrativeText}
+                  placeholder="Prior authorization narrative..."
+                  onChange={value => onPatch(['prior_auth_packet','medical_necessity_narrative'], value)}
+                  onClose={() => setExpandedField(null)}
+                />
+              )}
             </div>
-          </div>
-          <CoderReviewPanel
-            rows={packet.code_recommendations?.candidates || []}
-            onChange={updateCodeRows}
-            reviewer={reviewer}
-          />
-        </section>
-        <EditableText value={packet.prior_auth_packet?.medical_necessity_narrative || packet.prior_auth_packet?.packet_summary || ''} onChange={value => onPatch(['prior_auth_packet','medical_necessity_narrative'], value)} placeholder="Prior authorization narrative..." />
-        <div style={s.meta}>Decision: {packet.prior_auth_packet?.recommended_decision || 'needs review'}</div>
-        <Rows rows={packet.policy_documents || []} cols={['document_name','doc_type','document_id']} title="Policy documents used" />
-        <Rows rows={packet.policy_criteria?.criteria || []} cols={['criterion_id','criterion','required','category','source']} title="Payer criteria" editable onChange={rows => onPatch(['policy_criteria','criteria'], rows)} />
-        <Rows rows={packet.prior_auth_packet?.criteria_checklist || []} cols={['criterion','status','evidence','source']} title="Criteria checklist" editable onChange={rows => onPatch(['prior_auth_packet','criteria_checklist'], rows)} />
-        <Rows rows={packet.evidence_map?.criteria_matches || []} cols={['criterion_id','status','patient_evidence','policy_source','patient_source','confidence']} title="Criteria evidence map" editable onChange={rows => onPatch(['evidence_map','criteria_matches'], rows)} />
-        <Rows rows={packet.gap_detection?.missing_items || []} cols={['item','reason','priority','source']} title="Missing items" editable onChange={rows => onPatch(['gap_detection','missing_items'], rows)} />
-        <Rows rows={packet.gap_detection?.submission_risks || []} cols={['risk','priority','recommended_action']} title="Submission risks" editable onChange={rows => onPatch(['gap_detection','submission_risks'], rows)} />
-        <Rows rows={packet.prior_auth_packet?.next_actions || []} cols={['action','owner','priority']} title="Next actions" editable onChange={rows => onPatch(['prior_auth_packet','next_actions'], rows)} />
-      </section>
+            <button type="button" style={s.decisionBox} onClick={() => setExpandedField('decision')}>
+              <strong>Decision</strong>
+              <span>{decisionText}</span>
+              <small>Tap to view or edit full text</small>
+            </button>
+            {expandedField === 'decision' && (
+              <ExpandedTextEditor
+                title="Decision"
+                value={decisionText}
+                placeholder="Decision or reviewer comments..."
+                onChange={value => onPatch(['prior_auth_packet','recommended_decision'], value)}
+                onClose={() => setExpandedField(null)}
+              />
+            )}
+            <Rows rows={packet.policy_documents || []} cols={['document_name','doc_type','document_id']} title="Policy documents used" />
+          </section>
+        )}
+
+        {packetTab === 'payerCriteria' && (
+          <section style={s.section}>
+            <Rows rows={packet.policy_criteria?.criteria || []} cols={['criterion_id','criterion','required','category','source']} title="Payer criteria" editable onChange={rows => onPatch(['policy_criteria','criteria'], rows)} />
+          </section>
+        )}
+
+        {packetTab === 'checklist' && (
+          <section style={s.section}>
+            <Rows rows={packet.prior_auth_packet?.criteria_checklist || []} cols={['criterion','status','evidence','source']} title="Criteria checklist" editable onChange={rows => onPatch(['prior_auth_packet','criteria_checklist'], rows)} />
+          </section>
+        )}
+
+        {packetTab === 'evidence' && (
+          <section style={s.section}>
+            <Rows rows={packet.evidence_map?.criteria_matches || []} cols={['criterion_id','status','patient_evidence','policy_source','patient_source','confidence']} title="Criteria evidence map" editable onChange={rows => onPatch(['evidence_map','criteria_matches'], rows)} />
+          </section>
+        )}
+
+        {packetTab === 'missing' && (
+          <section style={s.section}>
+            <Rows rows={packet.gap_detection?.missing_items || []} cols={['item','reason','priority','source']} title="Missing items" editable onChange={rows => onPatch(['gap_detection','missing_items'], rows)} />
+            <Rows rows={packet.gap_detection?.submission_risks || []} cols={['risk','priority','recommended_action']} title="Submission risks" editable onChange={rows => onPatch(['gap_detection','submission_risks'], rows)} />
+          </section>
+        )}
+
+        {packetTab === 'actions' && (
+          <section style={s.section}>
+            <Rows rows={packet.prior_auth_packet?.next_actions || []} cols={['action','owner','priority']} title="Next actions" editable onChange={rows => onPatch(['prior_auth_packet','next_actions'], rows)} />
+          </section>
+        )}
+
+        {packetTab === 'history' && <ChangeHistory changes={changeHistory} />}
+      </>
+      )}
     </>
   );
 }
@@ -952,6 +1102,27 @@ function CodeReadinessPanel({ readiness }) {
         ))}
       </div>
       <div style={s.notice}>{readiness.notice}</div>
+    </div>
+  );
+}
+
+function ExpandedTextEditor({ title, value, placeholder, onChange, onClose }) {
+  return (
+    <div style={s.expandInline}>
+      <section style={s.expandPanel}>
+        <div style={s.expandHead}>
+          <strong>{title}</strong>
+          <button type="button" style={s.expandClose} onClick={onClose}>x</button>
+        </div>
+        <div style={s.expandBody}>
+          <textarea
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            placeholder={placeholder}
+            style={s.expandTextarea}
+          />
+        </div>
+      </section>
     </div>
   );
 }
@@ -1036,12 +1207,13 @@ function PriorAuthCaseTracker({ tracker, onField, onStatus, onDoc, onAddDoc, onR
         </label>
       </div>
       <label style={s.compactField}>Status note
-        <textarea
-          style={s.compactText}
-          rows={2}
+        <ExpandableTextarea
+          title="Status note"
           value={tracker.status_note || ''}
-          onChange={e => onField('status_note', e.target.value)}
+          onChange={value => onField('status_note', value)}
           placeholder="Submission note, payer call summary, denial reason, or follow-up instructions..."
+          inputStyle={s.compactText}
+          rows={2}
         />
       </label>
       <div style={s.statusActions}>
@@ -1129,11 +1301,12 @@ function PriorAuthReadinessChecklist({ checklist, overrides, onOverride, onReaso
               {item.status === 'blocked' || item.status === 'overridden' ? (
                 <div style={s.overrideBox}>
                   <label style={s.compactField}>Override reason
-                    <textarea
+                    <ExpandableTextarea
+                      title={`${item.label} override reason`}
                       value={override?.reason || ''}
-                      onChange={e => onReason(item, e.target.value)}
+                      onChange={value => onReason(item, value)}
                       placeholder="Explain why this can proceed despite the checklist item..."
-                      style={s.compactText}
+                      inputStyle={s.compactText}
                       rows={2}
                     />
                   </label>
@@ -1257,10 +1430,10 @@ function CodeReviewCard({ row, index, updateCell, setStatus, deleteRow }) {
         </label>
       </div>
       <label style={s.compactField}>Description
-        <textarea value={row.description || ''} onChange={e => updateCell(index, 'description', e.target.value)} style={s.compactText} rows={2} />
+        <ExpandableTextarea title="Code description" value={row.description || ''} onChange={value => updateCell(index, 'description', value)} inputStyle={s.compactText} rows={2} />
       </label>
       <label style={s.compactField}>Reviewer note
-        <textarea value={row.reviewer_note || ''} onChange={e => updateCell(index, 'reviewer_note', e.target.value)} style={s.compactText} rows={2} />
+        <ExpandableTextarea title="Reviewer note" value={row.reviewer_note || ''} onChange={value => updateCell(index, 'reviewer_note', value)} inputStyle={s.compactText} rows={2} />
       </label>
       <details style={s.codeDetails}>
         <summary>Advanced coding details</summary>
@@ -1287,7 +1460,7 @@ function CodeReviewCard({ row, index, updateCell, setStatus, deleteRow }) {
           </label>
           <label style={s.compactField}>Reference source<input value={row.reference_source || ''} onChange={e => updateCell(index, 'reference_source', e.target.value)} style={s.compactInput} /></label>
           <label style={s.compactField}>Payer rule match<input value={row.payer_rule_match || ''} onChange={e => updateCell(index, 'payer_rule_match', e.target.value)} style={s.compactInput} /></label>
-          <label style={s.compactField}>Basis<textarea value={row.basis || ''} onChange={e => updateCell(index, 'basis', e.target.value)} style={s.compactText} rows={2} /></label>
+          <label style={s.compactField}>Basis<ExpandableTextarea title="Coding basis" value={row.basis || ''} onChange={value => updateCell(index, 'basis', value)} inputStyle={s.compactText} rows={2} /></label>
           <label style={s.compactField}>Confidence<input value={String(row.confidence ?? '')} onChange={e => updateCell(index, 'confidence', e.target.value)} style={s.compactInput} /></label>
         </div>
       </details>
@@ -1566,18 +1739,19 @@ function WorkbenchOverview({ activeTab, packet, run, evaluation }) {
 function ReviewerControls({ accessContext, personaCatalog, selectedPersona, onPersonaChange }) {
   const available = accessContext?.personas?.length ? accessContext.personas : [selectedPersona].filter(Boolean);
   const persona = personaCatalog.find(item => item.id === selectedPersona) || accessContext?.persona_scopes?.[selectedPersona] || {};
+  const isMobile = useIsMobile();
   return (
-    <div style={s.reviewerBox}>
-      <div style={s.reviewerField}>
+    <div style={{...s.reviewerBox, ...(isMobile ? s.reviewerBoxMobile : {})}}>
+      <div style={{...s.reviewerField, ...(isMobile ? s.reviewerFieldMobile : {})}}>
         <strong>Reviewer persona</strong>
-        <select value={selectedPersona || ''} onChange={e => onPersonaChange(e.target.value)} style={s.select}>
+        <select value={selectedPersona || ''} onChange={e => onPersonaChange(e.target.value)} style={{...s.select, ...(isMobile ? s.reviewerSelectMobile : {})}}>
           {available.map(id => {
             const item = personaCatalog.find(p => p.id === id) || { label: id };
             return <option key={id} value={id}>{item.label || id}</option>;
           })}
         </select>
       </div>
-      <div style={s.reviewerScope}>
+      <div style={{...s.reviewerScope, ...(isMobile ? s.reviewerScopeMobile : {})}}>
         <strong>Scope</strong>
         <span>{persona.scope || 'Workspace persona controls what this reviewer can edit and approve.'}</span>
         <small>Workspace role: {accessContext?.workspace_role || 'loading'} · Approval: {persona.can_approve ? 'allowed' : 'not allowed'}</small>
@@ -2205,6 +2379,7 @@ async function waitForAgentRun(runId, onUpdate) {
 }
 
 function Rows({ rows, cols, title, editable = false, onChange = null }) {
+  const isMobile = useIsMobile();
   const updateCell = (index, col, value) => {
     const next = rows.map((row, i) => i === index ? { ...row, [col]: normalizeCellValue(col, value) } : row);
     onChange?.(next);
@@ -2223,6 +2398,36 @@ function Rows({ rows, cols, title, editable = false, onChange = null }) {
         <div style={s.emptySmall}>
           None found. {editable && <button type="button" style={s.linkBtn} onClick={addRow}>Add one</button>}
         </div>
+      ) : isMobile ? (
+        <div style={s.mobileRowCards}>
+          {rows.map((row, i) => (
+            <article key={i} style={s.mobileRowCard}>
+              <div style={s.mobileRowHead}>
+                <strong style={s.mobileRowTitle}>{mobileRowTitle(row, cols, i)}</strong>
+                {editable && <button type="button" style={s.deleteBtn} onClick={() => deleteRow(i)}>Remove</button>}
+              </div>
+              <div style={s.mobileRowFields}>
+                {cols.map(c => (
+                  <label key={c} style={s.mobileRowField}>
+                    <span>{c.replaceAll('_',' ')}</span>
+                    {editable ? (
+                      <ExpandableTextarea
+                        title={c.replaceAll('_',' ')}
+                        value={String(row[c] ?? '')}
+                        onChange={value => updateCell(i, c, value)}
+                        placeholder={c.replaceAll('_',' ')}
+                        rows={String(row[c] ?? '').length > 96 ? 5 : 2}
+                        inputStyle={s.mobileCellInput}
+                      />
+                    ) : (
+                      <strong>{String(row[c] ?? '') || '—'}</strong>
+                    )}
+                  </label>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
       ) : (
         <div style={s.tableWrap}>
           <table style={s.table}>
@@ -2233,10 +2438,12 @@ function Rows({ rows, cols, title, editable = false, onChange = null }) {
                   {cols.map(c => (
                     <td key={c} style={s.td}>
                       {editable ? (
-                        <textarea
+                        <ExpandableTextarea
+                          title={c.replaceAll('_',' ')}
                           value={String(row[c] ?? '')}
-                          onChange={e => updateCell(i, c, e.target.value)}
-                          style={s.cellInput}
+                          onChange={value => updateCell(i, c, value)}
+                          placeholder={c.replaceAll('_',' ')}
+                          inputStyle={s.cellInput}
                           rows={String(row[c] ?? '').length > 80 ? 3 : 1}
                         />
                       ) : String(row[c] ?? '')}
@@ -2253,13 +2460,46 @@ function Rows({ rows, cols, title, editable = false, onChange = null }) {
   );
 }
 
+function mobileRowTitle(row, cols, index) {
+  const firstValue = cols.map(col => row[col]).find(value => value != null && String(value).trim());
+  return firstValue ? String(firstValue) : `Row ${index + 1}`;
+}
+
+function ExpandableTextarea({ title = 'Text', value, onChange, placeholder, inputStyle, rows = 3 }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div style={s.textareaExpandWrap}>
+      <textarea
+        value={value || ''}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        style={inputStyle}
+        rows={rows}
+      />
+      <button type="button" style={s.textareaExpandBtn} onClick={() => setExpanded(prev => !prev)}>
+        {expanded ? 'Collapse' : 'Expand'}
+      </button>
+      {expanded && (
+        <ExpandedTextEditor
+          title={title}
+          value={value || ''}
+          placeholder={placeholder}
+          onChange={onChange}
+          onClose={() => setExpanded(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 function EditableText({ value, onChange, placeholder }) {
   return (
-    <textarea
+    <ExpandableTextarea
+      title={placeholder || 'Text'}
       value={value || ''}
-      onChange={e => onChange(e.target.value)}
+      onChange={onChange}
       placeholder={placeholder}
-      style={s.textEdit}
+      inputStyle={s.textEdit}
       rows={3}
     />
   );
@@ -2298,6 +2538,21 @@ function normalizeCellValue(col, value) {
   return value;
 }
 
+function useIsMobile(breakpoint = 760) {
+  const get = () => typeof window !== 'undefined' && window.innerWidth <= breakpoint;
+  const [mobile, setMobile] = useState(get);
+  useEffect(() => {
+    const onResize = () => setMobile(get());
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, [breakpoint]);
+  return mobile;
+}
+
 function collectSources(packet) {
   const found = new Set();
   collectLeafObjects(packet).forEach(item => {
@@ -2320,27 +2575,39 @@ function formatChangeValue(value) {
 
 const s = {
   backdrop:{position:'fixed',inset:0,background:'rgba(0,0,0,.62)',zIndex:5000,display:'flex',alignItems:'center',justifyContent:'center',padding:20},
+  backdropMobile:{padding:4,alignItems:'stretch',justifyContent:'stretch'},
   panel:{width:'min(1120px,96vw)',height:'min(92vh,920px)',overflow:'hidden',display:'flex',flexDirection:'column',background:'var(--s1)',border:'1px solid var(--b1)',borderRadius:8,boxShadow:'0 24px 80px rgba(0,0,0,.55)'},
+  panelMobile:{width:'calc(100vw - 8px)',height:'calc(100dvh - 8px)',maxHeight:'calc(100dvh - 8px)',borderRadius:8},
   head:{display:'flex',justifyContent:'space-between',gap:16,padding:'16px 18px',borderBottom:'1px solid var(--b1)',background:'var(--s2)'},
+  headMobile:{padding:'9px 10px',gap:8},
+  headTextMobile:{minWidth:0,overflow:'hidden'},
   kicker:{fontSize:11,color:'#f87171',fontWeight:800,textTransform:'uppercase',letterSpacing:1.2},
   title:{fontSize:18,margin:'4px 0 0',lineHeight:1.3},
+  titleMobile:{fontSize:14,margin:'2px 0 0',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'},
   close:{background:'transparent',border:'1px solid var(--b2)',color:'var(--tx)',borderRadius:8,width:32,height:32,cursor:'pointer'},
   actions:{display:'flex',alignItems:'center',gap:12,padding:'12px 18px',borderBottom:'1px solid var(--b1)',background:'rgba(248,113,113,.04)',flexWrap:'wrap'},
+  actionsMobile:{padding:'6px 8px',gap:6,alignItems:'center'},
   tabs:{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center',width:'100%'},
+  tabsMobile:{flex:'1 1 auto',minWidth:0,width:'auto',flexWrap:'nowrap',overflowX:'auto',WebkitOverflowScrolling:'touch',paddingBottom:2},
   tab:{display:'inline-flex',alignItems:'center',gap:8,background:'var(--s3)',border:'1px solid var(--b2)',color:'var(--tx2)',borderRadius:8,padding:'7px 10px',fontSize:12,fontWeight:800,cursor:'pointer'},
   tabActive:{display:'inline-flex',alignItems:'center',gap:8,background:'rgba(248,113,113,.14)',border:'1px solid rgba(248,113,113,.36)',color:'#fecaca',borderRadius:8,padding:'7px 10px',fontSize:12,fontWeight:900,cursor:'pointer'},
+  tabMobile:{flex:'0 0 auto',justifyContent:'center',padding:'6px 9px',fontSize:11,whiteSpace:'nowrap'},
   tabStatus:{fontSize:10,textTransform:'uppercase',color:'#4ade80',background:'rgba(74,222,128,.1)',border:'1px solid rgba(74,222,128,.22)',borderRadius:20,padding:'1px 6px'},
   primary:{background:'#b91c1c',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:800,cursor:'pointer'},
   secondary:{background:'#2563eb',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:800,cursor:'pointer'},
   scribeButton:{background:'#047857',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:800,cursor:'pointer'},
+  topRunButtonMobile:{padding:'6px 9px',fontSize:11,minHeight:30,flex:'0 1 auto'},
   approve:{background:'#2563eb',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:12,fontWeight:800,cursor:'pointer'},
   secondarySmall:{background:'var(--s3)',color:'var(--tx)',border:'1px solid var(--b2)',borderRadius:8,padding:'8px 12px',fontSize:12,fontWeight:800,cursor:'pointer'},
   reviewActions:{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'},
   inlineActions:{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'},
   hint:{fontSize:12,color:'var(--muted2)'},
   policyPicker:{display:'flex',flexDirection:'column',gap:8,padding:'10px 18px',borderBottom:'1px solid var(--b1)',background:'rgba(37,99,235,.07)'},
+  policyPickerMobile:{padding:'6px 8px',gap:6,maxHeight:150,overflowY:'auto',WebkitOverflowScrolling:'touch',flex:'0 0 auto'},
   policyPickerHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,fontSize:12,color:'var(--tx2)',flexWrap:'wrap'},
+  policyToggle:{background:'var(--s3)',border:'1px solid var(--b2)',color:'var(--tx)',borderRadius:7,padding:'4px 8px',fontSize:11,fontWeight:900,cursor:'pointer'},
   policyList:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:8},
+  policyListMobile:{gridTemplateColumns:'1fr',gap:6},
   policyItem:{display:'flex',alignItems:'flex-start',gap:8,border:'1px solid var(--b2)',background:'rgba(255,255,255,.035)',borderRadius:8,padding:9,fontSize:12,color:'var(--tx2)',cursor:'pointer'},
   policyEmpty:{fontSize:12,color:'#fbbf24',border:'1px solid rgba(251,191,36,.24)',background:'rgba(251,191,36,.07)',borderRadius:8,padding:9},
   scribeTools:{display:'flex',alignItems:'center',gap:10,padding:'10px 18px',borderBottom:'1px solid var(--b1)',background:'rgba(4,120,87,.07)',flexWrap:'wrap'},
@@ -2353,10 +2620,15 @@ const s = {
   clearBtn:{background:'transparent',border:'1px solid rgba(248,113,113,.3)',borderRadius:8,color:'#f87171',padding:'7px 11px',fontSize:12,fontWeight:800,cursor:'pointer'},
   recordingStatus:{fontSize:12,color:'#a7f3d0'},
   scroll:{flex:1,minHeight:0,overflowY:'auto',display:'flex',flexDirection:'column'},
+  scrollMobile:{overflowY:'auto',WebkitOverflowScrolling:'touch',overscrollBehavior:'contain',minHeight:0},
   body:{padding:18,display:'flex',flexDirection:'column',gap:16},
+  bodyMobile:{padding:10,gap:10,paddingBottom:28},
   section:{border:'1px solid var(--b1)',background:'var(--s2)',borderRadius:8,padding:14},
   sectionHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,marginBottom:10,flexWrap:'wrap'},
   pdfBtn:{background:'#0e7490',color:'#fff',border:'none',borderRadius:8,padding:'7px 11px',fontSize:12,fontWeight:900,cursor:'pointer'},
+  priorAuthSubTabs:{display:'flex',gap:6,alignItems:'center',overflowX:'auto',WebkitOverflowScrolling:'touch',border:'1px solid var(--b1)',background:'rgba(255,255,255,.025)',borderRadius:8,padding:6},
+  priorAuthSubTab:{flex:'0 0 auto',background:'transparent',border:'1px solid transparent',color:'var(--tx2)',borderRadius:7,padding:'7px 10px',fontSize:12,fontWeight:900,cursor:'pointer',whiteSpace:'nowrap'},
+  priorAuthSubTabActive:{flex:'0 0 auto',background:'rgba(96,165,250,.16)',border:'1px solid rgba(96,165,250,.42)',color:'#bfdbfe',borderRadius:7,padding:'7px 10px',fontSize:12,fontWeight:900,cursor:'pointer',whiteSpace:'nowrap'},
   workbench:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:14,border:'1px solid rgba(14,165,233,.24)',background:'rgba(14,165,233,.06)',borderRadius:8,padding:14},
   workbenchPane:{minWidth:0},
   readinessGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8},
@@ -2368,20 +2640,35 @@ const s = {
   summary:{fontSize:13,lineHeight:1.65,color:'var(--tx)'},
   meta:{fontSize:11,color:'var(--muted2)',marginTop:8},
   guardrail:{fontSize:11,color:'#fbbf24',marginTop:8},
-  reviewerBox:{display:'grid',gridTemplateColumns:'minmax(180px,240px) minmax(0,1fr)',gap:12,marginTop:12,border:'1px solid rgba(125,211,252,.18)',background:'rgba(14,165,233,.05)',borderRadius:8,padding:10},
-  reviewerField:{display:'flex',flexDirection:'column',gap:6,fontSize:12},
-  reviewerScope:{display:'flex',flexDirection:'column',gap:5,fontSize:12,color:'var(--tx2)'},
+  reviewerBox:{display:'grid',gridTemplateColumns:'minmax(130px,1fr) minmax(0,3fr)',gap:12,marginTop:12,border:'1px solid rgba(125,211,252,.18)',background:'rgba(14,165,233,.05)',borderRadius:8,padding:10},
+  reviewerBoxMobile:{gridTemplateColumns:'minmax(82px,1fr) minmax(0,3fr)',gap:8,padding:8},
+  reviewerField:{display:'flex',flexDirection:'column',gap:6,fontSize:12,minWidth:0},
+  reviewerFieldMobile:{fontSize:11},
+  reviewerSelectMobile:{width:'100%',minWidth:0,fontSize:11,padding:'6px 6px'},
+  reviewerScope:{display:'flex',flexDirection:'column',gap:5,fontSize:12,color:'var(--tx2)',minWidth:0,overflowWrap:'anywhere'},
+  reviewerScopeMobile:{fontSize:11,lineHeight:1.35},
   grid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:10},
   field:{border:'1px solid var(--b1)',borderRadius:8,padding:10,background:'rgba(255,255,255,.03)',display:'flex',flexDirection:'column',gap:5},
   inlineInput:{background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:6,color:'var(--tx)',padding:'7px 8px',fontSize:13,width:'100%'},
+  textareaExpandWrap:{display:'flex',flexDirection:'column',gap:6,minWidth:0,width:'100%'},
+  textareaExpandBtn:{alignSelf:'flex-end',background:'var(--s3)',border:'1px solid var(--b2)',color:'var(--tx)',borderRadius:7,padding:'4px 8px',fontSize:11,fontWeight:900,cursor:'pointer'},
   textEdit:{width:'100%',minHeight:78,background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:8,color:'var(--tx)',padding:10,fontSize:13,lineHeight:1.55,resize:'vertical'},
+  expandableField:{display:'flex',flexDirection:'column',gap:7,minWidth:0},
+  expandableFieldHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,color:'var(--tx)',fontSize:12},
+  decisionBox:{display:'flex',flexDirection:'column',gap:6,border:'1px solid var(--b1)',background:'rgba(255,255,255,.035)',borderRadius:8,padding:10,marginTop:10,color:'var(--tx2)',fontSize:13,lineHeight:1.55,whiteSpace:'pre-wrap',overflowWrap:'anywhere',wordBreak:'break-word',minWidth:0,width:'100%',textAlign:'left',cursor:'pointer'},
+  expandInline:{position:'relative',zIndex:1,display:'block',marginTop:8},
+  expandPanel:{position:'relative',width:'100%',height:'min(62vh,560px)',minHeight:320,background:'#0f172a',border:'1px solid rgba(148,163,184,.35)',borderRadius:8,boxShadow:'0 12px 32px rgba(0,0,0,.35)',display:'flex',flexDirection:'column',overflow:'hidden'},
+  expandHead:{position:'sticky',top:0,zIndex:2,display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,padding:'10px 12px',borderBottom:'1px solid rgba(148,163,184,.25)',background:'#111827',fontSize:14,color:'#f8fafc',flex:'0 0 auto',minHeight:54},
+  expandClose:{background:'#1f2937',border:'1px solid rgba(248,250,252,.4)',color:'#fff',borderRadius:8,width:42,height:42,cursor:'pointer',fontWeight:900,fontSize:20,lineHeight:1,flex:'0 0 auto'},
+  expandBody:{flex:1,minHeight:0,overflow:'hidden',display:'flex',background:'#020617'},
+  expandTextarea:{flex:1,width:'100%',height:'100%',minHeight:0,background:'#020617',border:'none',color:'#f8fafc',padding:14,fontSize:16,lineHeight:1.55,resize:'none',outline:'none',overflowY:'scroll',WebkitOverflowScrolling:'touch',touchAction:'pan-y'},
   avsGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))',gap:10,marginTop:10},
   avsLabel:{display:'flex',flexDirection:'column',gap:6,fontSize:12,fontWeight:800,color:'var(--tx2)'},
   tableHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,margin:'0 0 6px'},
   tableTitle:{fontSize:12,fontWeight:800,color:'var(--tx)',margin:'0 0 6px'},
   rowBtn:{background:'var(--s3)',border:'1px solid var(--b2)',color:'var(--tx)',borderRadius:7,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'},
   linkBtn:{background:'transparent',border:'none',color:'#7dd3fc',fontSize:12,fontWeight:800,cursor:'pointer',padding:0},
-  deleteBtn:{background:'transparent',border:'1px solid rgba(248,113,113,.28)',color:'#fca5a5',borderRadius:7,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'},
+  deleteBtn:{background:'transparent',border:'1px solid rgba(248,113,113,.28)',color:'#fca5a5',borderRadius:7,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer',flex:'0 0 auto',whiteSpace:'nowrap'},
   cellInput:{width:'100%',minWidth:120,background:'rgba(0,0,0,.12)',border:'1px solid transparent',borderRadius:6,color:'var(--tx2)',fontSize:12,lineHeight:1.4,padding:6,resize:'vertical'},
   cellSelect:{width:'100%',minWidth:145,background:'rgba(0,0,0,.12)',border:'1px solid var(--b2)',borderRadius:6,color:'var(--tx2)',fontSize:12,lineHeight:1.4,padding:6},
   rowActionStack:{display:'flex',flexDirection:'column',gap:6,minWidth:116},
@@ -2420,6 +2707,13 @@ const s = {
   table:{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:760},
   th:{textAlign:'left',textTransform:'capitalize',fontSize:11,fontWeight:800,color:'var(--tx)',background:'rgba(255,255,255,.06)',borderRight:'1px solid var(--b2)',borderBottom:'1px solid var(--b2)',padding:'8px 10px',verticalAlign:'top',whiteSpace:'nowrap'},
   td:{color:'var(--tx2)',borderRight:'1px solid var(--b2)',borderBottom:'1px solid var(--b2)',padding:'8px 10px',verticalAlign:'top',lineHeight:1.45,minWidth:110,maxWidth:320,whiteSpace:'normal',overflowWrap:'anywhere'},
+  mobileRowCards:{display:'flex',flexDirection:'column',gap:9},
+  mobileRowCard:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.035)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:9,minWidth:0},
+  mobileRowHead:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:8,color:'var(--tx)',fontSize:12,overflowWrap:'anywhere'},
+  mobileRowTitle:{minWidth:0,flex:'1 1 auto',lineHeight:1.35,overflowWrap:'anywhere'},
+  mobileRowFields:{display:'grid',gridTemplateColumns:'1fr',gap:7},
+  mobileRowField:{display:'flex',flexDirection:'column',gap:4,border:'1px solid var(--b1)',background:'rgba(0,0,0,.12)',borderRadius:7,padding:'7px 8px',fontSize:11,color:'var(--muted2)',textTransform:'capitalize',minWidth:0},
+  mobileCellInput:{width:'100%',minHeight:48,background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:7,color:'var(--tx)',padding:'8px 9px',fontSize:16,lineHeight:1.4,resize:'vertical',overflowY:'auto'},
   workflowHead:{display:'flex',justifyContent:'space-between',gap:12,alignItems:'flex-start',flexWrap:'wrap'},
   steps:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(210px,1fr))',gap:8,marginTop:10},
   step:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.03)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:4},
