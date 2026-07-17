@@ -32,6 +32,22 @@ export async function login(email, password) {
   }));
 }
 
+export async function verifyOtp(mfaToken, otp) {
+  return handleRes(await fetch(`${BASE}/auth/verify-otp`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ mfa_token: mfaToken, otp }),
+  }));
+}
+
+export async function resendOtp(mfaToken) {
+  return handleRes(await fetch(`${BASE}/auth/resend-otp`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ mfa_token: mfaToken }),
+  }));
+}
+
 export async function getMe() {
   return handleRes(await fetch(`${BASE}/auth/me`, { headers: authHdr() }));
 }

@@ -254,6 +254,23 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 CREATE INDEX IF NOT EXISTS idx_prt_token_hash ON password_reset_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_prt_user_id    ON password_reset_tokens(user_id);
 
+-- Email OTP challenges for login MFA
+CREATE TABLE IF NOT EXISTS login_mfa_challenges (
+    id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id        UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    email          TEXT        NOT NULL,
+    code_hash      TEXT        NOT NULL,
+    mfa_token_hash TEXT        NOT NULL UNIQUE,
+    expires_at     TIMESTAMPTZ NOT NULL,
+    attempts       INTEGER     NOT NULL DEFAULT 0,
+    used           BOOLEAN     NOT NULL DEFAULT FALSE,
+    sent_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at     TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mfa_user_id ON login_mfa_challenges(user_id);
+CREATE INDEX IF NOT EXISTS idx_mfa_token_hash ON login_mfa_challenges(mfa_token_hash);
+CREATE INDEX IF NOT EXISTS idx_mfa_expires_at ON login_mfa_challenges(expires_at);
+
 -- Chat sessions (persistent across devices)
 CREATE TABLE IF NOT EXISTS chat_sessions (
     id           UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),

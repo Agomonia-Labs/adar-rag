@@ -56,6 +56,47 @@ def _html_reset(name: str, link: str) -> str:
 </body></html>"""
 
 
+def _html_otp(name: str, otp: str) -> str:
+    safe_name = name or "there"
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8"></head>
+<body style="font-family:Inter,sans-serif;background:#0a1a0a;padding:40px 20px;margin:0">
+  <div style="max-width:480px;margin:0 auto;background:#162616;border-radius:16px;
+              padding:40px 36px;border:1px solid rgba(74,222,128,.2)">
+    <div style="text-align:center;margin-bottom:28px">
+      <span style="font-size:36px">🌿</span>
+      <h1 style="font-size:22px;font-weight:800;color:#4ade80;margin:10px 0 4px">আদর DocIntel</h1>
+      <p style="font-size:12px;color:#6b7280;margin:0">Document Intelligence Platform</p>
+    </div>
+    <h2 style="font-size:18px;font-weight:700;color:#f0fdf4;margin:0 0 12px">Sign in verification</h2>
+    <p style="font-size:14px;color:#d1fae5;line-height:1.6;margin:0 0 22px">
+      Hi {safe_name},<br><br>
+      Use this code to complete your DocIntel sign in.
+    </p>
+    <div style="text-align:center;margin:8px 0 24px">
+      <div style="font-size:0.78rem;color:#6b7280;margin-bottom:12px;letter-spacing:0.08em;text-transform:uppercase">
+        Your login code
+      </div>
+      <div style="font-size:2.6rem;font-weight:800;letter-spacing:0.22em;color:#dcfce7;
+                  background:rgba(74,222,128,.1);border-radius:12px;padding:16px 24px;
+                  display:inline-block;border:2px solid rgba(74,222,128,.28)">
+        {otp}
+      </div>
+      <div style="font-size:0.78rem;color:#6b7280;margin-top:12px">
+        Expires in <strong style="color:#fbbf24">5 minutes</strong> · Do not share this code
+      </div>
+    </div>
+    <p style="font-size:12px;color:#6b7280;line-height:1.6;margin:0;text-align:center">
+      If you did not try to sign in, you can safely ignore this email.
+    </p>
+    <hr style="border:none;border-top:1px solid rgba(255,255,255,.07);margin:24px 0">
+    <p style="font-size:11px;color:#4b5563;text-align:center;margin:0">
+      {EMAIL_FROM_NAME} · Agomonia Labs
+    </p>
+  </div>
+</body></html>"""
+
+
 # ── Core send function ────────────────────────────────────────────────────────
 def _smtp_send(to_email: str, subject: str, html: str) -> None:
     """
@@ -135,6 +176,43 @@ async def send_reset_email(to_email: str, to_name: str, reset_link: str) -> bool
         return False
     except Exception as e:
         log.error(f"✗ Unexpected email error: {type(e).__name__}: {e}")
+        return False
+
+
+async def send_otp_email(to_email: str, to_name: str, otp: str) -> bool:
+    """Send a 6-digit MFA login code. Returns True on success."""
+    if not is_email_configured():
+        log.warning(
+            f"\n{'='*60}\n"
+            f"⚠  No Gmail credentials configured (GMAIL_USER / GMAIL_APP_PASSWORD)\n"
+            f"   Dev mode — OTP for {to_email}: {otp}\n"
+            f"{'='*60}"
+        )
+        return True
+
+    subject = f"Your DocIntel login code: {otp}"
+    html = _html_otp(to_name, otp)
+
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(None, _smtp_send, to_email, subject, html)
+        log.info(f"✓ OTP email sent to {to_email}")
+        return True
+    except smtplib.SMTPAuthenticationError as e:
+        log.error(f"✗ Gmail SMTP authentication failed for {GMAIL_USER}: {e}")
+        return False
+    except smtplib.SMTPRecipientsRefused as e:
+        log.error(f"✗ Recipient refused: {to_email} — {e}")
+        return False
+    except smtplib.SMTPConnectError as e:
+        log.error(f"✗ Cannot connect to {SMTP_HOST}:{SMTP_PORT} — {e}")
+        return False
+    except TimeoutError:
+        log.error(f"✗ SMTP connection timed out (15s) to {SMTP_HOST}:{SMTP_PORT}")
+        return False
+    except Exception as e:
+        log.error(f"✗ OTP email error for {to_email}: {type(e).__name__}: {e}")
         return False
 
 

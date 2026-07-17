@@ -1,7 +1,7 @@
 // src/pages/AuthPages.jsx
 // Auth flow managed internally: login → forgot → reset / register
 import React, { useState, useEffect } from 'react';
-import { login, register, forgotPassword, verifyResetToken, resetPassword, resendVerification, verifyEmail } from '../services/api.js';
+import { login, register, forgotPassword, verifyResetToken, resetPassword, resendVerification, verifyEmail, verifyOtp, resendOtp } from '../services/api.js';
 
 const Brand = () => (
   <div style={{ textAlign:'center', marginBottom:'1.75rem' }}>
@@ -71,18 +71,108 @@ function LoginScreen({ onLogin, onSwitch, onForgot }) {
   const [pass,  setPass]  = useState('');
   const [error, setError] = useState('');
   const [busy,  setBusy]  = useState(false);
+  const [mfaToken, setMfaToken] = useState('');
+  const [emailHint, setEmailHint] = useState('');
+  const [otp, setOtp] = useState('');
+  const [message, setMessage] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
 
   const submit = async e => {
     e.preventDefault();
     setBusy(true); setError('');
     try {
       const data = await login(email, pass);
+      if (data.mfa_required) {
+        setMfaToken(data.mfa_token);
+        setEmailHint(data.email_hint || email);
+        setOtp('');
+        setMessage(data.message || 'Verification code sent.');
+        return;
+      }
       localStorage.setItem('token',     data.access_token);
       localStorage.setItem('user_role', data.role);
       onLogin(data);
     } catch(err) { setError(err.message); }
     finally { setBusy(false); }
   };
+
+  const submitOtp = async e => {
+    e.preventDefault();
+    if (otp.trim().length !== 6) { setError('Enter the 6-digit code.'); return; }
+    setBusy(true); setError(''); setMessage('');
+    try {
+      const data = await verifyOtp(mfaToken, otp.trim());
+      localStorage.setItem('token',     data.access_token);
+      localStorage.setItem('user_role', data.role);
+      onLogin(data);
+    } catch(err) { setError(err.message); }
+    finally { setBusy(false); }
+  };
+
+  const handleResendOtp = async () => {
+    setError(''); setMessage('');
+    try {
+      const data = await resendOtp(mfaToken);
+      setMessage(data.message || 'New code sent.');
+      setResendCooldown(60);
+      const timer = setInterval(() => {
+        setResendCooldown(current => {
+          if (current <= 1) { clearInterval(timer); return 0; }
+          return current - 1;
+        });
+      }, 1000);
+    } catch(err) { setError(err.message); }
+  };
+
+  if (mfaToken) {
+    return (
+      <div style={s.page}>
+        <div style={s.card}>
+          <Brand />
+          <h1 style={s.title}>Check your email</h1>
+          <p style={s.sub}>
+            We sent a 6-digit login code to<br />
+            <strong style={{ color:'var(--tx)' }}>{emailHint}</strong>
+          </p>
+          {error && <div style={s.err}>{error}</div>}
+          {message && <div style={s.ok}>{message}</div>}
+          <form onSubmit={submitOtp}>
+            <label style={s.label}>6-digit code</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              value={otp}
+              onChange={e=>setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              required
+              autoFocus
+              placeholder="000000"
+              style={s.otpInput}
+            />
+            <button type="submit" style={s.btn} disabled={busy || otp.length !== 6}>
+              {busy ? 'Verifying…' : 'Verify code →'}
+            </button>
+          </form>
+          <div style={s.otpActions}>
+            <button
+              type="button"
+              style={s.linkBtn}
+              onClick={() => { setMfaToken(''); setOtp(''); setError(''); setMessage(''); }}>
+              ← Back to login
+            </button>
+            <button
+              type="button"
+              style={s.linkBtn}
+              disabled={resendCooldown > 0}
+              onClick={handleResendOtp}>
+              {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
+            </button>
+          </div>
+          <p style={s.otpHint}>Code expires in 5 minutes. Do not share this code.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={s.page}>
@@ -340,6 +430,10 @@ const s = {
                display:'inline-flex', alignItems:'center', gap:6, opacity:.85 },
   demoBadge: { fontSize:10, background:'rgba(74,222,128,.12)', color:'#4ade80',
                padding:'2px 7px', borderRadius:20, border:'1px solid rgba(74,222,128,.25)' },
+  otpInput:  { width:'100%', textAlign:'center', letterSpacing:'.45em', fontSize:28, fontWeight:800,
+               padding:'10px 8px', marginBottom:2 },
+  otpActions:{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:12, marginTop:14 },
+  otpHint:   { textAlign:'center', color:'var(--muted2)', fontSize:11.5, marginTop:18, lineHeight:1.5 },
 };
 
 

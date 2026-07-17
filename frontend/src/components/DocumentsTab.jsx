@@ -556,12 +556,32 @@ function Stat({v,l,c}){ return <div style={{textAlign:'center',minWidth:50}}><di
 
 function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSummarize,onLease,onHealthcare,onRetry,onReclassify,onDelete,allTags=[],onTagAssign,onTagRemove}){
   const [conf,setConf]=useState(false);
+  const [showTagMenu,setShowTagMenu]=useState(false);
+  const [showActionMenu,setShowActionMenu]=useState(false);
   const isMobile = useIsMobile();
   const cfg=STATUS[doc.status]||{strip:'#6b7280',bg:'rgba(107,114,128,.1)',color:'#6b7280',label:doc.status};
   const spin=['chunking','embedding','uploading'].includes(doc.status);
   const canSum=['chunked','embedding','embedded'].includes(doc.status);
   const canLease = ['lease','lease_amendment','lease_extension','contract','agreement','rent_roll','estoppel','appraisal','inspection_report','property_management_agreement','cam_reconciliation'].includes(doc.doc_type) || doc.doc_domain === 'legal';
   const canHealthcare = ['medical_record','prescription','lab_report','clinical_notes','after_visit_summary','medication_list','discharge_summary','referral','imaging_report','prior_authorization','payer_policy','medical_policy'].includes(doc.doc_type) || doc.doc_domain === 'medical';
+  const docDomain = doc.doc_domain || 'general';
+  const domainColor = DOMAIN_COLORS[docDomain] || '#94a3b8';
+  const domainIcon = DOMAIN_ICONS[docDomain] || '⚪';
+  const docTypeLabel = doc.doc_type ? (DOC_TYPE_LABELS[doc.doc_type] || doc.doc_type) : 'Classifying';
+  const metaTags = [
+    { label: cfg.label, color: cfg.color, bg: cfg.bg, border: `${cfg.strip}40` },
+    { label: doc.workspace_id ? 'Workspace' : 'Personal', color: doc.workspace_id ? '#4ade80' : '#94a3b8', bg: doc.workspace_id ? 'rgba(74,222,128,.1)' : 'rgba(148,163,184,.06)', border: doc.workspace_id ? 'rgba(74,222,128,.25)' : 'rgba(148,163,184,.16)' },
+    { label: (doc.file_type || '?').toUpperCase(), color: 'var(--muted2)' },
+    { label: LANGUAGE_LABELS[doc.doc_language] || doc.doc_language || 'English', color: 'var(--muted2)' },
+    { label: fmtSz(doc.file_size), color: 'var(--muted2)' },
+    ...(doc.chunk_count > 0 ? [{ label: `${doc.chunk_count} chunks`, color: 'var(--muted2)' }] : []),
+    ...(doc.doc_metadata?.pii_redaction?.enabled ? [{ label: 'PII redacted', color:'#fbbf24', bg:'rgba(251,191,36,.08)', border:'rgba(251,191,36,.25)' }] : []),
+    { label: `${domainIcon} ${docTypeLabel}`, color: domainColor, bg: `${domainColor}18`, border: `${domainColor}35`, canReclassify: Boolean(doc.doc_type) },
+  ];
+  const closeMenus = () => {
+    setShowTagMenu(false);
+    setShowActionMenu(false);
+  };
   return (
     <div style={{...s.card,...(selected?s.cardSel:{})}}>
       <div style={{...s.cardInner, ...(isMobile ? s.cardInnerMobile : {})}}>
@@ -570,7 +590,7 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
         <span style={{fontSize:isMobile ? 18 : 22,flexShrink:0}}>{ICONS[doc.file_type||'?']||'📁'}</span>
         <div style={{...s.info, ...(isMobile ? s.infoMobile : {})}}>
           <p style={{...s.name, ...(isMobile ? s.nameMobile : {})}} title={doc.original_name}>{doc.original_name}</p>
-          <div style={{...s.meta, ...(isMobile ? s.metaMobile : {})}}>
+          {!isMobile && <div style={s.meta}>
             <span style={{...s.badge2,background:cfg.bg,color:cfg.color,border:`1px solid ${cfg.strip}30`}}>
               {spin && <span style={{display:'inline-block',animation:'spin .8s linear infinite',marginRight:3}}>⟳</span>}
               {cfg.label}
@@ -617,7 +637,23 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
                 </span>
               );
             })()}
-          </div>
+          </div>}
+          {isMobile && (
+            <div style={s.mobileDocCardMenus}>
+              <button
+                type="button"
+                style={{...s.docMenuButton, ...(showTagMenu ? s.docMenuButtonActive : {})}}
+                onClick={() => { setShowTagMenu(v => !v); setShowActionMenu(false); }}>
+                Tags
+              </button>
+              <button
+                type="button"
+                style={{...s.docMenuButton, ...(showActionMenu ? s.docMenuButtonActive : {})}}
+                onClick={() => { setShowActionMenu(v => !v); setShowTagMenu(false); }}>
+                Actions
+              </button>
+            </div>
+          )}
           {doc.error_message && <p style={{fontSize:11,color:'var(--red)',marginTop:4}}>{doc.error_message}</p>}
           {conf && (
             <div style={s.conf}>
@@ -628,9 +664,64 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
           )}
         </div>
       </div>
+      {isMobile && showTagMenu && (
+        <div style={s.mobileCardMenu}>
+          <div style={s.mobileMenuSectionTitle}>Document tags</div>
+          <div style={s.mobileTagGrid}>
+            {metaTags.map(tag => (
+              <span key={tag.label} style={{...s.mobileTagChip, color:tag.color, background:tag.bg || 'rgba(255,255,255,.035)', borderColor:tag.border || 'var(--b1)'}}>
+                {tag.label}
+                {tag.canReclassify && (
+                  <button type="button" onClick={async e=>{e.stopPropagation(); await onReclassify?.();}} title="Re-classify this document" style={s.mobileInlineIconBtn}>
+                    ↺
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+          {allTags.length > 0 && (
+            <>
+              <div style={s.mobileMenuSectionTitle}>Custom tags</div>
+              <div style={s.mobileTagGrid}>
+                {(doc.tags||[]).length === 0 && <span style={s.mobileMenuEmpty}>No custom tags</span>}
+                {(doc.tags||[]).map(t => (
+                  <span key={t.id} style={{...s.mobileTagChip, background:`${t.color}20`, color:t.color, borderColor:`${t.color}40`}}>
+                    {t.name}
+                    <button onClick={e=>{e.stopPropagation();onTagRemove?.(t.id);}} style={s.mobileInlineIconBtn}>✕</button>
+                  </span>
+                ))}
+              </div>
+              {allTags.filter(t=>!(doc.tags||[]).find(dt=>dt.id===t.id)).length > 0 && (
+                <select defaultValue="" onChange={e=>{if(e.target.value){onTagAssign?.(e.target.value);e.target.value='';}}} style={s.mobileMenuSelect}>
+                  <option value="">Add custom tag…</option>
+                  {allTags.filter(t=>!(doc.tags||[]).find(dt=>dt.id===t.id)).map(t=>(
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {isMobile && showActionMenu && (
+        <div style={s.mobileCardMenu}>
+          <div style={s.mobileMenuSectionTitle}>Document actions</div>
+          <div style={s.mobileActionGrid}>
+            <Btn mobile onClick={()=>{closeMenus();onViewSource();}} disabled={['uploading','chunking'].includes(doc.status)}>🔗 Source</Btn>
+            {canSum && <Btn mobile onClick={()=>{closeMenus();onViewChunks();}}>📋 Chunks</Btn>}
+            {canSum && <Btn mobile onClick={()=>{closeMenus();onSummarize();}} accent>📝 Summary</Btn>}
+            {canSum && canLease && <Btn mobile onClick={()=>{closeMenus();onLease();}} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>🏢 Lease</Btn>}
+            {canSum && canHealthcare && <Btn mobile onClick={()=>{closeMenus();onHealthcare();}} style={{color:'#f87171',borderColor:'rgba(248,113,113,.3)',background:'rgba(248,113,113,.08)'}}>⚕ Healthcare</Btn>}
+            {doc.status==='error' && <Btn mobile onClick={()=>{closeMenus();onRetry();}} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>↻ Retry</Btn>}
+            {doc.status==='chunked' && <Btn mobile onClick={()=>{closeMenus();onEmbed();}} primary>⚡ Embed</Btn>}
+            {doc.status==='embedded' && <Btn mobile onClick={()=>{closeMenus();onEmbed();}}>↩ Re-embed</Btn>}
+            {!conf && <Btn mobile onClick={()=>{closeMenus();setConf(true);}} danger>🗑 Delete</Btn>}
+          </div>
+        </div>
+      )}
       {/* Tag chips */}
-      {allTags.length > 0 && (
-        <div style={{ ...(isMobile ? s.tagRowMobile : s.tagRow) }}>
+      {allTags.length > 0 && !isMobile && (
+        <div style={s.tagRow}>
           {(doc.tags||[]).map(t => (
             <span key={t.id} style={{ display:'inline-flex', alignItems:'center', gap:2, padding:'1px 7px', borderRadius:20, fontSize:10.5, fontWeight:600, background:`${t.color}20`, color:t.color, border:`1px solid ${t.color}40` }}>
               {t.name}
@@ -649,18 +740,20 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
           )}
         </div>
       )}
-      <div style={{...s.footer, ...(isMobile ? s.footerMobile : {})}}>
-        <Btn mobile={isMobile} onClick={onViewSource} disabled={['uploading','chunking'].includes(doc.status)}>🔗 Source</Btn>
-        {canSum && <Btn mobile={isMobile} onClick={onViewChunks}>📋 Chunks</Btn>}
-        {canSum && <Btn mobile={isMobile} onClick={onSummarize} accent>📝 Summary</Btn>}
-        {canSum && canLease && <Btn mobile={isMobile} onClick={onLease} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>🏢 Lease</Btn>}
-        {canSum && canHealthcare && <Btn mobile={isMobile} onClick={onHealthcare} style={{color:'#f87171',borderColor:'rgba(248,113,113,.3)',background:'rgba(248,113,113,.08)'}}>⚕ Healthcare</Btn>}
-        {doc.status==='error'    && <Btn mobile={isMobile} onClick={onRetry} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>↻ Retry</Btn>}
-        {doc.status==='chunked'  && <Btn mobile={isMobile} onClick={onEmbed} primary>⚡ Embed</Btn>}
-        {doc.status==='embedded' && <Btn mobile={isMobile} onClick={onEmbed}>↩ Re-embed</Btn>}
-        {!isMobile && <div style={{flex:1}}/>}
-        {!conf && <Btn mobile={isMobile} onClick={()=>setConf(true)} danger>🗑 Delete</Btn>}
-      </div>
+      {!isMobile && (
+        <div style={s.footer}>
+          <Btn onClick={onViewSource} disabled={['uploading','chunking'].includes(doc.status)}>🔗 Source</Btn>
+          {canSum && <Btn onClick={onViewChunks}>📋 Chunks</Btn>}
+          {canSum && <Btn onClick={onSummarize} accent>📝 Summary</Btn>}
+          {canSum && canLease && <Btn onClick={onLease} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>🏢 Lease</Btn>}
+          {canSum && canHealthcare && <Btn onClick={onHealthcare} style={{color:'#f87171',borderColor:'rgba(248,113,113,.3)',background:'rgba(248,113,113,.08)'}}>⚕ Healthcare</Btn>}
+          {doc.status==='error'    && <Btn onClick={onRetry} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>↻ Retry</Btn>}
+          {doc.status==='chunked'  && <Btn onClick={onEmbed} primary>⚡ Embed</Btn>}
+          {doc.status==='embedded' && <Btn onClick={onEmbed}>↩ Re-embed</Btn>}
+          <div style={{flex:1}}/>
+          {!conf && <Btn onClick={()=>setConf(true)} danger>🗑 Delete</Btn>}
+        </div>
+      )}
     </div>
   );
 }
@@ -717,6 +810,17 @@ const s={
   metaMobile:{flexWrap:'nowrap',overflowX:'auto',overflowY:'hidden',WebkitOverflowScrolling:'touch',paddingBottom:2,gap:4,scrollbarWidth:'none'},
   badge2:  {display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:20,fontSize:11,fontWeight:600,whiteSpace:'nowrap',flex:'0 0 auto'},
   mt:      {fontSize:11,color:'var(--muted2)',whiteSpace:'nowrap',flex:'0 0 auto'},
+  mobileDocCardMenus:{display:'flex',gap:6,alignItems:'center',marginTop:6},
+  docMenuButton:{height:28,display:'inline-flex',alignItems:'center',justifyContent:'center',border:'1px solid var(--b2)',background:'rgba(255,255,255,.035)',color:'var(--tx2)',borderRadius:8,padding:'0 10px',fontSize:11,fontWeight:800,cursor:'pointer'},
+  docMenuButtonActive:{color:'#4ade80',borderColor:'rgba(74,222,128,.35)',background:'rgba(74,222,128,.1)'},
+  mobileCardMenu:{margin:'0 9px 8px 27px',padding:9,border:'1px solid var(--b1)',borderRadius:9,background:'rgba(0,0,0,.16)',display:'flex',flexDirection:'column',gap:8},
+  mobileMenuSectionTitle:{fontSize:10.5,fontWeight:900,color:'var(--muted2)',textTransform:'uppercase',letterSpacing:.5},
+  mobileTagGrid:{display:'flex',flexWrap:'wrap',gap:6},
+  mobileTagChip:{display:'inline-flex',alignItems:'center',gap:4,minHeight:24,maxWidth:'100%',boxSizing:'border-box',padding:'3px 8px',borderRadius:20,border:'1px solid var(--b1)',fontSize:11,fontWeight:750,lineHeight:1.25,overflowWrap:'anywhere'},
+  mobileInlineIconBtn:{background:'transparent',border:'none',color:'inherit',cursor:'pointer',fontSize:10,padding:'0 1px',lineHeight:1,opacity:.72},
+  mobileMenuSelect:{width:'100%',height:31,background:'var(--s3)',color:'var(--tx2)',border:'1px dashed var(--b2)',borderRadius:8,padding:'0 8px',fontSize:11,fontWeight:700},
+  mobileMenuEmpty:{fontSize:11,color:'var(--muted2)',padding:'3px 0'},
+  mobileActionGrid:{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:7},
   tagRow:{display:'flex',flexWrap:'wrap',gap:4,padding:'0 14px 7px',alignItems:'center'},
   tagRowMobile:{display:'flex',flexWrap:'nowrap',gap:4,padding:'0 9px 6px',alignItems:'center',overflowX:'auto',overflowY:'hidden',WebkitOverflowScrolling:'touch',scrollbarWidth:'none'},
   footer:  {display:'flex',gap:5,padding:'7px 14px',borderTop:'1px solid var(--b1)',background:'rgba(0,0,0,.15)',flexWrap:'wrap'},

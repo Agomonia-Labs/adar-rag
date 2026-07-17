@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 from typing import Annotated
 
-from auth.service       import hash_password, verify_password, create_access_token
+from auth.service       import hash_password, verify_password, create_access_token, create_mfa_token, decode_token
 from auth.dependencies  import CurrentUser
 from database.connection import get_db
 from services.limiter   import ip_3_per_min, ip_10_per_min
@@ -15,6 +15,9 @@ from services.notifications import send_verification_email
 
 router   = APIRouter()
 APP_URL  = os.getenv("APP_URL", "http://localhost:5173")
+OTP_EXPIRE_MINUTES = 5
+OTP_MAX_ATTEMPTS = 3
+OTP_RESEND_COOLDOWN_SECONDS = 60
 
 
 def _token_hash(tok: str) -> str:
@@ -39,6 +42,107 @@ class TokenResponse(BaseModel):
     email:        str
     full_name:    str
     role:         str
+
+
+class OTPVerifyRequest(BaseModel):
+    mfa_token: str
+    otp:       str
+
+
+class OTPResendRequest(BaseModel):
+    mfa_token: str
+
+
+def _mfa_enabled() -> bool:
+    return os.getenv("MFA_ENABLED", "true").lower() not in {"0", "false", "no", "off"}
+
+
+def _mfa_bypass_emails() -> set[str]:
+    raw = os.getenv("MFA_BYPASS_EMAILS", "").strip()
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
+def _email_hint(email: str) -> str:
+    local, _, domain = email.partition("@")
+    if not domain:
+        return email[:2] + "***"
+    return f"{local[:2]}***@{domain}"
+
+
+async def _ensure_mfa_table(db) -> None:
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS login_mfa_challenges (
+            id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_id        UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            email          TEXT        NOT NULL,
+            code_hash      TEXT        NOT NULL,
+            mfa_token_hash TEXT        NOT NULL UNIQUE,
+            expires_at     TIMESTAMPTZ NOT NULL,
+            attempts       INTEGER     NOT NULL DEFAULT 0,
+            used           BOOLEAN     NOT NULL DEFAULT FALSE,
+            sent_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            created_at     TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_mfa_user_id ON login_mfa_challenges(user_id);
+        CREATE INDEX IF NOT EXISTS idx_mfa_token_hash ON login_mfa_challenges(mfa_token_hash);
+        CREATE INDEX IF NOT EXISTS idx_mfa_expires_at ON login_mfa_challenges(expires_at);
+    """)
+
+
+async def _send_mfa_challenge(db, row) -> dict:
+    await _ensure_mfa_table(db)
+    user_id = str(row["id"])
+    email = row["email"]
+    full_name = row["full_name"] or email
+    otp = f"{secrets.randbelow(900000) + 100000}"
+    mfa_token = create_mfa_token(user_id, email, minutes=10)
+    now = datetime.now(timezone.utc)
+
+    await db.execute(
+        "UPDATE login_mfa_challenges SET used=TRUE WHERE user_id=$1 AND used=FALSE",
+        row["id"],
+    )
+    await db.execute(
+        """INSERT INTO login_mfa_challenges
+              (user_id, email, code_hash, mfa_token_hash, expires_at, sent_at)
+           VALUES ($1,$2,$3,$4,$5,$6)""",
+        row["id"],
+        email,
+        _token_hash(otp),
+        _token_hash(mfa_token),
+        now + timedelta(minutes=OTP_EXPIRE_MINUTES),
+        now,
+    )
+
+    from services.email import send_otp_email
+    sent = await send_otp_email(email, full_name, otp)
+    if not sent:
+        raise HTTPException(500, "Could not send login code. Please try again.")
+
+    return {
+        "mfa_required": True,
+        "mfa_token": mfa_token,
+        "email_hint": _email_hint(email),
+        "message": "Verification code sent to your email.",
+    }
+
+
+async def _complete_login(db, row, request: Request) -> TokenResponse:
+    await audit(db, user_id=str(row["id"]), action="login",
+                resource_type="user", resource_id=str(row["id"]),
+                ip_address=ip_from(request), user_agent=ua_from(request))
+
+    # Sync Stripe subscription status on every login (keeps tier always up-to-date)
+    await _sync_stripe_on_login(db, str(row["id"]))
+
+    token = create_access_token(str(row["id"]), row["email"])
+    return TokenResponse(
+        access_token=token,
+        user_id=str(row["id"]),
+        email=row["email"],
+        full_name=row["full_name"] or "",
+        role=row["role"] or "user",
+    )
 
 
 # ── Register ───────────────────────────────────────────────────────────────────
@@ -154,7 +258,7 @@ async def resend_verification(body: ResendRequest, db=Depends(get_db), _rl=Depen
 
 
 # ── Login ──────────────────────────────────────────────────────────────────────
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login")
 async def login(
     body:    LoginRequest,
     request: Request,
@@ -179,21 +283,115 @@ async def login(
                 "Check your inbox or use the resend link."
             )
 
-    await audit(db, user_id=str(row["id"]), action="login",
-                resource_type="user", resource_id=str(row["id"]),
-                ip_address=ip_from(request), user_agent=ua_from(request))
+    if _mfa_enabled() and row["email"].lower() not in _mfa_bypass_emails():
+        return await _send_mfa_challenge(db, row)
 
-    # Sync Stripe subscription status on every login (keeps tier always up-to-date)
-    await _sync_stripe_on_login(db, str(row["id"]))
+    return await _complete_login(db, row, request)
 
-    token = create_access_token(str(row["id"]), row["email"])
-    return TokenResponse(
-        access_token=token,
-        user_id=str(row["id"]),
-        email=row["email"],
-        full_name=row["full_name"] or "",
-        role=row["role"] or "user",
+
+@router.post("/verify-otp", response_model=TokenResponse)
+async def verify_otp(
+    body: OTPVerifyRequest,
+    request: Request,
+    db=Depends(get_db),
+    _rl=Depends(ip_10_per_min),
+):
+    try:
+        payload = decode_token(body.mfa_token)
+    except Exception:
+        raise HTTPException(401, "Session expired. Please log in again.")
+    if not payload.get("mfa_pending"):
+        raise HTTPException(400, "Invalid MFA token.")
+
+    user_id = payload.get("sub")
+    await _ensure_mfa_table(db)
+    challenge = await db.fetchrow(
+        """SELECT id, user_id, code_hash, expires_at, attempts, used
+           FROM login_mfa_challenges
+           WHERE user_id=$1::uuid AND mfa_token_hash=$2
+           ORDER BY created_at DESC
+           LIMIT 1""",
+        user_id,
+        _token_hash(body.mfa_token),
     )
+    if not challenge:
+        raise HTTPException(401, "Invalid or expired code. Please log in again.")
+    if challenge["used"]:
+        raise HTTPException(401, "Code already used. Please log in again.")
+    if challenge["expires_at"] < datetime.now(timezone.utc):
+        raise HTTPException(401, "Code expired. Please log in again.")
+    if challenge["attempts"] >= OTP_MAX_ATTEMPTS:
+        raise HTTPException(429, "Too many attempts. Please log in again.")
+
+    otp = body.otp.strip()
+    if len(otp) != 6 or not otp.isdigit() or _token_hash(otp) != challenge["code_hash"]:
+        attempts = challenge["attempts"] + 1
+        await db.execute("UPDATE login_mfa_challenges SET attempts=$1 WHERE id=$2", attempts, challenge["id"])
+        remaining = max(OTP_MAX_ATTEMPTS - attempts, 0)
+        raise HTTPException(401, f"Invalid code. {remaining} attempt(s) remaining.")
+
+    await db.execute("UPDATE login_mfa_challenges SET used=TRUE WHERE id=$1", challenge["id"])
+    row = await db.fetchrow(
+        "SELECT id, email, full_name, role FROM users WHERE id=$1",
+        challenge["user_id"],
+    )
+    if not row:
+        raise HTTPException(401, "Account not found. Please log in again.")
+    return await _complete_login(db, row, request)
+
+
+@router.post("/resend-otp")
+async def resend_otp(
+    body: OTPResendRequest,
+    db=Depends(get_db),
+    _rl=Depends(ip_10_per_min),
+):
+    try:
+        payload = decode_token(body.mfa_token)
+    except Exception:
+        raise HTTPException(401, "Session expired. Please log in again.")
+    if not payload.get("mfa_pending"):
+        raise HTTPException(400, "Invalid MFA token.")
+
+    user_id = payload.get("sub")
+    await _ensure_mfa_table(db)
+    challenge = await db.fetchrow(
+        """SELECT id, user_id, email, sent_at
+           FROM login_mfa_challenges
+           WHERE user_id=$1::uuid AND mfa_token_hash=$2 AND used=FALSE
+           ORDER BY created_at DESC
+           LIMIT 1""",
+        user_id,
+        _token_hash(body.mfa_token),
+    )
+    if not challenge:
+        raise HTTPException(401, "Session not found. Please log in again.")
+
+    now = datetime.now(timezone.utc)
+    elapsed = int((now - challenge["sent_at"]).total_seconds())
+    if elapsed < OTP_RESEND_COOLDOWN_SECONDS:
+        wait = OTP_RESEND_COOLDOWN_SECONDS - elapsed
+        raise HTTPException(429, f"Please wait {wait} seconds before resending.")
+
+    row = await db.fetchrow("SELECT id, email, full_name FROM users WHERE id=$1", challenge["user_id"])
+    if not row:
+        raise HTTPException(401, "Account not found. Please log in again.")
+    otp = f"{secrets.randbelow(900000) + 100000}"
+    await db.execute(
+        """UPDATE login_mfa_challenges
+           SET code_hash=$1, expires_at=$2, attempts=0, used=FALSE, sent_at=$3
+           WHERE id=$4""",
+        _token_hash(otp),
+        now + timedelta(minutes=OTP_EXPIRE_MINUTES),
+        now,
+        challenge["id"],
+    )
+
+    from services.email import send_otp_email
+    sent = await send_otp_email(row["email"], row["full_name"] or row["email"], otp)
+    if not sent:
+        raise HTTPException(500, "Could not resend code. Please try again.")
+    return {"message": "New code sent to your email."}
 
 
 # ── Me ─────────────────────────────────────────────────────────────────────────

@@ -19,13 +19,18 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 # ── JWT ───────────────────────────────────────────────────────────────────────
+def _encode(payload: dict) -> str:
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
 def create_access_token(user_id: str, email: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=EXPIRE_MIN)
-    return jwt.encode(
-        {"sub": user_id, "email": email, "exp": expire},
-        SECRET_KEY,
-        algorithm=ALGORITHM,
-    )
+    return _encode({"sub": user_id, "email": email, "exp": expire})
+
+
+def create_mfa_token(user_id: str, email: str, minutes: int = 10) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    return _encode({"sub": user_id, "email": email, "mfa_pending": True, "exp": expire})
 
 
 def decode_token(token: str) -> dict:
