@@ -8,6 +8,7 @@ import DocumentsTab    from './components/DocumentsTab.jsx';
 import ChatTab         from './components/ChatTab.jsx';
 import AdminDashboard  from './components/AdminDashboard.jsx';
 import HealthcarePanel from './components/HealthcarePanel.jsx';
+import FinanceTaxPanel from './components/FinanceTaxPanel.jsx';
 import RestaurantPanel from './components/RestaurantPanel.jsx';
 import { ToastContainer } from './components/Toast.jsx';
 import { getMe, getWorkspace }       from './services/api.js';
@@ -23,6 +24,7 @@ export default function App() {
   const [showVerticals,    setShowVerticals]    = useState(false);
   const [showMainMenu,     setShowMainMenu]     = useState(false);
   const [showNewVisit,     setShowNewVisit]     = useState(false);
+  const [showFinanceTaxPanel, setShowFinanceTaxPanel] = useState(false);
   const [showRestaurantPanel, setShowRestaurantPanel] = useState(false);
   const [openLeasePickerKey, setOpenLeasePickerKey] = useState(0);
   const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0);
@@ -166,6 +168,11 @@ export default function App() {
     setShowRestaurantPanel(true);
   };
 
+  const openFinanceTaxWorkflow = () => {
+    closeMenus();
+    setShowFinanceTaxPanel(true);
+  };
+
   return (
     <>
       <ToastContainer />
@@ -187,6 +194,12 @@ export default function App() {
           workspaceId={activeWorkspace?.id || null}
           activeWorkspace={activeWorkspace}
           onClose={() => setShowRestaurantPanel(false)}
+        />
+      )}
+      {showFinanceTaxPanel && (
+        <FinanceTaxPanel
+          activeWorkspace={activeWorkspace}
+          onClose={() => setShowFinanceTaxPanel(false)}
         />
       )}
       <div style={s.shell}>
@@ -272,6 +285,15 @@ export default function App() {
                       onClick={openLeaseDocuments}>
                       <span>🏢</span>
                       <span>Open lease documents</span>
+                    </button>
+                  </div>
+                  <div style={s.verticalGroup}>
+                    <div style={s.verticalGroupTitle}>Finance & Tax</div>
+                    <button
+                      style={s.verticalItem}
+                      onClick={openFinanceTaxWorkflow}>
+                      <span>💼</span>
+                      <span>Tax Submission Readiness</span>
                     </button>
                   </div>
                   <div style={s.verticalGroup}>
@@ -367,6 +389,10 @@ export default function App() {
                 <button type="button" style={s.menuItem} onClick={openLeaseDocuments}>
                   <span>🏢</span>
                   <span>Lease · Open lease documents</span>
+                </button>
+                <button type="button" style={s.menuItem} onClick={openFinanceTaxWorkflow}>
+                  <span>💼</span>
+                  <span>Finance & Tax · Tax submission readiness</span>
                 </button>
                 <button type="button" style={s.menuItem} onClick={openRestaurantWorkflow}>
                   <span>🍽</span>

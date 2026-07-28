@@ -66,6 +66,42 @@ You can access this workspace by logging in to আদর DocIntel:
         log.warning(f"Workspace invite notification failed for {invitee_email}: {e}")
 
 
+async def send_finance_tax_packet_notification(
+    user_email: str,
+    *,
+    action: str,
+    run_id: str,
+    client_name: str = "",
+    tax_year: str = "",
+    reviewer_name: str = "",
+    notes: str = "",
+) -> bool:
+    """Notify reviewer when a finance/tax workflow packet is approved or withdrawn."""
+    action_label = "approved and saved" if action == "approved" else "withdrawn and cleared"
+    subject = f"DocIntel tax packet {action_label}"
+    body = f"""Your DocIntel finance/tax packet was {action_label}.
+
+Client: {client_name or 'Client'}
+Tax year: {tax_year or 'Needs review'}
+Workflow run ID: {run_id}
+Reviewer: {reviewer_name or user_email}
+"""
+    if notes:
+        body += f"Reviewer notes: {notes}\n"
+    body += """
+Open DocIntel to continue the tax submission workflow.
+
+— আদর DocIntel
+"""
+    try:
+        await send_email(to=user_email, subject=subject, body=body)
+        log.info("Finance/tax packet notification sent to %s run_id=%s action=%s", user_email, run_id, action)
+        return True
+    except Exception as e:
+        log.warning("Finance/tax packet notification failed for %s run_id=%s action=%s: %s", user_email, run_id, action, e)
+        return False
+
+
 async def send_restaurant_order_email(
     to_email: str,
     *,

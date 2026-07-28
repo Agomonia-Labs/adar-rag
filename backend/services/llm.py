@@ -11,7 +11,13 @@ EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1536"))
 _EXTRACT_PROMPT = (
     "Extract ALL content from this document with complete fidelity. "
     "Include every piece of text (printed AND handwritten), all tables with values, "
-    "charts, diagrams, captions. Do NOT summarise — transcribe completely."
+    "charts, diagrams, captions. Do NOT summarise — transcribe completely. "
+    "If the document is a W-2 wage and tax statement, also normalize every numbered box "
+    "as separate lines using this format: Box 1 - Wages, tips, other compensation: <value>; "
+    "Box 2 - Federal income tax withheld: <value>; Box 3 - Social Security wages: <value>; "
+    "Box 4 - Social Security tax withheld: <value>; Box 5 - Medicare wages and tips: <value>; "
+    "Box 6 - Medicare tax withheld: <value>; Box 12a/12b/12c/12d - Code <code>: <value>; "
+    "Box 14 - Other: <value and label>. Do not merge duplicate W-2 copies; transcribe the clearest copy."
 )
 
 

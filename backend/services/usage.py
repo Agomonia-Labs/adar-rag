@@ -19,6 +19,7 @@ TIER_LIMITS: dict[str, dict] = {
         "max_compares_day": 3,
         "max_lease_ai_day": 5,
         "max_healthcare_ai_day": 5,
+        "max_finance_tax_ai_day": 5,
         "max_voice_transcriptions_day": 25,
         "max_evals_day": 3,
         "label":            "Free",
@@ -33,6 +34,7 @@ TIER_LIMITS: dict[str, dict] = {
         "max_compares_day": 50,
         "max_lease_ai_day": 50,
         "max_healthcare_ai_day": 50,
+        "max_finance_tax_ai_day": 50,
         "max_voice_transcriptions_day": 250,
         "max_evals_day": 25,
         "label":            "Pro",
@@ -47,6 +49,7 @@ TIER_LIMITS: dict[str, dict] = {
         "max_compares_day": -1,      # unlimited
         "max_lease_ai_day": -1,      # unlimited
         "max_healthcare_ai_day": -1, # unlimited
+        "max_finance_tax_ai_day": -1,# unlimited
         "max_voice_transcriptions_day": -1,
         "max_evals_day": -1,
         "label":            "Enterprise",

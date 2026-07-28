@@ -492,6 +492,45 @@ export async function generatePriorAuthMissingInfoPdf(runId) {
   }));
 }
 
+// ── Finance / tax intelligence ───────────────────────────────────────────────
+export async function runTaxSubmissionWorkflow({ documentIds = [], clientName = '', taxYear = '', filingStatus = '', notes = '' } = {}) {
+  return handleRes(await fetch(`${LONG_BASE}/finance-tax/tax-submission-runs`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({
+      document_ids: documentIds,
+      client_name: clientName,
+      tax_year: taxYear,
+      filing_status: filingStatus,
+      notes,
+    }),
+  }));
+}
+
+export async function fetchFinanceTaxAgentRun(runId) {
+  return handleRes(await fetch(`${BASE}/finance-tax/agent-runs/${runId}`, { headers: authHdr() }));
+}
+
+export async function listFinanceTaxAgentRuns({ status = 'approved', limit = 25 } = {}) {
+  const params = new URLSearchParams({ status, limit: String(limit) });
+  return handleRes(await fetch(`${BASE}/finance-tax/agent-runs?${params.toString()}`, { headers: authHdr() }));
+}
+
+export async function approveFinanceTaxAgentRun(runId, { approvedPacket = null, notes = '' } = {}) {
+  return handleRes(await fetch(`${BASE}/finance-tax/agent-runs/${runId}/approve`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({ approved_packet: approvedPacket, notes }),
+  }));
+}
+
+export async function withdrawFinanceTaxAgentRun(runId) {
+  return handleRes(await fetch(`${BASE}/finance-tax/agent-runs/${runId}`, {
+    method:'DELETE',
+    headers:authHdr(),
+  }));
+}
+
 // ── Agent workflow evaluations ───────────────────────────────────────────────
 export async function evaluateAgentWorkflow(vertical, runId, { persist = true } = {}) {
   return handleRes(await fetch(`${BASE}/agent-evals/${vertical}/runs/${runId}`, {

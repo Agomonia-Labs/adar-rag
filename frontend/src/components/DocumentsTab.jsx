@@ -30,7 +30,7 @@ const DOC_TYPE_LABELS = {
   cam_reconciliation:'CAM Recon',
   employment_contract:'Employment', terms_of_service:'Terms',
   invoice:'Invoice', receipt:'Receipt', purchase_order:'PO',
-  financial_statement:'Financial', audit_report:'Audit', tax_return:'Tax',
+  financial_statement:'Financial', audit_report:'Audit', tax:'Tax Return', tax_return:'Tax Return',
   report:'Report', proposal:'Proposal', presentation:'Slides', memo:'Memo',
   resume:'Resume', cv:'CV', job_description:'JD', offer_letter:'Offer',
   medical_record:'Medical', prescription:'Rx', lab_report:'Lab', clinical_notes:'Clinical',
