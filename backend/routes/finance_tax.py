@@ -590,7 +590,7 @@ def _build_review_packet(input_data: dict, docs: dict, extracted: dict, checklis
     client = extracted.get("client") or {}
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "workflow": "Finance/Tax MVP 1 - Tax Submission Readiness",
+        "workflow": "Finance/Tax - Tax & Financial Planning Readiness",
         "client": client,
         "document_summary": [
             {

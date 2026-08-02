@@ -293,7 +293,7 @@ export default function App() {
                       style={s.verticalItem}
                       onClick={openFinanceTaxWorkflow}>
                       <span>💼</span>
-                      <span>Tax Submission Readiness</span>
+                      <span>Tax & Financial Planning Readiness</span>
                     </button>
                   </div>
                   <div style={s.verticalGroup}>
@@ -392,7 +392,7 @@ export default function App() {
                 </button>
                 <button type="button" style={s.menuItem} onClick={openFinanceTaxWorkflow}>
                   <span>💼</span>
-                  <span>Finance & Tax · Tax submission readiness</span>
+                  <span>Finance & Tax · Tax & Financial Planning Readiness</span>
                 </button>
                 <button type="button" style={s.menuItem} onClick={openRestaurantWorkflow}>
                   <span>🍽</span>

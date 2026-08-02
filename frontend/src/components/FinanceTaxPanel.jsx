@@ -300,15 +300,15 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
       <div style={{...s.panel, ...(isMobile ? s.panelMobile : {})}}>
         <header style={{...s.header, ...(isMobile ? s.headerMobile : {})}}>
           <div>
-            <div style={s.kicker}>Finance & Tax MVP 1</div>
-            <h2 style={s.title}>Tax Submission Readiness</h2>
+            <div style={s.kicker}>DocIntel Finance</div>
+            <h2 style={s.title}>Tax & Financial Planning Readiness</h2>
           </div>
           <div style={{...s.headerActions, ...(isMobile ? s.headerActionsMobile : {})}}>
             <div style={s.docCount}>{selected.length} selected · {docs.length} ready</div>
             <button type="button" style={s.secondary} onClick={() => setSelected(docs.map(d => d.id))}>Select all</button>
             <button type="button" style={s.secondary} onClick={() => setSelected([])}>Clear</button>
             <button type="button" style={s.primary} disabled={loading || !selected.length} onClick={startRun}>
-              {loading ? 'Running...' : 'Run MVP 1'}
+              {loading ? 'Running...' : 'Run readiness workflow'}
             </button>
           </div>
           <button type="button" style={s.close} onClick={onClose}>X</button>
