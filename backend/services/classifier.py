@@ -16,7 +16,8 @@ DOCUMENT_TYPES = [
     "employment_contract", "terms_of_service",
     # Finance
     "invoice", "receipt", "purchase_order", "financial_statement", "audit_report", "tax_return", "w2",
-    "retirement_statement", "brokerage_statement", "mortgage_interest", "property_tax", "charitable_receipt",
+    "retirement_statement", "brokerage_statement", "bank_statement", "credit_card_statement",
+    "mortgage_interest", "property_tax", "charitable_receipt",
     # Business
     "report", "proposal", "presentation", "memo", "business_plan",
     # HR
@@ -45,6 +46,8 @@ HEURISTIC_RULES = [
     ("w2", "finance", ("form w-2", "form w 2", "wage and tax statement", "wages tips and other compensation", "federal income tax withheld", "social security wages")),
     ("retirement_statement", "finance", ("401(k)", "401k", "retirement statement", "retirement plan", "ira statement", "employee contribution", "employer match", "vested balance")),
     ("brokerage_statement", "finance", ("brokerage statement", "consolidated 1099", "1099 consolidated", "1099-div", "1099-int", "qualified dividends", "capital gain distributions", "gross proceeds", "cost basis")),
+    ("bank_statement", "finance", ("bank statement", "deposit accounts", "account summary", "beginning balance", "ending balance", "deposits and other additions", "withdrawals and other subtractions")),
+    ("credit_card_statement", "finance", ("credit card statement", "new balance total", "minimum payment due", "payment due date", "credit line", "purchases and adjustments", "payments and other credits")),
     ("mortgage_interest", "finance", ("form 1098", "1098 mortgage", "mortgage interest statement", "mortgage interest paid", "year-to-date interest paid", "ytd interest", "interest received from payer", "outstanding mortgage principal", "principal balance", "refund of overpaid interest", "points paid on purchase", "private mortgage insurance", "loan origination date", "mortgage lender")),
     ("property_tax", "finance", ("property tax statement", "property tax bill", "real estate tax", "parcel number", "assessed value", "taxable value")),
     ("charitable_receipt", "finance", ("donation receipt", "charitable contribution receipt", "thank you for your donation", "donation contribution", "monetary donation", "cash donation", "no goods or services", "ein")),
@@ -135,6 +138,8 @@ If the document is an agreement, invoice, resume, report, medical record, policy
 If the document is a W-2 wage and tax statement, classify doc_type as "w2" and doc_domain as "finance"; do not classify it as a generic tax_return.
 If the document is a 401(k), IRA, pension, or retirement plan statement, classify doc_type as "retirement_statement" and doc_domain as "finance".
 If the document is a brokerage, investment account, consolidated 1099, 1099-INT, 1099-DIV, or 1099-B statement, classify doc_type as "brokerage_statement" and doc_domain as "finance".
+If the document is a checking, savings, deposit account, or bank account statement, classify doc_type as "bank_statement" and doc_domain as "finance".
+If the document is a credit card statement, Visa/Mastercard account statement, card payment statement, or statement with purchases, payments, and new balance total, classify doc_type as "credit_card_statement" and doc_domain as "finance".
 If the document is a Form 1098 mortgage interest statement, classify doc_type as "mortgage_interest" and doc_domain as "finance".
 If the document is a property tax or real estate tax statement, classify doc_type as "property_tax" and doc_domain as "finance".
 If the document is a charitable donation receipt or charitable contribution acknowledgement, classify doc_type as "charitable_receipt" and doc_domain as "finance".
@@ -281,6 +286,13 @@ def _normalize_doc_type(doc_type: str) -> str:
         "form_1040": "tax_return",
         "1040": "tax_return",
         "1040_sr": "tax_return",
+        "bank": "bank_statement",
+        "checking_statement": "bank_statement",
+        "savings_statement": "bank_statement",
+        "deposit_statement": "bank_statement",
+        "credit_card": "credit_card_statement",
+        "card_statement": "credit_card_statement",
+        "visa_statement": "credit_card_statement",
     }
     return aliases.get(normalized, normalized or "general")
 
@@ -293,6 +305,8 @@ def _should_prefer_heuristic_doc_type(doc_type: str, heuristic_doc_type: str) ->
         "w2",
         "retirement_statement",
         "brokerage_statement",
+        "bank_statement",
+        "credit_card_statement",
         "mortgage_interest",
         "property_tax",
         "charitable_receipt",
@@ -330,6 +344,20 @@ def _heuristic_classification(filename: str, sample: str) -> dict | None:
             "doc_domain": "finance",
             "confidence": 0.82,
             "reasoning": "Matched brokerage statement signals",
+        }
+    if _looks_like_credit_card_statement(raw_haystack):
+        return {
+            "doc_type": "credit_card_statement",
+            "doc_domain": "finance",
+            "confidence": 0.82,
+            "reasoning": "Matched credit card statement signals",
+        }
+    if _looks_like_bank_statement(raw_haystack):
+        return {
+            "doc_type": "bank_statement",
+            "doc_domain": "finance",
+            "confidence": 0.82,
+            "reasoning": "Matched deposit bank statement signals",
         }
     if _looks_like_mortgage_interest(raw_haystack):
         return {
@@ -534,6 +562,53 @@ def _looks_like_mortgage_interest(haystack: str) -> bool:
     return hits >= 3
 
 
+def _looks_like_bank_statement(haystack: str) -> bool:
+    normalized = re.sub(r"[\u2010-\u2015]", "-", haystack or "")
+    explicit_markers = [
+        r"\byour\s+combined\s+statement\b",
+        r"\byour\s+deposit\s+accounts\b",
+        r"\bbank\s+statement\b",
+        r"\bchecking\s+account\s+statement\b",
+        r"\bsavings\s+account\s+statement\b",
+    ]
+    if any(re.search(pattern, normalized, re.I) for pattern in explicit_markers):
+        return True
+    bank_signals = [
+        r"\baccount\s+summary\b",
+        r"\bbeginning\s+balance\b",
+        r"\bending\s+balance\b",
+        r"\bdeposits\s+and\s+other\s+additions\b",
+        r"\bwithdrawals\s+and\s+other\s+subtractions\b",
+        r"\bservice\s+fees\b",
+        r"\btotal\s+balance\b",
+    ]
+    hits = sum(1 for pattern in bank_signals if re.search(pattern, normalized, re.I))
+    return hits >= 4
+
+
+def _looks_like_credit_card_statement(haystack: str) -> bool:
+    normalized = re.sub(r"[\u2010-\u2015]", "-", haystack or "")
+    explicit_markers = [
+        r"\bvisa\s+signature\b",
+        r"\bcredit\s+card\s+statement\b",
+        r"\bnew\s+balance\s+total\b",
+    ]
+    if any(re.search(pattern, normalized, re.I) for pattern in explicit_markers):
+        return True
+    card_signals = [
+        r"\bcurrent\s+payment\s+due\b",
+        r"\btotal\s+minimum\s+payment\s+due\b",
+        r"\bpayment\s+due\s+date\b",
+        r"\bpurchases\s+and\s+adjustments\b",
+        r"\bpayments\s+and\s+other\s+credits\b",
+        r"\bfees\s+charged\b",
+        r"\binterest\s+charged\b",
+        r"\btotal\s+credit\s+line\b",
+    ]
+    hits = sum(1 for pattern in card_signals if re.search(pattern, normalized, re.I))
+    return hits >= 4
+
+
 def _looks_like_property_tax(haystack: str) -> bool:
     normalized = re.sub(r"[\u2010-\u2015]", "-", haystack or "")
     explicit_markers = [
@@ -635,6 +710,8 @@ DOC_TYPE_LABELS = {
     "w2": "W-2",
     "retirement_statement": "Retirement",
     "brokerage_statement": "Brokerage",
+    "bank_statement": "Bank Statement",
+    "credit_card_statement": "Credit Card",
     "mortgage_interest": "Mortgage",
     "property_tax": "Property Tax",
     "charitable_receipt": "Donation",

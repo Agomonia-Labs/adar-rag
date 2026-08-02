@@ -50,6 +50,13 @@ TAX_FORM_ALIASES = {
     "investment_account_statement": "brokerage_statement",
     "consolidated_1099": "brokerage_statement",
     "1099_consolidated": "brokerage_statement",
+    "bank": "bank_statement",
+    "bank_statement": "bank_statement",
+    "checking_statement": "bank_statement",
+    "savings_statement": "bank_statement",
+    "credit_card": "credit_card_statement",
+    "credit_card_statement": "credit_card_statement",
+    "card_statement": "credit_card_statement",
 }
 TAX_METADATA_FORM_TYPES = {
     "w2",
@@ -57,6 +64,8 @@ TAX_METADATA_FORM_TYPES = {
     "k1",
     "retirement_statement",
     "brokerage_statement",
+    "bank_statement",
+    "credit_card_statement",
     "mortgage_interest",
     "property_tax",
     "charitable_receipt",
@@ -644,6 +653,10 @@ def _detect_tax_form(name: str, text: str) -> str:
         return "retirement_statement"
     if _looks_like_brokerage_statement(hay):
         return "brokerage_statement"
+    if _looks_like_credit_card_statement(hay):
+        return "credit_card_statement"
+    if _looks_like_bank_statement(hay):
+        return "bank_statement"
     if _looks_like_mortgage_interest(hay):
         return "mortgage_interest"
     if _looks_like_property_tax(hay):
@@ -655,6 +668,8 @@ def _detect_tax_form(name: str, text: str) -> str:
     patterns = [
         ("prior_year_return", [r"form\s+1040(?:-sr|-nr)?", r"u\.?s\.?\s+individual\s+income\s+tax\s+return", r"prior[- ]?year\s+(?:federal\s+|state\s+)?tax\s+return", r"previous[- ]?year\s+(?:federal\s+|state\s+)?tax\s+return", r"federal\s+tax\s+return", r"state\s+tax\s+return"]),
         ("brokerage_statement", [r"brokerage", r"capital gain", r"dividend", r"1099[- ]?int", r"1099[- ]?div", r"1099[- ]?b", r"gross proceeds", r"cost basis"]),
+        ("bank_statement", [r"bank statement", r"deposit accounts", r"account summary", r"beginning balance", r"ending balance", r"deposits and other additions", r"withdrawals and other subtractions"]),
+        ("credit_card_statement", [r"credit card statement", r"new balance total", r"minimum payment due", r"payment due date", r"purchases and adjustments", r"payments and other credits"]),
         ("1099", [r"\b1099\b", r"nonemployee compensation", r"interest income", r"dividends and distributions"]),
         ("k1", [r"\bk-?1\b", r"schedule k"]),
         ("mortgage_interest", [r"\b1098\b", r"mortgage interest"]),
@@ -777,6 +792,56 @@ def _looks_like_brokerage_statement(hay: str) -> bool:
     ]
     hits = sum(1 for pattern in brokerage_signals if re.search(pattern, normalized, re.I))
     return hits >= 3
+
+
+def _looks_like_bank_statement(hay: str) -> bool:
+    normalized = re.sub(r"[\u2010-\u2015]", "-", hay or "")
+    explicit_markers = [
+        r"\bbank\s+statement\b",
+        r"\bdeposit\s+accounts?\b",
+        r"\bchecking\s+account\s+statement\b",
+        r"\bsavings\s+account\s+statement\b",
+    ]
+    if any(re.search(pattern, normalized, re.I) for pattern in explicit_markers):
+        return True
+
+    bank_signals = [
+        r"\baccount\s+summary\b",
+        r"\bbeginning\s+balance\b",
+        r"\bending\s+balance\b",
+        r"\bdeposits?\s+and\s+other\s+additions\b",
+        r"\bwithdrawals?\s+and\s+other\s+subtractions\b",
+        r"\bservice\s+fees?\b",
+        r"\bchecks\b",
+    ]
+    hits = sum(1 for pattern in bank_signals if re.search(pattern, normalized, re.I))
+    has_bank_context = bool(re.search(r"\bbank\s+of\s+america\b|\bchecking\b|\bsavings\b|\bdeposit\b", normalized, re.I))
+    return has_bank_context and hits >= 3
+
+
+def _looks_like_credit_card_statement(hay: str) -> bool:
+    normalized = re.sub(r"[\u2010-\u2015]", "-", hay or "")
+    explicit_markers = [
+        r"\bcredit\s+card\s+statement\b",
+        r"\bvisa\s+signature\b",
+        r"\bmastercard\s+statement\b",
+        r"\bnew\s+balance\s+total\b",
+    ]
+    if any(re.search(pattern, normalized, re.I) for pattern in explicit_markers):
+        return True
+
+    card_signals = [
+        r"\bprevious\s+balance\b",
+        r"\bpayments?\s+and\s+other\s+credits\b",
+        r"\bpurchases?\s+and\s+adjustments\b",
+        r"\bminimum\s+payment\s+due\b",
+        r"\bpayment\s+due\s+date\b",
+        r"\btotal\s+credit\s+line\b",
+        r"\btotal\s+credit\s+available\b",
+    ]
+    hits = sum(1 for pattern in card_signals if re.search(pattern, normalized, re.I))
+    has_card_context = bool(re.search(r"\bcredit\s+card\b|\bvisa\b|\bmastercard\b|\bcard\s+services\b", normalized, re.I))
+    return has_card_context and hits >= 3
 
 
 def _looks_like_mortgage_interest(hay: str) -> bool:
@@ -953,6 +1018,14 @@ def _amounts_for_tax_form(form: str, text: str) -> list[tuple[str, Decimal]]:
         brokerage_amounts = _brokerage_amounts(text)
         if brokerage_amounts:
             return brokerage_amounts
+    if form == "bank_statement":
+        bank_amounts = _bank_statement_amounts(text)
+        if bank_amounts:
+            return bank_amounts
+    if form == "credit_card_statement":
+        card_amounts = _credit_card_statement_amounts(text)
+        if card_amounts:
+            return card_amounts
     if form == "mortgage_interest":
         mortgage_amounts = _mortgage_interest_amounts(text)
         if mortgage_amounts:
@@ -977,6 +1050,10 @@ def _values_for_tax_form(form: str, text: str) -> list[dict]:
         return _mortgage_interest_values(text)
     if form == "charitable_receipt":
         return _charitable_receipt_values(text)
+    if form == "bank_statement":
+        return _bank_statement_values(text)
+    if form == "credit_card_statement":
+        return _credit_card_statement_values(text)
     return []
 
 
@@ -1474,6 +1551,211 @@ def _brokerage_amounts(text: str) -> list[tuple[str, Decimal]]:
     return found
 
 
+def _bank_statement_amounts(text: str) -> list[tuple[str, Decimal]]:
+    normalized = re.sub(r"\s+", " ", text or " ").strip()
+    found: list[tuple[str, Decimal]] = []
+    account_summary = _bank_account_summary_amounts(text)
+
+    total_balance = _amount_after_line_label(text, r"\btotal\s+balance\b")
+    ending_balance = account_summary.get("Ending balance") or _amount_after_line_label(text, r"\bending\s+balance\b")
+    if total_balance is not None:
+        found.append(("Total deposit balance", total_balance))
+    elif ending_balance is not None:
+        found.append(("Ending balance", ending_balance))
+
+    for label in [
+        "Beginning balance",
+        "Deposits and other additions",
+        "Withdrawals and other subtractions",
+        "Checks",
+        "Service fees",
+        "Interest paid YTD",
+    ]:
+        if label in account_summary:
+            found.append((label, account_summary[label]))
+
+    field_patterns = [
+        ("Beginning balance", [r"\bbeginning\s+balance\b", r"\bopening\s+balance\b"]),
+        ("Deposits and other additions", [r"\bdeposits?\s+and\s+other\s+additions\b", r"\btotal\s+deposits?\b", r"\bcredits?\b"]),
+        ("Withdrawals and other subtractions", [r"\bwithdrawals?\s+and\s+other\s+subtractions\b", r"\btotal\s+withdrawals?\b", r"\bdebits?\b"]),
+        ("Checks", [r"\bchecks\b", r"\bchecks?\s+paid\b"]),
+        ("Service fees", [r"\bservice\s+fees?\b", r"\bmonthly\s+maintenance\s+fees?\b"]),
+        ("Interest paid YTD", [r"\binterest\s+paid\s+ytd\b", r"\byear[- ]?to[- ]?date\s+interest\b"]),
+    ]
+    seen = {label for label, _ in found}
+    for label, patterns in field_patterns:
+        amount = _first_signed_financial_amount_after_any_pattern(normalized, patterns)
+        if amount is not None and label not in seen:
+            found.append((label, amount))
+            seen.add(label)
+    return _dedupe_amounts(found)
+
+
+def _credit_card_statement_amounts(text: str) -> list[tuple[str, Decimal]]:
+    normalized = re.sub(r"\s+", " ", text or " ").strip()
+    summary = _credit_card_summary_amounts(text)
+    field_patterns = [
+        ("Previous balance", [r"\bprevious\s+balance\b"]),
+        ("Payments and other credits", [r"\bpayments?\s+and\s+other\s+credits\b", r"\bpayments?\s*/\s*credits\b"]),
+        ("Purchases and adjustments", [r"\bpurchases?\s+and\s+adjustments\b", r"\bpurchases?\b"]),
+        ("Fees charged", [r"\bfees?\s+charged\b", r"\bfees\b"]),
+        ("Interest charged", [r"\binterest\s+charged\b", r"\binterest\b"]),
+        ("New balance total", [r"\bnew\s+balance\s+total\b", r"\bnew\s+balance\b", r"\bstatement\s+balance\b"]),
+    ]
+    found: list[tuple[str, Decimal]] = []
+    seen = set()
+    for label in [
+        "Previous balance",
+        "Payments and other credits",
+        "Purchases and adjustments",
+        "Fees charged",
+        "Interest charged",
+        "New balance total",
+    ]:
+        if label in summary:
+            found.append((label, summary[label]))
+            seen.add(label)
+    for label, patterns in field_patterns:
+        amount = _first_signed_financial_amount_after_any_pattern(normalized, patterns)
+        if amount is not None and label not in seen:
+            found.append((label, amount))
+            seen.add(label)
+    return _dedupe_amounts(found)
+
+
+def _bank_statement_values(text: str) -> list[dict]:
+    values: list[dict] = []
+    normalized = re.sub(r"\s+", " ", text or " ").strip()
+    period = re.search(
+        r"\b(?:for\s+the\s+period\s+)?([A-Za-z]+\s+\d{1,2},?\s+20[1-3][0-9])\s+(?:to|through|-)\s+([A-Za-z]+\s+\d{1,2},?\s+20[1-3][0-9])",
+        normalized,
+        re.I,
+    )
+    if period:
+        values.append({"label": "Statement period", "value": f"{period.group(1)} to {period.group(2)}"})
+    account = re.search(r"\baccount\s+(?:number\s*)?(?:#\s*)?(\d{4}\s+\d{4}\s+\d{4}|\d{8,16})\b", normalized, re.I)
+    if account:
+        values.append({"label": "Account number", "value": account.group(1).strip()})
+    if re.search(r"\badvantage\s+plus\s+banking\b", normalized, re.I):
+        values.append({"label": "Account type", "value": "Advantage Plus Banking"})
+    elif re.search(r"\badvantage\s+savings\b", normalized, re.I):
+        values.append({"label": "Account type", "value": "Advantage Savings"})
+    return values[:8]
+
+
+def _credit_card_statement_values(text: str) -> list[dict]:
+    values: list[dict] = []
+    normalized = re.sub(r"\s+", " ", text or " ").strip()
+    account = re.search(r"\baccount\s+(?:number\s*)?(?:#\s*)?(\d{4}\s+\d{4}\s+\d{4}\s+\d{4}|\d{12,19})\b", normalized, re.I)
+    if account:
+        values.append({"label": "Account number", "value": account.group(1).strip()})
+    period = re.search(
+        r"\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}\s*-\s*(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+20[1-3][0-9]",
+        normalized,
+        re.I,
+    )
+    if period:
+        values.append({"label": "Statement period", "value": period.group(0).strip()})
+    due_date = re.search(r"\b(?:payment\s+)?due\s+date\b[^0-9]{0,40}(\d{1,2}/\d{1,2}/\d{2,4})", normalized, re.I)
+    if due_date:
+        values.append({"label": "Payment due date", "value": due_date.group(1)})
+    closing_date = re.search(r"\bstatement\s+closing\s+date\b[^0-9]{0,40}(\d{1,2}/\d{1,2}/\d{2,4})", normalized, re.I)
+    if closing_date:
+        values.append({"label": "Statement closing date", "value": closing_date.group(1)})
+    return values[:8]
+
+
+def _bank_account_summary_amounts(text: str) -> dict[str, Decimal]:
+    lines = _nonempty_statement_lines(text)
+    summary: dict[str, Decimal] = {}
+    for index, line in enumerate(lines):
+        if not re.fullmatch(r"account\s+summary", line, re.I):
+            continue
+        label_patterns = [
+            ("Beginning balance", r"\bbeginning\s+balance\b"),
+            ("Deposits and other additions", r"\bdeposits?\s+and\s+other\s+additions\b"),
+            ("Withdrawals and other subtractions", r"\bwithdrawals?\s+and\s+other\s+subtractions\b"),
+        ]
+        labels: list[str] = []
+        scan = index + 1
+        while scan < len(lines) and scan <= index + 12:
+            if _first_signed_financial_amount(lines[scan]) is not None:
+                break
+            for label, pattern in label_patterns:
+                if label not in labels and re.search(pattern, lines[scan], re.I):
+                    labels.append(label)
+            scan += 1
+        amounts: list[Decimal] = []
+        while scan < len(lines) and len(amounts) < len(labels) and scan <= index + 24:
+            amount = _first_signed_financial_amount(lines[scan])
+            if amount is not None:
+                amounts.append(amount)
+            scan += 1
+        for label, amount in zip(labels, amounts):
+            summary[label] = amount
+        break
+
+    for label, pattern in [
+        ("Checks", r"\bchecks\b"),
+        ("Service fees", r"\bservice\s+fees?\b"),
+        ("Ending balance", r"\bending\s+balance\b"),
+        ("Interest paid YTD", r"\binterest\s+paid\s+ytd\b"),
+    ]:
+        amount = _amount_after_line_label(text, pattern)
+        if amount is not None:
+            summary[label] = amount
+    return summary
+
+
+def _credit_card_summary_amounts(text: str) -> dict[str, Decimal]:
+    lines = _nonempty_statement_lines(text)
+    summary: dict[str, Decimal] = {}
+    start = next((index for index, line in enumerate(lines) if re.search(r"\baccount\s+summary/payment\s+information\b", line, re.I)), None)
+    if start is None:
+        return summary
+
+    amounts: list[Decimal] = []
+    for line in lines[start + 1:start + 45]:
+        amount = _first_signed_financial_amount(line)
+        if amount is not None:
+            amounts.append(amount)
+    if len(amounts) >= 3:
+        summary["Previous balance"] = amounts[0]
+        summary["Payments and other credits"] = amounts[1]
+        summary["Purchases and adjustments"] = amounts[2]
+    zero_amounts = [amount for amount in amounts[3:] if amount == 0]
+    if zero_amounts:
+        summary["Fees charged"] = zero_amounts[0]
+    if len(zero_amounts) > 1:
+        summary["Interest charged"] = zero_amounts[1]
+
+    for label, pattern in [
+        ("New balance total", r"\bnew\s+balance\s+total\b"),
+    ]:
+        amount = _amount_after_line_label(text, pattern)
+        if amount is not None:
+            summary[label] = amount
+    return summary
+
+
+def _amount_after_line_label(text: str, pattern: str, max_lines: int = 8) -> Decimal | None:
+    lines = _nonempty_statement_lines(text)
+    for index, line in enumerate(lines):
+        if not re.search(pattern, line, re.I):
+            continue
+        for candidate in lines[index + 1:index + 1 + max_lines]:
+            if re.search(r"\b(?:page|date|days\s+in\s+billing\s+cycle|account\s+summary)\b", candidate, re.I):
+                continue
+            amount = _first_signed_financial_amount(candidate)
+            if amount is not None:
+                return amount
+    return None
+
+
+def _nonempty_statement_lines(text: str) -> list[str]:
+    return [re.sub(r"\s+", " ", line).strip() for line in (text or "").splitlines() if re.sub(r"\s+", " ", line).strip()]
+
+
 def _mortgage_interest_amounts(text: str) -> list[tuple[str, Decimal]]:
     field_patterns = [
         ("Box 1 - Mortgage interest received from payer/borrower", [r"\bbox\s*1\b[^$0-9]{0,80}(?:mortgage\s+)?interest\s+received\s+from\s+(?:payer|borrower)", r"\bform\s+1098\s+mortgage\s+interest\s+paid\b", r"\bmortgage\s+interest\s+paid\b", r"\binterest\s+received\s+from\s+(?:payer|borrower)\b", r"\b(?:year[- ]?to[- ]?date|ytd|total)\s+(?:mortgage\s+)?interest\s+paid\b", r"\b(?:year[- ]?to[- ]?date|ytd|total)\s+interest\b", r"\binterest\s+paid\s+(?:this\s+year|year[- ]?to[- ]?date|ytd)\b"]),
@@ -1734,6 +2016,38 @@ def _first_financial_amount_after_any_pattern(text: str, patterns: list[str]) ->
     if re.search(r"^\s*:?\s*(?:not\s+shown|not\s+included|none|n/?a|not\s+available)\b", window, re.I):
         return None
     return _first_financial_amount(window)
+
+
+def _first_signed_financial_amount_after_any_pattern(text: str, patterns: list[str]) -> Decimal | None:
+    matches = []
+    for pattern in patterns:
+        match = re.search(pattern, text or "", re.I)
+        if match:
+            matches.append(match)
+    if not matches:
+        return None
+    match = min(matches, key=lambda item: item.start())
+    window = text[match.end():match.end() + 180]
+    if re.search(r"^\s*:?\s*(?:not\s+shown|not\s+included|none|n/?a|not\s+available)\b", window, re.I):
+        return None
+    return _first_signed_financial_amount(window)
+
+
+def _first_signed_financial_amount(text: str) -> Decimal | None:
+    match = re.search(
+        r"(?P<paren>\(\s*\$?\s*(?:\d{1,3}(?:,\d{3})+(?:\.\d{2})?|\d+\.\d{2})\s*\))|(?P<signed>-?\s*\$?\s*(?:\d{1,3}(?:,\d{3})+(?:\.\d{2})?|\d+\.\d{2}))",
+        text or "",
+    )
+    if not match:
+        return None
+    raw = match.group("paren") or match.group("signed") or ""
+    is_negative = raw.strip().startswith("-") or bool(match.group("paren"))
+    cleaned = re.sub(r"[\s$(),-]", "", raw)
+    try:
+        amount = Decimal(cleaned)
+    except Exception:
+        return None
+    return -amount if is_negative else amount
 
 
 def _first_financial_amount(text: str) -> Decimal | None:

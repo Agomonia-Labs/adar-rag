@@ -553,6 +553,8 @@ function formLabel(value) {
     business_expense: 'Business Expense',
     retirement_statement: 'Retirement',
     brokerage_statement: 'Brokerage',
+    bank_statement: 'Bank Statement',
+    credit_card_statement: 'Credit Card',
     brokerage: 'Brokerage',
     brokerage_1099: 'Brokerage',
     investment_statement: 'Brokerage',
@@ -591,6 +593,13 @@ function canonicalFormValue(value) {
     investment_account_statement: 'brokerage_statement',
     consolidated_1099: 'brokerage_statement',
     '1099_consolidated': 'brokerage_statement',
+    bank: 'bank_statement',
+    checking_statement: 'bank_statement',
+    savings_statement: 'bank_statement',
+    deposit_statement: 'bank_statement',
+    credit_card: 'credit_card_statement',
+    card_statement: 'credit_card_statement',
+    visa_statement: 'credit_card_statement',
     tax: 'prior_year_return',
     tax_return: 'prior_year_return',
     prior_tax_return: 'prior_year_return',
@@ -1105,6 +1114,9 @@ function isAssetAmount(formKey, label) {
   if (formKey === 'brokerage_statement') {
     return /\bending\s+(?:account\s+value|balance)\b/.test(label);
   }
+  if (formKey === 'bank_statement') {
+    return /\b(?:total\s+deposit\s+balance|ending\s+balance|closing\s+balance|current\s+balance)\b/.test(label);
+  }
   if (formKey === 'property_tax') {
     if (/\btaxable\s+value\b/.test(label)) return false;
     return /\b(?:assessed|market|appraised|property)\s+value\b/.test(label)
@@ -1114,8 +1126,13 @@ function isAssetAmount(formKey, label) {
 }
 
 function isLiabilityAmount(formKey, label) {
-  return formKey === 'mortgage_interest'
-    && /\b(?:outstanding|ending|current|unpaid)?\s*(?:mortgage\s+)?principal(?:\s+balance)?\b/.test(label);
+  if (formKey === 'mortgage_interest') {
+    return /\b(?:outstanding|ending|current|unpaid)?\s*(?:mortgage\s+)?principal(?:\s+balance)?\b/.test(label);
+  }
+  if (formKey === 'credit_card_statement') {
+    return /\b(?:new\s+balance\s+total|new\s+balance|statement\s+balance)\b/.test(label);
+  }
+  return false;
 }
 
 function isCashInflowAmount(formKey, label) {
@@ -1127,6 +1144,9 @@ function isCashInflowAmount(formKey, label) {
   }
   if (formKey === 'retirement_statement') {
     return /\b(?:distribution|withdrawal|ira distribution|pension|annuity)\b/.test(label);
+  }
+  if (formKey === 'bank_statement') {
+    return /\b(?:deposits?\s+and\s+other\s+additions|total\s+deposits?|interest\s+paid\s+ytd|interest\s+earned)\b/.test(label);
   }
   return false;
 }
@@ -1147,18 +1167,26 @@ function isCashOutflowAmount(formKey, label) {
   if (formKey === 'charitable_receipt') {
     return /\b(?:charitable|donation|contribution|monetary donation|cash donation)\b/.test(label);
   }
+  if (formKey === 'bank_statement') {
+    return /\b(?:withdrawals?\s+and\s+other\s+subtractions|total\s+withdrawals?|checks|service\s+fees?)\b/.test(label);
+  }
+  if (formKey === 'credit_card_statement') {
+    return /\b(?:purchases?\s+and\s+adjustments|fees\s+charged|interest\s+charged)\b/.test(label);
+  }
   return false;
 }
 
 function netWorthAssetCategory(formKey, label) {
   if (formKey === 'retirement_statement') return 'Retirement assets';
   if (formKey === 'brokerage_statement') return 'Investment assets';
+  if (formKey === 'bank_statement') return 'Cash assets';
   if (formKey === 'property_tax') return 'Property assessed value';
   return 'Asset';
 }
 
 function cashInflowCategory(formKey, label) {
   if (formKey === 'w2') return 'Employment income';
+  if (formKey === 'bank_statement') return label.includes('interest') ? 'Bank interest' : 'Bank deposits';
   if (formKey === 'retirement_statement') return 'Retirement distribution';
   if (label.includes('dividend')) return 'Investment dividends';
   if (label.includes('interest')) return 'Interest income';
@@ -1171,6 +1199,8 @@ function cashOutflowCategory(formKey, label) {
   if (formKey === 'mortgage_interest' && label.includes('mortgage interest')) return 'Mortgage interest';
   if (formKey === 'mortgage_interest' || formKey === 'property_tax') return 'Housing tax / deduction';
   if (formKey === 'charitable_receipt') return 'Charitable giving';
+  if (formKey === 'bank_statement') return label.includes('fee') ? 'Bank fees' : 'Bank withdrawals';
+  if (formKey === 'credit_card_statement') return label.includes('interest') ? 'Credit card interest' : label.includes('fee') ? 'Credit card fees' : 'Credit card spending';
   return 'Tracked outflow';
 }
 
@@ -1314,6 +1344,8 @@ function isFinanceTaxDoc(doc) {
     '1099',
     'retirement_statement',
     'brokerage_statement',
+    'bank_statement',
+    'credit_card_statement',
     'mortgage_interest',
     'property_tax',
     'charitable_receipt',
@@ -1324,7 +1356,7 @@ function isFinanceTaxDoc(doc) {
   return (
     domain === 'finance' ||
     taxDocTypes.has(docType) ||
-    /\b(?:tax|return|1040|w-?2|1098|1099|mortgage|property|donation|charitable|brokerage|retirement|401k|401\(k\))\b/i.test(name)
+    /\b(?:tax|return|1040|w-?2|1098|1099|mortgage|property|donation|charitable|brokerage|retirement|401k|401\(k\)|bank|checking|savings|deposit|credit\s*card|visa|mastercard)\b/i.test(name)
   );
 }
 
