@@ -164,22 +164,37 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
     });
   };
 
-  const saveTabSnapshot = (tabKey, label, snapshot = {}) => {
+  const saveTabSnapshot = async (tabKey, label, snapshot = {}) => {
     if (!packet) return;
     const savedAt = new Date().toISOString();
-    setDraftPacket(prev => {
-      if (!prev) return prev;
-      const next = deepClone(prev);
-      next.tab_review_saves = {
-        ...(next.tab_review_saves || {}),
-        [tabKey]: {
-          label,
-          saved_at: savedAt,
-          snapshot,
-        },
-      };
-      return next;
-    });
+    const nextPacket = deepClone(packet);
+    nextPacket.tab_review_saves = {
+      ...(nextPacket.tab_review_saves || {}),
+      [tabKey]: {
+        label,
+        saved_at: savedAt,
+        snapshot,
+      },
+    };
+    setDraftPacket(nextPacket);
+    if (run?.status === 'approved' && run?.run_id && nextPacket) {
+      setLoading(true);
+      setError('');
+      try {
+        const data = await approveFinanceTaxAgentRun(run.run_id, {
+          approvedPacket: nextPacket,
+          notes: `${label} updated in DocIntel.`,
+        });
+        setRun(data);
+        setTabSaveNotice(`${label} updated in saved packet.`);
+        loadApprovedRuns();
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     setTabSaveNotice(`${label} saved to draft packet.`);
   };
 
@@ -208,7 +223,7 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
         notes: notes || 'Reviewed in DocIntel.',
       });
       setRun(data);
-      setNotice('Reviewed packet approved and saved.');
+      setNotice(run?.status === 'approved' ? 'Reviewed packet updated and saved.' : 'Reviewed packet approved and saved.');
       loadApprovedRuns();
     } catch (e) {
       setError(e.message);
@@ -492,8 +507,8 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
                 <Rows title="Packet Contents" rows={packet.document_summary || []} />
                 <div style={s.actions}>
                   <button type="button" style={s.primary} onClick={downloadPacket}>Download reviewed packet</button>
-                  <button type="button" style={s.secondary} disabled={loading || run?.status === 'approved'} onClick={approveRun}>
-                    {run?.status === 'approved' ? 'Reviewed packet saved' : 'Approve & save reviewed packet'}
+                  <button type="button" style={s.secondary} disabled={loading} onClick={approveRun}>
+                    {run?.status === 'approved' ? 'Update saved reviewed packet' : 'Approve & save reviewed packet'}
                   </button>
                   <button type="button" style={s.danger} disabled={loading} onClick={withdrawRun}>Withdraw / delete packet</button>
                 </div>
@@ -586,7 +601,8 @@ function canonicalFormValue(value) {
 
 function Rows({ title, rows, basePath = null, rowIndices = null, onPatch = null, onDelete = null }) {
   const data = Array.isArray(rows) ? rows : [];
-  const canDelete = Boolean(basePath && onDelete);
+  const hasBasePath = Array.isArray(basePath);
+  const canDelete = Boolean(hasBasePath && onDelete);
   return (
     <section style={s.card}>
       <div style={s.sectionTitle}>{title}</div>
@@ -603,7 +619,7 @@ function Rows({ title, rows, basePath = null, rowIndices = null, onPatch = null,
               <div key={key} style={isStructuredList(value) ? s.rowFieldWide : s.rowField}>
                 <span style={s.rowKey}>{key.replaceAll('_',' ')}</span>
                 {renderValue(value, {
-                  path: basePath ? [...basePath, rowIndices?.[i] ?? i, key] : null,
+                  path: hasBasePath ? [...basePath, rowIndices?.[i] ?? i, key] : null,
                   onPatch,
                 })}
               </div>
@@ -652,11 +668,12 @@ function isStructuredList(value) {
 }
 
 function renderValue(value, options = {}) {
+  const editable = Boolean(options.path && options.onPatch);
   if (Array.isArray(value) && value.length && value.every(item => item && typeof item === 'object' && 'amount' in item)) {
     return (
       <AmountList
         amounts={value}
-        editable={Boolean(options.path && options.onPatch)}
+        editable={editable}
         onChange={next => options.onPatch?.(options.path, next)}
       />
     );
@@ -665,8 +682,22 @@ function renderValue(value, options = {}) {
     return (
       <ValueList
         values={value}
-        editable={Boolean(options.path && options.onPatch)}
+        editable={editable}
         onChange={next => options.onPatch?.(options.path, next)}
+      />
+    );
+  }
+  if (editable) {
+    const fieldName = String(options.path?.[options.path.length - 1] || '');
+    const isAmountField = /amount|total|balance|value|liabilit|asset|inflow|outflow/i.test(fieldName);
+    return (
+      <input
+        style={isAmountField ? s.amountInputValue : s.valueInput}
+        type={isAmountField ? 'number' : 'text'}
+        step={isAmountField ? '0.01' : undefined}
+        value={value ?? ''}
+        placeholder={isAmountField ? '0.00' : 'Value'}
+        onChange={e => options.onPatch?.(options.path, e.target.value)}
       />
     );
   }
@@ -806,6 +837,8 @@ function NetWorthWorkspace({ plan, onSave = null }) {
   };
 
   const recalculate = () => {
+    setAssets(prev => normalizeFinancialRows(prev));
+    setLiabilities(prev => normalizeFinancialRows(prev));
     setLastUpdated(`Recalculated from ${assets.length} assets and ${liabilities.length} liabilities.`);
   };
 
@@ -889,6 +922,8 @@ function CashFlowWorkspace({ plan, onSave = null }) {
   };
 
   const recalculate = () => {
+    setInflows(prev => normalizeFinancialRows(prev));
+    setOutflows(prev => normalizeFinancialRows(prev));
     setLastUpdated(`Recalculated from ${inflows.length} inflows and ${outflows.length} outflows.`);
   };
 
@@ -953,6 +988,13 @@ function patchLocalRows(setRows, path, value) {
     cursor[path[path.length - 1]] = value;
     return next;
   });
+}
+
+function normalizeFinancialRows(rows) {
+  return (rows || []).map(row => ({
+    ...row,
+    amount: toNumber(row.amount),
+  }));
 }
 
 function buildFinancialPlanningMvp2(packet) {
