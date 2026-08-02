@@ -25,6 +25,7 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
   const [approvedRuns, setApprovedRuns] = useState([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [tabSaveNotice, setTabSaveNotice] = useState('');
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -86,7 +87,8 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
   const organizer = packet?.tax_organizer || {};
   const checklist = packet?.missing_document_checklist || {};
   const comparison = packet?.prior_year_comparison || {};
-  const cpaPacket = packet?.cpa_review_packet || {};
+  const reviewPacket = packet?.cpa_review_packet || {};
+  const financialPlan = useMemo(() => buildFinancialPlanningMvp2(packet), [packet]);
 
   const selectedDocs = useMemo(() => docs.filter(d => selected.includes(d.id)), [docs, selected]);
   const organizerForms = organizer.forms || [];
@@ -162,6 +164,25 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
     });
   };
 
+  const saveTabSnapshot = (tabKey, label, snapshot = {}) => {
+    if (!packet) return;
+    const savedAt = new Date().toISOString();
+    setDraftPacket(prev => {
+      if (!prev) return prev;
+      const next = deepClone(prev);
+      next.tab_review_saves = {
+        ...(next.tab_review_saves || {}),
+        [tabKey]: {
+          label,
+          saved_at: savedAt,
+          snapshot,
+        },
+      };
+      return next;
+    });
+    setTabSaveNotice(`${label} saved to draft packet.`);
+  };
+
   const deletePacketRecord = path => {
     if (!path?.length) return;
     setDraftPacket(prev => {
@@ -184,7 +205,7 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
     try {
       const data = await approveFinanceTaxAgentRun(run.run_id, {
         approvedPacket: packet,
-        notes: notes || 'CPA/EA review completed in DocIntel.',
+        notes: notes || 'Reviewed in DocIntel.',
       });
       setRun(data);
       setNotice('Reviewed packet approved and saved.');
@@ -252,9 +273,11 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
     ['documents', 'Documents'],
     ['approved', 'Approved Packets'],
     ['organizer', 'Tax Organizer'],
+    ['networth', 'Net Worth'],
+    ['cashflow', 'Cash Flow'],
     ['missing', 'Missing Items'],
     ['comparison', 'Prior-Year Compare'],
-    ['packet', 'CPA Packet'],
+    ['packet', 'Review Packet'],
   ];
 
   return (
@@ -294,6 +317,7 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
 
         {error && <div style={s.error}>{error}</div>}
         {notice && <div style={s.success}>{notice}</div>}
+        {tabSaveNotice && <div style={s.success}>{tabSaveNotice}</div>}
 
         <div style={{...s.body, ...(isMobile ? s.bodyMobile : {})}}>
           <aside style={{...s.docPane, ...(isMobile ? s.docPaneMobile : {})}}>
@@ -335,9 +359,9 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
                 <Metric label="Status" value={run?.status || 'draft'} tone={run?.status === 'approved' ? 'green' : 'amber'} />
                 <Metric label="Detected Forms" value={(organizer.forms || []).length} />
                 <Metric label="Missing Items" value={(checklist.missing_items || []).length} tone={(checklist.missing_items || []).length ? 'amber' : 'green'} />
-                <Metric label="CPA Ready" value={checklist.ready_for_cpa_review ? 'Yes' : 'Review'} tone={checklist.ready_for_cpa_review ? 'green' : 'amber'} />
-                <TextBlock title="CPA Packet Summary" text={cpaPacket.summary} />
-                <Rows title="Next Actions" rows={cpaPacket.next_actions || []} />
+                <Metric label="Review Ready" value={checklist.ready_for_cpa_review ? 'Yes' : 'Needs Review'} tone={checklist.ready_for_cpa_review ? 'green' : 'amber'} />
+                <TextBlock title="Packet Summary" text={reviewPacket.summary} />
+                <Rows title="Next Actions" rows={reviewPacket.next_actions || []} />
               </div>
             )}
 
@@ -380,6 +404,16 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
 
             {activeTab === 'organizer' && packet && (
               <div style={s.grid}>
+                <TabSaveBar
+                  label="Tax Organizer"
+                  onSave={() => saveTabSnapshot('organizer', 'Tax Organizer', {
+                    active_organizer_tab: activeOrganizerTab,
+                    forms: organizerForms,
+                    income_summary: organizerIncome,
+                    deduction_credit_summary: organizerDeductions,
+                    review_flags: organizerReviewFlags,
+                  })}
+                />
                 <div style={s.subtabs}>
                   {organizerTabs.map(tab => (
                     <button
@@ -403,15 +437,41 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
               </div>
             )}
 
+            {activeTab === 'networth' && packet && (
+              <NetWorthWorkspace
+                plan={financialPlan.netWorth}
+                onSave={snapshot => saveTabSnapshot('networth', 'Net Worth', snapshot)}
+              />
+            )}
+
+            {activeTab === 'cashflow' && packet && (
+              <CashFlowWorkspace
+                plan={financialPlan.cashFlow}
+                onSave={snapshot => saveTabSnapshot('cashflow', 'Cash Flow', snapshot)}
+              />
+            )}
+
             {activeTab === 'missing' && packet && (
               <div style={s.grid}>
+                <TabSaveBar
+                  label="Missing Items"
+                  onSave={() => saveTabSnapshot('missing', 'Missing Items', {
+                    missing_document_checklist: checklist,
+                    financial_planning_missing_items: financialPlan.missingItems,
+                  })}
+                />
                 <Rows title="Missing Documents" rows={checklist.missing_items || []} />
                 <Rows title="Client Questions" rows={checklist.client_questions || []} />
+                <Rows title="Financial Planning MVP2 Missing Items" rows={financialPlan.missingItems} />
               </div>
             )}
 
             {activeTab === 'comparison' && packet && (
               <div style={s.grid}>
+                <TabSaveBar
+                  label="Prior-Year Compare"
+                  onSave={() => saveTabSnapshot('comparison', 'Prior-Year Compare', comparison)}
+                />
                 <Metric label="Prior-Year Return" value={comparison.prior_year_return_detected ? 'Detected' : 'Missing'} tone={comparison.prior_year_return_detected ? 'green' : 'amber'} />
                 <Rows title="Comparison Notes" rows={comparison.comparison_notes || []} />
               </div>
@@ -419,11 +479,19 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
 
             {activeTab === 'packet' && packet && (
               <div style={s.grid}>
-                <TextBlock title="Review Status" text={cpaPacket.review_status} />
+                <TabSaveBar
+                  label="Review Packet"
+                  onSave={() => saveTabSnapshot('packet', 'Review Packet', {
+                    review_packet: reviewPacket,
+                    document_summary: packet.document_summary || [],
+                    guardrails: packet.guardrails || [],
+                  })}
+                />
+                <TextBlock title="Review Status" text={reviewPacket.review_status} />
                 <Rows title="Guardrails" rows={(packet.guardrails || []).map(item => ({guardrail:item}))} />
                 <Rows title="Packet Contents" rows={packet.document_summary || []} />
                 <div style={s.actions}>
-                  <button type="button" style={s.primary} onClick={downloadPacket}>Download CPA packet</button>
+                  <button type="button" style={s.primary} onClick={downloadPacket}>Download reviewed packet</button>
                   <button type="button" style={s.secondary} disabled={loading || run?.status === 'approved'} onClick={approveRun}>
                     {run?.status === 'approved' ? 'Reviewed packet saved' : 'Approve & save reviewed packet'}
                   </button>
@@ -445,6 +513,18 @@ function Metric({ label, value, tone = 'blue' }) {
 
 function TextBlock({ title, text }) {
   return <section style={s.card}><div style={s.sectionTitle}>{title}</div><p style={s.text}>{text || 'Nothing generated yet.'}</p></section>;
+}
+
+function TabSaveBar({ label, onSave }) {
+  return (
+    <section style={s.tabSaveBar}>
+      <div>
+        <div style={s.sectionTitle}>{label} Review</div>
+        <p style={s.helpText}>Save this tab's reviewed information into the draft packet before final approval.</p>
+      </div>
+      <button type="button" style={s.primary} onClick={onSave}>Save {label}</button>
+    </section>
+  );
 }
 
 function formLabel(value) {
@@ -562,7 +642,7 @@ function formatValue(value) {
     return value.map(item => formatObjectSummary(item)).join('\n');
   }
   if (typeof value === 'object') return formatObjectSummary(value);
-  return String(value);
+  return cleanReviewerText(value);
 }
 
 function isStructuredList(value) {
@@ -693,6 +773,402 @@ function ValueList({ values, editable = false, onChange = null }) {
   );
 }
 
+function NetWorthWorkspace({ plan, onSave = null }) {
+  const [assets, setAssets] = useState(() => deepClone(plan.assets || []));
+  const [liabilities, setLiabilities] = useState(() => deepClone(plan.liabilities || []));
+  const [lastUpdated, setLastUpdated] = useState('');
+
+  useEffect(() => {
+    setAssets(deepClone(plan.assets || []));
+    setLiabilities(deepClone(plan.liabilities || []));
+    setLastUpdated('');
+  }, [plan]);
+
+  const totalAssets = sumRows(assets);
+  const totalLiabilities = sumRows(liabilities);
+  const estimatedNetWorth = totalAssets - totalLiabilities;
+
+  const patchAsset = (path, value) => patchLocalRows(setAssets, path, value);
+  const patchLiability = (path, value) => patchLocalRows(setLiabilities, path, value);
+
+  const addAsset = () => {
+    setAssets(prev => [...prev, { source_document: 'Manual review', category: 'Asset', label: 'Additional asset', amount: 0 }]);
+  };
+
+  const addLiability = () => {
+    setLiabilities(prev => [...prev, { source_document: 'Manual review', category: 'Liability', label: 'Additional liability', amount: 0 }]);
+  };
+
+  const resetFromOrganizer = () => {
+    setAssets(deepClone(plan.baseAssets || plan.assets || []));
+    setLiabilities(deepClone(plan.baseLiabilities || plan.liabilities || []));
+    setLastUpdated('Reset from tax organizer values.');
+  };
+
+  const recalculate = () => {
+    setLastUpdated(`Recalculated from ${assets.length} assets and ${liabilities.length} liabilities.`);
+  };
+
+  const saveNetWorth = () => {
+    const snapshot = {
+      total_assets: totalAssets,
+      total_liabilities: totalLiabilities,
+      estimated_net_worth: estimatedNetWorth,
+      assets,
+      liabilities,
+      missing_items: plan.missingItems || [],
+    };
+    onSave?.(snapshot);
+    setLastUpdated('Net Worth saved to draft packet.');
+  };
+
+  const summary = [
+    `DocIntel calculated this net worth view from already extracted tax submission values, then allows reviewer adjustments before final planning review.`,
+    `Current reviewed assets are ${formatMoney(totalAssets)} and current reviewed liabilities are ${formatMoney(totalLiabilities)}, producing an estimated reviewed net worth of ${formatMoney(estimatedNetWorth)}.`,
+  ].join(' ');
+
+  return (
+    <div style={s.grid}>
+      <Metric label="Reviewed Assets" value={formatMoney(totalAssets)} tone="green" />
+      <Metric label="Reviewed Liabilities" value={formatMoney(totalLiabilities)} tone={totalLiabilities ? 'amber' : 'blue'} />
+      <Metric label="Reviewed Net Worth" value={formatMoney(estimatedNetWorth)} tone={estimatedNetWorth >= 0 ? 'green' : 'amber'} />
+      <section style={s.card}>
+        <div style={s.cardHeader}>
+          <div>
+            <div style={s.sectionTitle}>Net Worth Review</div>
+            <p style={s.helpText}>{summary}</p>
+            {lastUpdated && <p style={s.inlineNotice}>{lastUpdated}</p>}
+          </div>
+          <div style={s.actionsCompact}>
+            <button type="button" style={s.secondary} onClick={resetFromOrganizer}>Reset from organizer</button>
+            <button type="button" style={s.primary} onClick={recalculate}>Recalculate</button>
+            <button type="button" style={s.primary} onClick={saveNetWorth}>Save Net Worth</button>
+          </div>
+        </div>
+      </section>
+      <Rows title="Editable Asset Details" rows={assets} basePath={[]} rowIndices={assets.map((_, i) => i)} onPatch={patchAsset} onDelete={path => setAssets(prev => prev.filter((_, i) => i !== path[0]))} />
+      <div style={s.actions}>
+        <button type="button" style={s.secondary} onClick={addAsset}>Add asset</button>
+      </div>
+      <Rows title="Editable Liability Details" rows={liabilities} basePath={[]} rowIndices={liabilities.map((_, i) => i)} onPatch={patchLiability} onDelete={path => setLiabilities(prev => prev.filter((_, i) => i !== path[0]))} />
+      <div style={s.actions}>
+        <button type="button" style={s.secondary} onClick={addLiability}>Add liability</button>
+      </div>
+      <Rows title="Net Worth Missing Items" rows={plan.missingItems} />
+    </div>
+  );
+}
+
+function CashFlowWorkspace({ plan, onSave = null }) {
+  const [inflows, setInflows] = useState(() => deepClone(plan.inflows || []));
+  const [outflows, setOutflows] = useState(() => deepClone(plan.outflows || []));
+  const [lastUpdated, setLastUpdated] = useState('');
+
+  useEffect(() => {
+    setInflows(deepClone(plan.inflows || []));
+    setOutflows(deepClone(plan.outflows || []));
+    setLastUpdated('');
+  }, [plan]);
+
+  const totalInflows = sumRows(inflows);
+  const totalOutflows = sumRows(outflows);
+  const estimatedCashFlow = totalInflows - totalOutflows;
+
+  const addInflow = () => {
+    setInflows(prev => [...prev, { source_document: 'Manual review', category: 'Income', label: 'Additional inflow', amount: 0 }]);
+  };
+
+  const addOutflow = () => {
+    setOutflows(prev => [...prev, { source_document: 'Manual review', category: 'Outflow', label: 'Additional outflow', amount: 0 }]);
+  };
+
+  const resetFromOrganizer = () => {
+    setInflows(deepClone(plan.baseInflows || plan.inflows || []));
+    setOutflows(deepClone(plan.baseOutflows || plan.outflows || []));
+    setLastUpdated('Reset from tax organizer values.');
+  };
+
+  const recalculate = () => {
+    setLastUpdated(`Recalculated from ${inflows.length} inflows and ${outflows.length} outflows.`);
+  };
+
+  const saveCashFlow = () => {
+    const snapshot = {
+      total_inflows: totalInflows,
+      total_outflows: totalOutflows,
+      estimated_cash_flow: estimatedCashFlow,
+      inflows,
+      outflows,
+      missing_items: plan.missingItems || [],
+    };
+    onSave?.(snapshot);
+    setLastUpdated('Cash Flow saved to draft packet.');
+  };
+
+  const summary = [
+    `DocIntel calculated this cash flow view from already extracted tax submission values, then allows reviewer adjustments before final planning review.`,
+    `Current reviewed inflows are ${formatMoney(totalInflows)} and current reviewed outflows are ${formatMoney(totalOutflows)}, producing an estimated reviewed cash flow of ${formatMoney(estimatedCashFlow)}.`,
+  ].join(' ');
+
+  return (
+    <div style={s.grid}>
+      <Metric label="Reviewed Inflows" value={formatMoney(totalInflows)} tone="green" />
+      <Metric label="Reviewed Outflows" value={formatMoney(totalOutflows)} tone="amber" />
+      <Metric label="Reviewed Cash Flow" value={formatMoney(estimatedCashFlow)} tone={estimatedCashFlow >= 0 ? 'green' : 'amber'} />
+      <section style={s.card}>
+        <div style={s.cardHeader}>
+          <div>
+            <div style={s.sectionTitle}>Cash Flow Review</div>
+            <p style={s.helpText}>{summary}</p>
+            {lastUpdated && <p style={s.inlineNotice}>{lastUpdated}</p>}
+          </div>
+          <div style={s.actionsCompact}>
+            <button type="button" style={s.secondary} onClick={resetFromOrganizer}>Reset from organizer</button>
+            <button type="button" style={s.primary} onClick={recalculate}>Recalculate</button>
+            <button type="button" style={s.primary} onClick={saveCashFlow}>Save Cash Flow</button>
+          </div>
+        </div>
+      </section>
+      <Rows title="Editable Income / Inflow Details" rows={inflows} basePath={[]} rowIndices={inflows.map((_, i) => i)} onPatch={(path, value) => patchLocalRows(setInflows, path, value)} onDelete={path => setInflows(prev => prev.filter((_, i) => i !== path[0]))} />
+      <div style={s.actions}>
+        <button type="button" style={s.secondary} onClick={addInflow}>Add inflow</button>
+      </div>
+      <Rows title="Editable Tax, Housing, and Deduction Outflows" rows={outflows} basePath={[]} rowIndices={outflows.map((_, i) => i)} onPatch={(path, value) => patchLocalRows(setOutflows, path, value)} onDelete={path => setOutflows(prev => prev.filter((_, i) => i !== path[0]))} />
+      <div style={s.actions}>
+        <button type="button" style={s.secondary} onClick={addOutflow}>Add outflow</button>
+      </div>
+      <Rows title="Cash Flow Missing Items" rows={plan.missingItems} />
+    </div>
+  );
+}
+
+function patchLocalRows(setRows, path, value) {
+  setRows(prev => {
+    const next = deepClone(prev);
+    if (!path?.length) return next;
+    let cursor = next;
+    for (let i = 0; i < path.length - 1; i += 1) {
+      cursor = cursor[path[i]];
+    }
+    cursor[path[path.length - 1]] = value;
+    return next;
+  });
+}
+
+function buildFinancialPlanningMvp2(packet) {
+  const forms = packet?.tax_organizer?.forms || [];
+  const savedNetWorth = packet?.tab_review_saves?.networth?.snapshot || null;
+  const savedCashFlow = packet?.tab_review_saves?.cashflow?.snapshot || null;
+  const assets = [];
+  const liabilities = [];
+  const inflows = [];
+  const outflows = [];
+
+  for (const form of forms) {
+    const formKey = canonicalFormKey(form);
+    const source = form.document_name || 'Uploaded document';
+    const amounts = Array.isArray(form.sample_amounts) ? form.sample_amounts : [];
+
+    for (const item of amounts) {
+      const amount = toNumber(item?.amount);
+      if (!Number.isFinite(amount)) continue;
+      const label = cleanLabel(item?.label);
+      const normalized = normalizeLabel(label);
+
+      if (isAssetAmount(formKey, normalized)) {
+        assets.push({ source_document: source, category: netWorthAssetCategory(formKey, normalized), label, amount });
+      }
+      if (isLiabilityAmount(formKey, normalized)) {
+        liabilities.push({ source_document: source, category: 'Mortgage debt', label, amount });
+      }
+      if (isCashInflowAmount(formKey, normalized)) {
+        inflows.push({ source_document: source, category: cashInflowCategory(formKey, normalized), label, amount });
+      }
+      if (isCashOutflowAmount(formKey, normalized)) {
+        outflows.push({ source_document: source, category: cashOutflowCategory(formKey, normalized), label, amount });
+      }
+    }
+  }
+
+  const totalAssets = sumRows(assets);
+  const totalLiabilities = sumRows(liabilities);
+  const totalInflows = sumRows(inflows);
+  const totalOutflows = sumRows(outflows);
+  const netWorthMissing = buildNetWorthMissingItems(forms, assets, liabilities);
+  const cashFlowMissing = buildCashFlowMissingItems(forms, inflows, outflows);
+  const reviewedAssets = Array.isArray(savedNetWorth?.assets) ? savedNetWorth.assets : assets;
+  const reviewedLiabilities = Array.isArray(savedNetWorth?.liabilities) ? savedNetWorth.liabilities : liabilities;
+  const reviewedInflows = Array.isArray(savedCashFlow?.inflows) ? savedCashFlow.inflows : inflows;
+  const reviewedOutflows = Array.isArray(savedCashFlow?.outflows) ? savedCashFlow.outflows : outflows;
+  const reviewedNetWorthAssets = sumRows(reviewedAssets);
+  const reviewedNetWorthLiabilities = sumRows(reviewedLiabilities);
+  const reviewedCashInflows = sumRows(reviewedInflows);
+  const reviewedCashOutflows = sumRows(reviewedOutflows);
+
+  return {
+    netWorth: {
+      totalAssets: reviewedNetWorthAssets,
+      totalLiabilities: reviewedNetWorthLiabilities,
+      estimatedNetWorth: reviewedNetWorthAssets - reviewedNetWorthLiabilities,
+      assets: reviewedAssets,
+      liabilities: reviewedLiabilities,
+      baseAssets: assets,
+      baseLiabilities: liabilities,
+      missingItems: Array.isArray(savedNetWorth?.missing_items) ? savedNetWorth.missing_items : netWorthMissing,
+      summary: [
+        `DocIntel calculated this net worth view from already extracted tax submission values only.`,
+        `It found ${formatMoney(reviewedNetWorthAssets)} in asset signals and ${formatMoney(reviewedNetWorthLiabilities)} in liability signals, producing an estimated review net worth of ${formatMoney(reviewedNetWorthAssets - reviewedNetWorthLiabilities)}.`,
+        `This should be treated as a planning snapshot for advisor review, not a full financial statement, because cash, checking, savings, credit cards, loans, insurance, and estate documents may not be uploaded.`,
+      ].join(' '),
+    },
+    cashFlow: {
+      totalInflows: reviewedCashInflows,
+      totalOutflows: reviewedCashOutflows,
+      estimatedCashFlow: reviewedCashInflows - reviewedCashOutflows,
+      inflows: reviewedInflows,
+      outflows: reviewedOutflows,
+      baseInflows: inflows,
+      baseOutflows: outflows,
+      missingItems: Array.isArray(savedCashFlow?.missing_items) ? savedCashFlow.missing_items : cashFlowMissing,
+      summary: [
+        `DocIntel calculated this cash flow view from W-2, 1099, brokerage, retirement, mortgage, property tax, and charitable values already present in the tax organizer.`,
+        `It found ${formatMoney(reviewedCashInflows)} in annual inflow signals and ${formatMoney(reviewedCashOutflows)} in tracked tax, housing, and deduction outflow signals.`,
+        `The remaining ${formatMoney(reviewedCashInflows - reviewedCashOutflows)} is a review estimate because everyday living expenses, bank deposits, credit card spending, insurance premiums, and non-taxable cash activity may not be available from tax documents alone.`,
+      ].join(' '),
+    },
+    missingItems: [...netWorthMissing, ...cashFlowMissing],
+  };
+}
+
+function normalizeLabel(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function toNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  const text = String(value ?? '').replace(/[$,]/g, '').trim();
+  if (!text) return 0;
+  const number = Number(text);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function sumRows(rows) {
+  return rows.reduce((sum, row) => sum + toNumber(row.amount), 0);
+}
+
+function isAssetAmount(formKey, label) {
+  if (formKey === 'retirement_statement') {
+    return /\bending\s+balance\b/.test(label);
+  }
+  if (formKey === 'brokerage_statement') {
+    return /\bending\s+(?:account\s+value|balance)\b/.test(label);
+  }
+  if (formKey === 'property_tax') {
+    if (/\btaxable\s+value\b/.test(label)) return false;
+    return /\b(?:assessed|market|appraised|property)\s+value\b/.test(label)
+      || /\btotal\s+(?:land\s+and\s+improvement\s+)?value\b/.test(label);
+  }
+  return false;
+}
+
+function isLiabilityAmount(formKey, label) {
+  return formKey === 'mortgage_interest'
+    && /\b(?:outstanding|ending|current|unpaid)?\s*(?:mortgage\s+)?principal(?:\s+balance)?\b/.test(label);
+}
+
+function isCashInflowAmount(formKey, label) {
+  if (formKey === 'w2') {
+    return /\bbox\s*1\b/.test(label) || /\bwages\b/.test(label);
+  }
+  if (formKey === '1099' || formKey === 'brokerage_statement') {
+    return /\b(?:interest|dividend|ordinary dividends|qualified dividends|capital gain|gross proceeds|proceeds|income)\b/.test(label);
+  }
+  if (formKey === 'retirement_statement') {
+    return /\b(?:distribution|withdrawal|ira distribution|pension|annuity)\b/.test(label);
+  }
+  return false;
+}
+
+function isCashOutflowAmount(formKey, label) {
+  if (formKey === 'w2') {
+    return /\b(?:federal income tax withheld|social security tax withheld|medicare tax withheld|state income tax|local income tax)\b/.test(label);
+  }
+  if (formKey === '1099' || formKey === 'brokerage_statement') {
+    return /\b(?:federal income tax withheld|federal tax withheld|foreign tax paid|withholding)\b/.test(label);
+  }
+  if (formKey === 'mortgage_interest') {
+    return /\b(?:mortgage interest|real estate taxes paid|property taxes paid|mortgage insurance|points paid)\b/.test(label);
+  }
+  if (formKey === 'property_tax') {
+    return /\b(?:property tax paid|real estate tax|total property tax due|tax due|amount due)\b/.test(label);
+  }
+  if (formKey === 'charitable_receipt') {
+    return /\b(?:charitable|donation|contribution|monetary donation|cash donation)\b/.test(label);
+  }
+  return false;
+}
+
+function netWorthAssetCategory(formKey, label) {
+  if (formKey === 'retirement_statement') return 'Retirement assets';
+  if (formKey === 'brokerage_statement') return 'Investment assets';
+  if (formKey === 'property_tax') return 'Property assessed value';
+  return 'Asset';
+}
+
+function cashInflowCategory(formKey, label) {
+  if (formKey === 'w2') return 'Employment income';
+  if (formKey === 'retirement_statement') return 'Retirement distribution';
+  if (label.includes('dividend')) return 'Investment dividends';
+  if (label.includes('interest')) return 'Interest income';
+  if (label.includes('capital gain') || label.includes('proceeds')) return 'Investment sale activity';
+  return 'Income';
+}
+
+function cashOutflowCategory(formKey, label) {
+  if (formKey === 'w2' || label.includes('withheld') || label.includes('withholding')) return 'Tax withholding';
+  if (formKey === 'mortgage_interest' && label.includes('mortgage interest')) return 'Mortgage interest';
+  if (formKey === 'mortgage_interest' || formKey === 'property_tax') return 'Housing tax / deduction';
+  if (formKey === 'charitable_receipt') return 'Charitable giving';
+  return 'Tracked outflow';
+}
+
+function buildNetWorthMissingItems(forms, assets, liabilities) {
+  const formKeys = new Set(forms.map(canonicalFormKey));
+  const missing = [];
+  if (!assets.some(row => row.category.includes('Property'))) {
+    missing.push({ item: 'Property value or county assessment', reason: 'Needed to estimate real estate asset value.', priority: 'medium' });
+  }
+  if (formKeys.has('mortgage_interest') && !liabilities.length) {
+    missing.push({ item: 'Mortgage principal balance', reason: 'Mortgage debt is needed to calculate home equity.', priority: 'high' });
+  }
+  if (!assets.some(row => row.category === 'Retirement assets')) {
+    missing.push({ item: 'Retirement account balance statement', reason: 'Needed for retirement readiness and total investable assets.', priority: 'medium' });
+  }
+  if (!assets.some(row => row.category === 'Investment assets')) {
+    missing.push({ item: 'Brokerage or investment account value', reason: 'Needed for investable asset review.', priority: 'medium' });
+  }
+  missing.push({ item: 'Cash, checking, and savings balances', reason: 'Tax documents usually do not show liquid cash reserves.', priority: 'medium' });
+  missing.push({ item: 'Credit cards, auto loans, student loans, and other debt', reason: 'Needed to complete household liability review.', priority: 'medium' });
+  return missing;
+}
+
+function buildCashFlowMissingItems(forms, inflows, outflows) {
+  const formKeys = new Set(forms.map(canonicalFormKey));
+  const missing = [];
+  if (!formKeys.has('w2') && !formKeys.has('1099') && !formKeys.has('brokerage_statement')) {
+    missing.push({ item: 'Income documents', reason: 'W-2, 1099, brokerage, or business income documents are needed for annual income review.', priority: 'high' });
+  }
+  if (!inflows.length) {
+    missing.push({ item: 'Annual inflow details', reason: 'No usable income amounts were found in existing tax organizer values.', priority: 'high' });
+  }
+  if (!outflows.length) {
+    missing.push({ item: 'Tax withholding and deductible outflows', reason: 'No withholding, mortgage, property tax, or charitable outflow amounts were found.', priority: 'medium' });
+  }
+  missing.push({ item: 'Monthly household spending', reason: 'Tax documents do not show groceries, utilities, insurance, childcare, subscriptions, or discretionary spending.', priority: 'medium' });
+  missing.push({ item: 'Bank and credit card statements', reason: 'Needed to validate actual cash movement against tax document summaries.', priority: 'medium' });
+  return missing;
+}
+
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -712,13 +1188,13 @@ function formatMoney(value) {
 function formatObjectSummary(value) {
   if (!value || typeof value !== 'object') return String(value ?? '-');
   return Object.entries(value)
-    .map(([key, item]) => `${key.replaceAll('_',' ')}: ${Array.isArray(item) ? item.map(v => typeof v === 'object' ? formatObjectSummary(v) : v).join(', ') : item}`)
+    .map(([key, item]) => `${key.replaceAll('_',' ')}: ${cleanReviewerText(Array.isArray(item) ? item.map(v => typeof v === 'object' ? formatObjectSummary(v) : v).join(', ') : item)}`)
     .join('; ');
 }
 
 function formatPacketMarkdown(packet) {
   const lines = [];
-  lines.push(`# DocIntel Tax Submission Readiness Packet`);
+  lines.push(`# DocIntel Tax Submission Reviewed Packet`);
   lines.push('');
   lines.push(`Client: ${packet.client?.name || 'Client'}`);
   lines.push(`Tax year: ${packet.client?.tax_year || 'Needs review'}`);
@@ -739,7 +1215,7 @@ function formatPacketMarkdown(packet) {
   lines.push('');
   lines.push(`## Prior-Year Comparison`);
   for (const n of packet.prior_year_comparison?.comparison_notes || []) {
-    lines.push(`- ${n.area}: ${n.finding} Action: ${n.recommended_action}`);
+    lines.push(`- ${n.area}: ${n.finding} Action: ${cleanReviewerText(n.recommended_action)}`);
   }
   lines.push('');
   lines.push(`## Detected Forms`);
@@ -751,6 +1227,10 @@ function formatPacketMarkdown(packet) {
   for (const g of packet.guardrails || []) lines.push(`- ${g}`);
   lines.push('');
   return lines.join('\n');
+}
+
+function cleanReviewerText(value) {
+  return String(value || '').replace(/\bCPA\/EA\b/g, 'Reviewer').replace(/\bCPA\b/g, 'Reviewer');
 }
 
 function safeName(value) {
@@ -845,9 +1325,11 @@ const s = {
   metricLabel:{fontSize:10.5,color:'var(--muted2)',textTransform:'uppercase',letterSpacing:'.6px',fontWeight:900},
   metricValue:{fontSize:24,fontWeight:950,marginTop:4},
   card:{gridColumn:'1 / -1',background:'var(--s2)',border:'1px solid var(--b2)',borderRadius:8,padding:12,minWidth:0},
+  tabSaveBar:{gridColumn:'1 / -1',display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,flexWrap:'wrap',background:'rgba(74,222,128,.06)',border:'1px solid rgba(74,222,128,.16)',borderRadius:8,padding:12,minWidth:0},
   cardHeader:{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10,marginBottom:10,flexWrap:'wrap'},
   sectionTitle:{fontSize:12,fontWeight:900,color:'var(--tx)',marginBottom:8},
   helpText:{margin:'-4px 0 0',color:'var(--muted2)',fontSize:12,lineHeight:1.45},
+  inlineNotice:{margin:'7px 0 0',color:'#bbf7d0',fontSize:12,fontWeight:800,lineHeight:1.45},
   text:{fontSize:13,color:'var(--tx2)',lineHeight:1.65,margin:0,whiteSpace:'pre-wrap'},
   approvedList:{display:'grid',gap:8},
   approvedCard:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,padding:10,borderRadius:8,background:'rgba(0,0,0,.16)',border:'1px solid rgba(255,255,255,.06)',flexWrap:'wrap'},
@@ -875,6 +1357,7 @@ const s = {
   amountRemove:{border:'1px solid rgba(248,113,113,.28)',borderRadius:7,background:'rgba(248,113,113,.09)',color:'#fecaca',padding:'6px 7px',fontSize:11,fontWeight:900,cursor:'pointer',whiteSpace:'nowrap'},
   amountAdd:{justifySelf:'start',border:'1px solid rgba(74,222,128,.28)',borderRadius:7,background:'rgba(74,222,128,.08)',color:'#86efac',padding:'6px 8px',fontSize:11.5,fontWeight:900,cursor:'pointer'},
   actions:{gridColumn:'1 / -1',display:'flex',gap:8,flexWrap:'wrap'},
+  actionsCompact:{display:'flex',gap:8,flexWrap:'wrap',justifyContent:'flex-end'},
   danger:{border:'1px solid rgba(248,113,113,.35)',borderRadius:8,background:'rgba(248,113,113,.1)',color:'#fecaca',padding:'9px 12px',fontWeight:900,cursor:'pointer'},
   running:{padding:12,borderRadius:8,background:'rgba(96,165,250,.1)',border:'1px solid rgba(96,165,250,.25)',color:'#bfdbfe',fontSize:13,marginBottom:10},
   error:{margin:10,padding:10,borderRadius:8,background:'rgba(248,113,113,.1)',border:'1px solid rgba(248,113,113,.28)',color:'#fecaca',fontSize:13},
