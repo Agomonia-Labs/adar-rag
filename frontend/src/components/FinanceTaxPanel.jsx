@@ -267,6 +267,11 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
     URL.revokeObjectURL(url);
   };
 
+  const downloadAdvisorPacket = () => {
+    if (!packet) return;
+    openAdvisorPacketPrintWindow(packet, financialPlan);
+  };
+
   const viewApprovedRun = async runId => {
     setLoading(true);
     setError('');
@@ -287,12 +292,16 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
     ['overview', 'Overview'],
     ['documents', 'Documents'],
     ['approved', 'Approved Packets'],
+    ['profile', 'Client Profile'],
     ['organizer', 'Tax Organizer'],
     ['networth', 'Net Worth'],
     ['cashflow', 'Cash Flow'],
+    ['retirement', 'Retirement'],
+    ['questions', 'Advisor Questions'],
+    ['score', 'Readiness Score'],
     ['missing', 'Missing Items'],
     ['comparison', 'Prior-Year Compare'],
-    ['packet', 'Review Packet'],
+    ['packet', 'Advisor Packet'],
   ];
 
   return (
@@ -452,6 +461,13 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
               </div>
             )}
 
+            {activeTab === 'profile' && packet && (
+              <ClientProfileWorkspace
+                profile={financialPlan.clientProfile}
+                onSave={snapshot => saveTabSnapshot('client_profile', 'Client Profile', snapshot)}
+              />
+            )}
+
             {activeTab === 'networth' && packet && (
               <NetWorthWorkspace
                 plan={financialPlan.netWorth}
@@ -463,6 +479,27 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
               <CashFlowWorkspace
                 plan={financialPlan.cashFlow}
                 onSave={snapshot => saveTabSnapshot('cashflow', 'Cash Flow', snapshot)}
+              />
+            )}
+
+            {activeTab === 'retirement' && packet && (
+              <RetirementReadinessWorkspace
+                plan={financialPlan.retirement}
+                onSave={snapshot => saveTabSnapshot('retirement', 'Retirement Readiness', snapshot)}
+              />
+            )}
+
+            {activeTab === 'questions' && packet && (
+              <AdvisorQuestionsWorkspace
+                questions={financialPlan.advisorQuestions}
+                onSave={snapshot => saveTabSnapshot('advisor_questions', 'Advisor Questions', snapshot)}
+              />
+            )}
+
+            {activeTab === 'score' && packet && (
+              <ReadinessScoreView
+                score={financialPlan.readinessScore}
+                onSave={() => saveTabSnapshot('readiness_score', 'Readiness Score', financialPlan.readinessScore)}
               />
             )}
 
@@ -495,18 +532,21 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
             {activeTab === 'packet' && packet && (
               <div style={s.grid}>
                 <TabSaveBar
-                  label="Review Packet"
+                  label="Advisor Packet"
                   onSave={() => saveTabSnapshot('packet', 'Review Packet', {
                     review_packet: reviewPacket,
                     document_summary: packet.document_summary || [],
                     guardrails: packet.guardrails || [],
+                    financial_planning: financialPlan,
                   })}
                 />
                 <TextBlock title="Review Status" text={reviewPacket.review_status} />
+                <TextBlock title="Advisor Packet Summary" text={formatAdvisorPacketSummary(packet, financialPlan)} />
                 <Rows title="Guardrails" rows={(packet.guardrails || []).map(item => ({guardrail:item}))} />
                 <Rows title="Packet Contents" rows={packet.document_summary || []} />
                 <div style={s.actions}>
-                  <button type="button" style={s.primary} onClick={downloadPacket}>Download reviewed packet</button>
+                  <button type="button" style={s.primary} onClick={downloadAdvisorPacket}>Download Advisor Packet PDF</button>
+                  <button type="button" style={s.secondary} onClick={downloadPacket}>Download markdown packet</button>
                   <button type="button" style={s.secondary} disabled={loading} onClick={approveRun}>
                     {run?.status === 'approved' ? 'Update saved reviewed packet' : 'Approve & save reviewed packet'}
                   </button>
@@ -986,6 +1026,225 @@ function CashFlowWorkspace({ plan, onSave = null }) {
   );
 }
 
+function ClientProfileWorkspace({ profile, onSave = null }) {
+  const [rows, setRows] = useState(() => [deepClone(profile || defaultClientProfile())]);
+  const [lastUpdated, setLastUpdated] = useState('');
+
+  useEffect(() => {
+    setRows([deepClone(profile || defaultClientProfile())]);
+    setLastUpdated('');
+  }, [profile]);
+
+  const saveProfile = () => {
+    const snapshot = rows[0] || defaultClientProfile();
+    onSave?.(snapshot);
+    setLastUpdated('Client profile saved to draft packet.');
+  };
+
+  return (
+    <div style={s.grid}>
+      <section style={s.card}>
+        <div style={s.cardHeader}>
+          <div>
+            <div style={s.sectionTitle}>Client Planning Profile</div>
+            <p style={s.helpText}>Capture planning context that documents alone usually cannot provide. These fields are editable and become part of the advisor packet.</p>
+            {lastUpdated && <p style={s.inlineNotice}>{lastUpdated}</p>}
+          </div>
+          <button type="button" style={s.primary} onClick={saveProfile}>Save Client Profile</button>
+        </div>
+      </section>
+      <Rows title="Editable Client Planning Profile" rows={rows} basePath={[]} rowIndices={[0]} onPatch={(path, value) => patchLocalRows(setRows, path, value)} />
+    </div>
+  );
+}
+
+function RetirementReadinessWorkspace({ plan, onSave = null }) {
+  const [signals, setSignals] = useState(() => deepClone(plan.signals || []));
+  const [missingItems, setMissingItems] = useState(() => deepClone(plan.missingItems || []));
+  const [lastUpdated, setLastUpdated] = useState('');
+
+  useEffect(() => {
+    setSignals(deepClone(plan.signals || []));
+    setMissingItems(deepClone(plan.missingItems || []));
+    setLastUpdated('');
+  }, [plan]);
+
+  const saveRetirement = () => {
+    const snapshot = {
+      status: plan.status,
+      score: plan.score,
+      total_retirement_assets: sumRows(signals.filter(row => /balance|account value/i.test(row.label || ''))),
+      signals,
+      missing_items: missingItems,
+      summary: plan.summary,
+    };
+    onSave?.(snapshot);
+    setLastUpdated('Retirement readiness saved to draft packet.');
+  };
+
+  return (
+    <div style={s.grid}>
+      <Metric label="Retirement Status" value={plan.status} tone={plan.score >= 75 ? 'green' : plan.score >= 45 ? 'amber' : 'blue'} />
+      <Metric label="Readiness Score" value={`${plan.score}%`} tone={plan.score >= 75 ? 'green' : 'amber'} />
+      <Metric label="Signals Found" value={signals.length} />
+      <section style={s.card}>
+        <div style={s.cardHeader}>
+          <div>
+            <div style={s.sectionTitle}>Retirement Readiness</div>
+            <p style={s.helpText}>{plan.summary}</p>
+            {lastUpdated && <p style={s.inlineNotice}>{lastUpdated}</p>}
+          </div>
+          <button type="button" style={s.primary} onClick={saveRetirement}>Save Retirement</button>
+        </div>
+      </section>
+      <Rows title="Editable Retirement Signals" rows={signals} basePath={[]} rowIndices={signals.map((_, i) => i)} onPatch={(path, value) => patchLocalRows(setSignals, path, value)} onDelete={path => setSignals(prev => prev.filter((_, i) => i !== path[0]))} />
+      <Rows title="Editable Retirement Missing Items" rows={missingItems} basePath={[]} rowIndices={missingItems.map((_, i) => i)} onPatch={(path, value) => patchLocalRows(setMissingItems, path, value)} onDelete={path => setMissingItems(prev => prev.filter((_, i) => i !== path[0]))} />
+    </div>
+  );
+}
+
+function AdvisorQuestionsWorkspace({ questions, onSave = null }) {
+  const [rows, setRows] = useState(() => deepClone(questions || []));
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [lastUpdated, setLastUpdated] = useState('');
+
+  useEffect(() => {
+    setRows(deepClone(questions || []));
+    setSelectedIndex(0);
+    setLastUpdated('');
+  }, [questions]);
+
+  const addQuestion = () => {
+    setRows(prev => {
+      const next = [...prev, { question: 'Confirm planning detail with client.', reason: 'Manual advisor review item.', category: 'Manual', priority: 'medium' }];
+      setSelectedIndex(next.length - 1);
+      return next;
+    });
+  };
+
+  const patchSelectedQuestion = (field, value) => {
+    setRows(prev => prev.map((row, i) => (
+      i === selectedIndex ? { ...row, [field]: value } : row
+    )));
+  };
+
+  const deleteQuestion = index => {
+    setRows(prev => {
+      const next = prev.filter((_, i) => i !== index);
+      setSelectedIndex(current => Math.max(0, Math.min(current >= index ? current - 1 : current, next.length - 1)));
+      return next;
+    });
+  };
+
+  const saveQuestions = () => {
+    onSave?.({ questions: rows });
+    setLastUpdated('Advisor questions saved to draft packet.');
+  };
+
+  const selectedQuestion = rows[selectedIndex] || null;
+
+  return (
+    <div style={s.grid}>
+      <section style={s.card}>
+        <div style={s.cardHeader}>
+          <div>
+            <div style={s.sectionTitle}>Advisor Question Generator</div>
+            <p style={s.helpText}>Generated from missing documents, extracted signals, profile gaps, and planning readiness checks. Review and edit before sharing with a client or advisor.</p>
+            {lastUpdated && <p style={s.inlineNotice}>{lastUpdated}</p>}
+          </div>
+          <div style={s.actionsCompact}>
+            <button type="button" style={s.secondary} onClick={addQuestion}>Add question</button>
+            <button type="button" style={s.primary} onClick={saveQuestions}>Save Questions</button>
+          </div>
+        </div>
+      </section>
+      <section style={s.card}>
+        <div style={s.sectionTitle}>Question Workspace</div>
+        {!selectedQuestion ? (
+          <div style={s.empty}>No advisor questions found. Add a question to start review.</div>
+        ) : (
+          <div style={s.advisorEditor}>
+            <label style={s.editorFieldWide}>
+              <span style={s.rowKey}>Question</span>
+              <textarea
+                style={s.largeTextInput}
+                value={selectedQuestion.question || ''}
+                rows={6}
+                onChange={e => patchSelectedQuestion('question', e.target.value)}
+              />
+            </label>
+            <label style={s.editorFieldWide}>
+              <span style={s.rowKey}>Reason</span>
+              <textarea
+                style={s.largeTextInput}
+                value={selectedQuestion.reason || ''}
+                rows={4}
+                onChange={e => patchSelectedQuestion('reason', e.target.value)}
+              />
+            </label>
+            <label style={s.editorField}>
+              <span style={s.rowKey}>Category</span>
+              <input
+                style={s.valueInput}
+                value={selectedQuestion.category || ''}
+                onChange={e => patchSelectedQuestion('category', e.target.value)}
+              />
+            </label>
+            <label style={s.editorField}>
+              <span style={s.rowKey}>Priority</span>
+              <select
+                style={s.valueInput}
+                value={selectedQuestion.priority || 'medium'}
+                onChange={e => patchSelectedQuestion('priority', e.target.value)}
+              >
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </label>
+          </div>
+        )}
+      </section>
+      <section style={s.card}>
+        <div style={s.sectionTitle}>Select Question to Edit</div>
+        {!rows.length && <div style={s.empty}>None found.</div>}
+        <div style={s.questionList}>
+          {rows.map((row, index) => (
+            <div key={index} style={index === selectedIndex ? {...s.questionCard, ...s.questionCardActive} : s.questionCard}>
+              <button type="button" style={s.questionSelect} onClick={() => setSelectedIndex(index)}>
+                <span style={s.questionTitle}>{row.question || 'Untitled advisor question'}</span>
+                <span style={s.questionMeta}>{row.category || 'Review'} · {row.priority || 'medium'}</span>
+              </button>
+              <button type="button" style={s.recordDelete} onClick={() => deleteQuestion(index)}>Delete</button>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ReadinessScoreView({ score, onSave = null }) {
+  return (
+    <div style={s.grid}>
+      <Metric label="Overall Readiness" value={`${score.overall}%`} tone={score.overall >= 75 ? 'green' : score.overall >= 45 ? 'amber' : 'blue'} />
+      <Metric label="Status" value={score.status} tone={score.overall >= 75 ? 'green' : 'amber'} />
+      <Metric label="Gaps" value={(score.gaps || []).length} tone={(score.gaps || []).length ? 'amber' : 'green'} />
+      <section style={s.card}>
+        <div style={s.cardHeader}>
+          <div>
+            <div style={s.sectionTitle}>Planning Readiness Score</div>
+            <p style={s.helpText}>{score.summary}</p>
+          </div>
+          <button type="button" style={s.primary} onClick={onSave}>Save Score</button>
+        </div>
+      </section>
+      <Rows title="Readiness Categories" rows={score.categories || []} />
+      <Rows title="Readiness Gaps" rows={score.gaps || []} />
+    </div>
+  );
+}
+
 function patchLocalRows(setRows, path, value) {
   setRows(prev => {
     const next = deepClone(prev);
@@ -1010,10 +1269,14 @@ function buildFinancialPlanningMvp2(packet) {
   const forms = packet?.tax_organizer?.forms || [];
   const savedNetWorth = packet?.tab_review_saves?.networth?.snapshot || null;
   const savedCashFlow = packet?.tab_review_saves?.cashflow?.snapshot || null;
+  const savedProfile = packet?.tab_review_saves?.client_profile?.snapshot || null;
+  const savedRetirement = packet?.tab_review_saves?.retirement?.snapshot || null;
+  const savedQuestions = packet?.tab_review_saves?.advisor_questions?.snapshot?.questions || null;
   const assets = [];
   const liabilities = [];
   const inflows = [];
   const outflows = [];
+  const retirementSignals = [];
 
   for (const form of forms) {
     const formKey = canonicalFormKey(form);
@@ -1038,6 +1301,9 @@ function buildFinancialPlanningMvp2(packet) {
       if (isCashOutflowAmount(formKey, normalized)) {
         outflows.push({ source_document: source, category: cashOutflowCategory(formKey, normalized), label, amount });
       }
+      if (isRetirementSignalAmount(formKey, normalized)) {
+        retirementSignals.push({ source_document: source, category: retirementSignalCategory(formKey, normalized), label, amount });
+      }
     }
   }
 
@@ -1055,8 +1321,22 @@ function buildFinancialPlanningMvp2(packet) {
   const reviewedNetWorthLiabilities = sumRows(reviewedLiabilities);
   const reviewedCashInflows = sumRows(reviewedInflows);
   const reviewedCashOutflows = sumRows(reviewedOutflows);
+  const baseClientProfile = buildClientProfile(packet, forms);
+  const clientProfile = savedProfile || baseClientProfile;
+  const retirement = buildRetirementReadiness(forms, savedRetirement?.signals || retirementSignals, savedRetirement?.missing_items || null);
+  const advisorQuestions = Array.isArray(savedQuestions) ? savedQuestions : buildAdvisorQuestions(packet, forms, netWorthMissing, cashFlowMissing, retirement.missingItems, clientProfile);
+  const readinessScore = buildReadinessScore({
+    forms,
+    netWorthMissing,
+    cashFlowMissing,
+    retirement,
+    advisorQuestions,
+    clientProfile,
+    packet,
+  });
 
   return {
+    clientProfile,
     netWorth: {
       totalAssets: reviewedNetWorthAssets,
       totalLiabilities: reviewedNetWorthLiabilities,
@@ -1087,8 +1367,256 @@ function buildFinancialPlanningMvp2(packet) {
         `The remaining ${formatMoney(reviewedCashInflows - reviewedCashOutflows)} is a review estimate because everyday living expenses, bank deposits, credit card spending, insurance premiums, and non-taxable cash activity may not be available from tax documents alone.`,
       ].join(' '),
     },
-    missingItems: [...netWorthMissing, ...cashFlowMissing],
+    retirement,
+    advisorQuestions,
+    readinessScore,
+    missingItems: [...netWorthMissing, ...cashFlowMissing, ...retirement.missingItems],
   };
+}
+
+function defaultClientProfile() {
+  return {
+    client_name: 'Client',
+    tax_year: 'Needs review',
+    filing_status: 'Needs review',
+    household_status: 'Needs review',
+    dependents: 'Needs client confirmation',
+    employment_context: 'Needs review',
+    business_income_context: 'Needs review',
+    retirement_target_age: 'Needs client confirmation',
+    planning_goals: 'Needs client/advisor input',
+    liquidity_needs: 'Needs review',
+    risk_tolerance: 'Needs advisor discussion',
+    major_life_events: 'Needs client confirmation',
+    document_context: 'Needs document review',
+    advisor_notes: 'Needs advisor review',
+  };
+}
+
+function buildClientProfile(packet, forms) {
+  const client = packet?.client || {};
+  const hasW2 = forms.some(form => canonicalFormKey(form) === 'w2');
+  const hasBrokerage = forms.some(form => canonicalFormKey(form) === 'brokerage_statement');
+  const hasRetirement = forms.some(form => canonicalFormKey(form) === 'retirement_statement');
+  const hasMortgage = forms.some(form => canonicalFormKey(form) === 'mortgage_interest');
+  return {
+    client_name: client.name || 'Client',
+    tax_year: client.tax_year || 'Needs review',
+    filing_status: client.filing_status || 'Needs review',
+    household_status: client.filing_status || 'Needs review',
+    dependents: 'Needs client confirmation',
+    employment_context: hasW2 ? 'W-2 income document detected' : 'Needs income document review',
+    business_income_context: forms.some(form => canonicalFormKey(form) === '1099') ? '1099 activity detected' : 'Needs client confirmation',
+    retirement_target_age: 'Needs client confirmation',
+    planning_goals: 'Needs client/advisor input',
+    liquidity_needs: 'Needs bank statement and client confirmation',
+    risk_tolerance: 'Needs advisor discussion',
+    major_life_events: 'Needs client confirmation',
+    document_context: [
+      hasBrokerage ? 'Brokerage detected' : 'Brokerage not detected',
+      hasRetirement ? 'Retirement detected' : 'Retirement not detected',
+      hasMortgage ? 'Mortgage detected' : 'Mortgage not detected',
+    ].join('; '),
+    advisor_notes: packet?.cpa_review_packet?.summary || 'Needs advisor review',
+  };
+}
+
+function isRetirementSignalAmount(formKey, label) {
+  if (formKey === 'retirement_statement') {
+    return /\b(?:balance|contribution|match|distribution|withdrawal|rollover|gain|loss|fees?)\b/.test(label);
+  }
+  if (formKey === 'w2') {
+    return /\bbox\s*12\b|\bcode\s+(?:d|aa|bb|dd)\b|\bretirement\b/.test(label);
+  }
+  return false;
+}
+
+function retirementSignalCategory(formKey, label) {
+  if (formKey === 'w2') return 'Payroll retirement signal';
+  if (/\bending|balance|vested\b/.test(label)) return 'Retirement balance';
+  if (/\bmatch|employer\b/.test(label)) return 'Employer contribution';
+  if (/\bcontribution|pre tax|roth|after tax\b/.test(label)) return 'Employee contribution';
+  if (/\bdistribution|withdrawal\b/.test(label)) return 'Distribution / withdrawal';
+  if (/\brollover\b/.test(label)) return 'Rollover activity';
+  if (/\bgain|loss|fees?\b/.test(label)) return 'Performance / fees';
+  return 'Retirement signal';
+}
+
+function buildRetirementReadiness(forms, signals, savedMissingItems = null) {
+  const formKeys = new Set(forms.map(canonicalFormKey));
+  const missingItems = Array.isArray(savedMissingItems) ? savedMissingItems : [];
+  if (!formKeys.has('retirement_statement')) {
+    missingItems.push({ item: 'Retirement statement', reason: 'Needed to confirm balances, contribution activity, fees, and investment change.', priority: 'high' });
+  }
+  if (!signals.some(row => /contribution/i.test(row.label || row.category || ''))) {
+    missingItems.push({ item: 'Retirement contribution detail', reason: 'Needed to review employee contribution and employer match readiness.', priority: 'medium' });
+  }
+  if (!signals.some(row => /match|employer/i.test(row.label || row.category || ''))) {
+    missingItems.push({ item: 'Employer match confirmation', reason: 'Needed to check whether matching contribution information is available.', priority: 'medium' });
+  }
+  const uniqueMissing = dedupeRows(missingItems, row => `${row.item}-${row.reason}`);
+  const score = Math.max(20, Math.min(100, 100 - uniqueMissing.length * 18 + Math.min(signals.length, 5) * 5));
+  const status = score >= 75 ? 'Ready for advisor review' : score >= 45 ? 'Needs documents' : 'Incomplete';
+  return {
+    status,
+    score,
+    signals,
+    missingItems: uniqueMissing,
+    summary: `DocIntel found ${signals.length} retirement signal${signals.length === 1 ? '' : 's'} across uploaded documents. Status: ${status}. Treat this as readiness support for advisor review, not retirement advice.`,
+  };
+}
+
+function buildAdvisorQuestions(packet, forms, netWorthMissing, cashFlowMissing, retirementMissing, profile) {
+  const questions = [];
+  const add = (question, reason, category = 'Planning', priority = 'medium') => questions.push({ question, reason, category, priority });
+  for (const item of [...(packet?.missing_document_checklist?.missing_items || []), ...netWorthMissing, ...cashFlowMissing, ...retirementMissing]) {
+    add(`Can you provide or confirm: ${item.item}?`, item.reason || 'Needed for planning readiness.', item.priority === 'high' ? 'Document gap' : 'Planning gap', item.priority || 'medium');
+  }
+  if (String(profile.retirement_target_age || '').toLowerCase().includes('needs')) add('What is the target retirement age or planning horizon?', 'Retirement readiness needs client context.', 'Client profile', 'medium');
+  if (String(profile.risk_tolerance || '').toLowerCase().includes('needs')) add('How would the client describe risk tolerance and liquidity comfort?', 'Investment and cash reserve planning require advisor discussion.', 'Client profile', 'medium');
+  if (!forms.some(form => canonicalFormKey(form) === 'bank_statement')) add('Can the client upload recent bank statements?', 'Cash reserve and spending validation need bank context.', 'Cash flow', 'medium');
+  if (!forms.some(form => canonicalFormKey(form) === 'credit_card_statement')) add('Can the client upload credit card or debt statements?', 'Debt exposure and recurring spending need validation.', 'Debt review', 'medium');
+  return dedupeRows(questions, row => row.question).slice(0, 18);
+}
+
+function buildReadinessScore({ forms, netWorthMissing, cashFlowMissing, retirement, advisorQuestions, clientProfile, packet }) {
+  const formKeys = new Set(forms.map(canonicalFormKey));
+  const categories = [
+    scoreCategory('Tax readiness', forms.length >= 2 ? 82 : forms.length ? 62 : 25, forms.length ? `${forms.length} tax/planning document records detected.` : 'No organizer records detected.'),
+    scoreCategory('Net worth readiness', Math.max(30, 100 - netWorthMissing.length * 14), `${netWorthMissing.length} net worth gap${netWorthMissing.length === 1 ? '' : 's'} found.`),
+    scoreCategory('Cash flow readiness', Math.max(30, 100 - cashFlowMissing.length * 15), `${cashFlowMissing.length} cash flow gap${cashFlowMissing.length === 1 ? '' : 's'} found.`),
+    scoreCategory('Retirement readiness', retirement.score, retirement.status),
+    scoreCategory('Insurance readiness', formKeys.has('insurance_policy') ? 70 : 35, formKeys.has('insurance_policy') ? 'Insurance document detected.' : 'Insurance policies not detected.'),
+    scoreCategory('Estate readiness', formKeys.has('estate_document') ? 70 : 30, formKeys.has('estate_document') ? 'Estate document detected.' : 'Will, trust, POA, and healthcare directive not detected.'),
+    scoreCategory('Human review status', packet?.tab_review_saves ? 75 : 45, packet?.tab_review_saves ? 'Some sections have saved review state.' : 'No saved planning review sections yet.'),
+  ];
+  const overall = Math.round(categories.reduce((sum, row) => sum + row.score, 0) / categories.length);
+  const gaps = [
+    ...categories.filter(row => row.score < 60).map(row => ({ item: row.category, reason: row.detail, priority: row.score < 40 ? 'high' : 'medium' })),
+    ...advisorQuestions.filter(row => row.priority === 'high').slice(0, 5).map(row => ({ item: row.category, reason: row.question, priority: row.priority })),
+  ];
+  return {
+    overall,
+    status: overall >= 75 ? 'Ready for advisor review' : overall >= 50 ? 'Needs documents / review' : 'Incomplete',
+    categories,
+    gaps,
+    summary: `Overall planning readiness is ${overall}%. This score measures document completeness and review readiness; it is not financial, tax, investment, insurance, or estate advice.`,
+  };
+}
+
+function scoreCategory(category, score, detail) {
+  const rounded = Math.max(0, Math.min(100, Math.round(score)));
+  return { category, score: rounded, status: rounded >= 75 ? 'Ready for review' : rounded >= 50 ? 'Needs review' : 'Incomplete', detail };
+}
+
+function dedupeRows(rows, keyFn) {
+  const seen = new Set();
+  const out = [];
+  for (const row of rows || []) {
+    const key = keyFn(row);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
+function formatAdvisorPacketSummary(packet, plan) {
+  return [
+    `Client: ${plan.clientProfile?.client_name || packet?.client?.name || 'Client'} for tax year ${plan.clientProfile?.tax_year || packet?.client?.tax_year || 'Needs review'}.`,
+    `Net worth snapshot: assets ${formatMoney(plan.netWorth.totalAssets)}, liabilities ${formatMoney(plan.netWorth.totalLiabilities)}, estimated net worth ${formatMoney(plan.netWorth.estimatedNetWorth)}.`,
+    `Cash flow snapshot: inflows ${formatMoney(plan.cashFlow.totalInflows)}, outflows ${formatMoney(plan.cashFlow.totalOutflows)}, estimated cash flow ${formatMoney(plan.cashFlow.estimatedCashFlow)}.`,
+    `Retirement readiness: ${plan.retirement.status} with ${plan.retirement.signals.length} signal${plan.retirement.signals.length === 1 ? '' : 's'} detected.`,
+    `Planning readiness score: ${plan.readinessScore.overall}% (${plan.readinessScore.status}).`,
+    `Advisor questions generated: ${plan.advisorQuestions.length}.`,
+  ].join('\n');
+}
+
+function openAdvisorPacketPrintWindow(packet, plan) {
+  const title = `DocIntel Advisor Packet - ${plan.clientProfile?.client_name || packet?.client?.name || 'Client'}`;
+  const html = advisorPacketHtml(title, packet, plan);
+  const win = window.open('', '_blank', 'noopener,noreferrer');
+  if (!win) {
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `docintel-advisor-packet-${safeName(plan.clientProfile?.client_name || packet?.client?.name || 'client')}.html`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    return;
+  }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 400);
+}
+
+function advisorPacketHtml(title, packet, plan) {
+  const sectionRows = rows => (rows || []).map(row => (
+    `<tr>${Object.entries(row || {}).map(([key, value]) => `<td><strong>${escapeHtml(key.replaceAll('_', ' '))}</strong><br/>${escapeHtml(formatValue(value))}</td>`).join('')}</tr>`
+  )).join('');
+  const listItems = rows => (rows || []).map(row => `<li>${escapeHtml(formatObjectSummary(row))}</li>`).join('');
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172033; margin: 32px; line-height: 1.45; }
+    header { border-bottom: 3px solid #15803d; padding-bottom: 14px; margin-bottom: 20px; }
+    h1 { margin: 0; font-size: 26px; color: #14532d; }
+    h2 { margin: 24px 0 8px; font-size: 17px; color: #14532d; }
+    .subtitle { color: #526078; margin-top: 6px; }
+    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0; }
+    .metric { border: 1px solid #d7dee8; border-radius: 8px; padding: 10px; background: #f8fafc; }
+    .label { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: #64748b; font-weight: 800; }
+    .value { font-size: 18px; font-weight: 900; color: #0f172a; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    td { border: 1px solid #d7dee8; padding: 8px; vertical-align: top; font-size: 12px; }
+    ul { margin-top: 8px; }
+    li { margin-bottom: 5px; }
+    .notice { background: #ecfdf5; border: 1px solid #bbf7d0; padding: 10px; border-radius: 8px; margin-top: 16px; font-size: 12px; color: #14532d; }
+    @media print { body { margin: 20mm; } .pagebreak { page-break-before: always; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>${escapeHtml(title)}</h1>
+    <div class="subtitle">Tax & Financial Planning Readiness | Human-reviewed planning support packet</div>
+  </header>
+  <div class="metrics">
+    <div class="metric"><div class="label">Readiness Score</div><div class="value">${plan.readinessScore.overall}%</div></div>
+    <div class="metric"><div class="label">Net Worth</div><div class="value">${escapeHtml(formatMoney(plan.netWorth.estimatedNetWorth))}</div></div>
+    <div class="metric"><div class="label">Cash Flow</div><div class="value">${escapeHtml(formatMoney(plan.cashFlow.estimatedCashFlow))}</div></div>
+  </div>
+  <h2>Executive Summary</h2>
+  <p>${escapeHtml(formatAdvisorPacketSummary(packet, plan)).replaceAll('\n', '<br/>')}</p>
+  <h2>Client Planning Profile</h2>
+  <table>${sectionRows([plan.clientProfile])}</table>
+  <h2>Net Worth Snapshot</h2>
+  <table>${sectionRows([...(plan.netWorth.assets || []), ...(plan.netWorth.liabilities || [])])}</table>
+  <h2>Cash Flow Snapshot</h2>
+  <table>${sectionRows([...(plan.cashFlow.inflows || []), ...(plan.cashFlow.outflows || [])])}</table>
+  <h2>Retirement Readiness</h2>
+  <p>${escapeHtml(plan.retirement.summary)}</p>
+  <table>${sectionRows(plan.retirement.signals || [])}</table>
+  <h2>Readiness Score</h2>
+  <table>${sectionRows(plan.readinessScore.categories || [])}</table>
+  <h2>Advisor Questions</h2>
+  <ul>${listItems(plan.advisorQuestions || [])}</ul>
+  <h2>Missing Items</h2>
+  <ul>${listItems(plan.missingItems || [])}</ul>
+  <div class="notice">This packet is planning readiness support. It is not tax, investment, insurance, legal, or estate advice. Advisor and reviewer validation is required before action.</div>
+</body>
+</html>`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 }
 
 function normalizeLabel(value) {
@@ -1137,7 +1665,8 @@ function isLiabilityAmount(formKey, label) {
 
 function isCashInflowAmount(formKey, label) {
   if (formKey === 'w2') {
-    return /\bbox\s*1\b/.test(label) || /\bwages\b/.test(label);
+    return /\bbox\s*1\b/.test(label)
+      || /\bwages,\s*tips,\s*other\s+comp(?:ensation)?\b/.test(label);
   }
   if (formKey === '1099' || formKey === 'brokerage_statement') {
     return /\b(?:interest|dividend|ordinary dividends|qualified dividends|capital gain|gross proceeds|proceeds|income)\b/.test(label);
@@ -1265,8 +1794,9 @@ function formatObjectSummary(value) {
 }
 
 function formatPacketMarkdown(packet) {
+  const plan = buildFinancialPlanningMvp2(packet);
   const lines = [];
-  lines.push(`# DocIntel Tax Submission Reviewed Packet`);
+  lines.push(`# DocIntel Tax & Financial Planning Readiness Packet`);
   lines.push('');
   lines.push(`Client: ${packet.client?.name || 'Client'}`);
   lines.push(`Tax year: ${packet.client?.tax_year || 'Needs review'}`);
@@ -1294,6 +1824,34 @@ function formatPacketMarkdown(packet) {
   for (const f of packet.tax_organizer?.forms || []) {
     lines.push(`- ${f.document_name}: ${f.detected_form}, year ${f.tax_year || 'needs review'}, confidence ${Math.round((f.confidence || 0) * 100)}%`);
   }
+  lines.push('');
+  lines.push(`## Financial Planning Readiness`);
+  lines.push(formatAdvisorPacketSummary(packet, plan));
+  lines.push('');
+  lines.push(`## Client Planning Profile`);
+  for (const [key, value] of Object.entries(plan.clientProfile || {})) lines.push(`- ${key.replaceAll('_', ' ')}: ${value}`);
+  lines.push('');
+  lines.push(`## Net Worth`);
+  lines.push(`- Assets: ${formatMoney(plan.netWorth.totalAssets)}`);
+  lines.push(`- Liabilities: ${formatMoney(plan.netWorth.totalLiabilities)}`);
+  lines.push(`- Estimated net worth: ${formatMoney(plan.netWorth.estimatedNetWorth)}`);
+  lines.push('');
+  lines.push(`## Cash Flow`);
+  lines.push(`- Inflows: ${formatMoney(plan.cashFlow.totalInflows)}`);
+  lines.push(`- Outflows: ${formatMoney(plan.cashFlow.totalOutflows)}`);
+  lines.push(`- Estimated cash flow: ${formatMoney(plan.cashFlow.estimatedCashFlow)}`);
+  lines.push('');
+  lines.push(`## Retirement Readiness`);
+  lines.push(`- Status: ${plan.retirement.status}`);
+  lines.push(`- Score: ${plan.retirement.score}%`);
+  for (const row of plan.retirement.signals || []) lines.push(`- ${row.category}: ${row.label} ${formatMoney(row.amount)} (${row.source_document})`);
+  lines.push('');
+  lines.push(`## Advisor Questions`);
+  for (const row of plan.advisorQuestions || []) lines.push(`- ${row.question} Reason: ${row.reason}`);
+  lines.push('');
+  lines.push(`## Readiness Score`);
+  lines.push(`- Overall: ${plan.readinessScore.overall}% (${plan.readinessScore.status})`);
+  for (const row of plan.readinessScore.categories || []) lines.push(`- ${row.category}: ${row.score}% - ${row.detail}`);
   lines.push('');
   lines.push(`## Guardrails`);
   for (const g of packet.guardrails || []) lines.push(`- ${g}`);
@@ -1428,6 +1986,16 @@ const s = {
   amountInputLabel:{minWidth:0,width:'100%',boxSizing:'border-box',border:'1px solid rgba(255,255,255,.14)',borderRadius:7,background:'rgba(0,0,0,.18)',color:'var(--tx)',padding:'6px 7px',fontSize:12,fontWeight:800},
   amountInputValue:{minWidth:0,width:'100%',boxSizing:'border-box',border:'1px solid rgba(255,255,255,.14)',borderRadius:7,background:'rgba(0,0,0,.18)',color:'#4ade80',padding:'6px 7px',fontSize:12,fontWeight:900,fontVariantNumeric:'tabular-nums'},
   valueInput:{minWidth:0,width:'100%',boxSizing:'border-box',border:'1px solid rgba(255,255,255,.14)',borderRadius:7,background:'rgba(0,0,0,.18)',color:'#bfdbfe',padding:'6px 7px',fontSize:12,fontWeight:800},
+  advisorEditor:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:10},
+  editorField:{minWidth:0,display:'flex',flexDirection:'column',gap:5},
+  editorFieldWide:{gridColumn:'1 / -1',minWidth:0,display:'flex',flexDirection:'column',gap:5},
+  largeTextInput:{minWidth:0,width:'100%',boxSizing:'border-box',border:'1px solid rgba(255,255,255,.14)',borderRadius:8,background:'rgba(0,0,0,.18)',color:'#bfdbfe',padding:'9px 10px',fontSize:13,fontWeight:750,lineHeight:1.5,resize:'vertical'},
+  questionList:{display:'grid',gap:8},
+  questionCard:{display:'grid',gridTemplateColumns:'minmax(0,1fr) auto',gap:8,alignItems:'center',padding:8,borderRadius:8,background:'rgba(0,0,0,.16)',border:'1px solid rgba(255,255,255,.06)'},
+  questionCardActive:{borderColor:'rgba(74,222,128,.38)',background:'rgba(74,222,128,.08)'},
+  questionSelect:{minWidth:0,textAlign:'left',border:'none',background:'transparent',color:'var(--tx)',padding:0,cursor:'pointer'},
+  questionTitle:{display:'block',fontSize:12.5,fontWeight:900,lineHeight:1.35,overflowWrap:'anywhere'},
+  questionMeta:{display:'block',marginTop:3,fontSize:10.5,color:'var(--muted2)',fontWeight:850,textTransform:'uppercase',letterSpacing:'.35px'},
   amountRemove:{border:'1px solid rgba(248,113,113,.28)',borderRadius:7,background:'rgba(248,113,113,.09)',color:'#fecaca',padding:'6px 7px',fontSize:11,fontWeight:900,cursor:'pointer',whiteSpace:'nowrap'},
   amountAdd:{justifySelf:'start',border:'1px solid rgba(74,222,128,.28)',borderRadius:7,background:'rgba(74,222,128,.08)',color:'#86efac',padding:'6px 8px',fontSize:11.5,fontWeight:900,cursor:'pointer'},
   actions:{gridColumn:'1 / -1',display:'flex',gap:8,flexWrap:'wrap'},
