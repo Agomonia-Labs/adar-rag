@@ -524,6 +524,14 @@ export async function approveFinanceTaxAgentRun(runId, { approvedPacket = null, 
   }));
 }
 
+export async function generateFinanceTaxAdvisorPacketPdf(runId, { packet = null } = {}) {
+  return handleRes(await fetch(`${BASE}/finance-tax/agent-runs/${runId}/advisor-packet/pdf`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({ packet }),
+  }));
+}
+
 export async function withdrawFinanceTaxAgentRun(runId) {
   return handleRes(await fetch(`${BASE}/finance-tax/agent-runs/${runId}`, {
     method:'DELETE',

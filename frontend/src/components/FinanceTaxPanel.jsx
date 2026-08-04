@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   approveFinanceTaxAgentRun,
   fetchFinanceTaxAgentRun,
+  generateFinanceTaxAdvisorPacketPdf,
   listFinanceTaxAgentRuns,
   listDocuments,
   listWorkspaceDocuments,
@@ -267,9 +268,23 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
     URL.revokeObjectURL(url);
   };
 
-  const downloadAdvisorPacket = () => {
-    if (!packet) return;
-    openAdvisorPacketPrintWindow(packet, financialPlan);
+  const downloadAdvisorPacket = async () => {
+    if (!run?.run_id || !packet) return;
+    setLoading(true);
+    setError('');
+    setNotice('');
+    try {
+      const data = await generateFinanceTaxAdvisorPacketPdf(run.run_id, { packet });
+      if (data.download_url) {
+        window.open(data.download_url, '_blank', 'noopener,noreferrer');
+      }
+      setNotice('Advisor packet PDF created and added as a generated document.');
+      loadApprovedRuns();
+    } catch (e) {
+      setError(e.message || 'Could not generate advisor packet PDF');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const viewApprovedRun = async runId => {
@@ -545,7 +560,9 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
                 <Rows title="Guardrails" rows={(packet.guardrails || []).map(item => ({guardrail:item}))} />
                 <Rows title="Packet Contents" rows={packet.document_summary || []} />
                 <div style={s.actions}>
-                  <button type="button" style={s.primary} onClick={downloadAdvisorPacket}>Download Advisor Packet PDF</button>
+                  <button type="button" style={s.primary} disabled={loading || !run?.run_id} onClick={downloadAdvisorPacket}>
+                    {loading ? 'Creating PDF...' : 'Download Advisor Packet PDF'}
+                  </button>
                   <button type="button" style={s.secondary} onClick={downloadPacket}>Download markdown packet</button>
                   <button type="button" style={s.secondary} disabled={loading} onClick={approveRun}>
                     {run?.status === 'approved' ? 'Update saved reviewed packet' : 'Approve & save reviewed packet'}

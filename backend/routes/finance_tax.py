@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import uuid
+from io import BytesIO
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -13,8 +16,10 @@ from pydantic import BaseModel
 from auth.dependencies import CurrentUser
 from database.connection import get_db, get_pool
 from services.audit import audit, ip_from, ua_from
+from services.chunker import chunk_text
 from services import storage as gcs
 from services.notifications import send_finance_tax_packet_notification
+from services.text_safety import sanitize_text_for_storage
 from services.usage import check_and_log_daily_event
 from services.vertical_agent_runs import (
     approve_vertical_run,
@@ -84,6 +89,10 @@ class TaxSubmissionRunRequest(BaseModel):
 class FinanceTaxApprovalRequest(BaseModel):
     approved_packet: dict | None = None
     notes: str | None = None
+
+
+class FinanceTaxAdvisorPacketPdfRequest(BaseModel):
+    packet: dict | None = None
 
 
 def _finance_tax_run_summary(row: dict) -> dict:
@@ -293,6 +302,99 @@ async def approve_finance_tax_run(
     )
     updated = await get_accessible_vertical_run(db, run_id, user_id)
     return await vertical_run_response(db, updated)
+
+
+@router.post("/agent-runs/{run_id}/advisor-packet/pdf")
+async def generate_finance_tax_advisor_packet_pdf_artifact(
+    run_id: str,
+    body: FinanceTaxAdvisorPacketPdfRequest,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    run = await get_accessible_vertical_run(db, run_id, user_id)
+    if run.get("vertical") != FINANCE_TAX_VERTICAL:
+        raise HTTPException(404, "Finance/tax run not found")
+    if run.get("status") not in ("pending_approval", "approved"):
+        raise HTTPException(400, f"Run is not ready for advisor packet PDF generation: {run.get('status')}")
+
+    result = _json(run.get("result_data")) or {}
+    packet = body.packet or result.get("approved_packet") or result.get("review_packet") or result
+    if not isinstance(packet, dict) or not packet.get("tax_organizer"):
+        raise HTTPException(400, "No finance/tax packet is available. Run the tax and financial planning readiness workflow first.")
+
+    doc_id = str(uuid.uuid4())
+    owner_id = user_id
+    workspace_id = str(run["workspace_id"]) if run.get("workspace_id") else None
+    title = _finance_tax_advisor_packet_title(packet, run_id)
+    filename = _safe_filename(title, suffix=".pdf")
+    source_path = gcs.source_path(owner_id, doc_id, filename)
+    packet_text = _format_finance_tax_advisor_packet_text(packet, run_id)
+    pdf_bytes = _render_finance_tax_advisor_packet_pdf(title, packet_text)
+
+    await gcs.upload_bytes(source_path, pdf_bytes, "application/pdf")
+    await db.execute(
+        """
+        INSERT INTO documents
+          (id, user_id, workspace_id, filename, original_name, file_type, file_size,
+           gcs_source_path, gcs_chunks_dir, status, doc_type, doc_domain, doc_language, classified_at, doc_metadata)
+        VALUES ($1,$2,$3,$4,$5,'pdf',$6,$7,$8,'chunked','financial_advisor_packet','finance','en',NOW(),$9::jsonb)
+        """,
+        doc_id,
+        owner_id,
+        workspace_id,
+        filename,
+        title,
+        len(pdf_bytes),
+        source_path,
+        gcs.chunks_dir(owner_id, doc_id),
+        json.dumps({
+            "source_kind": "finance_tax_advisor_packet_pdf",
+            "source_run_id": run_id,
+            "source_document_id": str(run["document_id"]),
+            "generated_from": "tax_financial_planning_readiness",
+        }),
+    )
+    await _persist_finance_tax_generated_document_chunks(
+        db,
+        doc_id=doc_id,
+        user_id=owner_id,
+        workspace_id=workspace_id,
+        run_id=run_id,
+        source_document_id=str(run["document_id"]),
+        filename=filename,
+        source_path=source_path,
+        text=packet_text,
+    )
+    await audit(
+        db,
+        user_id=user_id,
+        action="finance_tax_advisor_packet_pdf_generate",
+        resource_type="document",
+        resource_id=doc_id,
+        metadata={"run_id": run_id, "source_document_id": str(run["document_id"])},
+        ip_address=ip_from(request),
+        user_agent=ua_from(request),
+    )
+    download_url = None
+    try:
+        download_url = await gcs.get_signed_url(source_path)
+    except Exception:
+        log.warning("Could not create signed URL for finance advisor packet doc_id=%s", doc_id, exc_info=True)
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "download_url": download_url,
+        "document": {
+            "doc_id": doc_id,
+            "filename": filename,
+            "original_name": title,
+            "file_type": "pdf",
+            "status": "chunked",
+            "gcs_source_path": source_path,
+        },
+    }
 
 
 async def _execute_tax_submission_background(run_id: str, user_id: str, ip_address: str | None, user_agent: str | None):
@@ -620,6 +722,276 @@ def _build_review_packet(input_data: dict, docs: dict, extracted: dict, checklis
             "Do not file based only on this packet. Confirm values against source tax documents and taxpayer interview notes.",
         ],
     }
+
+
+def _finance_tax_advisor_packet_title(packet: dict, run_id: str) -> str:
+    client = packet.get("client") or {}
+    name = str(client.get("name") or "Client").strip() or "Client"
+    year = str(client.get("tax_year") or datetime.now(timezone.utc).year).strip()
+    return f"Advisor Packet - {name} - {year} - {run_id[:8]}"
+
+
+def _format_finance_tax_advisor_packet_text(packet: dict, run_id: str) -> str:
+    client = packet.get("client") or {}
+    review = packet.get("cpa_review_packet") or {}
+    organizer = packet.get("tax_organizer") or {}
+    saves = packet.get("tab_review_saves") or {}
+    profile = _saved_snapshot(saves, "client_profile") or _finance_tax_default_profile(packet)
+    networth = _saved_snapshot(saves, "networth") or {}
+    cashflow = _saved_snapshot(saves, "cashflow") or {}
+    retirement = _saved_snapshot(saves, "retirement") or {}
+    questions = (_saved_snapshot(saves, "advisor_questions") or {}).get("questions") or []
+    score = _saved_snapshot(saves, "readiness_score") or _finance_tax_readiness_score_from_saves(saves, packet)
+
+    lines = [
+        "ADVISOR PACKET",
+        f"Generated from finance/tax run: {run_id}",
+        "",
+        "Client Overview",
+        (
+            f"This packet was prepared for {client.get('name') or profile.get('client_name') or 'the client'}"
+            f" for tax year {client.get('tax_year') or profile.get('tax_year') or 'not specified'}."
+            f" Filing status is {client.get('filing_status') or profile.get('filing_status') or 'needs review'}."
+            " It organizes tax submission readiness and financial planning readiness in one human-reviewed packet."
+        ),
+        _profile_sentence(profile),
+        "",
+        "Tax Readiness Summary",
+        review.get("summary") or "DocIntel prepared a tax and financial planning readiness packet from the selected documents.",
+        _organizer_sentence(organizer),
+        "",
+        "Net Worth Snapshot",
+        _networth_sentence(networth),
+        *_section_rows(networth.get("assets"), "Asset"),
+        *_section_rows(networth.get("liabilities"), "Liability"),
+        "",
+        "Cash Flow Snapshot",
+        _cashflow_sentence(cashflow),
+        *_section_rows(cashflow.get("inflows"), "Inflow"),
+        *_section_rows(cashflow.get("outflows"), "Outflow"),
+        "",
+        "Retirement Readiness",
+        _retirement_sentence(retirement),
+        *_section_rows(retirement.get("signals"), "Retirement signal"),
+        "",
+        "Planning Readiness Score",
+        _score_sentence(score),
+        *_section_rows(score.get("categories"), "Score category"),
+        "",
+        "Advisor Questions",
+        *(_advisor_question_lines(questions) or ["No advisor questions were generated. Advisor should confirm planning objectives directly with the client."]),
+        "",
+        "Missing Planning Items",
+        *(_missing_item_lines(packet, networth, cashflow, retirement, score) or ["No missing planning items were identified from the reviewed packet."]),
+        "",
+        "Human Review Notice",
+        "This advisor packet is planning readiness support. It is not tax, investment, insurance, legal, or estate advice. A qualified advisor, CPA, EA, or appropriate reviewer must validate extracted values and recommendations before client action.",
+    ]
+    return sanitize_text_for_storage("\n".join(str(line) for line in lines if line is not None))
+
+
+def _saved_snapshot(saves: dict, key: str) -> dict | None:
+    value = saves.get(key)
+    if not isinstance(value, dict):
+        return None
+    snapshot = value.get("snapshot")
+    return snapshot if isinstance(snapshot, dict) else None
+
+
+def _finance_tax_default_profile(packet: dict) -> dict:
+    client = packet.get("client") or {}
+    return {
+        "client_name": client.get("name") or "Client",
+        "tax_year": client.get("tax_year") or "",
+        "filing_status": client.get("filing_status") or "",
+        "planning_stage": "Needs advisor review",
+        "risk_tolerance": "Needs advisor review",
+        "advisor_notes": (packet.get("cpa_review_packet") or {}).get("summary") or "",
+    }
+
+
+def _profile_sentence(profile: dict) -> str:
+    return (
+        f"Planning profile: household stage is {profile.get('planning_stage') or 'needs review'},"
+        f" risk tolerance is {profile.get('risk_tolerance') or 'needs review'},"
+        f" retirement target is {profile.get('retirement_target_age') or 'needs review'},"
+        f" and advisor notes are {_plain(profile.get('advisor_notes') or 'not provided')}."
+    )
+
+
+def _organizer_sentence(organizer: dict) -> str:
+    forms = organizer.get("forms") if isinstance(organizer, dict) else []
+    counts = Counter(str((form or {}).get("detected_from") or (form or {}).get("detected_form") or "tax document") for form in forms or [])
+    if not counts:
+        return "No tax organizer forms were available in the packet."
+    summary = ", ".join(f"{label}: {count}" for label, count in counts.most_common(8))
+    return f"Detected tax organizer records include {summary}."
+
+
+def _networth_sentence(networth: dict) -> str:
+    assets = _number(networth.get("totalAssets"))
+    liabilities = _number(networth.get("totalLiabilities"))
+    value = _number(networth.get("netWorth"))
+    return f"Reviewed assets total {_money(assets)}, reviewed liabilities total {_money(liabilities)}, and estimated net worth is {_money(value)}."
+
+
+def _cashflow_sentence(cashflow: dict) -> str:
+    inflows = _number(cashflow.get("totalInflows"))
+    outflows = _number(cashflow.get("totalOutflows"))
+    estimated = _number(cashflow.get("estimatedCashFlow"))
+    return f"Reviewed inflows total {_money(inflows)}, reviewed outflows total {_money(outflows)}, and estimated reviewed cash flow is {_money(estimated)}."
+
+
+def _retirement_sentence(retirement: dict) -> str:
+    status = retirement.get("status") or "Needs advisor review"
+    score = retirement.get("score")
+    summary = retirement.get("summary") or "Retirement readiness requires advisor review."
+    score_text = f" with a readiness score of {score}%" if score not in (None, "") else ""
+    return f"Retirement status is {status}{score_text}. {_plain(summary)}"
+
+
+def _score_sentence(score: dict) -> str:
+    overall = score.get("overallScore") or score.get("overall_score") or score.get("score")
+    status = score.get("status") or "Needs review"
+    if overall not in (None, ""):
+        return f"Overall planning readiness score is {overall}% and status is {status}."
+    return f"Overall planning readiness status is {status}."
+
+
+def _section_rows(rows, prefix: str) -> list[str]:
+    output = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            output.append(f"- {prefix}: {_plain(row)}")
+            continue
+        label = row.get("label") or row.get("category") or row.get("item") or row.get("question") or prefix
+        amount = row.get("amount")
+        detail = row.get("detail") or row.get("reason") or row.get("source_document") or row.get("status") or ""
+        if amount not in (None, ""):
+            suffix = f" ({_plain(detail)})" if detail else ""
+            output.append(f"- {prefix}: {_plain(label)} - {_money(amount)}{suffix}")
+        else:
+            suffix = f" - {_plain(detail)}" if detail else ""
+            output.append(f"- {prefix}: {_plain(label)}{suffix}")
+    return output[:30]
+
+
+def _advisor_question_lines(questions) -> list[str]:
+    lines = []
+    for row in questions or []:
+        if not isinstance(row, dict):
+            lines.append(f"- {_plain(row)}")
+            continue
+        question = row.get("question") or "Confirm planning detail with client."
+        reason = row.get("reason") or row.get("category") or ""
+        priority = row.get("priority") or "medium"
+        reason_text = f" Reason: {_plain(reason)}" if reason else ""
+        lines.append(f"- {_plain(question)} Priority: {_plain(priority)}.{reason_text}")
+    return lines[:20]
+
+
+def _missing_item_lines(packet: dict, networth: dict, cashflow: dict, retirement: dict, score: dict) -> list[str]:
+    rows = []
+    sources = (
+        (packet.get("missing_document_checklist") or {}).get("missing_items"),
+        networth.get("missingItems") or networth.get("missing_items"),
+        cashflow.get("missingItems") or cashflow.get("missing_items"),
+        retirement.get("missingItems") or retirement.get("missing_items"),
+        score.get("gaps"),
+    )
+    for source in sources:
+        for item in source or []:
+            if isinstance(item, dict):
+                label = item.get("item") or item.get("category") or item.get("label") or "Missing item"
+                reason = item.get("reason") or item.get("detail") or item.get("priority") or ""
+                rows.append(f"- {_plain(label)}{f': {_plain(reason)}' if reason else ''}")
+            else:
+                rows.append(f"- {_plain(item)}")
+    return list(dict.fromkeys(rows))[:25]
+
+
+def _finance_tax_readiness_score_from_saves(saves: dict, packet: dict) -> dict:
+    saved_count = len([key for key in ("client_profile", "networth", "cashflow", "retirement", "advisor_questions") if key in saves])
+    score = min(95, 35 + saved_count * 12)
+    return {
+        "overallScore": score,
+        "status": "Ready for advisor review" if score >= 70 else "Needs additional review",
+        "categories": [
+            {"category": "Tax organizer", "score": 75 if (packet.get("tax_organizer") or {}).get("forms") else 35, "detail": "Tax organizer values are available for reviewer validation."},
+            {"category": "Human review", "score": score, "detail": f"{saved_count} planning sections have saved review state."},
+        ],
+    }
+
+
+async def _persist_finance_tax_generated_document_chunks(
+    db,
+    *,
+    doc_id: str,
+    user_id: str,
+    workspace_id: str | None,
+    run_id: str,
+    source_document_id: str,
+    filename: str,
+    source_path: str,
+    text: str,
+) -> None:
+    clean_text = sanitize_text_for_storage(text)
+    doc_meta = {
+        "document_id": doc_id,
+        "user_id": user_id,
+        "filename": filename,
+        "file_type": "pdf",
+        "source_kind": "finance_tax_advisor_packet_pdf",
+        "workflow_id": TAX_MVP_WORKFLOW_ID,
+        "run_id": run_id,
+        "source_document_id": source_document_id,
+    }
+    chunks = chunk_text(clean_text, doc_meta=doc_meta)
+    if not chunks:
+        chunks = chunk_text("Generated finance advisor packet.", doc_meta=doc_meta)
+    for chunk in chunks:
+        await gcs.upload_text(gcs.chunk_path(user_id, doc_id, chunk.index), chunk.text)
+    now = datetime.now(timezone.utc).isoformat()
+    meta_obj = {
+        "document": {
+            "id": doc_id,
+            "user_id": user_id,
+            "filename": filename,
+            "file_type": "pdf",
+            "total_chunks": len(chunks),
+            "created_at": now,
+            "source_kind": "finance_tax_advisor_packet_pdf",
+            "workflow_id": TAX_MVP_WORKFLOW_ID,
+            "run_id": run_id,
+            "source_document_id": source_document_id,
+        },
+        "chunks": [
+            {
+                "index": c.index,
+                "word_count": c.word_count,
+                "char_count": c.char_count,
+                "gcs_path": gcs.chunk_path(user_id, doc_id, c.index),
+                "source_kind": "finance_tax_advisor_packet_pdf",
+                "run_id": run_id,
+                "source_document_id": source_document_id,
+            }
+            for c in chunks
+        ],
+    }
+    await gcs.upload_json(gcs.metadata_path(user_id, doc_id), meta_obj)
+    await db.execute(
+        """
+        UPDATE documents
+           SET status='chunked',
+               chunk_count=$2,
+               doc_metadata = COALESCE(doc_metadata, '{}'::jsonb) || $3::jsonb,
+               updated_at=NOW()
+         WHERE id=$1
+        """,
+        doc_id,
+        len(chunks),
+        json.dumps({"advisor_packet_artifact": {"run_id": run_id, "chunk_count": len(chunks), "source_path": source_path}}),
+    )
 
 
 async def _get_accessible_doc(db, doc_id: str, user_id: str) -> dict:
@@ -2160,6 +2532,216 @@ def _next_actions(checklist: dict, comparison: dict) -> list[dict]:
     if not actions:
         actions.append({"owner": "CPA/EA", "action": "Review extracted values against source documents and approve final organizer.", "priority": "high"})
     return actions
+
+
+def _render_finance_tax_advisor_packet_pdf(title: str, text: str) -> bytes:
+    try:
+        from reportlab.lib.pagesizes import LETTER
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer
+
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=LETTER, rightMargin=46, leftMargin=46, topMargin=42, bottomMargin=48)
+        styles = _finance_tax_pdf_styles(getSampleStyleSheet())
+        story = _finance_tax_pdf_header(title, styles)
+        section_titles = {
+            "ADVISOR PACKET",
+            "Client Overview",
+            "Tax Readiness Summary",
+            "Net Worth Snapshot",
+            "Cash Flow Snapshot",
+            "Retirement Readiness",
+            "Planning Readiness Score",
+            "Advisor Questions",
+            "Missing Planning Items",
+            "Human Review Notice",
+        }
+        pending_heading = None
+        for line in text.splitlines():
+            clean = line.strip()
+            if not clean:
+                story.append(Spacer(1, 8))
+                continue
+            if clean == "ADVISOR PACKET":
+                continue
+            if clean.startswith("Generated from finance/tax run:"):
+                story.append(Paragraph(_xml_escape(clean), styles["Meta"]))
+                story.append(Spacer(1, 10))
+            elif clean in section_titles:
+                pending_heading = Paragraph(_xml_escape(clean), styles["SectionHeading"])
+            elif clean.startswith("- "):
+                bullet = Paragraph(_xml_escape(clean[2:]), styles["BulletBody"])
+                if pending_heading:
+                    story.append(KeepTogether([pending_heading, Spacer(1, 5), bullet]))
+                    pending_heading = None
+                else:
+                    story.append(bullet)
+            else:
+                paragraph_style = styles["NoticeBody"] if pending_heading and pending_heading.getPlainText() == "Human Review Notice" else styles["Body"]
+                para = Paragraph(_xml_escape(clean), paragraph_style)
+                if pending_heading:
+                    story.append(KeepTogether([pending_heading, Spacer(1, 5), para]))
+                    pending_heading = None
+                else:
+                    story.append(para)
+        doc.build(story, onFirstPage=_finance_tax_pdf_footer, onLaterPages=_finance_tax_pdf_footer)
+        return buffer.getvalue()
+    except Exception:
+        log.exception("Finance/tax advisor packet PDF render failed; using minimal PDF fallback")
+        return _render_minimal_pdf(title, text)
+
+
+def _finance_tax_pdf_styles(base_styles):
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.styles import ParagraphStyle
+
+    base_styles.add(ParagraphStyle(name="BrandEnglish", parent=base_styles["Normal"], fontName="Helvetica", fontSize=12, leading=14, textColor=colors.HexColor("#6b7280")))
+    base_styles.add(ParagraphStyle(name="BrandTag", parent=base_styles["Normal"], fontName="Helvetica", fontSize=8.5, leading=11, textColor=colors.HexColor("#15803d")))
+    base_styles.add(ParagraphStyle(name="DocTitle", parent=base_styles["Title"], fontName="Helvetica-Bold", fontSize=17, leading=21, textColor=colors.HexColor("#064e3b"), alignment=TA_CENTER, spaceAfter=10))
+    base_styles.add(ParagraphStyle(name="HeaderTitle", parent=base_styles["Normal"], fontName="Helvetica-Bold", fontSize=17, leading=21, textColor=colors.HexColor("#064e3b")))
+    base_styles.add(ParagraphStyle(name="HeaderSubtitle", parent=base_styles["Normal"], fontName="Helvetica", fontSize=9, leading=12, textColor=colors.HexColor("#15803d")))
+    base_styles.add(ParagraphStyle(name="Meta", parent=base_styles["Normal"], fontName="Helvetica", fontSize=8, leading=10, textColor=colors.HexColor("#6b7280"), alignment=TA_CENTER))
+    base_styles.add(ParagraphStyle(name="SectionHeading", parent=base_styles["Heading2"], fontName="Helvetica-Bold", fontSize=11.5, leading=14, textColor=colors.HexColor("#065f46"), spaceBefore=8, spaceAfter=5, keepWithNext=True))
+    base_styles.add(ParagraphStyle(name="Body", parent=base_styles["BodyText"], fontName="Helvetica", fontSize=9.5, leading=14, textColor=colors.HexColor("#1f2937"), spaceAfter=4))
+    base_styles.add(ParagraphStyle(name="BulletBody", parent=base_styles["Body"], leftIndent=14, firstLineIndent=-8, bulletIndent=0, bulletFontName="Helvetica-Bold", bulletFontSize=8, bulletText="-"))
+    base_styles.add(ParagraphStyle(name="NoticeBody", parent=base_styles["Body"], fontSize=9, leading=13, textColor=colors.HexColor("#7f1d1d"), backColor=colors.HexColor("#fef2f2"), borderColor=colors.HexColor("#fecaca"), borderWidth=0.6, borderPadding=7, spaceBefore=3))
+    return base_styles
+
+
+def _finance_tax_pdf_header(title: str, styles) -> list:
+    from reportlab.lib import colors
+    from reportlab.graphics.shapes import Circle, Drawing, Line
+    from reportlab.platypus import HRFlowable, Image, Paragraph, Spacer, Table
+
+    logo_path = _adar_docintel_logo_path()
+    if logo_path:
+        brand = Image(logo_path, width=210, height=46)
+    else:
+        leaf = Drawing(24, 24)
+        leaf.add(Circle(9, 14, 6, fillColor=colors.HexColor("#4ade80"), strokeColor=colors.HexColor("#15803d"), strokeWidth=0.6))
+        leaf.add(Circle(15, 10, 6, fillColor=colors.HexColor("#22c55e"), strokeColor=colors.HexColor("#15803d"), strokeWidth=0.6))
+        leaf.add(Line(7, 6, 18, 18, strokeColor=colors.HexColor("#166534"), strokeWidth=1))
+        brand = Table(
+            [[leaf, [
+                Paragraph('<font name="Helvetica-Bold" color="#4ade80" size="18"><b>ADAR</b></font> <font name="Helvetica" color="#6b7280" size="12">DocIntel</font>', styles["BrandEnglish"]),
+                Paragraph("Document Intelligence | Finance Planning", styles["BrandTag"]),
+            ]]],
+            colWidths=[34, 410],
+            style=[
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (0, 0), 0),
+                ("RIGHTPADDING", (0, 0), (0, 0), 8),
+                ("TOPPADDING", (0, 0), (0, 0), 2),
+                ("BOTTOMPADDING", (0, 0), (0, 0), 2),
+                ("LEFTPADDING", (1, 0), (1, 0), 2),
+                ("RIGHTPADDING", (1, 0), (1, 0), 0),
+            ],
+        )
+    header = Table(
+        [[brand, [
+            Paragraph("Advisor Packet", styles["HeaderTitle"]),
+            Paragraph("Tax and financial planning readiness", styles["HeaderSubtitle"]),
+        ]]],
+        colWidths=[230, 260],
+        style=[
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f0fdf4")),
+            ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#bbf7d0")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (0, 0), 10),
+            ("RIGHTPADDING", (0, 0), (0, 0), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 9),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+            ("LEFTPADDING", (1, 0), (1, 0), 14),
+            ("RIGHTPADDING", (1, 0), (1, 0), 12),
+        ],
+    )
+    return [
+        header,
+        Spacer(1, 10),
+        HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#d1fae5"), spaceAfter=14),
+        Paragraph(_xml_escape(title), styles["DocTitle"]),
+    ]
+
+
+def _adar_docintel_logo_path() -> str | None:
+    assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
+    for filename in ("adar_docintel_logo_light.png", "adar_docintel_logo.png"):
+        path = os.path.join(assets_dir, filename)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _finance_tax_pdf_footer(canvas, doc):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import LETTER
+
+    canvas.saveState()
+    canvas.setStrokeColor(colors.HexColor("#d1d5db"))
+    canvas.setLineWidth(0.4)
+    canvas.line(doc.leftMargin, 34, LETTER[0] - doc.rightMargin, 34)
+    canvas.setFont("Helvetica", 7.5)
+    canvas.setFillColor(colors.HexColor("#6b7280"))
+    canvas.drawString(doc.leftMargin, 22, "Generated by ADAR DocIntel Finance. Human advisor review required before client action.")
+    canvas.drawRightString(LETTER[0] - doc.rightMargin, 22, f"Page {doc.page}")
+    canvas.restoreState()
+
+
+def _render_minimal_pdf(title: str, text: str) -> bytes:
+    lines = [title, ""] + text.splitlines()
+    content = ["BT", "/F1 11 Tf", "50 750 Td", "14 TL"]
+    for line in lines[:48]:
+        content.append(f"({_pdf_escape(line[:95])}) Tj")
+        content.append("T*")
+    content.append("ET")
+    stream = "\n".join(content)
+    objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        f"<< /Length {len(stream.encode('latin-1', errors='replace'))} >>\nstream\n{stream}\nendstream",
+    ]
+    return _assemble_pdf(objects)
+
+
+def _assemble_pdf(objects: list[str]) -> bytes:
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for idx, obj in enumerate(objects, start=1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{idx} 0 obj\n{obj}\nendobj\n".encode("latin-1", errors="replace"))
+    xref = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects)+1}\n0000000000 65535 f \n".encode())
+    for offset in offsets:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode())
+    pdf.extend(f"trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
+    return bytes(pdf)
+
+
+def _xml_escape(value: str) -> str:
+    return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _pdf_escape(value: str) -> str:
+    return str(value or "").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _safe_filename(value: str, suffix: str = ".txt") -> str:
+    base = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "document")).strip("-._")[:90]
+    return f"{base or 'document'}{suffix}"
+
+
+def _plain(value) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _number(value) -> Decimal:
+    try:
+        return Decimal(str(value or 0))
+    except Exception:
+        return Decimal("0")
 
 
 def _unique_ids(values) -> list[str]:

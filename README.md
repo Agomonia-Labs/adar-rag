@@ -58,6 +58,7 @@ DocIntel classifies documents by domain and type, such as:
 - Healthcare clinical document
 - Healthcare prior authorization document
 - Restaurant/menu document
+- Finance/tax documents such as W-2, prior-year tax return, brokerage statement, retirement statement, mortgage interest statement, property tax assessment, charitable receipt, bank statement, and credit card statement
 
 Classification is powered by Gemini and uses `GOOGLE_AI_KEY`. The implementation logs confidence, source, sample size, and fallback reason so silent failures are visible.
 
@@ -239,6 +240,51 @@ Healthcare personas:
 - Prior authorization team: find evidence faster and check policy readiness.
 - Compliance team: inspect PHI flags, traceability, approvals, and field changes.
 
+### Finance: Tax and Financial Planning Readiness
+
+Finance workflows support tax submission readiness and advisor-facing financial planning readiness.
+
+Implemented finance workflows:
+
+- Tax organizer and document readiness workflow.
+- Prior-year tax return comparison.
+- Net worth snapshot from reviewed extracted values.
+- Cash flow snapshot from reviewed extracted values.
+- Client planning profile.
+- Retirement readiness review.
+- Advisor question generator.
+- Planning readiness score.
+- Reviewed advisor packet with backend-generated PDF artifact.
+
+Finance document types:
+
+- W-2 wage and tax statements.
+- Prior-year tax returns and Form 1040 returns.
+- Brokerage and consolidated 1099 statements.
+- Retirement and 401(k) statements.
+- Mortgage interest statements and Form 1098.
+- Property tax assessments and property value records.
+- Charitable donation receipts.
+- Bank statements.
+- Credit card statements.
+
+Finance workflow sequence:
+
+1. Upload tax and planning documents.
+2. Classify documents into finance/tax types.
+3. Extract deterministic tax and planning values from supported forms.
+4. Review organizer tabs by document type.
+5. Save reviewed tax organizer, net worth, cash flow, client profile, retirement readiness, advisor questions, and readiness score.
+6. Approve or update the reviewed packet.
+7. Generate the advisor packet PDF from the backend.
+8. Store the generated PDF in GCS and register it as a generated finance document.
+
+Finance design principles:
+
+- Deterministic rules handle exact fields where repeatability matters, such as W-2 Box 1 wages, withholding, 1040 line values, mortgage interest, property assessed value, retirement ending balance, brokerage ending account value, bank balances, and credit card balances.
+- AI-assisted reasoning supports planning gaps, advisor questions, review summaries, and narrative readiness explanations.
+- Human review is required before tax filing, financial planning, investment, insurance, legal, or estate decisions.
+
 ### Restaurant Menu Scribe and Carryout Orders
 
 The restaurant vertical turns restaurant/menu conversations into searchable menu intelligence and carryout ordering workflows.
@@ -355,6 +401,7 @@ flowchart TB
 | `backend/routes/compare.py` | Document comparison |
 | `backend/routes/lease.py` | Lease vertical APIs |
 | `backend/routes/healthcare.py` | Healthcare vertical APIs |
+| `backend/routes/finance_tax.py` | Finance/tax readiness APIs, packet approval, advisor PDF generation |
 | `backend/routes/restaurant.py` | Restaurant vertical APIs, menu, order, owner queue |
 | `backend/routes/traces.py` | Trace inspection APIs |
 | `backend/routes/agent_evals.py` | Agent workflow evaluation APIs |
@@ -378,6 +425,7 @@ flowchart TB
 | `ComparePanel.jsx` | Document comparison |
 | `LeasePanel.jsx` | Lease abstraction, agent workflow, approval, display |
 | `HealthcarePanel.jsx` | Healthcare clinical, scribe, prior auth, AVS workflows |
+| `FinanceTaxPanel.jsx` | Tax organizer, financial planning readiness, advisor questions, packet approval, advisor PDF download |
 | `RestaurantPanel.jsx` | Restaurant scribe, menu editing, compare menus, carryout orders |
 | `WorkspacesTab.jsx` | Workspace membership and switching |
 | `UsagePanel.jsx` | Tier and usage visibility |
@@ -464,6 +512,7 @@ Authorization: Bearer <jwt_token>
 | Voice | `/api/voice` | Voice/audio helper APIs |
 | Lease | `/api/lease` | Lease vertical workflows |
 | Healthcare | `/api/healthcare` | Healthcare workflows |
+| Finance/tax | `/api/finance-tax` | Tax and financial planning readiness workflow, approval, advisor packet PDF |
 | Restaurant | `/api/restaurant` | Restaurant scribe, menu, compare, recommendations, carryout orders, customer feedback |
 | Admin | `/api/admin` | Admin-only users/documents/platform views |
 
@@ -582,6 +631,18 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 6. Approve field-level changes where applicable.
 7. Generate AVS PDF when clinical scribe output is ready.
 8. Use chat to ask patient/provider/care coordination questions over approved clinical context and documents.
+
+### Finance Workflow
+
+1. Upload W-2, 1099, brokerage, retirement, mortgage, property tax, charitable, bank, credit card, and prior-year tax return documents.
+2. Embed or chunk documents so they are ready for the workflow.
+3. Open Tax & Financial Planning Readiness.
+4. Run the readiness workflow for the selected documents.
+5. Review Tax Organizer tabs by document type.
+6. Review and save Net Worth, Cash Flow, Client Profile, Retirement Readiness, Advisor Questions, and Readiness Score tabs.
+7. Approve or update the reviewed packet.
+8. Generate the Advisor Packet PDF.
+9. Use the generated packet for human advisor review, client follow-up, and planning readiness discussion.
 
 ### Restaurant Workflow
 
@@ -856,6 +917,8 @@ DocIntel is designed to support many verticals on one reusable architecture:
 - Healthcare review workbench
 - Clinical scribe and AVS generation
 - Prior authorization readiness
+- Tax and financial planning readiness
+- Advisor packet PDF generation
 - Lease intelligence and obligation tracking
 - Restaurant menu scribe and carryout ordering
 - Legal and contract management
