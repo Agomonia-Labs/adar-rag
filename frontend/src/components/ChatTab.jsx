@@ -67,7 +67,7 @@ function exportChatAsMarkdown(session, messages) {
       if (Array.isArray(m.sources) && m.sources.length) {
         md += `> **Sources:** `;
         md += m.sources.map(s =>
-          `${s.doc_name} (chunk ${(s.chunk_index||0)+1}/${s.chunk_total||'?'}, ${Math.round((s.similarity||0)*100)}%)`
+          `${sourceTitle(s)} (chunk ${(s.chunk_index||0)+1}/${s.chunk_total||'?'}, ${Math.round((s.similarity||0)*100)}%)`
         ).join(' · ');
         md += '\n\n';
       }
@@ -1640,6 +1640,8 @@ function Src({ src, i }) {
   const score = src.rerank_score != null ? src.rerank_score : (src.similarity || 0);
   const sim   = Math.round(score * 100);
   const type  = src.match_type || 'vector';
+  const title = sourceTitle(src);
+  const timeLabel = videoTimeLabel(src);
   const typeStyle = {
     hybrid:  { bg:'rgba(192,132,252,.15)', color:'#c084fc', label:'⚡ hybrid'  },
     keyword: { bg:'rgba(251,191,36,.12)',  color:'#fbbf24', label:'🔤 keyword' },
@@ -1659,8 +1661,13 @@ function Src({ src, i }) {
           </span>
         )}
         <span style={{ fontSize:11, color:'var(--blue)', maxWidth:140, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-          {src.doc_name}
+          {title}
         </span>
+        {timeLabel && (
+          <span style={{ fontSize:9.5, padding:'1px 7px', borderRadius:20, background:'rgba(20,184,166,.12)', color:'#5eead4', fontWeight:700 }}>
+            🎬 {timeLabel}
+          </span>
+        )}
         <span style={{ fontSize:10, color:'var(--muted2)', marginLeft:'auto' }}>
           chunk {(src.chunk_index || 0) + 1}/{src.chunk_total || '?'}
         </span>
@@ -1673,6 +1680,32 @@ function Src({ src, i }) {
       </div>
     </div>
   );
+}
+
+function sourceTitle(src) {
+  const name = src?.doc_name || 'Document';
+  const time = videoTimeLabel(src);
+  return time ? `${name} @ ${time}` : name;
+}
+
+function videoTimeLabel(src) {
+  if (!src || src.file_type !== 'video') return '';
+  const start = src.start_time || fmtSeconds(src.start_seconds);
+  const end = src.end_time || fmtSeconds(src.end_seconds);
+  if (start && end && start !== end) return `${start}-${end}`;
+  return start || '';
+}
+
+function fmtSeconds(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '';
+  const total = Math.max(0, Math.floor(n));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return h
+    ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 function Thinking() {

@@ -9,11 +9,24 @@ const LONG_BASE = STREAM_BASE;
 
 function token()   { return localStorage.getItem('token'); }
 function authHdr() { return { Authorization: `Bearer ${token()}` }; }
+function isVideoFile(file) {
+  const name = (file?.name || '').toLowerCase();
+  return (file?.type || '').startsWith('video/') || /\.(mp4|mov|m4v|avi|mkv|webm)$/.test(name);
+}
 
 async function handleRes(res) {
   if (res.ok) return res.json();
-  const e = await res.json().catch(() => ({}));
-  throw new Error(e.detail || e.message || `HTTP ${res.status}`);
+  const traceId = res.headers.get('x-trace-id');
+  const contentType = res.headers.get('content-type') || '';
+  let detail = '';
+  if (contentType.includes('application/json')) {
+    const e = await res.json().catch(() => ({}));
+    detail = e.detail || e.message || '';
+  } else {
+    detail = (await res.text().catch(() => '')).replace(/\s+/g, ' ').trim();
+  }
+  const suffix = traceId ? ` (trace ${traceId})` : '';
+  throw new Error(detail ? `HTTP ${res.status}: ${detail.slice(0, 240)}${suffix}` : `HTTP ${res.status}${suffix}`);
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -54,6 +67,13 @@ export async function getMe() {
 
 // ── Documents ─────────────────────────────────────────────────────────────────
 export async function uploadDocuments(files, workspaceId = null, options = {}) {
+  const largeFiles = [...files].filter(f => f.size > 31 * 1024 * 1024 && !isVideoFile(f));
+  if (largeFiles.length) {
+    const names = largeFiles.map(f => `${f.name} (${(f.size / 1024 / 1024).toFixed(1)} MB)`).join(', ');
+    throw new Error(
+      `Large upload blocked before sending: ${names}. Current production document upload goes through the /api proxy and can fail around 32 MiB before backend logs appear. Use a file under 30 MB for this path. Large videos use the direct-to-GCS upload flow.`
+    );
+  }
   const form = new FormData();
   for (const f of files) form.append('files', f);
   if (options.redactPii) form.append('redact_pii', 'true');
@@ -61,6 +81,48 @@ export async function uploadDocuments(files, workspaceId = null, options = {}) {
     ? `${BASE}/documents/upload?workspace_id=${workspaceId}`
     : `${BASE}/documents/upload`;
   return handleRes(await fetch(url, { method:'POST', headers:authHdr(), body:form }));
+}
+
+export async function uploadLargeVideoDocument(file, workspaceId = null, options = {}) {
+  if (!isVideoFile(file)) throw new Error('Direct upload is only available for supported video files');
+  const session = await handleRes(await fetch(`${BASE}/video/upload-session`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body: JSON.stringify({
+      filename: file.name,
+      content_type: file.type || 'video/mp4',
+      file_size: file.size,
+      workspace_id: workspaceId || null,
+    }),
+  }));
+
+  const putRes = await fetch(session.upload_url, {
+    method: session.method || 'PUT',
+    headers: {'Content-Type': file.type || 'video/mp4'},
+    body: file,
+  });
+  if (!putRes.ok) {
+    const detail = (await putRes.text().catch(() => '')).replace(/\s+/g, ' ').trim();
+    throw new Error(detail ? `GCS upload failed HTTP ${putRes.status}: ${detail.slice(0, 220)}` : `GCS upload failed HTTP ${putRes.status}`);
+  }
+
+  return handleRes(await fetch(`${BASE}/video/upload-complete`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body: JSON.stringify({
+      doc_id: session.doc_id,
+      filename: file.name,
+      content_type: file.type || 'video/mp4',
+      file_size: file.size,
+      gcs_source_path: session.gcs_source_path,
+      workspace_id: workspaceId || null,
+      process_after_upload: Boolean(options.processAfterUpload),
+      rights_confirmed: Boolean(options.rightsConfirmed),
+      max_frames: options.maxFrames || 12,
+      segment_seconds: options.segmentSeconds || 60,
+      embed_after_processing: options.embedAfterProcessing !== false,
+    }),
+  }));
 }
 
 export async function listDocuments() {

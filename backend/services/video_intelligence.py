@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from database.connection import get_pool
 from services import storage as gcs
+from services.notifications import send_video_processing_notification
 from services.text_safety import sanitize_text_for_storage
 from services.vectordb import delete_document_vectors, store_chunk
 
@@ -225,6 +226,15 @@ async def process_video_document(
                 json.dumps({"video_intelligence": output}),
                 document_id,
             )
+        await _send_video_notification(
+            user_id=user_id,
+            filename=filename,
+            status="completed",
+            duration_seconds=duration,
+            segment_count=len(segments),
+            chunk_count=len(chunks),
+            embed_status=embed_status,
+        )
         return output
 
     except Exception as exc:
@@ -251,6 +261,12 @@ async def process_video_document(
                 error,
                 document_id,
             )
+        await _send_video_notification(
+            user_id=user_id,
+            filename=filename,
+            status="error",
+            error_message=error,
+        )
         raise
     finally:
         if tmp_video:
@@ -263,6 +279,40 @@ async def process_video_document(
                 os.unlink(path)
             except OSError:
                 pass
+
+
+async def _send_video_notification(
+    *,
+    user_id: str,
+    filename: str,
+    status: str,
+    duration_seconds: float | int | None = None,
+    segment_count: int = 0,
+    chunk_count: int = 0,
+    embed_status: str = "",
+    error_message: str = "",
+) -> None:
+    """Send best-effort video notification using the user's existing embed preference."""
+    try:
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            user_row = await conn.fetchrow(
+                "SELECT email, notify_on_embed FROM users WHERE id=$1",
+                user_id,
+            )
+        if user_row and user_row.get("notify_on_embed", True) and user_row.get("email"):
+            await send_video_processing_notification(
+                user_email=user_row["email"],
+                doc_name=filename,
+                status=status,
+                duration_seconds=duration_seconds,
+                segment_count=segment_count,
+                chunk_count=chunk_count,
+                embed_status=embed_status,
+                error_message=error_message,
+            )
+    except Exception as exc:
+        log.warning("Video notification skipped for user=%s file=%s: %s", user_id, filename, exc)
 
 
 def _probe_video(path: str) -> dict[str, Any]:

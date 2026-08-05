@@ -26,6 +26,62 @@ You can now open আদর DocIntel and start chatting with this document.
         log.warning(f"Embed notification failed for {user_email}: {e}")
 
 
+async def send_video_processing_notification(
+    user_email: str,
+    *,
+    doc_name: str,
+    status: str,
+    duration_seconds: float | int | None = None,
+    segment_count: int = 0,
+    chunk_count: int = 0,
+    embed_status: str = "",
+    error_message: str = "",
+) -> bool:
+    """Notify user when video processing completes or fails."""
+    completed = status == "completed"
+    subject = (
+        f"Video intelligence ready — {doc_name}"
+        if completed else
+        f"Video intelligence failed — {doc_name}"
+    )
+    minutes = ""
+    if duration_seconds:
+        try:
+            minutes = f"{float(duration_seconds) / 60:.1f} minutes"
+        except (TypeError, ValueError):
+            minutes = ""
+
+    body = (
+        "Your video is ready for DocIntel review and Q&A.\n\n"
+        if completed else
+        "DocIntel could not finish processing your video.\n\n"
+    )
+    body += f"Video: {doc_name}\n"
+    if minutes:
+        body += f"Duration: {minutes}\n"
+    if completed:
+        body += f"Timeline segments: {segment_count}\n"
+        body += f"Generated chunks: {chunk_count}\n"
+        body += f"Embedding status: {embed_status or 'not requested'}\n\n"
+        if embed_status == "embedded":
+            body += "You can now ask questions about this video in normal DocIntel Chat.\n"
+        else:
+            body += "Open Video Intelligence to review the timeline, then embed when ready for normal DocIntel Chat.\n"
+    else:
+        body += f"Error: {error_message or 'Processing failed'}\n\n"
+        body += "Open DocIntel, check the video status, and rerun processing after correcting the issue.\n"
+
+    body += "\n— আদর DocIntel\n"
+
+    try:
+        await send_email(to=user_email, subject=subject, body=body)
+        log.info("Video processing notification sent to %s doc=%s status=%s", user_email, doc_name, status)
+        return True
+    except Exception as e:
+        log.warning("Video processing notification failed for %s doc=%s status=%s: %s", user_email, doc_name, status, e)
+        return False
+
+
 async def send_verification_email(user_email: str, token: str, app_url: str) -> None:
     """Send email address verification link."""
     link = f"{app_url.rstrip('/')}/verify-email?token={token}"

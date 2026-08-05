@@ -1294,6 +1294,7 @@ def _chunk_trace(chunks: list[dict], redact_pii: bool = False) -> list[dict]:
             "doc_name": c.get("doc_name") or c.get("original_name"),
             "chunk_index": c.get("chunk_index"),
             "chunk_total": c.get("chunk_total"),
+            **_video_source_fields(c),
             "similarity": c.get("similarity"),
             "rerank_score": c.get("rerank_score"),
             "match_type": c.get("match_type"),
@@ -1314,10 +1315,12 @@ def _build_context(chunks: list[dict], redact_pii: bool = False) -> str:
         score = (f"rerank {rerank_score*100:.1f}%" if rerank_score is not None
                  else f"relevance {c.get('similarity', 0)*100:.1f}%")
         content = redact_text(c.get("content", ""), redact_pii).text
+        video_label = _video_source_label(c)
+        video_suffix = f" | {video_label}" if video_label else ""
         parts.append(
             f"[Source {i+1}: \"{c.get('doc_name','')}\" | "
             f"chunk {(c.get('chunk_index') or 0)+1}/{c.get('chunk_total','?')} | "
-            f"{icon} {match_type} | {score}]\n{content}"
+            f"{icon} {match_type} | {score}{video_suffix}]\n{content}"
         )
     return "\n\n---\n\n".join(parts)
 
@@ -1328,6 +1331,7 @@ def _sanitise(chunks: list[dict], redact_pii: bool = False) -> list[dict]:
             "doc_name":     c.get("doc_name"),
             "chunk_index":  c.get("chunk_index"),
             "chunk_total":  c.get("chunk_total"),
+            **_video_source_fields(c),
             "similarity":   round(float(c.get("similarity") or 0), 4),
             "rerank_score": round(float(c.get("rerank_score") or 0), 4)
                             if c.get("rerank_score") is not None else None,
@@ -1336,3 +1340,52 @@ def _sanitise(chunks: list[dict], redact_pii: bool = False) -> list[dict]:
         }
         for c in chunks
     ]
+
+
+def _chunk_meta(chunk: dict) -> dict:
+    meta = chunk.get("chunk_metadata") or {}
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except json.JSONDecodeError:
+            meta = {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _video_source_fields(chunk: dict) -> dict:
+    meta = _chunk_meta(chunk)
+    if meta.get("file_type") != "video" and not str(meta.get("chunk_type") or "").startswith("video_"):
+        return {}
+    return {
+        "file_type": "video",
+        "chunk_type": meta.get("chunk_type"),
+        "start_seconds": meta.get("start_seconds"),
+        "end_seconds": meta.get("end_seconds"),
+        "start_time": meta.get("start_time"),
+        "end_time": meta.get("end_time"),
+        "thumbnail_path": meta.get("thumbnail_path") or meta.get("frame_path"),
+    }
+
+
+def _video_source_label(chunk: dict) -> str:
+    fields = _video_source_fields(chunk)
+    if not fields:
+        return ""
+    start = fields.get("start_time") or _fmt_seconds(fields.get("start_seconds"))
+    end = fields.get("end_time") or _fmt_seconds(fields.get("end_seconds"))
+    if start and end and start != end:
+        return f"video {start}-{end}"
+    if start:
+        return f"video @ {start}"
+    return "video"
+
+
+def _fmt_seconds(value) -> str:
+    try:
+        total = int(float(value))
+    except (TypeError, ValueError):
+        return ""
+    h = total // 3600
+    m = (total % 3600) // 60
+    s = total % 60
+    return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"

@@ -44,89 +44,120 @@ async def upload_documents(
     workspace_id: Optional[str]   = None,   # if set, doc belongs to a workspace
     db=Depends(get_db),
 ):
+    trace_id = getattr(request.state, "trace_id", "")
+    declared_length = request.headers.get("content-length")
+    log.info(
+        "[upload] start trace=%s user=%s workspace=%s files=%s content_length=%s",
+        trace_id,
+        current_user.get("id"),
+        workspace_id,
+        len(files),
+        declared_length,
+    )
     # Enforce per-user tier document limit (replaces global MAX_FILES env var)
     user_id = str(current_user["id"])
-    await check_document_limit(db, user_id, quantity=len(files))
+    try:
+        await check_document_limit(db, user_id, quantity=len(files))
 
-    # Enforce per-file size limit from tier
-    from services.usage import get_user_limits
-    limits   = await get_user_limits(db, user_id)
-    max_mb   = limits.get("max_file_mb", 10)
-    for upload in files:
-        content_peek = await upload.read(1)
-        await upload.seek(0)
-        # Check Content-Length header if present
-        cl = upload.size  # may be None on some clients
-        if cl and max_mb != -1 and cl > max_mb * 1024 * 1024:
-            raise HTTPException(
-                413,
-                f"File '{upload.filename}' exceeds your {max_mb} MB file size limit "
-                f"({limits.get('label','Free')} plan). Upgrade to upload larger files."
+        # Enforce per-file size limit from tier
+        from services.usage import get_user_limits
+        limits   = await get_user_limits(db, user_id)
+        max_mb   = limits.get("max_file_mb", 10)
+        for upload in files:
+            content_peek = await upload.read(1)
+            await upload.seek(0)
+            # Check Content-Length header if present
+            cl = upload.size  # may be None on some clients
+            log.info(
+                "[upload] file trace=%s name=%s content_type=%s declared_size=%s",
+                trace_id,
+                upload.filename,
+                upload.content_type,
+                cl,
+            )
+            if cl and max_mb != -1 and cl > max_mb * 1024 * 1024:
+                raise HTTPException(
+                    413,
+                    f"File '{upload.filename}' exceeds your {max_mb} MB file size limit "
+                    f"({limits.get('label','Free')} plan). Upgrade to upload larger files."
+                )
+
+        # If workspace upload — verify editor/owner membership
+        if workspace_id:
+            from routes.workspaces import _require_role
+            await _require_role(db, workspace_id, user_id, "editor")
+        if len(files) > MAX_FILES:
+            raise HTTPException(400, f"You can upload at most {MAX_FILES} files at once")
+
+        created = []
+        for upload in files:
+            content = await upload.read()
+            log.info(
+                "[upload] read trace=%s name=%s bytes=%s",
+                trace_id,
+                upload.filename,
+                len(content),
+            )
+            if max_mb != -1 and len(content) > max_mb * 1024 * 1024:
+                raise HTTPException(
+                    413,
+                    f"File '{upload.filename}' exceeds your {max_mb} MB file size limit "
+                    f"({limits.get('label','Free')} plan). Upgrade to upload larger files.",
+                )
+
+            doc_id    = str(uuid4())
+            user_id   = str(current_user["id"])
+            filename  = upload.filename or "unnamed"
+            ftype     = detect_type(filename, upload.content_type or "")
+            src_path  = gcs.source_path(user_id, doc_id, filename)
+            chk_dir   = gcs.chunks_dir(user_id, doc_id)
+
+            # Insert document record (status = uploading)
+            await db.execute(
+                """
+                INSERT INTO documents
+                  (id, user_id, workspace_id, filename, original_name, file_type, file_size,
+                   gcs_source_path, gcs_chunks_dir, status)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'uploading')
+                """,
+                doc_id, user_id, workspace_id, filename, filename,
+                ftype, len(content), src_path, chk_dir,
             )
 
-    # If workspace upload — verify editor/owner membership
-    if workspace_id:
-        from routes.workspaces import _require_role
-        await _require_role(db, workspace_id, user_id, "editor")
-    if len(files) > MAX_FILES:
-        raise HTTPException(400, f"You can upload at most {MAX_FILES} files at once")
+            # Save temp file for processing
+            suffix = os.path.splitext(filename)[1]
+            tmp    = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            tmp.write(content); tmp.close()
 
-    created = []
-    for upload in files:
-        content = await upload.read()
-        if max_mb != -1 and len(content) > max_mb * 1024 * 1024:
-            raise HTTPException(
-                413,
-                f"File '{upload.filename}' exceeds your {max_mb} MB file size limit "
-                f"({limits.get('label','Free')} plan). Upgrade to upload larger files.",
+            # Upload source to GCS
+            await gcs.upload_bytes(src_path, content, upload.content_type or "application/octet-stream")
+
+            # Update status to chunking, then kick off chunking in background
+            await db.execute("UPDATE documents SET status='chunking' WHERE id=$1", doc_id)
+            background_tasks.add_task(
+                _chunk_document, doc_id, user_id, tmp.name, filename, upload.content_type or "", ftype, workspace_id, redact_pii
             )
+            created.append({"doc_id": doc_id, "filename": filename})
+            await log_event(db, user_id, "upload", metadata={
+                "doc_id":    doc_id,
+                "filename":  filename,
+                "file_size": len(content),
+                "file_type": ftype,
+                "redact_pii": redact_pii,
+            })
+            await audit(db, user_id=user_id, action="upload_document",
+                        resource_type="document", resource_id=doc_id,
+                        metadata={"filename": filename, "workspace_id": workspace_id, "redact_pii": redact_pii},
+                        ip_address=ip_from(request), user_agent=ua_from(request))
 
-        doc_id    = str(uuid4())
-        user_id   = str(current_user["id"])
-        filename  = upload.filename or "unnamed"
-        ftype     = detect_type(filename, upload.content_type or "")
-        src_path  = gcs.source_path(user_id, doc_id, filename)
-        chk_dir   = gcs.chunks_dir(user_id, doc_id)
-
-        # Insert document record (status = uploading)
-        await db.execute(
-            """
-            INSERT INTO documents
-              (id, user_id, workspace_id, filename, original_name, file_type, file_size,
-               gcs_source_path, gcs_chunks_dir, status)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'uploading')
-            """,
-            doc_id, user_id, workspace_id, filename, filename,
-            ftype, len(content), src_path, chk_dir,
-        )
-
-        # Save temp file for processing
-        suffix = os.path.splitext(filename)[1]
-        tmp    = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-        tmp.write(content); tmp.close()
-
-        # Upload source to GCS
-        await gcs.upload_bytes(src_path, content, upload.content_type or "application/octet-stream")
-
-        # Update status to chunking, then kick off chunking in background
-        await db.execute("UPDATE documents SET status='chunking' WHERE id=$1", doc_id)
-        background_tasks.add_task(
-            _chunk_document, doc_id, user_id, tmp.name, filename, upload.content_type or "", ftype, workspace_id, redact_pii
-        )
-        created.append({"doc_id": doc_id, "filename": filename})
-        await log_event(db, user_id, "upload", metadata={
-            "doc_id":    doc_id,
-            "filename":  filename,
-            "file_size": len(content),
-            "file_type": ftype,
-            "redact_pii": redact_pii,
-        })
-        await audit(db, user_id=user_id, action="upload_document",
-                    resource_type="document", resource_id=doc_id,
-                    metadata={"filename": filename, "workspace_id": workspace_id, "redact_pii": redact_pii},
-                    ip_address=ip_from(request), user_agent=ua_from(request))
-
-    return {"uploaded": created}
+        log.info("[upload] complete trace=%s uploaded=%s", trace_id, len(created))
+        return {"uploaded": created}
+    except HTTPException:
+        log.warning("[upload] rejected trace=%s", trace_id, exc_info=True)
+        raise
+    except Exception as exc:
+        log.exception("[upload] failed trace=%s error=%s", trace_id, exc)
+        raise
 
 
 # ══════════════════════════════════════════════════════════════════════════════

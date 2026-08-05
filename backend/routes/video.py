@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
 from decimal import Decimal
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
 from auth.dependencies import CurrentUser
 from database.connection import get_db
+from services.usage import check_document_limit, get_user_limits, log_event
 from services.video_intelligence import is_video_file, process_video_document
 from services.vectordb import find_similar
 import services.storage as gcs
@@ -26,9 +28,169 @@ class ProcessVideoRequest(BaseModel):
     embed_after_processing: bool = True
 
 
+class VideoUploadSessionRequest(BaseModel):
+    filename: str
+    content_type: str = "video/mp4"
+    file_size: int
+    workspace_id: Optional[str] = None
+
+
+class VideoUploadCompleteRequest(BaseModel):
+    doc_id: str
+    filename: str
+    content_type: str = "video/mp4"
+    file_size: int
+    gcs_source_path: str
+    workspace_id: Optional[str] = None
+    process_after_upload: bool = False
+    rights_confirmed: bool = False
+    max_frames: int = 12
+    segment_seconds: int = 60
+    embed_after_processing: bool = True
+
+
 class VideoQuestionRequest(BaseModel):
     question: str
     limit: int = 8
+
+
+@router.post("/upload-session")
+async def create_video_upload_session(
+    body: VideoUploadSessionRequest,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    filename = os.path.basename((body.filename or "video.mp4").strip()) or "video.mp4"
+    content_type = (body.content_type or "application/octet-stream").strip()
+    file_size = int(body.file_size or 0)
+
+    if not is_video_file(filename, "video", content_type):
+        raise HTTPException(400, "Direct upload is currently supported for video files only")
+    if file_size <= 0:
+        raise HTTPException(400, "file_size is required")
+
+    await check_document_limit(db, user_id, quantity=1)
+    limits = await get_user_limits(db, user_id)
+    max_mb = limits.get("max_file_mb", 10)
+    if max_mb != -1 and file_size > max_mb * 1024 * 1024:
+        raise HTTPException(
+            413,
+            f"File '{filename}' exceeds your {max_mb} MB file size limit ({limits.get('label','Free')} plan).",
+        )
+
+    workspace_id = body.workspace_id
+    if workspace_id:
+        from routes.workspaces import _require_role
+        await _require_role(db, workspace_id, user_id, "editor")
+
+    doc_id = str(uuid4())
+    source_path = gcs.source_path(user_id, doc_id, filename)
+    upload_url = await gcs.get_signed_upload_url(source_path, content_type=content_type)
+    return {
+        "doc_id": doc_id,
+        "upload_url": upload_url,
+        "gcs_source_path": source_path,
+        "expires_in_seconds": int(os.getenv("GCS_SIGNED_URL_EXPIRY_SECONDS", "3600")),
+        "method": "PUT",
+        "headers": {"Content-Type": content_type},
+    }
+
+
+@router.post("/upload-complete")
+async def complete_video_upload(
+    body: VideoUploadCompleteRequest,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    doc_id = body.doc_id
+    filename = os.path.basename((body.filename or "video.mp4").strip()) or "video.mp4"
+    content_type = (body.content_type or "application/octet-stream").strip()
+    file_size = int(body.file_size or 0)
+    expected_path = gcs.source_path(user_id, doc_id, filename)
+
+    if body.gcs_source_path != expected_path:
+        raise HTTPException(400, "Upload path does not match the authenticated user and document")
+    if not is_video_file(filename, "video", content_type):
+        raise HTTPException(400, "Uploaded file is not a supported video")
+
+    workspace_id = body.workspace_id
+    if workspace_id:
+        from routes.workspaces import _require_role
+        await _require_role(db, workspace_id, user_id, "editor")
+
+    meta = await gcs.blob_metadata(body.gcs_source_path)
+    if not meta:
+        raise HTTPException(400, "Uploaded video was not found in storage")
+    uploaded_size = int(meta.get("size") or 0)
+    if file_size and uploaded_size and abs(uploaded_size - file_size) > 1024:
+        raise HTTPException(400, f"Uploaded size mismatch. Expected {file_size} bytes but found {uploaded_size} bytes")
+
+    chk_dir = gcs.chunks_dir(user_id, doc_id)
+    await db.execute(
+        """
+        INSERT INTO documents
+          (id, user_id, workspace_id, filename, original_name, file_type, file_size,
+           gcs_source_path, gcs_chunks_dir, status, doc_type, doc_domain, doc_metadata)
+        VALUES ($1,$2,$3,$4,$5,'video',$6,$7,$8,'uploaded','video','general',$9::jsonb)
+        ON CONFLICT (id) DO UPDATE SET
+           workspace_id = EXCLUDED.workspace_id,
+           file_size = EXCLUDED.file_size,
+           gcs_source_path = EXCLUDED.gcs_source_path,
+           gcs_chunks_dir = EXCLUDED.gcs_chunks_dir,
+           status = EXCLUDED.status,
+           doc_type = 'video',
+           doc_domain = 'general',
+           doc_metadata = COALESCE(documents.doc_metadata, '{}'::jsonb) || EXCLUDED.doc_metadata,
+           updated_at = NOW()
+        """,
+        doc_id,
+        user_id,
+        workspace_id,
+        filename,
+        filename,
+        uploaded_size or file_size,
+        body.gcs_source_path,
+        chk_dir,
+        json.dumps({
+            "direct_upload": True,
+            "upload_content_type": meta.get("content_type") or content_type,
+            "upload_generation": meta.get("generation"),
+        }),
+    )
+    await log_event(db, user_id, "upload", metadata={
+        "doc_id": doc_id,
+        "filename": filename,
+        "file_size": uploaded_size or file_size,
+        "file_type": "video",
+        "direct_upload": True,
+    })
+
+    if body.process_after_upload:
+        background_tasks.add_task(
+            process_video_document,
+            document_id=doc_id,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            source_gcs_path=body.gcs_source_path,
+            filename=filename,
+            rights_confirmed=body.rights_confirmed,
+            source_type="upload",
+            source_url=None,
+            max_frames=body.max_frames,
+            segment_seconds=body.segment_seconds,
+            embed_after_processing=body.embed_after_processing,
+        )
+
+    return {
+        "doc_id": doc_id,
+        "filename": filename,
+        "status": "processing" if body.process_after_upload else "uploaded",
+        "file_size": uploaded_size or file_size,
+        "gcs_source_path": body.gcs_source_path,
+    }
 
 
 @router.get("/documents")

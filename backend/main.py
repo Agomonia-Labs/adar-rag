@@ -13,6 +13,7 @@ logging.basicConfig(
 log = logging.getLogger("docintel")
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from services.tracing import current_trace_id, new_trace_id
@@ -77,6 +78,19 @@ async def trace_id_middleware(request: Request, call_next):
         response = await call_next(request)
         response.headers["X-Trace-Id"] = trace_id
         return response
+    except Exception as exc:
+        log.exception(
+            "Unhandled request error trace=%s method=%s path=%s error=%s",
+            trace_id,
+            request.method,
+            request.url.path,
+            exc,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error", "trace_id": trace_id},
+            headers={"X-Trace-Id": trace_id},
+        )
     finally:
         current_trace_id.reset(token)
 

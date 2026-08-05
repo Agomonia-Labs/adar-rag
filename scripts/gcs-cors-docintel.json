@@ -1,0 +1,19 @@
+[
+  {
+    "origin": [
+      "https://docintel.adar.agomoniai.com",
+      "https://docintel-adar.web.app",
+      "http://localhost:5173",
+      "http://localhost:3000"
+    ],
+    "method": ["PUT", "GET", "HEAD", "OPTIONS"],
+    "responseHeader": [
+      "Content-Type",
+      "Authorization",
+      "x-goog-resumable",
+      "x-goog-content-length-range",
+      "x-goog-meta-*"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

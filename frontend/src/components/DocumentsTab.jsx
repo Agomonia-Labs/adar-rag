@@ -1,6 +1,6 @@
 // src/components/DocumentsTab.jsx
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { uploadDocuments, listDocuments, listWorkspaceDocuments, getViewUrl, triggerEmbed, deleteDocument, retryDocument,
+import { uploadDocuments, uploadLargeVideoDocument, listDocuments, listWorkspaceDocuments, getViewUrl, triggerEmbed, deleteDocument, retryDocument,
          listTags, createTag, deleteTag, assignTag, removeTagAssignment, reclassifyDocument, fetchLatestLeaseAgentWorkflow } from '../services/api.js';
 import { toast } from './Toast.jsx';
 import ChunksViewer from './ChunksViewer.jsx';
@@ -12,6 +12,7 @@ import HealthcarePanel from './HealthcarePanel.jsx';
 const MAX_FILES = parseInt(import.meta.env.VITE_MAX_UPLOAD_FILES || '500');
 
 const STATUS = {
+  uploaded:  { strip:'#38bdf8', bg:'rgba(56,189,248,.1)',  color:'#38bdf8', label:'Ready for video processing' },
   uploading: { strip:'#94a3b8', bg:'rgba(148,163,184,.1)', color:'#94a3b8', label:'Uploading…'     },
   chunking:  { strip:'#fbbf24', bg:'rgba(251,191,36,.1)',  color:'#fbbf24', label:'Chunking…'      },
   chunked:   { strip:'#60a5fa', bg:'rgba(96,165,250,.1)',  color:'#60a5fa', label:'Ready to embed' },
@@ -58,6 +59,11 @@ const DOMAIN_ICONS = {
 const LANGUAGE_LABELS = { en:'English', es:'Español', bn:'বাংলা', hi:'हिन्दी', ar:'العربية' };
 const fmtSz = b => b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
 const LEASE_DOC_TYPES = new Set(['lease', 'lease_amendment', 'lease_extension']);
+const DIRECT_VIDEO_UPLOAD_BYTES = 31 * 1024 * 1024;
+const isVideoUpload = file => {
+  const name = (file?.name || '').toLowerCase();
+  return (file?.type || '').startsWith('video/') || /\.(mp4|mov|m4v|avi|mkv|webm)$/.test(name);
+};
 
 export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKey = 0, openLeasePickerKey = 0 }) {
   const [docs,    setDocs]    = useState([]);
@@ -155,9 +161,18 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
     if (ex+files.length>MAX_FILES){ toast(`Max ${MAX_FILES} docs. Have ${ex}; can add ${MAX_FILES-ex} more.`,'error'); return; }
     setBusy(true);
     try{
-      await uploadDocuments(files, activeWorkspace?.id || null, { redactPii: redactPiiOnUpload });
+      const directVideos = files.filter(f => isVideoUpload(f) && f.size > DIRECT_VIDEO_UPLOAD_BYTES);
+      const regularFiles = files.filter(f => !directVideos.includes(f));
+      if (regularFiles.length) {
+        await uploadDocuments(regularFiles, activeWorkspace?.id || null, { redactPii: redactPiiOnUpload });
+      }
+      for (const file of directVideos) {
+        toast(`Uploading large video directly: ${file.name}`, 'info');
+        await uploadLargeVideoDocument(file, activeWorkspace?.id || null);
+      }
       await loadDocs();
-      toast(`${files.length} file${files.length>1?'s':''} uploaded${redactPiiOnUpload ? ' with PII redaction' : ''}`,'success');
+      const directMsg = directVideos.length ? ` (${directVideos.length} large video${directVideos.length>1?'s':''} uploaded directly)` : '';
+      toast(`${files.length} file${files.length>1?'s':''} uploaded${redactPiiOnUpload && regularFiles.length ? ' with PII redaction' : ''}${directMsg}`,'success');
     }
     catch(e){ toast(e.message,'error'); }
     finally{ setBusy(false); }
