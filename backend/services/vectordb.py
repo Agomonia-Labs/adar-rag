@@ -129,10 +129,10 @@ async def _hybrid_rrf(
     Chunks found by both methods score highest.
     Chunks found by only one method still contribute.
     """
-    # Sanitize query for PostgreSQL FTS
-    fts_query = " & ".join(
-        w for w in query_text[:200].split() if len(w) > 1
-    ) or query_text[:200]
+    # Use PostgreSQL's web-style parser for raw user text. Manual to_tsquery
+    # strings break on natural punctuation such as video timestamps (1:00-3:00),
+    # dollar amounts, quoted phrases, slashes, and hyphenated IDs.
+    fts_query = query_text[:200].strip()
 
     async with get_pool().acquire() as conn:
         rows = await conn.fetch(
@@ -165,15 +165,15 @@ async def _hybrid_rrf(
                     dc.content,
                     dc.chunk_metadata,
                     ts_rank_cd(dc.search_vector,
-                               to_tsquery('english', $3))    AS fts_score,
+                               websearch_to_tsquery('english', $3)) AS fts_score,
                     ROW_NUMBER() OVER (
                         ORDER BY ts_rank_cd(dc.search_vector,
-                                            to_tsquery('english', $3)) DESC
+                                            websearch_to_tsquery('english', $3)) DESC
                     )                                        AS frank
                 FROM document_chunks dc
                 WHERE dc.document_id   = ANY($2::uuid[])
                   AND dc.search_vector IS NOT NULL
-                  AND dc.search_vector @@ to_tsquery('english', $3)
+                  AND dc.search_vector @@ websearch_to_tsquery('english', $3)
                 LIMIT $4
             ),
 
