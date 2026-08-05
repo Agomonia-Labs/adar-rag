@@ -33,7 +33,7 @@ DOCUMENT_TYPES = [
     # Correspondence
     "email", "letter", "notice",
     # General
-    "general",
+    "video", "general",
 ]
 
 DOMAINS = ["legal", "finance", "hr", "medical", "research", "operations", "general"]
@@ -52,6 +52,7 @@ HEURISTIC_RULES = [
     ("property_tax", "finance", ("property tax statement", "property tax bill", "real estate tax", "parcel number", "assessed value", "taxable value")),
     ("charitable_receipt", "finance", ("donation receipt", "charitable contribution receipt", "thank you for your donation", "donation contribution", "monetary donation", "cash donation", "no goods or services", "ein")),
     ("tax_return", "finance", ("prior year tax return", "previous year tax return", "federal tax return", "state tax return", "u.s. individual income tax return", "form 1040", "1040-sr", "schedule a", "adjusted gross income", "taxable income")),
+    ("video", "general", ("video file uploaded", "video intelligence workflow", ".mp4", ".mov", ".mkv", ".webm")),
     ("nda", "legal", ("non-disclosure", "confidentiality agreement", "nda")),
     ("lease_extension", "legal", ("lease extension", "extension agreement", "extend the term")),
     ("lease_amendment", "legal", ("lease amendment", "amendment to lease", "first amendment", "second amendment")),
@@ -317,6 +318,13 @@ def _should_prefer_heuristic_doc_type(doc_type: str, heuristic_doc_type: str) ->
 
 def _heuristic_classification(filename: str, sample: str) -> dict | None:
     raw_haystack = f"{filename}\n{sample}".lower()
+    if _looks_like_video(raw_haystack):
+        return {
+            "doc_type": "video",
+            "doc_domain": "general",
+            "confidence": 0.9,
+            "reasoning": "Matched supported video file or video workflow signals",
+        }
     if _has_explicit_tax_return_marker(raw_haystack):
         return {
             "doc_type": "tax_return",
@@ -409,6 +417,10 @@ def _heuristic_classification(filename: str, sample: str) -> dict | None:
         "confidence": 0.75,
         "reasoning": f"Matched document signal: {keyword}",
     }
+
+
+def _looks_like_video(haystack: str) -> bool:
+    return bool(re.search(r"\.(mp4|mov|m4v|avi|mkv|webm)\b", haystack or "", re.I)) or "video file uploaded" in (haystack or "")
 
 
 def _looks_like_w2(haystack: str) -> bool:

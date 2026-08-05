@@ -134,6 +134,7 @@ _ROUTERS = [
     ("routes.lease",          "lease_router",          "/api/lease",         ["lease"]),
     ("routes.healthcare",     "healthcare_router",     "/api/healthcare",    ["healthcare"]),
     ("routes.finance_tax",    "finance_tax_router",    "/api/finance-tax",   ["finance-tax"]),
+    ("routes.video",          "video_router",          "/api/video",         ["video"]),
     ("routes.restaurant",     "restaurant_router",     "/api/restaurant",    ["restaurant"]),
     ("routes.agent_evals",    "agent_evals_router",    "/api/agent-evals",   ["agent-evals"]),
 ]

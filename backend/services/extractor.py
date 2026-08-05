@@ -15,6 +15,8 @@ SCANNED_THRESHOLD = 200      # chars below which we treat a PDF as scanned
 # ── Public entry point ────────────────────────────────────────────────────────
 async def extract_text(file_path: str, filename: str, content_type: str) -> str:
     ftype = detect_type(filename, content_type)
+    if ftype == "video":
+        return "Video file uploaded. Use the Video Intelligence workflow to extract timeline, transcript, frames, and searchable events."
     if ftype == "pdf":
         return await _extract_pdf(file_path)
     if ftype == "docx":
@@ -31,6 +33,8 @@ def detect_type(filename: str, content_type: str = "") -> str:
     if ext == "pdf" or "pdf" in content_type:               return "pdf"
     if ext == "docx" or "wordprocessingml" in content_type: return "docx"
     if ext == "csv"  or "text/csv" in content_type:         return "csv"
+    if content_type.startswith("video/") or ext in {"mp4","mov","m4v","avi","mkv","webm"}:
+        return "video"
     if content_type.startswith("image/") or ext in {"png","jpg","jpeg","gif","webp","tiff","bmp"}:
         return "image"
     return "text"

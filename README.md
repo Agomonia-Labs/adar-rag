@@ -285,6 +285,34 @@ Finance design principles:
 - AI-assisted reasoning supports planning gaps, advisor questions, review summaries, and narrative readiness explanations.
 - Human review is required before tax filing, financial planning, investment, insurance, legal, or estate decisions.
 
+### Video Intelligence
+
+Video workflows turn uploaded video files into searchable timeline intelligence.
+
+Features:
+
+- Upload MP4, MOV, M4V, AVI, MKV, or WEBM files through the existing Documents flow.
+- Classify uploaded media as `video`.
+- Process video with `ffprobe` metadata extraction.
+- Sample bounded frames with `ffmpeg`.
+- Optionally caption sampled frames with the existing vision extraction provider.
+- Optionally transcribe audio when OpenAI audio transcription is configured.
+- Create timestamped timeline segments.
+- Store sampled frames, timeline chunks, and metadata in GCS and PostgreSQL.
+- Embed generated video chunks into the existing pgvector/RAG layer.
+- Ask questions against the processed video and receive timestamp-aware source citations.
+
+Video workflow sequence:
+
+1. Upload a supported video file.
+2. Open Video Intelligence from the Verticals menu.
+3. Select the uploaded video.
+4. Confirm rights to process the video.
+5. Choose max sampled frames and segment duration.
+6. Process the video.
+7. Review processing status, timeline segments, sampled frames, and captions.
+8. Ask questions against the processed video.
+
 ### Restaurant Menu Scribe and Carryout Orders
 
 The restaurant vertical turns restaurant/menu conversations into searchable menu intelligence and carryout ordering workflows.
@@ -402,6 +430,7 @@ flowchart TB
 | `backend/routes/lease.py` | Lease vertical APIs |
 | `backend/routes/healthcare.py` | Healthcare vertical APIs |
 | `backend/routes/finance_tax.py` | Finance/tax readiness APIs, packet approval, advisor PDF generation |
+| `backend/routes/video.py` | Video processing, timeline, frame preview, and video Q&A APIs |
 | `backend/routes/restaurant.py` | Restaurant vertical APIs, menu, order, owner queue |
 | `backend/routes/traces.py` | Trace inspection APIs |
 | `backend/routes/agent_evals.py` | Agent workflow evaluation APIs |
@@ -409,6 +438,7 @@ flowchart TB
 | `backend/routes/workspaces.py` | Workspace membership and RBAC |
 | `backend/services/llm.py` | Gemini/OpenAI calls, embeddings, streaming generation |
 | `backend/services/vectordb.py` | pgvector storage and hybrid retrieval |
+| `backend/services/video_intelligence.py` | Video metadata extraction, frame sampling, transcript/caption handling, timeline chunk generation |
 | `backend/services/adk_workflow.py` | Generic configurable multi-agent workflow runner |
 | `backend/services/*_intelligence.py` | Domain-specific intelligence and normalization logic |
 | `backend/services/tracing.py` | Trace, span, and LLM event persistence |
@@ -426,6 +456,7 @@ flowchart TB
 | `LeasePanel.jsx` | Lease abstraction, agent workflow, approval, display |
 | `HealthcarePanel.jsx` | Healthcare clinical, scribe, prior auth, AVS workflows |
 | `FinanceTaxPanel.jsx` | Tax organizer, financial planning readiness, advisor questions, packet approval, advisor PDF download |
+| `VideoPanel.jsx` | Video Intelligence selection, processing, timeline, sampled frames, and timestamp-aware Q&A |
 | `RestaurantPanel.jsx` | Restaurant scribe, menu editing, compare menus, carryout orders |
 | `WorkspacesTab.jsx` | Workspace membership and switching |
 | `UsagePanel.jsx` | Tier and usage visibility |
@@ -513,6 +544,7 @@ Authorization: Bearer <jwt_token>
 | Lease | `/api/lease` | Lease vertical workflows |
 | Healthcare | `/api/healthcare` | Healthcare workflows |
 | Finance/tax | `/api/finance-tax` | Tax and financial planning readiness workflow, approval, advisor packet PDF |
+| Video | `/api/video` | Video document listing, processing, timeline, frame previews, and video Q&A |
 | Restaurant | `/api/restaurant` | Restaurant scribe, menu, compare, recommendations, carryout orders, customer feedback |
 | Admin | `/api/admin` | Admin-only users/documents/platform views |
 
@@ -523,6 +555,7 @@ Authorization: Bearer <jwt_token>
 - Docker and Docker Compose
 - Node.js 18+ if running frontend outside Docker
 - Python 3.12+ if running backend outside Docker
+- `ffmpeg` and `ffprobe` for video processing. The backend Dockerfile installs `ffmpeg`; local non-Docker development should install it separately.
 - Google AI Studio API key for Gemini
 - Google Cloud Storage bucket or compatible local service account setup
 
@@ -643,6 +676,17 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 7. Approve or update the reviewed packet.
 8. Generate the Advisor Packet PDF.
 9. Use the generated packet for human advisor review, client follow-up, and planning readiness discussion.
+
+### Video Workflow
+
+1. Upload an MP4, MOV, M4V, AVI, MKV, or WEBM file from Documents.
+2. Open Video Intelligence from the Verticals menu.
+3. Select the uploaded video.
+4. Confirm rights to process the media.
+5. Choose max sampled frames and segment duration.
+6. Process the video and optionally embed generated timeline chunks.
+7. Review metadata, timeline segments, sampled frames, and generated captions.
+8. Ask timestamp-aware questions against the processed video.
 
 ### Restaurant Workflow
 

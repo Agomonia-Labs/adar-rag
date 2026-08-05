@@ -88,6 +88,39 @@ export async function deleteDocument(docId) {
   return handleRes(await fetch(`${BASE}/documents/${docId}`, { method:'DELETE', headers:authHdr() }));
 }
 
+// ── Video Intelligence ───────────────────────────────────────────────────────
+export async function listVideoDocuments() {
+  return handleRes(await fetch(`${BASE}/video/documents`, { headers: authHdr() }));
+}
+
+export async function processVideoDocument(docId, options = {}) {
+  return handleRes(await fetch(`${LONG_BASE}/video/${docId}/process`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body: JSON.stringify(options),
+  }));
+}
+
+export async function getVideoStatus(docId) {
+  return handleRes(await fetch(`${BASE}/video/${docId}/status`, { headers: authHdr() }));
+}
+
+export async function getVideoTimeline(docId) {
+  return handleRes(await fetch(`${BASE}/video/${docId}/timeline`, { headers: authHdr() }));
+}
+
+export async function getVideoFrameUrl(docId, frameIndex) {
+  return handleRes(await fetch(`${BASE}/video/${docId}/frames/${frameIndex}/view-url`, { headers: authHdr() }));
+}
+
+export async function askVideoQuestion(docId, question, limit = 8) {
+  return handleRes(await fetch(`${LONG_BASE}/video/${docId}/ask`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body: JSON.stringify({ question, limit }),
+  }));
+}
+
 // ── Chat ──────────────────────────────────────────────────────────────────────
 export async function streamChat({ question, documentIds, document_ids, history, workspaceId = null, traceId = null, redactPii = false }, { onToken, onDone, onError }) {
   const docIds = documentIds || document_ids;  // accept both forms

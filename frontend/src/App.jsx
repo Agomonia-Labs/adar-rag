@@ -10,6 +10,7 @@ import AdminDashboard  from './components/AdminDashboard.jsx';
 import HealthcarePanel from './components/HealthcarePanel.jsx';
 import FinanceTaxPanel from './components/FinanceTaxPanel.jsx';
 import RestaurantPanel from './components/RestaurantPanel.jsx';
+import VideoPanel from './components/VideoPanel.jsx';
 import { ToastContainer } from './components/Toast.jsx';
 import { getMe, getWorkspace }       from './services/api.js';
 import { LANGUAGES, getLanguage, getStrings } from './i18n.js';
@@ -26,6 +27,7 @@ export default function App() {
   const [showNewVisit,     setShowNewVisit]     = useState(false);
   const [showFinanceTaxPanel, setShowFinanceTaxPanel] = useState(false);
   const [showRestaurantPanel, setShowRestaurantPanel] = useState(false);
+  const [showVideoPanel, setShowVideoPanel] = useState(false);
   const [openLeasePickerKey, setOpenLeasePickerKey] = useState(0);
   const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0);
   const [activeWorkspace,  setActiveWorkspace]  = useState(null);
@@ -173,6 +175,11 @@ export default function App() {
     setShowFinanceTaxPanel(true);
   };
 
+  const openVideoWorkflow = () => {
+    closeMenus();
+    setShowVideoPanel(true);
+  };
+
   return (
     <>
       <ToastContainer />
@@ -200,6 +207,11 @@ export default function App() {
         <FinanceTaxPanel
           activeWorkspace={activeWorkspace}
           onClose={() => setShowFinanceTaxPanel(false)}
+        />
+      )}
+      {showVideoPanel && (
+        <VideoPanel
+          onClose={() => setShowVideoPanel(false)}
         />
       )}
       <div style={s.shell}>
@@ -294,6 +306,15 @@ export default function App() {
                       onClick={openFinanceTaxWorkflow}>
                       <span>💼</span>
                       <span>Tax & Financial Planning Readiness</span>
+                    </button>
+                  </div>
+                  <div style={s.verticalGroup}>
+                    <div style={s.verticalGroupTitle}>Video Intelligence</div>
+                    <button
+                      style={s.verticalItem}
+                      onClick={openVideoWorkflow}>
+                      <span>🎬</span>
+                      <span>Video Timeline & Q&A</span>
                     </button>
                   </div>
                   <div style={s.verticalGroup}>
@@ -393,6 +414,10 @@ export default function App() {
                 <button type="button" style={s.menuItem} onClick={openFinanceTaxWorkflow}>
                   <span>💼</span>
                   <span>Finance & Tax · Tax & Financial Planning Readiness</span>
+                </button>
+                <button type="button" style={s.menuItem} onClick={openVideoWorkflow}>
+                  <span>🎬</span>
+                  <span>Video Intelligence · Timeline & Q&A</span>
                 </button>
                 <button type="button" style={s.menuItem} onClick={openRestaurantWorkflow}>
                   <span>🍽</span>
