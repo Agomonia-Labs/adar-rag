@@ -27,7 +27,16 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [tabSaveNotice, setTabSaveNotice] = useState('');
+  const [openSections, setOpenSections] = useState({
+    setup: true,
+    documents: true,
+  });
   const isMobile = useIsMobile();
+
+  useEffect(() => {
+    if (!isMobile) return;
+    setOpenSections(prev => ({ ...prev, setup: false, documents: false }));
+  }, [isMobile]);
 
   useEffect(() => {
     let alive = true;
@@ -140,11 +149,18 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
       });
       setRun(data);
       setActiveTab('overview');
+      if (isMobile) {
+        setOpenSections(prev => ({ ...prev, setup: false, documents: false }));
+      }
     } catch (e) {
       setError(e.message);
     } finally {
       setLoading(false);
     }
+  };
+
+  const toggleSection = key => {
+    setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
   const patchPacket = (path, value) => {
@@ -320,14 +336,14 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
   ];
 
   return (
-    <div style={s.overlay}>
-      <div style={{...s.panel, ...(isMobile ? s.panelMobile : {})}}>
-        <header style={{...s.header, ...(isMobile ? s.headerMobile : {})}}>
+    <div className="finance-tax-overlay" style={s.overlay}>
+      <div className="finance-tax-panel" style={{...s.panel, ...(isMobile ? s.panelMobile : {})}}>
+        <header className="finance-tax-header" style={{...s.header, ...(isMobile ? s.headerMobile : {})}}>
           <div>
             <div style={s.kicker}>DocIntel Finance</div>
             <h2 style={s.title}>Tax & Financial Planning Readiness</h2>
           </div>
-          <div style={{...s.headerActions, ...(isMobile ? s.headerActionsMobile : {})}}>
+          <div className="finance-tax-desktop-actions" style={s.headerActions}>
             <div style={s.docCount}>{selected.length} selected · {docs.length} ready</div>
             <button type="button" style={s.secondary} onClick={() => setSelected(docs.map(d => d.id))}>Select all</button>
             <button type="button" style={s.secondary} onClick={() => setSelected([])}>Clear</button>
@@ -335,50 +351,84 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
               {loading ? 'Running...' : 'Run readiness workflow'}
             </button>
           </div>
+          <button className="finance-tax-mobile-run" type="button" style={s.mobileRun} disabled={loading || !selected.length} onClick={startRun}>
+            {loading ? 'Running...' : 'Run'}
+          </button>
           <button type="button" style={s.close} onClick={onClose}>X</button>
         </header>
 
-        <div style={{...s.setup, ...(isMobile ? s.setupMobile : {})}}>
-          <label style={s.field}>Client name<input value={clientName} onChange={e=>setClientName(e.target.value)} placeholder="Avery Morgan" /></label>
-          <label style={s.field}>Tax year<input value={taxYear} onChange={e=>setTaxYear(e.target.value)} placeholder="2025" /></label>
-          <label style={s.field}>Filing status
-            <select value={filingStatus} onChange={e=>setFilingStatus(e.target.value)}>
-              <option value="">Needs review</option>
-              <option>Single</option>
-              <option>Married filing jointly</option>
-              <option>Married filing separately</option>
-              <option>Head of household</option>
-              <option>Qualifying surviving spouse</option>
-            </select>
-          </label>
-          <label style={{...s.field, ...(isMobile ? {gridColumn:'1 / -1'} : {})}}>Reviewer notes<input value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Client expects W-2, 1099, mortgage interest..." /></label>
-        </div>
+        <section className="finance-tax-setup-section" style={s.collapsibleBand}>
+          <button type="button" style={s.collapseHead} onClick={() => toggleSection('setup')}>
+            <span style={s.collapseTitle}>Client / Tax Setup</span>
+            <span style={s.collapseMeta}>{taxYear || 'Tax year'} · {filingStatus || 'Needs review'}</span>
+            <span style={s.collapseIcon}>{openSections.setup ? '−' : '+'}</span>
+          </button>
+          {openSections.setup && (
+            <div className="finance-tax-setup-content" style={s.setupContent}>
+              <div className="finance-tax-setup-grid" style={{...s.setup, ...(isMobile ? s.setupMobile : {})}}>
+                <label style={s.field}>Client name<ExpandableTextField value={clientName} onChange={setClientName} placeholder="Avery Morgan" title="Client name" /></label>
+                <label style={s.field}>Tax year<ExpandableTextField value={taxYear} onChange={setTaxYear} placeholder="2025" title="Tax year" /></label>
+                <label style={s.field}>Filing status
+                  <select value={filingStatus} onChange={e=>setFilingStatus(e.target.value)}>
+                    <option value="">Needs review</option>
+                    <option>Single</option>
+                    <option>Married filing jointly</option>
+                    <option>Married filing separately</option>
+                    <option>Head of household</option>
+                    <option>Qualifying surviving spouse</option>
+                  </select>
+                </label>
+                <label style={{...s.field, ...(isMobile ? {gridColumn:'1 / -1'} : {})}}>Reviewer notes<ExpandableTextField value={notes} onChange={setNotes} placeholder="Client expects W-2, 1099, mortgage interest..." title="Reviewer notes" /></label>
+              </div>
+            </div>
+          )}
+        </section>
 
         {error && <div style={s.error}>{error}</div>}
         {notice && <div style={s.success}>{notice}</div>}
         {tabSaveNotice && <div style={s.success}>{tabSaveNotice}</div>}
 
-        <div style={{...s.body, ...(isMobile ? s.bodyMobile : {})}}>
-          <aside style={{...s.docPane, ...(isMobile ? s.docPaneMobile : {})}}>
-            <div style={s.sectionTitle}>Ready Documents</div>
-            <div style={s.docList}>
-              {docs.map(doc => (
-                <label key={doc.id} style={{...s.docCard, ...(selected.includes(doc.id) ? s.docCardActive : {})}}>
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(doc.id)}
-                    onChange={e => setSelected(prev => e.target.checked ? [...prev, doc.id] : prev.filter(id => id !== doc.id))}
-                  />
-                  <span style={s.docName}>{doc.original_name || doc.filename}</span>
-                  <span style={s.docMeta}>{doc.doc_type || 'document'} · {doc.status}</span>
-                </label>
-              ))}
-              {!docs.length && <div style={s.empty}>No chunked or embedded documents are ready yet.</div>}
-            </div>
+        <div className="finance-tax-body" style={{...s.body, ...(isMobile ? s.bodyMobile : {})}}>
+          <aside className="finance-tax-doc-pane" style={{...s.docPane, ...(isMobile ? s.docPaneMobile : {})}}>
+            <button type="button" style={s.collapseHead} onClick={() => toggleSection('documents')}>
+              <span style={s.collapseTitle}>Ready Documents</span>
+              <span style={s.collapseMeta}>{selected.length}/{docs.length}</span>
+              <span style={s.collapseIcon}>{openSections.documents ? '−' : '+'}</span>
+            </button>
+            {openSections.documents && (
+              <div className="finance-tax-doc-list" style={s.docList}>
+                <div className="finance-tax-doc-actions" style={s.docActions}>
+                  <button type="button" style={s.secondary} onClick={() => setSelected(docs.map(d => d.id))}>Select all</button>
+                  <button type="button" style={s.secondary} onClick={() => setSelected([])}>Clear</button>
+                </div>
+                {docs.map(doc => (
+                  <label key={doc.id} style={{...s.docCard, ...(selected.includes(doc.id) ? s.docCardActive : {})}}>
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(doc.id)}
+                      onChange={e => setSelected(prev => e.target.checked ? [...prev, doc.id] : prev.filter(id => id !== doc.id))}
+                    />
+                    <span style={s.docName}>{doc.original_name || doc.filename}</span>
+                    <span style={s.docMeta}>{doc.doc_type || 'document'} · {doc.status}</span>
+                  </label>
+                ))}
+                {!docs.length && <div style={s.empty}>No chunked or embedded documents are ready yet.</div>}
+              </div>
+            )}
           </aside>
 
-          <main style={s.resultPane}>
-            <div style={s.tabs}>
+          <main className="finance-tax-result-pane" style={s.resultPane}>
+            <select
+              className="finance-tax-mobile-tab-select"
+              value={activeTab}
+              onChange={e => setActiveTab(e.target.value)}
+              style={s.mobileTabSelect}
+            >
+              {tabs.map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </select>
+            <div className="finance-tax-tabs" style={s.tabs}>
               {tabs.map(([key, label]) => (
                 <button key={key} type="button" style={activeTab === key ? s.tabActive : s.tab} onClick={() => setActiveTab(key)}>{label}</button>
               ))}
@@ -453,7 +503,19 @@ export default function FinanceTaxPanel({ activeWorkspace = null, onClose }) {
                     review_flags: organizerReviewFlags,
                   })}
                 />
-                <div style={s.subtabs}>
+                <select
+                  className="finance-tax-mobile-organizer-select"
+                  value={activeOrganizerTab}
+                  onChange={e => setActiveOrganizerTab(e.target.value)}
+                  style={s.mobileTabSelect}
+                >
+                  {organizerTabs.map(tab => (
+                    <option key={tab.key} value={tab.key}>
+                      {tab.label} ({tab.count})
+                    </option>
+                  ))}
+                </select>
+                <div className="finance-tax-organizer-subtabs" style={s.subtabs}>
                   {organizerTabs.map(tab => (
                     <button
                       key={tab.key}
@@ -584,7 +646,99 @@ function Metric({ label, value, tone = 'blue' }) {
 }
 
 function TextBlock({ title, text }) {
-  return <section style={s.card}><div style={s.sectionTitle}>{title}</div><p style={s.text}>{text || 'Nothing generated yet.'}</p></section>;
+  const [open, setOpen] = useState(true);
+  return (
+    <section style={s.card}>
+      <button type="button" style={s.sectionToggle} onClick={() => setOpen(v => !v)}>
+        <span style={s.sectionTitle}>{title}</span>
+        <span style={s.collapseIcon}>{open ? '−' : '+'}</span>
+      </button>
+      {open && <p style={s.text}>{text || 'Nothing generated yet.'}</p>}
+    </section>
+  );
+}
+
+function ExpandableTextField({
+  value,
+  onChange,
+  placeholder = 'Value',
+  title = 'Edit text',
+  multiline = false,
+  rows = 5,
+  style = null,
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [draft, setDraft] = useState(value ?? '');
+
+  useEffect(() => {
+    if (!expanded) setDraft(value ?? '');
+  }, [value, expanded]);
+
+  const openEditor = event => {
+    event?.preventDefault?.();
+    setDraft(value ?? '');
+    setExpanded(true);
+  };
+
+  const saveEditor = () => {
+    onChange?.(draft);
+    setExpanded(false);
+  };
+
+  const closeEditor = () => {
+    setDraft(value ?? '');
+    setExpanded(false);
+  };
+
+  const control = multiline ? (
+    <textarea
+      style={style || s.largeTextInput}
+      value={value ?? ''}
+      rows={rows}
+      placeholder={placeholder}
+      readOnly
+      onClick={openEditor}
+      onFocus={openEditor}
+    />
+  ) : (
+    <input
+      style={style || s.valueInput}
+      type="text"
+      value={value ?? ''}
+      placeholder={placeholder}
+      readOnly
+      onClick={openEditor}
+      onFocus={openEditor}
+    />
+  );
+
+  return (
+    <>
+      {control}
+      {expanded && (
+        <div style={s.popupBackdrop} role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}>
+          <div style={s.popupPanel} onClick={event => event.stopPropagation()}>
+            <div style={s.popupHeader}>
+              <div style={s.popupTitle}>{title}</div>
+              <button type="button" style={s.popupClose} onClick={closeEditor} aria-label="Close editor">x</button>
+            </div>
+            <textarea
+              style={s.popupEditor}
+              value={draft}
+              rows={10}
+              placeholder={placeholder}
+              onChange={event => setDraft(event.target.value)}
+              autoFocus
+            />
+            <div style={s.popupActions}>
+              <button type="button" style={s.secondary} onClick={closeEditor}>Cancel</button>
+              <button type="button" style={s.primary} onClick={saveEditor}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
 
 function TabSaveBar({ label, onSave }) {
@@ -666,33 +820,42 @@ function canonicalFormValue(value) {
 }
 
 function Rows({ title, rows, basePath = null, rowIndices = null, onPatch = null, onDelete = null }) {
+  const [open, setOpen] = useState(true);
   const data = Array.isArray(rows) ? rows : [];
   const hasBasePath = Array.isArray(basePath);
   const canDelete = Boolean(hasBasePath && onDelete);
   return (
     <section style={s.card}>
-      <div style={s.sectionTitle}>{title}</div>
-      {!data.length && <div style={s.empty}>None found.</div>}
-      <div style={s.rows}>
-        {data.map((row, i) => (
-          <div key={i} style={s.rowCard}>
-            {canDelete && (
-              <div style={s.recordActions}>
-                <button type="button" style={s.recordDelete} onClick={() => onDelete([...basePath, rowIndices?.[i] ?? i])}>Delete record</button>
-              </div>
-            )}
-            {Object.entries(flattenRow(row)).map(([key, value]) => (
-              <div key={key} style={isStructuredList(value) ? s.rowFieldWide : s.rowField}>
-                <span style={s.rowKey}>{key.replaceAll('_',' ')}</span>
-                {renderValue(value, {
-                  path: hasBasePath ? [...basePath, rowIndices?.[i] ?? i, key] : null,
-                  onPatch,
-                })}
+      <button type="button" style={s.sectionToggle} onClick={() => setOpen(v => !v)}>
+        <span style={s.sectionTitle}>{title}</span>
+        <span style={s.sectionCount}>{data.length}</span>
+        <span style={s.collapseIcon}>{open ? '−' : '+'}</span>
+      </button>
+      {open && (
+        <>
+          {!data.length && <div style={s.empty}>None found.</div>}
+          <div style={s.rows}>
+            {data.map((row, i) => (
+              <div key={i} style={s.rowCard}>
+                {canDelete && (
+                  <div style={s.recordActions}>
+                    <button type="button" style={s.recordDelete} onClick={() => onDelete([...basePath, rowIndices?.[i] ?? i])}>Delete record</button>
+                  </div>
+                )}
+                {Object.entries(flattenRow(row)).map(([key, value]) => (
+                  <div key={key} style={isStructuredList(value) ? s.rowFieldWide : s.rowField}>
+                    <span style={s.rowKey}>{key.replaceAll('_',' ')}</span>
+                    {renderValue(value, {
+                      path: hasBasePath ? [...basePath, rowIndices?.[i] ?? i, key] : null,
+                      onPatch,
+                    })}
+                  </div>
+                ))}
               </div>
             ))}
           </div>
-        ))}
-      </div>
+        </>
+      )}
     </section>
   );
 }
@@ -756,13 +919,23 @@ function renderValue(value, options = {}) {
   if (editable) {
     const fieldName = String(options.path?.[options.path.length - 1] || '');
     const isAmountField = /amount|total|balance|value|liabilit|asset|inflow|outflow/i.test(fieldName);
+    if (!isAmountField) {
+      return (
+        <ExpandableTextField
+          value={value ?? ''}
+          placeholder="Value"
+          title={fieldName.replaceAll('_', ' ') || 'Edit value'}
+          onChange={next => options.onPatch?.(options.path, next)}
+        />
+      );
+    }
     return (
       <input
-        style={isAmountField ? s.amountInputValue : s.valueInput}
-        type={isAmountField ? 'number' : 'text'}
-        step={isAmountField ? '0.01' : undefined}
+        style={s.amountInputValue}
+        type="number"
+        step="0.01"
         value={value ?? ''}
-        placeholder={isAmountField ? '0.00' : 'Value'}
+        placeholder="0.00"
         onChange={e => options.onPatch?.(options.path, e.target.value)}
       />
     );
@@ -792,11 +965,12 @@ function AmountList({ amounts, editable = false, onChange = null }) {
         <div key={index} style={s.amountRow}>
           {editable ? (
             <>
-              <input
+              <ExpandableTextField
                 style={s.amountInputLabel}
                 value={item.label || ''}
                 placeholder="Label"
-                onChange={e => updateAmount(index, 'label', e.target.value)}
+                title="Amount label"
+                onChange={next => updateAmount(index, 'label', next)}
               />
               <input
                 style={s.amountInputValue}
@@ -843,17 +1017,19 @@ function ValueList({ values, editable = false, onChange = null }) {
         <div key={index} style={s.valueRow}>
           {editable ? (
             <>
-              <input
+              <ExpandableTextField
                 style={s.amountInputLabel}
                 value={item.label || ''}
                 placeholder="Label"
-                onChange={e => updateValue(index, 'label', e.target.value)}
+                title="Value label"
+                onChange={next => updateValue(index, 'label', next)}
               />
-              <input
+              <ExpandableTextField
                 style={s.valueInput}
                 value={item.value ?? ''}
                 placeholder="Value"
-                onChange={e => updateValue(index, 'value', e.target.value)}
+                title="Value"
+                onChange={next => updateValue(index, 'value', next)}
               />
               <button type="button" style={s.amountRemove} onClick={() => removeValue(index)}>Remove</button>
             </>
@@ -1183,28 +1359,36 @@ function AdvisorQuestionsWorkspace({ questions, onSave = null }) {
           <div style={s.advisorEditor}>
             <label style={s.editorFieldWide}>
               <span style={s.rowKey}>Question</span>
-              <textarea
+              <ExpandableTextField
                 style={s.largeTextInput}
                 value={selectedQuestion.question || ''}
+                multiline
                 rows={6}
-                onChange={e => patchSelectedQuestion('question', e.target.value)}
+                title="Advisor question"
+                placeholder="Question"
+                onChange={next => patchSelectedQuestion('question', next)}
               />
             </label>
             <label style={s.editorFieldWide}>
               <span style={s.rowKey}>Reason</span>
-              <textarea
+              <ExpandableTextField
                 style={s.largeTextInput}
                 value={selectedQuestion.reason || ''}
+                multiline
                 rows={4}
-                onChange={e => patchSelectedQuestion('reason', e.target.value)}
+                title="Advisor question reason"
+                placeholder="Reason"
+                onChange={next => patchSelectedQuestion('reason', next)}
               />
             </label>
             <label style={s.editorField}>
               <span style={s.rowKey}>Category</span>
-              <input
+              <ExpandableTextField
                 style={s.valueInput}
                 value={selectedQuestion.category || ''}
-                onChange={e => patchSelectedQuestion('category', e.target.value)}
+                title="Question category"
+                placeholder="Category"
+                onChange={next => patchSelectedQuestion('category', next)}
               />
             </label>
             <label style={s.editorField}>
@@ -1938,16 +2122,23 @@ function isFinanceTaxDoc(doc) {
 const s = {
   overlay:{position:'fixed',inset:0,background:'rgba(0,0,0,.62)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center',padding:10},
   panel:{width:'min(1240px,100%)',height:'min(94dvh,960px)',background:'#0f1f0f',border:'1px solid rgba(74,222,128,.18)',borderRadius:12,boxShadow:'0 28px 80px rgba(0,0,0,.55)',display:'flex',flexDirection:'column',overflow:'hidden'},
-  panelMobile:{height:'98dvh',borderRadius:10},
+  panelMobile:{height:'100dvh',borderRadius:0,width:'100%',borderLeft:0,borderRight:0},
   header:{display:'grid',gridTemplateColumns:'minmax(180px,1fr) auto 34px',alignItems:'center',gap:10,padding:'10px 12px',borderBottom:'1px solid rgba(74,222,128,.12)',background:'rgba(74,222,128,.04)'},
-  headerMobile:{gridTemplateColumns:'1fr 30px',padding:'8px 10px'},
+  headerMobile:{gridTemplateColumns:'minmax(0,1fr) auto 30px',padding:'8px 8px',gap:7},
   headerActions:{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:7,flexWrap:'wrap'},
   headerActionsMobile:{gridColumn:'1 / -1',justifyContent:'flex-start',gap:6},
   kicker:{fontSize:10,color:'#4ade80',textTransform:'uppercase',letterSpacing:'.7px',fontWeight:900},
   title:{margin:'1px 0 0',fontSize:18,color:'var(--tx)',lineHeight:1.15},
   close:{width:30,height:30,borderRadius:8,border:'1px solid var(--b2)',background:'var(--s2)',color:'var(--tx)',cursor:'pointer',fontWeight:900},
-  setup:{display:'grid',gridTemplateColumns:'1.1fr .55fr .8fr 1.4fr',gap:8,padding:'8px 10px',borderBottom:'1px solid rgba(255,255,255,.06)'},
-  setupMobile:{gridTemplateColumns:'1fr 1fr',padding:8,gap:7},
+  mobileRun:{display:'none',border:'none',borderRadius:8,background:'#15803d',color:'#fff',padding:'7px 10px',fontSize:12,fontWeight:900,cursor:'pointer',whiteSpace:'nowrap'},
+  collapsibleBand:{borderBottom:'1px solid rgba(255,255,255,.06)',background:'rgba(255,255,255,.015)',flexShrink:0},
+  collapseHead:{width:'100%',minHeight:38,border:0,background:'rgba(74,222,128,.055)',color:'var(--tx)',display:'grid',gridTemplateColumns:'minmax(0,1fr) auto 26px',alignItems:'center',gap:8,padding:'7px 10px',cursor:'pointer',textAlign:'left'},
+  collapseTitle:{minWidth:0,fontSize:12.5,fontWeight:950,color:'var(--tx)',letterSpacing:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},
+  collapseMeta:{fontSize:11,color:'var(--muted2)',fontWeight:850,whiteSpace:'nowrap'},
+  collapseIcon:{width:24,height:24,borderRadius:7,border:'1px solid rgba(74,222,128,.22)',background:'rgba(74,222,128,.08)',color:'#86efac',display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:17,fontWeight:950,lineHeight:1},
+  setupContent:{display:'grid',gap:8,padding:'8px 10px 10px'},
+  setup:{display:'grid',gridTemplateColumns:'1.1fr .55fr .8fr 1.4fr',gap:8,padding:0,borderBottom:0},
+  setupMobile:{gridTemplateColumns:'1fr 1fr',padding:0,gap:7},
   field:{display:'flex',flexDirection:'column',gap:3,fontSize:10,color:'var(--muted2)',fontWeight:800,textTransform:'uppercase',letterSpacing:'.35px'},
   docCount:{fontSize:11.5,color:'var(--muted2)',whiteSpace:'nowrap'},
   primary:{border:'none',borderRadius:8,background:'#15803d',color:'#fff',padding:'7px 10px',fontSize:12,fontWeight:900,cursor:'pointer'},
@@ -1955,13 +2146,15 @@ const s = {
   body:{flex:1,minHeight:0,display:'grid',gridTemplateColumns:'280px 1fr'},
   bodyMobile:{display:'flex',flexDirection:'column'},
   docPane:{minHeight:0,borderRight:'1px solid rgba(255,255,255,.07)',padding:9,overflow:'auto'},
-  docPaneMobile:{maxHeight:'18dvh',borderRight:'none',borderBottom:'1px solid rgba(255,255,255,.07)'},
-  docList:{display:'flex',flexDirection:'column',gap:5},
+  docPaneMobile:{maxHeight:'24dvh',borderRight:'none',borderBottom:'1px solid rgba(255,255,255,.07)',padding:0,overflow:'hidden',flex:'0 0 auto'},
+  docList:{display:'flex',flexDirection:'column',gap:5,marginTop:8},
+  docActions:{display:'flex',gap:6,flexWrap:'wrap',padding:'0 0 4px'},
   docCard:{display:'grid',gridTemplateColumns:'16px 1fr',gap:7,padding:'7px 8px',border:'1px solid var(--b2)',borderRadius:8,background:'var(--s2)',cursor:'pointer'},
   docCardActive:{borderColor:'rgba(74,222,128,.45)',background:'rgba(74,222,128,.1)'},
   docName:{fontSize:12,color:'var(--tx)',fontWeight:800,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},
   docMeta:{gridColumn:'2',fontSize:10.5,color:'var(--muted2)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},
   resultPane:{minHeight:0,overflow:'auto',padding:'9px 12px 14px'},
+  mobileTabSelect:{display:'none',width:'100%',boxSizing:'border-box',border:'1px solid rgba(74,222,128,.26)',borderRadius:8,background:'var(--s2)',color:'var(--tx)',padding:'9px 10px',fontSize:13,fontWeight:850,marginBottom:8},
   tabs:{position:'sticky',top:0,zIndex:2,display:'flex',gap:5,flexWrap:'wrap',margin:'-9px -12px 10px',padding:'8px 12px',background:'#0f1f0f',borderBottom:'1px solid rgba(255,255,255,.06)'},
   tab:{border:'1px solid var(--b2)',background:'var(--s2)',color:'var(--tx2)',borderRadius:8,padding:'6px 8px',fontSize:11.5,fontWeight:800,cursor:'pointer'},
   tabActive:{border:'1px solid rgba(74,222,128,.42)',background:'rgba(74,222,128,.13)',color:'#4ade80',borderRadius:8,padding:'6px 8px',fontSize:11.5,fontWeight:900,cursor:'pointer'},
@@ -1977,6 +2170,8 @@ const s = {
   tabSaveBar:{gridColumn:'1 / -1',display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,flexWrap:'wrap',background:'rgba(74,222,128,.06)',border:'1px solid rgba(74,222,128,.16)',borderRadius:8,padding:12,minWidth:0},
   cardHeader:{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:10,marginBottom:10,flexWrap:'wrap'},
   sectionTitle:{fontSize:12,fontWeight:900,color:'var(--tx)',marginBottom:8},
+  sectionToggle:{width:'100%',border:0,background:'transparent',color:'var(--tx)',display:'grid',gridTemplateColumns:'minmax(0,1fr) auto 26px',alignItems:'center',gap:8,padding:0,margin:'0 0 8px',cursor:'pointer',textAlign:'left'},
+  sectionCount:{fontSize:10.5,color:'var(--muted2)',fontWeight:900},
   helpText:{margin:'-4px 0 0',color:'var(--muted2)',fontSize:12,lineHeight:1.45},
   inlineNotice:{margin:'7px 0 0',color:'#bbf7d0',fontSize:12,fontWeight:800,lineHeight:1.45},
   text:{fontSize:13,color:'var(--tx2)',lineHeight:1.65,margin:0,whiteSpace:'pre-wrap'},
@@ -2007,6 +2202,13 @@ const s = {
   editorField:{minWidth:0,display:'flex',flexDirection:'column',gap:5},
   editorFieldWide:{gridColumn:'1 / -1',minWidth:0,display:'flex',flexDirection:'column',gap:5},
   largeTextInput:{minWidth:0,width:'100%',boxSizing:'border-box',border:'1px solid rgba(255,255,255,.14)',borderRadius:8,background:'rgba(0,0,0,.18)',color:'#bfdbfe',padding:'9px 10px',fontSize:13,fontWeight:750,lineHeight:1.5,resize:'vertical'},
+  popupBackdrop:{position:'fixed',inset:0,zIndex:2600,background:'rgba(0,0,0,.72)',display:'flex',alignItems:'center',justifyContent:'center',padding:12},
+  popupPanel:{width:'min(720px,100%)',maxHeight:'min(82dvh,720px)',display:'flex',flexDirection:'column',gap:10,border:'1px solid rgba(74,222,128,.22)',borderRadius:10,background:'#0f1f0f',boxShadow:'0 24px 70px rgba(0,0,0,.58)',padding:12,overflow:'hidden'},
+  popupHeader:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10},
+  popupTitle:{minWidth:0,color:'var(--tx)',fontSize:14,fontWeight:950,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textTransform:'capitalize'},
+  popupClose:{width:34,height:34,borderRadius:8,border:'1px solid var(--b2)',background:'var(--s2)',color:'var(--tx)',cursor:'pointer',fontWeight:950},
+  popupEditor:{width:'100%',boxSizing:'border-box',flex:'1 1 auto',minHeight:220,border:'1px solid rgba(255,255,255,.16)',borderRadius:8,background:'rgba(0,0,0,.2)',color:'#bfdbfe',padding:'11px 12px',fontSize:14,lineHeight:1.55,fontWeight:750,resize:'none',overflow:'auto'},
+  popupActions:{display:'flex',justifyContent:'flex-end',gap:8,flexWrap:'wrap'},
   questionList:{display:'grid',gap:8},
   questionCard:{display:'grid',gridTemplateColumns:'minmax(0,1fr) auto',gap:8,alignItems:'center',padding:8,borderRadius:8,background:'rgba(0,0,0,.16)',border:'1px solid rgba(255,255,255,.06)'},
   questionCardActive:{borderColor:'rgba(74,222,128,.38)',background:'rgba(74,222,128,.08)'},
@@ -2024,3 +2226,58 @@ const s = {
   empty:{fontSize:12,color:'var(--muted2)',lineHeight:1.5},
   emptyBig:{padding:28,textAlign:'center',color:'var(--muted2)',border:'1px dashed var(--b2)',borderRadius:10,background:'rgba(255,255,255,.03)'},
 };
+
+if (typeof window !== 'undefined') {
+  const style = document.createElement('style');
+  style.textContent = `
+    @media (max-width: 760px) {
+      .finance-tax-overlay { align-items: stretch !important; justify-content: stretch !important; padding: 0 !important; }
+      .finance-tax-panel { height: 100dvh !important; max-height: 100dvh !important; border-radius: 0 !important; }
+      .finance-tax-header h2 { font-size: 15px !important; line-height: 1.15 !important; }
+      .finance-tax-header { flex: 0 0 auto !important; }
+      .finance-tax-desktop-actions { display: none !important; }
+      .finance-tax-mobile-run { display: inline-flex !important; align-items: center !important; justify-content: center !important; min-height: 34px !important; }
+      .finance-tax-setup-section { flex: 0 0 auto !important; }
+      .finance-tax-setup-content { padding: 7px 8px 8px !important; gap: 7px !important; }
+      .finance-tax-setup-grid input,
+      .finance-tax-setup-grid select {
+        min-height: 38px !important;
+        font-size: 13px !important;
+      }
+      .finance-tax-body { flex: 1 1 auto !important; min-height: 0 !important; overflow: hidden !important; }
+      .finance-tax-doc-pane { max-height: 24dvh !important; overflow: hidden !important; }
+      .finance-tax-doc-list { max-height: calc(24dvh - 42px) !important; overflow-y: auto !important; padding: 0 8px 8px !important; -webkit-overflow-scrolling: touch !important; }
+      .finance-tax-result-pane { flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important; padding: 8px 8px 14px !important; -webkit-overflow-scrolling: touch !important; }
+      .finance-tax-mobile-tab-select { display: block !important; position: sticky !important; top: 0 !important; z-index: 3 !important; }
+      .finance-tax-tabs {
+        display: none !important;
+      }
+      .finance-tax-mobile-organizer-select {
+        display: block !important;
+      }
+      .finance-tax-organizer-subtabs {
+        display: none !important;
+      }
+      .finance-tax-result-pane section,
+      .finance-tax-result-pane div[style*="border-radius: 8px"] {
+        max-width: 100% !important;
+      }
+      .finance-tax-result-pane input,
+      .finance-tax-result-pane select,
+      .finance-tax-result-pane textarea {
+        font-size: 14px !important;
+      }
+      .finance-tax-result-pane textarea {
+        min-height: 120px !important;
+      }
+    }
+    @media (max-width: 480px) {
+      .finance-tax-header h2 { font-size: 14px !important; }
+      .finance-tax-mobile-run { padding: 7px 9px !important; }
+    }
+  `;
+  if (!document.head.querySelector('style[data-finance-tax-panel]')) {
+    style.setAttribute('data-finance-tax-panel', 'true');
+    document.head.appendChild(style);
+  }
+}
