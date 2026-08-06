@@ -37,7 +37,14 @@ docker push "$IMAGE"
 docker push "$IMAGE_LATEST"
 echo "  ✓ Pushed: $IMAGE"
 
-# ── 4. Determine LLM provider ─────────────────────────────────────────────────
+# ── 4. Enable APIs needed by runtime features ─────────────────────────────────
+echo "▶ Ensuring required Google APIs are enabled..."
+gcloud services enable speech.googleapis.com \
+  --project="$PROJECT_ID" \
+  --quiet
+echo "  ✓ Speech-to-Text API enabled"
+
+# ── 5. Determine LLM provider ─────────────────────────────────────────────────
 LLM_PROVIDER=$(gcloud secrets versions access latest \
   --secret="docintel-llm-provider" \
   --project="$PROJECT_ID" 2>/dev/null || echo "gemini")
@@ -49,7 +56,7 @@ EMBEDDING_DIM=$(gcloud secrets versions access latest \
 echo "  LLM provider : $LLM_PROVIDER"
 echo "  Embedding dim: $EMBEDDING_DIM"
 
-# ── 5. Build secrets flags ────────────────────────────────────────────────────
+# ── 6. Build secrets flags ────────────────────────────────────────────────────
 # All secrets use :latest so Cloud Run always reads the newest version
 SECRETS=(
   "JWT_SECRET_KEY=docintel-jwt-secret:latest"
@@ -60,6 +67,17 @@ SECRETS=(
 
 if [[ "$LLM_PROVIDER" == "openai" ]]; then
   SECRETS+=("OPENAI_API_KEY=docintel-openai-key:latest")
+fi
+
+# Google Speech-to-Text for video transcript extraction.
+# Recommended: store a key restricted to speech.googleapis.com as docintel-google-speech-key.
+# Fallback: if this secret is absent, video transcription can still try GOOGLE_AI_KEY,
+# but that key must be allowed to call speech.googleapis.com.
+if gcloud secrets describe docintel-google-speech-key --project="$PROJECT_ID" &>/dev/null; then
+  SECRETS+=("GOOGLE_SPEECH_API_KEY=docintel-google-speech-key:latest")
+  echo "  Video STT    : enabled (docintel-google-speech-key)"
+else
+  echo "  Video STT    : ⚠ docintel-google-speech-key not found; GOOGLE_AI_KEY fallback will be used"
 fi
 
 # Gmail SMTP — add only if both secrets exist in Secret Manager
@@ -100,7 +118,7 @@ for s in "${SECRETS[@]}"; do
   SECRETS_FLAGS="$SECRETS_FLAGS --set-secrets=$s"
 done
 
-# ── 6. Deploy to Cloud Run ────────────────────────────────────────────────────
+# ── 7. Deploy to Cloud Run ────────────────────────────────────────────────────
 echo "▶ Deploying to Cloud Run..."
 
 gcloud run deploy "$SERVICE_NAME" \
@@ -113,9 +131,9 @@ gcloud run deploy "$SERVICE_NAME" \
   --allow-unauthenticated \
   --min-instances=1 \
   --max-instances=10 \
-  --memory=1Gi \
-  --cpu=1 \
-  --timeout=300s \
+  --memory=2Gi \
+  --cpu=2 \
+  --timeout=3600s \
   --concurrency=80 \
   --cpu-boost \
   --set-env-vars="LLM_PROVIDER=$LLM_PROVIDER" \
@@ -129,6 +147,14 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="TOP_K=6" \
   --set-env-vars="MAX_UPLOAD_FILES=500" \
   --set-env-vars="MAX_FILE_SIZE_MB=50" \
+  --set-env-vars="VIDEO_TRANSCRIBE_AUDIO_ENABLED=true" \
+  --set-env-vars="VIDEO_TRANSCRIBE_PROVIDER=google_speech" \
+  --set-env-vars="VIDEO_TRANSCRIBE_LANGUAGE_CODE=en-US" \
+  --set-env-vars="VIDEO_TRANSCRIBE_CHUNK_SECONDS=55" \
+  --set-env-vars="GOOGLE_SPEECH_MODEL=latest_long" \
+  --set-env-vars="VIDEO_MAX_FRAMES=12" \
+  --set-env-vars="VIDEO_SEGMENT_SECONDS=60" \
+  --set-env-vars="VIDEO_FRAME_CAPTION_ENABLED=true" \
   --set-env-vars="JWT_ALGORITHM=HS256" \
   --set-env-vars="JWT_ACCESS_TOKEN_EXPIRE_MINUTES=480" \
   --set-env-vars="GCS_SIGNED_URL_EXPIRY_SECONDS=3600" \
@@ -141,7 +167,7 @@ gcloud run deploy "$SERVICE_NAME" \
   $SECRETS_FLAGS \
   --quiet
 
-# ── 7. Get service URL ────────────────────────────────────────────────────────
+# ── 8. Get service URL ────────────────────────────────────────────────────────
 SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
   --region="$REGION" \
   --project="$PROJECT_ID" \
@@ -154,7 +180,7 @@ echo "╚═══════════════════════�
 echo "  URL   : $SERVICE_URL"
 echo ""
 
-# ── 8. Health check ───────────────────────────────────────────────────────────
+# ── 9. Health check ───────────────────────────────────────────────────────────
 echo "▶ Running health check..."
 sleep 3
 HEALTH=$(curl -sf "$SERVICE_URL/api/health" 2>/dev/null || echo "unreachable")

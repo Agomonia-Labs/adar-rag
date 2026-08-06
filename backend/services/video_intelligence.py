@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import math
@@ -24,6 +25,7 @@ DEFAULT_MAX_FRAMES = int(os.getenv("VIDEO_MAX_FRAMES", "12"))
 DEFAULT_SEGMENT_SECONDS = int(os.getenv("VIDEO_SEGMENT_SECONDS", "60"))
 FRAME_CAPTION_ENABLED = os.getenv("VIDEO_FRAME_CAPTION_ENABLED", "true").lower() != "false"
 TRANSCRIBE_AUDIO_ENABLED = os.getenv("VIDEO_TRANSCRIBE_AUDIO_ENABLED", "true").lower() != "false"
+TRANSCRIBE_CHUNK_SECONDS = int(os.getenv("VIDEO_TRANSCRIBE_CHUNK_SECONDS", "55"))
 
 
 def is_video_file(filename: str = "", file_type: str = "", content_type: str = "") -> bool:
@@ -390,9 +392,19 @@ async def _caption_frame(path: str, timestamp: float) -> str:
 
 
 async def _transcribe_audio(path: str) -> str:
-    if os.getenv("LLM_PROVIDER", "openai").lower() != "openai":
-        return ""
+    provider = os.getenv("VIDEO_TRANSCRIBE_PROVIDER") or os.getenv("LLM_PROVIDER", "openai")
+    provider = provider.lower().strip()
+    if provider == "openai":
+        return await _transcribe_audio_openai(path)
+    if provider in {"gemini", "google", "google_speech", "speech", "vertex"}:
+        return await _transcribe_audio_google_speech(path)
+    log.warning("Audio transcription skipped: unsupported provider %s", provider)
+    return ""
+
+
+async def _transcribe_audio_openai(path: str) -> str:
     if not os.getenv("OPENAI_API_KEY"):
+        log.warning("Audio transcription skipped: OPENAI_API_KEY is not configured")
         return ""
     _require_binary("ffmpeg")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
@@ -421,6 +433,107 @@ async def _transcribe_audio(path: str) -> str:
             os.unlink(tmp.name)
         except OSError:
             pass
+
+
+async def _transcribe_audio_google_speech(path: str) -> str:
+    api_key = (
+        os.getenv("GOOGLE_SPEECH_API_KEY")
+        or os.getenv("GOOGLE_STT_API_KEY")
+        or os.getenv("GOOGLE_AI_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+    )
+    if not api_key:
+        log.warning("Audio transcription skipped: GOOGLE_SPEECH_API_KEY or GOOGLE_AI_KEY is not configured")
+        return ""
+
+    _require_binary("ffmpeg")
+    duration = _probe_video(path).get("duration_seconds") or 0
+    chunk_seconds = max(15, min(55, TRANSCRIBE_CHUNK_SECONDS))
+    starts = [0.0] if duration <= 0 else [float(s) for s in range(0, int(math.ceil(duration)), chunk_seconds)]
+    language_code = os.getenv("VIDEO_TRANSCRIBE_LANGUAGE_CODE", "en-US")
+    transcripts: list[str] = []
+
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=90) as client:
+            for start in starts:
+                length = chunk_seconds if duration <= 0 else min(chunk_seconds, max(1.0, duration - start))
+                if length <= 0:
+                    continue
+                chunk_path = await asyncio.to_thread(_extract_audio_chunk, path, start, length)
+                try:
+                    text = await _google_speech_recognize(client, api_key, chunk_path, language_code)
+                finally:
+                    try:
+                        os.unlink(chunk_path)
+                    except OSError:
+                        pass
+                text = sanitize_text_for_storage(text).strip()
+                if text:
+                    end = start + length
+                    transcripts.append(f"[{_fmt_time(start)}-{_fmt_time(end)}] {text}")
+        return "\n".join(transcripts)
+    except Exception as exc:
+        log.warning("Google audio transcription skipped: %s", exc)
+        return ""
+
+
+def _extract_audio_chunk(path: str, start: float, length: float) -> str:
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".flac")
+    tmp.close()
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-ss",
+            str(max(0, start)),
+            "-t",
+            str(max(1, length)),
+            "-i",
+            path,
+            "-vn",
+            "-acodec",
+            "flac",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            tmp.name,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=True,
+    )
+    return tmp.name
+
+
+async def _google_speech_recognize(client: Any, api_key: str, audio_path: str, language_code: str) -> str:
+    with open(audio_path, "rb") as f:
+        audio_b64 = base64.b64encode(f.read()).decode()
+    payload = {
+        "config": {
+            "encoding": "FLAC",
+            "sampleRateHertz": 16000,
+            "languageCode": language_code,
+            "enableAutomaticPunctuation": True,
+            "model": os.getenv("GOOGLE_SPEECH_MODEL", "latest_long"),
+        },
+        "audio": {"content": audio_b64},
+    }
+    resp = await client.post(
+        "https://speech.googleapis.com/v1/speech:recognize",
+        params={"key": api_key},
+        json=payload,
+    )
+    if not resp.is_success:
+        raise RuntimeError(f"Google Speech error {resp.status_code}: {resp.text[:300]}")
+    parts: list[str] = []
+    for result in resp.json().get("results", []):
+        alternatives = result.get("alternatives") or []
+        if alternatives:
+            parts.append(alternatives[0].get("transcript", ""))
+    return " ".join(p for p in parts if p).strip()
 
 
 def _build_segments(duration: float, segment_seconds: int, transcript: str, frames: list[dict]) -> list[dict]:
