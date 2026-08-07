@@ -34,6 +34,8 @@ VIDEO_FRAME_CONCURRENCY = int(os.getenv("VIDEO_FRAME_CONCURRENCY", "4"))
 VIDEO_EMBED_CONCURRENCY = int(os.getenv("VIDEO_EMBED_CONCURRENCY", "4"))
 VIDEO_SOURCE_READ_URL_EXPIRY_SECONDS = int(os.getenv("VIDEO_SOURCE_READ_URL_EXPIRY_SECONDS", os.getenv("GCS_SIGNED_URL_EXPIRY_SECONDS", "21600")))
 FFMPEG_REMOTE_TIMEOUT_US = int(os.getenv("FFMPEG_REMOTE_TIMEOUT_US", "30000000"))
+VIDEO_REMOTE_STAGE_RETRIES = int(os.getenv("VIDEO_REMOTE_STAGE_RETRIES", "3"))
+VIDEO_REMOTE_RETRY_DELAY_SECONDS = float(os.getenv("VIDEO_REMOTE_RETRY_DELAY_SECONDS", "3"))
 
 
 def is_video_file(filename: str = "", file_type: str = "", content_type: str = "") -> bool:
@@ -99,11 +101,7 @@ async def process_video_document(
             progress_pct=8,
             message="Creating signed read URL for remote video processing.",
         )
-        source_ref = await gcs.get_signed_read_url(
-            source_gcs_path,
-            expiry_seconds=VIDEO_SOURCE_READ_URL_EXPIRY_SECONDS,
-        )
-        await asyncio.to_thread(_assert_remote_source_readable, source_ref)
+        source_ref = await _create_signed_source_ref(source_gcs_path)
 
         await _update_video_progress(
             document_id,
@@ -112,10 +110,18 @@ async def process_video_document(
             message="Reading duration, codec, resolution, and audio metadata.",
         )
         try:
-            metadata = await asyncio.to_thread(_probe_video, source_ref)
+            metadata, source_ref = await _run_remote_stage_with_retries(
+                document_id=document_id,
+                source_gcs_path=source_gcs_path,
+                source_ref=source_ref,
+                stage_name="extracting_metadata",
+                progress_pct=16,
+                message="Retrying remote metadata extraction with a fresh signed URL.",
+                run_stage=lambda ref: asyncio.to_thread(_probe_video, ref),
+            )
         except Exception as exc:
             log.warning(
-                "Remote ffprobe failed for document %s; falling back to streaming temp file: %s",
+                "Remote ffprobe failed after retries for document %s; falling back to streaming temp file: %s",
                 document_id,
                 exc,
             )
@@ -125,6 +131,7 @@ async def process_video_document(
                 progress_pct=18,
                 message="Remote video probe failed; using streaming fallback for this file.",
             )
+            source_ref = await _create_signed_source_ref(source_gcs_path)
             local_source_path = await asyncio.to_thread(_download_signed_url_to_temp_file, source_ref, filename)
             source_ref = local_source_path
             metadata = await asyncio.to_thread(_probe_video, source_ref)
@@ -195,17 +202,46 @@ async def process_video_document(
             progress_pct=26,
             message="Extracting and transcribing the video audio." if TRANSCRIBE_AUDIO_ENABLED else "Audio transcription is disabled.",
         )
-        transcript = await _transcribe_audio(
-            source_ref,
-            document_id=document_id,
-        ) if TRANSCRIBE_AUDIO_ENABLED else ""
+        if TRANSCRIBE_AUDIO_ENABLED and _is_remote_ref(source_ref):
+            transcript, source_ref = await _run_remote_stage_with_retries(
+                document_id=document_id,
+                source_gcs_path=source_gcs_path,
+                source_ref=source_ref,
+                stage_name="transcribing_audio",
+                progress_pct=26,
+                message="Retrying remote audio transcription with a fresh signed URL.",
+                run_stage=lambda ref: _transcribe_audio(ref, document_id=document_id),
+            )
+        else:
+            transcript = await _transcribe_audio(
+                source_ref,
+                document_id=document_id,
+            ) if TRANSCRIBE_AUDIO_ENABLED else ""
         await _update_video_progress(
             document_id,
             step="sampling_frames",
             progress_pct=45,
             message="Sampling representative frames from the video timeline.",
         )
-        frame_paths = await asyncio.to_thread(_sample_frames, source_ref, duration, max_frames)
+        try:
+            frame_paths, source_ref = await _run_remote_stage_with_retries(
+                document_id=document_id,
+                source_gcs_path=source_gcs_path,
+                source_ref=source_ref,
+                stage_name="sampling_frames",
+                progress_pct=45,
+                message="Retrying remote frame sampling with a fresh signed URL.",
+                run_stage=lambda ref: asyncio.to_thread(_sample_frames, ref, duration, max_frames),
+            )
+        except Exception as exc:
+            log.warning("Frame sampling skipped after signed URL retries for document %s: %s", document_id, exc)
+            await _update_video_progress(
+                document_id,
+                step="sampling_frames_skipped",
+                progress_pct=45,
+                message="Frame sampling failed after retries; continuing with transcript and timeline chunks.",
+            )
+            frame_paths = []
         frames = await _process_frames_parallel(
             document_id=document_id,
             frames_dir=frames_dir,
@@ -445,6 +481,61 @@ def _phase_pct(start_pct: int, end_pct: int, completed: int, total: int) -> int:
     return int(round(start_pct + (end_pct - start_pct) * ratio))
 
 
+def _is_remote_ref(source: str | None) -> bool:
+    return bool(source and str(source).startswith(("http://", "https://")))
+
+
+async def _create_signed_source_ref(source_gcs_path: str) -> str:
+    source_ref = await gcs.get_signed_read_url(
+        source_gcs_path,
+        expiry_seconds=VIDEO_SOURCE_READ_URL_EXPIRY_SECONDS,
+    )
+    await asyncio.to_thread(_assert_remote_source_readable, source_ref)
+    return source_ref
+
+
+async def _run_remote_stage_with_retries(
+    *,
+    document_id: str,
+    source_gcs_path: str,
+    source_ref: str,
+    stage_name: str,
+    progress_pct: int,
+    message: str,
+    run_stage: Any,
+) -> tuple[Any, str]:
+    current_source_ref = source_ref
+    attempts = max(1, VIDEO_REMOTE_STAGE_RETRIES)
+    last_exc: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            return await run_stage(current_source_ref), current_source_ref
+        except Exception as exc:
+            last_exc = exc
+            if not _is_remote_ref(current_source_ref) or attempt >= attempts:
+                break
+            log.warning(
+                "Video stage %s failed on attempt %s/%s for document %s; refreshing signed URL: %s",
+                stage_name,
+                attempt,
+                attempts,
+                document_id,
+                exc,
+            )
+            await _update_video_progress(
+                document_id,
+                step=f"{stage_name}_retry",
+                progress_pct=progress_pct,
+                message=f"{message} Attempt {attempt + 1} of {attempts}.",
+            )
+            if VIDEO_REMOTE_RETRY_DELAY_SECONDS > 0:
+                await asyncio.sleep(VIDEO_REMOTE_RETRY_DELAY_SECONDS)
+            current_source_ref = await _create_signed_source_ref(source_gcs_path)
+
+    raise RuntimeError(f"{stage_name} failed after {attempts} attempt(s): {last_exc}")
+
+
 def _safe_unlink(path: str | None, *, label: str = "temporary file") -> None:
     if not path:
         return
@@ -520,6 +611,15 @@ def _check_output_text(cmd: list[str]) -> str:
     return completed.stdout
 
 
+def _run_command(cmd: list[str]) -> None:
+    completed = subprocess.run(cmd, text=True, capture_output=True)
+    if completed.returncode != 0:
+        stderr = (completed.stderr or "").strip()
+        stdout = (completed.stdout or "").strip()
+        detail = stderr or stdout or f"exit code {completed.returncode}"
+        raise RuntimeError(detail[:2000])
+
+
 def _probe_video(path: str) -> dict[str, Any]:
     _require_binary("ffprobe")
     cmd = [
@@ -566,7 +666,7 @@ def _sample_frames(path: str, duration: float, max_frames: int) -> list[tuple[in
     for idx, timestamp in enumerate(timestamps):
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
         tmp.close()
-        cmd = [
+        fast_seek_cmd = [
             "ffmpeg",
             "-y",
             "-ss",
@@ -580,8 +680,33 @@ def _sample_frames(path: str, duration: float, max_frames: int) -> list[tuple[in
             "3",
             tmp.name,
         ]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        compatible_seek_cmd = [
+            "ffmpeg",
+            "-y",
+            *(_ffmpeg_remote_input_options(path)),
+            "-i",
+            path,
+            "-ss",
+            str(timestamp),
+            "-frames:v",
+            "1",
+            "-q:v",
+            "3",
+            tmp.name,
+        ]
+        try:
+            _run_command(fast_seek_cmd)
+        except Exception as fast_exc:
+            log.warning("Fast frame seek failed at %.2fs; retrying compatible seek: %s", timestamp, fast_exc)
+            try:
+                _run_command(compatible_seek_cmd)
+            except Exception as compat_exc:
+                _safe_unlink(tmp.name, label="failed sampled frame")
+                log.warning("Frame sampling skipped at %.2fs: %s", timestamp, compat_exc)
+                continue
         frames.append((idx, timestamp, tmp.name))
+    if timestamps and not frames:
+        raise RuntimeError("No video frames could be sampled")
     return frames
 
 

@@ -160,6 +160,8 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="VIDEO_FRAME_CAPTION_ENABLED=true" \
   --set-env-vars="VIDEO_SOURCE_READ_URL_EXPIRY_SECONDS=21600" \
   --set-env-vars="FFMPEG_REMOTE_TIMEOUT_US=30000000" \
+  --set-env-vars="VIDEO_REMOTE_STAGE_RETRIES=3" \
+  --set-env-vars="VIDEO_REMOTE_RETRY_DELAY_SECONDS=3" \
   --set-env-vars="JWT_ALGORITHM=HS256" \
   --set-env-vars="JWT_ACCESS_TOKEN_EXPIRE_MINUTES=480" \
   --set-env-vars="GCS_SIGNED_URL_EXPIRY_SECONDS=3600" \
