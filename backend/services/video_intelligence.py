@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -36,6 +37,7 @@ VIDEO_SOURCE_READ_URL_EXPIRY_SECONDS = int(os.getenv("VIDEO_SOURCE_READ_URL_EXPI
 FFMPEG_REMOTE_TIMEOUT_US = int(os.getenv("FFMPEG_REMOTE_TIMEOUT_US", "30000000"))
 VIDEO_REMOTE_STAGE_RETRIES = int(os.getenv("VIDEO_REMOTE_STAGE_RETRIES", "3"))
 VIDEO_REMOTE_RETRY_DELAY_SECONDS = float(os.getenv("VIDEO_REMOTE_RETRY_DELAY_SECONDS", "3"))
+FFMPEG_COMMAND_TIMEOUT_SECONDS = int(os.getenv("FFMPEG_COMMAND_TIMEOUT_SECONDS", "180"))
 
 
 def is_video_file(filename: str = "", file_type: str = "", content_type: str = "") -> bool:
@@ -602,7 +604,7 @@ def _download_signed_url_to_temp_file(url: str, filename: str) -> str:
 
 
 def _check_output_text(cmd: list[str]) -> str:
-    completed = subprocess.run(cmd, text=True, capture_output=True)
+    completed = subprocess.run(cmd, text=True, capture_output=True, timeout=FFMPEG_COMMAND_TIMEOUT_SECONDS)
     if completed.returncode != 0:
         stderr = (completed.stderr or "").strip()
         stdout = (completed.stdout or "").strip()
@@ -612,7 +614,7 @@ def _check_output_text(cmd: list[str]) -> str:
 
 
 def _run_command(cmd: list[str]) -> None:
-    completed = subprocess.run(cmd, text=True, capture_output=True)
+    completed = subprocess.run(cmd, text=True, capture_output=True, timeout=FFMPEG_COMMAND_TIMEOUT_SECONDS)
     if completed.returncode != 0:
         stderr = (completed.stderr or "").strip()
         stdout = (completed.stdout or "").strip()
@@ -659,8 +661,21 @@ def _sample_frames(path: str, duration: float, max_frames: int) -> list[tuple[in
         timestamps = [0.5]
     else:
         count = max(1, min(max_frames, max(1, math.ceil(duration / DEFAULT_SEGMENT_SECONDS))))
-        step = duration / (count + 1)
-        timestamps = [max(0.1, round(step * (i + 1), 2)) for i in range(count)]
+        early = [1.0, min(30.0, duration * 0.05), min(90.0, duration * 0.1)]
+        early = [t for t in early if 0 < t < duration]
+        remaining = max(0, count - len(early))
+        if remaining:
+            start = max(120.0, duration * 0.15)
+            if start >= duration:
+                spread = [duration * (i + 1) / (remaining + 1) for i in range(remaining)]
+            elif remaining == 1:
+                spread = [min(duration - 0.1, start)]
+            else:
+                step = (duration - start) / (remaining - 1)
+                spread = [start + step * i for i in range(remaining)]
+        else:
+            spread = []
+        timestamps = sorted({max(0.1, min(duration - 0.1, round(t, 2))) for t in [*early, *spread]})
 
     frames = []
     for idx, timestamp in enumerate(timestamps):
@@ -811,26 +826,44 @@ async def _transcribe_audio_google_speech(path: str, *, document_id: str | None 
                         document_id,
                         step="transcribing_audio",
                         progress_pct=_phase_pct(26, 44, completed, total),
-                        message=f"Transcribing audio chunk {completed + 1} of {total}.",
+                        message=f"Extracting audio chunk {index + 1} of {total} ({_fmt_time(start)}-{_fmt_time(start + length)}).",
                     )
-                chunk_path = await asyncio.to_thread(_extract_audio_chunk, path, start, length)
+                chunk_path = ""
                 try:
+                    chunk_path = await asyncio.to_thread(_extract_audio_chunk, path, start, length)
+                    if document_id:
+                        await _update_video_progress(
+                            document_id,
+                            step="transcribing_audio",
+                            progress_pct=_phase_pct(26, 44, completed, total),
+                            message=f"Sending audio chunk {index + 1} of {total} to speech recognition.",
+                        )
                     text = await _google_speech_recognize(client, api_key, chunk_path, language_code)
+                    text = sanitize_text_for_storage(text).strip()
+                    if not text:
+                        return index, ""
+                    end = start + length
+                    return index, f"[{_fmt_time(start)}-{_fmt_time(end)}] {text}"
+                except Exception as exc:
+                    log.warning("Audio chunk %s/%s skipped at %.2fs: %s", index + 1, total, start, exc)
+                    if document_id:
+                        await _update_video_progress(
+                            document_id,
+                            step="transcribing_audio",
+                            progress_pct=_phase_pct(26, 44, completed, total),
+                            message=f"Skipped audio chunk {index + 1} of {total}: {str(exc)[:160]}",
+                        )
+                    return index, ""
                 finally:
                     _safe_unlink(chunk_path, label="audio transcript chunk temp file")
-                completed += 1
-                if document_id:
-                    await _update_video_progress(
-                        document_id,
-                        step="transcribing_audio",
-                        progress_pct=_phase_pct(26, 44, completed, total),
-                        message=f"Transcribed audio chunk {completed} of {total}.",
-                    )
-                text = sanitize_text_for_storage(text).strip()
-                if not text:
-                    return index, ""
-                end = start + length
-                return index, f"[{_fmt_time(start)}-{_fmt_time(end)}] {text}"
+                    completed += 1
+                    if document_id:
+                        await _update_video_progress(
+                            document_id,
+                            step="transcribing_audio",
+                            progress_pct=_phase_pct(26, 44, completed, total),
+                            message=f"Finished audio chunk {completed} of {total}.",
+                        )
 
         async with httpx.AsyncClient(timeout=90) as client:
             results = await asyncio.gather(*(transcribe_one(i, start, client) for i, start in enumerate(starts)))
@@ -887,31 +920,32 @@ async def _process_frames_parallel(
 def _extract_audio_chunk(path: str, start: float, length: float) -> str:
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".flac")
     tmp.close()
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-ss",
-            str(max(0, start)),
-            "-t",
-            str(max(1, length)),
-            *(_ffmpeg_remote_input_options(path)),
-            "-i",
-            path,
-            "-vn",
-            "-acodec",
-            "flac",
-            "-ar",
-            "16000",
-            "-ac",
-            "1",
-            tmp.name,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=True,
-    )
-    return tmp.name
+    try:
+        _run_command(
+            [
+                "ffmpeg",
+                "-y",
+                "-ss",
+                str(max(0, start)),
+                "-t",
+                str(max(1, length)),
+                *(_ffmpeg_remote_input_options(path)),
+                "-i",
+                path,
+                "-vn",
+                "-acodec",
+                "flac",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                tmp.name,
+            ]
+        )
+        return tmp.name
+    except Exception:
+        _safe_unlink(tmp.name, label="failed audio transcript chunk temp file")
+        raise
 
 
 async def _google_speech_recognize(client: Any, api_key: str, audio_path: str, language_code: str) -> str:
@@ -947,16 +981,18 @@ def _build_segments(duration: float, segment_seconds: int, transcript: str, fram
     if duration <= 0:
         duration = float(segment_seconds)
     count = max(1, math.ceil(duration / segment_seconds))
-    transcript_parts = _split_text_evenly(transcript, count)
+    transcript_entries = _parse_timestamped_transcript(transcript)
+    transcript_parts = _split_text_evenly(transcript, count) if not transcript_entries else [""] * count
     segments = []
     for idx in range(count):
         start = float(idx * segment_seconds)
         end = float(min(duration, (idx + 1) * segment_seconds))
+        transcript_text = _transcript_for_range(transcript_entries, start, end) if transcript_entries else transcript_parts[idx].strip()
         segment_frames = [f for f in frames if start <= float(f["timestamp_seconds"]) <= end]
         captions = [f.get("caption", "") for f in segment_frames if f.get("caption")]
         summary = " ".join(captions).strip()
-        if not summary and transcript_parts[idx].strip():
-            summary = transcript_parts[idx].strip()
+        if not summary and transcript_text:
+            summary = transcript_text
         if not summary:
             summary = f"Video segment from {_fmt_time(start)} to {_fmt_time(end)}."
         segments.append({
@@ -966,13 +1002,43 @@ def _build_segments(duration: float, segment_seconds: int, transcript: str, fram
             "segment_type": "timeline",
             "title": f"{_fmt_time(start)} - {_fmt_time(end)}",
             "summary": summary[:2500],
-            "transcript": transcript_parts[idx].strip(),
+            "transcript": transcript_text,
             "ocr_text": "",
             "thumbnail_path": segment_frames[0]["frame_path"] if segment_frames else None,
-            "confidence": 0.75 if summary else 0.4,
-            "metadata": {"frame_indices": [f["frame_index"] for f in segment_frames]},
+            "confidence": 0.85 if transcript_text or captions else 0.4,
+            "metadata": {
+                "frame_indices": [f["frame_index"] for f in segment_frames],
+                "transcript_entry_count": len(_transcript_entries_for_range(transcript_entries, start, end)) if transcript_entries else 0,
+            },
         })
     return segments
+
+
+def _parse_timestamped_transcript(transcript: str) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    pattern = re.compile(r"\[(?P<start>\d{1,2}:\d{2}(?::\d{2})?)-(?P<end>\d{1,2}:\d{2}(?::\d{2})?)\]\s*(?P<text>.*?)(?=\n\[\d{1,2}:\d{2}(?::\d{2})?-|\Z)", re.S)
+    for match in pattern.finditer(transcript or ""):
+        text = " ".join((match.group("text") or "").split()).strip()
+        if not text:
+            continue
+        start = _parse_timecode(match.group("start"))
+        end = _parse_timecode(match.group("end"))
+        if end < start:
+            end = start
+        entries.append({"start": start, "end": end, "text": text})
+    return entries
+
+
+def _transcript_entries_for_range(entries: list[dict[str, Any]], start: float, end: float) -> list[dict[str, Any]]:
+    return [
+        entry
+        for entry in entries
+        if float(entry.get("start") or 0) < end and float(entry.get("end") or 0) > start
+    ]
+
+
+def _transcript_for_range(entries: list[dict[str, Any]], start: float, end: float) -> str:
+    return " ".join(entry["text"] for entry in _transcript_entries_for_range(entries, start, end)).strip()
 
 
 def _build_video_chunks(document_id: str, user_id: str, filename: str, metadata: dict, segments: list[dict], frames: list[dict], transcript: str) -> list[dict]:
@@ -1252,3 +1318,12 @@ def _fmt_time(seconds: float | int | None) -> str:
     m = (total % 3600) // 60
     s = total % 60
     return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def _parse_timecode(value: str) -> float:
+    parts = [int(part or 0) for part in str(value or "0").split(":")]
+    if len(parts) == 3:
+        return float(parts[0] * 3600 + parts[1] * 60 + parts[2])
+    if len(parts) == 2:
+        return float(parts[0] * 60 + parts[1])
+    return float(parts[0] if parts else 0)
