@@ -211,6 +211,7 @@ export default function App() {
       )}
       {showVideoPanel && (
         <VideoPanel
+          activeWorkspace={activeWorkspace}
           onClose={() => setShowVideoPanel(false)}
         />
       )}

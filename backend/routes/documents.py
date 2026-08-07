@@ -270,31 +270,53 @@ async def trigger_embedding(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  Delete — removes GCS files + pgvector rows + DB record
+#  Delete — removes GCS files + pgvector rows + DB/video records
 # ══════════════════════════════════════════════════════════════════════════════
 @router.delete("/{doc_id}")
 async def delete_document(doc_id: str, current_user: CurrentUser, db=Depends(get_db)):
     row     = await _get_owned(doc_id, str(current_user["id"]), db)
     user_id = str(current_user["id"])
-    warnings = []
 
-    # Delete GCS files — non-fatal
+    # Delete GCS files first. If this fails, keep the DB row so the user can retry
+    # instead of leaving hidden storage artifacts behind.
     try:
         await gcs.delete_prefix(f"users/{user_id}/documents/{doc_id}/")
     except Exception as e:
-        warnings.append(f"GCS cleanup skipped: {e}")
         print(f"[delete] GCS warning for doc {doc_id}: {e}")
+        raise HTTPException(500, f"GCS cleanup failed for document {doc_id}: {e}")
 
-    # Delete pgvector rows — non-fatal
+    # Delete pgvector rows before the document row.
     try:
         await delete_document_vectors(doc_id)
     except Exception as e:
-        warnings.append(f"Vector cleanup skipped: {e}")
         print(f"[delete] Vector warning for doc {doc_id}: {e}")
+        raise HTTPException(500, f"Vector cleanup failed for document {doc_id}: {e}")
 
-    # Hard-delete from DB — always runs
-    await db.execute("DELETE FROM documents WHERE id = $1", doc_id)
-    return {"deleted": doc_id, "warnings": warnings}
+    # Explicitly remove video/workflow rows before deleting the document.
+    # Most tables also have ON DELETE CASCADE, but this keeps cleanup safe even
+    # when older deployments have partial constraints.
+    await _delete_document_database_rows(db, doc_id)
+    return {"deleted": doc_id, "hard_deleted": True}
+
+
+async def _delete_document_database_rows(db, doc_id: str) -> None:
+    async with db.transaction():
+        await db.execute(
+            """
+            UPDATE video_processing_jobs
+               SET status='cancelled', updated_at=NOW(), completed_at=COALESCE(completed_at, NOW())
+             WHERE document_id=$1 AND status IN ('queued','running','processing')
+            """,
+            doc_id,
+        )
+        await db.execute("DELETE FROM video_events WHERE document_id=$1", doc_id)
+        await db.execute("DELETE FROM video_transcript_chunks WHERE document_id=$1", doc_id)
+        await db.execute("DELETE FROM video_frames WHERE document_id=$1", doc_id)
+        await db.execute("DELETE FROM video_segments WHERE document_id=$1", doc_id)
+        await db.execute("DELETE FROM video_processing_jobs WHERE document_id=$1", doc_id)
+        await db.execute("DELETE FROM video_documents WHERE document_id=$1", doc_id)
+        await db.execute("DELETE FROM document_tag_map WHERE document_id=$1", doc_id)
+        await db.execute("DELETE FROM documents WHERE id=$1", doc_id)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

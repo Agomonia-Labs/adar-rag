@@ -106,7 +106,7 @@ async def list_all_documents(admin: AdminUser, db=Depends(get_db)):
 @router.delete("/documents/{doc_id}")
 async def admin_delete_document(doc_id: str, admin: AdminUser, db=Depends(get_db)):
     row = await db.fetchrow(
-        "SELECT user_id, gcs_source_path FROM documents WHERE id = $1 AND status != 'deleted'",
+        "SELECT user_id, gcs_source_path FROM documents WHERE id = $1",
         doc_id,
     )
     if not row:
@@ -115,8 +115,28 @@ async def admin_delete_document(doc_id: str, admin: AdminUser, db=Depends(get_db
     user_id = str(row["user_id"])
     await gcs.delete_prefix(f"users/{user_id}/documents/{doc_id}/")
     await delete_document_vectors(doc_id)
-    await db.execute("UPDATE documents SET status = 'deleted', updated_at = NOW() WHERE id = $1", doc_id)
-    return {"deleted": doc_id}
+    await _hard_delete_document_database_rows(db, doc_id)
+    return {"deleted": doc_id, "hard_deleted": True}
+
+
+async def _hard_delete_document_database_rows(db, doc_id: str) -> None:
+    async with db.transaction():
+        await db.execute(
+            """
+            UPDATE video_processing_jobs
+               SET status='cancelled', updated_at=NOW(), completed_at=COALESCE(completed_at, NOW())
+             WHERE document_id=$1 AND status IN ('queued','running','processing')
+            """,
+            doc_id,
+        )
+        await db.execute("DELETE FROM video_events WHERE document_id=$1", doc_id)
+        await db.execute("DELETE FROM video_transcript_chunks WHERE document_id=$1", doc_id)
+        await db.execute("DELETE FROM video_frames WHERE document_id=$1", doc_id)
+        await db.execute("DELETE FROM video_segments WHERE document_id=$1", doc_id)
+        await db.execute("DELETE FROM video_processing_jobs WHERE document_id=$1", doc_id)
+        await db.execute("DELETE FROM video_documents WHERE document_id=$1", doc_id)
+        await db.execute("DELETE FROM document_tag_map WHERE document_id=$1", doc_id)
+        await db.execute("DELETE FROM documents WHERE id=$1", doc_id)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

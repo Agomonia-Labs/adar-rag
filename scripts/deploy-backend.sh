@@ -131,7 +131,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --allow-unauthenticated \
   --min-instances=1 \
   --max-instances=10 \
-  --memory=2Gi \
+  --memory=4Gi \
   --cpu=2 \
   --timeout=3600s \
   --concurrency=80 \
@@ -151,10 +151,15 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="VIDEO_TRANSCRIBE_PROVIDER=google_speech" \
   --set-env-vars="VIDEO_TRANSCRIBE_LANGUAGE_CODE=en-US" \
   --set-env-vars="VIDEO_TRANSCRIBE_CHUNK_SECONDS=55" \
+  --set-env-vars="VIDEO_TRANSCRIBE_CONCURRENCY=3" \
+  --set-env-vars="VIDEO_FRAME_CONCURRENCY=4" \
+  --set-env-vars="VIDEO_EMBED_CONCURRENCY=4" \
   --set-env-vars="GOOGLE_SPEECH_MODEL=latest_long" \
   --set-env-vars="VIDEO_MAX_FRAMES=12" \
   --set-env-vars="VIDEO_SEGMENT_SECONDS=60" \
   --set-env-vars="VIDEO_FRAME_CAPTION_ENABLED=true" \
+  --set-env-vars="VIDEO_SOURCE_READ_URL_EXPIRY_SECONDS=21600" \
+  --set-env-vars="FFMPEG_REMOTE_TIMEOUT_US=30000000" \
   --set-env-vars="JWT_ALGORITHM=HS256" \
   --set-env-vars="JWT_ACCESS_TOKEN_EXPIRE_MINUTES=480" \
   --set-env-vars="GCS_SIGNED_URL_EXPIRY_SECONDS=3600" \

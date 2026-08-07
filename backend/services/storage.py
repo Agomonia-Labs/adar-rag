@@ -73,6 +73,12 @@ async def download_bytes(blob_path: str) -> bytes:
         return _make_client().bucket(GCS_BUCKET).blob(blob_path).download_as_bytes()
     return await asyncio.to_thread(_do)
 
+async def download_to_file(blob_path: str, local_path: str) -> None:
+    """Stream a GCS object to a local file path without materializing it in memory."""
+    def _do():
+        _make_client().bucket(GCS_BUCKET).blob(blob_path).download_to_filename(local_path)
+    await asyncio.to_thread(_do)
+
 
 # ── Signed URL ────────────────────────────────────────────────────────────────
 async def get_signed_upload_url(
@@ -119,6 +125,52 @@ async def get_signed_upload_url(
             method="PUT",
             version="v4",
             content_type=content_type,
+        )
+
+    return await asyncio.to_thread(_do)
+
+
+async def get_signed_read_url(
+    blob_path: str,
+    expiry_seconds: int = SIGNED_EXPIRY,
+) -> str:
+    """Generate a signed GET URL so video processors can stream from GCS."""
+    def _do():
+        if _IS_CLOUD_RUN:
+            import google.auth
+            from google.auth.transport import requests as google_requests
+
+            credentials, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+            credentials.refresh(google_requests.Request())
+            client = storage.Client(credentials=credentials)
+            blob = client.bucket(GCS_BUCKET).blob(blob_path)
+            return blob.generate_signed_url(
+                expiration=timedelta(seconds=expiry_seconds),
+                method="GET",
+                version="v4",
+                service_account_email=credentials.service_account_email,
+                access_token=credentials.token,
+            )
+
+        if KEY_JSON_STR:
+            creds = service_account.Credentials.from_service_account_info(
+                json.loads(KEY_JSON_STR)
+            )
+        elif KEY_PATH and os.path.exists(KEY_PATH):
+            creds = service_account.Credentials.from_service_account_file(KEY_PATH)
+        else:
+            raise RuntimeError(
+                "Signed read URLs require a service account key locally. "
+                "Set GCS_SERVICE_ACCOUNT_KEY_PATH or GCS_SERVICE_ACCOUNT_KEY_JSON."
+            )
+        client = storage.Client(credentials=creds)
+        blob = client.bucket(GCS_BUCKET).blob(blob_path)
+        return blob.generate_signed_url(
+            expiration=timedelta(seconds=expiry_seconds),
+            method="GET",
+            version="v4",
         )
 
     return await asyncio.to_thread(_do)

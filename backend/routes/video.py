@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from auth.dependencies import CurrentUser
@@ -194,23 +194,29 @@ async def complete_video_upload(
 
 
 @router.get("/documents")
-async def list_video_documents(current_user: CurrentUser, db=Depends(get_db)):
+async def list_video_documents(
+    current_user: CurrentUser,
+    workspace_id: Optional[str] = Query(default=None),
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    if workspace_id:
+        from routes.workspaces import _require_role
+        await _require_role(db, workspace_id, user_id, "viewer")
+
     rows = await db.fetch(
         """
         SELECT d.id, d.original_name, d.file_type, d.status, d.chunk_count,
-               d.error_message, d.doc_type, d.doc_domain, d.workspace_id,
+               d.error_message, d.doc_type, d.doc_domain, d.workspace_id, d.doc_metadata,
                vd.id AS video_id, vd.processing_status, vd.duration_seconds,
-               vd.width, vd.height, vd.frame_count, vd.updated_at AS video_updated_at
+               vd.width, vd.height, vd.frame_count, vd.updated_at AS video_updated_at,
+               vd.metadata AS video_metadata
         FROM documents d
         LEFT JOIN video_documents vd ON vd.document_id = d.id
         WHERE d.status != 'deleted'
           AND (
-            d.user_id = $1
-            OR EXISTS (
-              SELECT 1 FROM workspace_members wm
-               WHERE wm.workspace_id = d.workspace_id
-                 AND wm.user_id = $1
-            )
+            ($2::uuid IS NULL AND d.workspace_id IS NULL AND d.user_id = $1)
+            OR ($2::uuid IS NOT NULL AND d.workspace_id = $2::uuid)
           )
           AND (
             d.file_type = 'video'
@@ -219,7 +225,8 @@ async def list_video_documents(current_user: CurrentUser, db=Depends(get_db)):
           )
         ORDER BY d.created_at DESC
         """,
-        current_user["id"],
+        user_id,
+        workspace_id,
     )
     return [_video_doc_row(r) for r in rows]
 
@@ -262,16 +269,38 @@ async def video_status(doc_id: str, current_user: CurrentUser, db=Depends(get_db
     await _get_accessible_document(db, doc_id, str(current_user["id"]))
     row = await db.fetchrow(
         """
-        SELECT vd.*, d.status AS document_status, d.chunk_count, d.error_message AS document_error
-        FROM video_documents vd
-        JOIN documents d ON d.id = vd.document_id
-        WHERE vd.document_id = $1
+        SELECT
+               d.id AS document_id,
+               d.status AS document_status,
+               d.chunk_count,
+               d.error_message AS document_error,
+               d.doc_metadata AS document_metadata,
+               vd.id,
+               vd.processing_status,
+               vd.duration_seconds,
+               vd.fps,
+               vd.width,
+               vd.height,
+               vd.codec,
+               vd.audio_codec,
+               vd.bitrate,
+               vd.frame_count,
+               vd.error_message,
+               vd.metadata,
+               vd.updated_at
+        FROM documents d
+        LEFT JOIN video_documents vd ON vd.document_id = d.id
+        WHERE d.id = $1
         """,
         doc_id,
     )
     if not row:
         return {"doc_id": doc_id, "processing_status": "not_processed"}
-    return _jsonable(dict(row))
+    data = _with_video_progress(_jsonable(dict(row)))
+    data["doc_id"] = str(data.get("document_id") or doc_id)
+    if not data.get("processing_status"):
+        data["processing_status"] = data.get("progress_step") or "not_processed"
+    return data
 
 
 @router.get("/{doc_id}/timeline")
@@ -400,6 +429,22 @@ def _video_doc_row(row) -> dict:
     data["id"] = str(data["id"])
     data["workspace_id"] = str(data["workspace_id"]) if data.get("workspace_id") else None
     data["video_id"] = str(data["video_id"]) if data.get("video_id") else None
+    return _with_video_progress(data)
+
+
+def _with_video_progress(data: dict) -> dict:
+    video_meta = _parse_meta(data.get("video_metadata") or data.get("metadata") or {})
+    doc_meta = _parse_meta(data.get("document_metadata") or data.get("doc_metadata") or {})
+    progress = {}
+    if isinstance(video_meta, dict):
+        progress = video_meta.get("progress") or {}
+    if not progress and isinstance(doc_meta, dict):
+        progress = doc_meta.get("video_progress") or {}
+    if isinstance(progress, dict):
+        data["progress_step"] = progress.get("step")
+        data["progress_pct"] = progress.get("progress_pct")
+        data["progress_message"] = progress.get("message")
+        data["progress_updated_at"] = progress.get("updated_at")
     return data
 
 

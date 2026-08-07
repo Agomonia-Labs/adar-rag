@@ -6,8 +6,11 @@ import json
 import logging
 import math
 import os
+import shutil
 import subprocess
 import tempfile
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,6 +29,11 @@ DEFAULT_SEGMENT_SECONDS = int(os.getenv("VIDEO_SEGMENT_SECONDS", "60"))
 FRAME_CAPTION_ENABLED = os.getenv("VIDEO_FRAME_CAPTION_ENABLED", "true").lower() != "false"
 TRANSCRIBE_AUDIO_ENABLED = os.getenv("VIDEO_TRANSCRIBE_AUDIO_ENABLED", "true").lower() != "false"
 TRANSCRIBE_CHUNK_SECONDS = int(os.getenv("VIDEO_TRANSCRIBE_CHUNK_SECONDS", "55"))
+VIDEO_TRANSCRIBE_CONCURRENCY = int(os.getenv("VIDEO_TRANSCRIBE_CONCURRENCY", "3"))
+VIDEO_FRAME_CONCURRENCY = int(os.getenv("VIDEO_FRAME_CONCURRENCY", "4"))
+VIDEO_EMBED_CONCURRENCY = int(os.getenv("VIDEO_EMBED_CONCURRENCY", "4"))
+VIDEO_SOURCE_READ_URL_EXPIRY_SECONDS = int(os.getenv("VIDEO_SOURCE_READ_URL_EXPIRY_SECONDS", os.getenv("GCS_SIGNED_URL_EXPIRY_SECONDS", "21600")))
+FFMPEG_REMOTE_TIMEOUT_US = int(os.getenv("FFMPEG_REMOTE_TIMEOUT_US", "30000000"))
 
 
 def is_video_file(filename: str = "", file_type: str = "", content_type: str = "") -> bool:
@@ -75,17 +83,51 @@ async def process_video_document(
             "UPDATE documents SET status='chunking', error_message=NULL, updated_at=NOW() WHERE id=$1",
             document_id,
         )
+    await _update_video_progress(
+        document_id,
+        step="queued",
+        progress_pct=2,
+        message="Video processing job started.",
+    )
 
-    tmp_video = None
     frame_paths: list[tuple[int, float, str]] = []
+    local_source_path: str | None = None
     try:
-        suffix = Path(filename or "video.mp4").suffix or ".mp4"
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-        tmp.write(await gcs.download_bytes(source_gcs_path))
-        tmp.close()
-        tmp_video = tmp.name
+        await _update_video_progress(
+            document_id,
+            step="preparing_remote_source",
+            progress_pct=8,
+            message="Creating signed read URL for remote video processing.",
+        )
+        source_ref = await gcs.get_signed_read_url(
+            source_gcs_path,
+            expiry_seconds=VIDEO_SOURCE_READ_URL_EXPIRY_SECONDS,
+        )
+        await asyncio.to_thread(_assert_remote_source_readable, source_ref)
 
-        metadata = await asyncio.to_thread(_probe_video, tmp_video)
+        await _update_video_progress(
+            document_id,
+            step="extracting_metadata",
+            progress_pct=16,
+            message="Reading duration, codec, resolution, and audio metadata.",
+        )
+        try:
+            metadata = await asyncio.to_thread(_probe_video, source_ref)
+        except Exception as exc:
+            log.warning(
+                "Remote ffprobe failed for document %s; falling back to streaming temp file: %s",
+                document_id,
+                exc,
+            )
+            await _update_video_progress(
+                document_id,
+                step="remote_probe_fallback",
+                progress_pct=18,
+                message="Remote video probe failed; using streaming fallback for this file.",
+            )
+            local_source_path = await asyncio.to_thread(_download_signed_url_to_temp_file, source_ref, filename)
+            source_ref = local_source_path
+            metadata = await asyncio.to_thread(_probe_video, source_ref)
         duration = float(metadata.get("duration_seconds") or 0)
         frames_dir = f"users/{user_id}/documents/{document_id}/video/frames/"
         clips_dir = f"users/{user_id}/documents/{document_id}/video/clips/"
@@ -147,23 +189,50 @@ async def process_video_document(
                 job_id,
             )
 
-        transcript = await _transcribe_audio(tmp_video) if TRANSCRIBE_AUDIO_ENABLED else ""
-        frame_paths = await asyncio.to_thread(_sample_frames, tmp_video, duration, max_frames)
-        frames = []
-        for frame_index, timestamp, path in frame_paths:
-            frame_gcs_path = f"{frames_dir}frame_{frame_index:04d}_{int(timestamp):06d}s.jpg"
-            await gcs.upload_bytes(frame_gcs_path, Path(path).read_bytes(), "image/jpeg")
-            caption = await _caption_frame(path, timestamp) if FRAME_CAPTION_ENABLED else ""
-            frames.append({
-                "frame_index": frame_index,
-                "timestamp_seconds": timestamp,
-                "frame_path": frame_gcs_path,
-                "caption": caption,
-            })
+        await _update_video_progress(
+            document_id,
+            step="transcribing_audio" if TRANSCRIBE_AUDIO_ENABLED else "audio_transcription_skipped",
+            progress_pct=26,
+            message="Extracting and transcribing the video audio." if TRANSCRIBE_AUDIO_ENABLED else "Audio transcription is disabled.",
+        )
+        transcript = await _transcribe_audio(
+            source_ref,
+            document_id=document_id,
+        ) if TRANSCRIBE_AUDIO_ENABLED else ""
+        await _update_video_progress(
+            document_id,
+            step="sampling_frames",
+            progress_pct=45,
+            message="Sampling representative frames from the video timeline.",
+        )
+        frame_paths = await asyncio.to_thread(_sample_frames, source_ref, duration, max_frames)
+        frames = await _process_frames_parallel(
+            document_id=document_id,
+            frames_dir=frames_dir,
+            frame_paths=frame_paths,
+        )
 
+        await _update_video_progress(
+            document_id,
+            step="building_segments",
+            progress_pct=62,
+            message="Building timestamped video segments from transcript and sampled frames.",
+        )
         segments = _build_segments(duration, segment_seconds, transcript, frames)
+        await _update_video_progress(
+            document_id,
+            step="creating_chunks",
+            progress_pct=72,
+            message="Creating searchable timestamped chunks for retrieval.",
+        )
         chunks = _build_video_chunks(document_id, user_id, filename, metadata, segments, frames, transcript)
 
+        await _update_video_progress(
+            document_id,
+            step="saving_artifacts",
+            progress_pct=80,
+            message="Saving timeline, frames, transcript, and chunk artifacts.",
+        )
         await _persist_video_artifacts(
             document_id=document_id,
             user_id=user_id,
@@ -178,6 +247,12 @@ async def process_video_document(
         embed_error = ""
         if embed_after_processing:
             try:
+                await _update_video_progress(
+                    document_id,
+                    step="embedding_chunks",
+                    progress_pct=88,
+                    message=f"Embedding {len(chunks)} video chunks for chat and search.",
+                )
                 await _embed_generated_chunks(document_id, user_id, workspace_id, chunks)
                 embed_status = "embedded"
                 document_status = "embedded"
@@ -197,6 +272,12 @@ async def process_video_document(
             "embed_status": embed_status,
             "embed_error": embed_error,
         }
+        await _update_video_progress(
+            document_id,
+            step="completed",
+            progress_pct=100,
+            message="Video processing completed.",
+        )
         async with pool.acquire() as conn:
             await conn.execute(
                 """
@@ -242,6 +323,12 @@ async def process_video_document(
     except Exception as exc:
         error = str(exc)[:500]
         log.exception("Video processing failed for %s: %s", document_id, error)
+        await _update_video_progress(
+            document_id,
+            step="failed",
+            progress_pct=100,
+            message=error,
+        )
         async with pool.acquire() as conn:
             if video_id:
                 await conn.execute(
@@ -271,16 +358,9 @@ async def process_video_document(
         )
         raise
     finally:
-        if tmp_video:
-            try:
-                os.unlink(tmp_video)
-            except OSError:
-                pass
+        _safe_unlink(local_source_path, label="streaming fallback source file")
         for _, _, path in frame_paths:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+            _safe_unlink(path, label="sampled frame temp file")
 
 
 async def _send_video_notification(
@@ -317,19 +397,143 @@ async def _send_video_notification(
         log.warning("Video notification skipped for user=%s file=%s: %s", user_id, filename, exc)
 
 
+async def _update_video_progress(
+    document_id: str,
+    *,
+    step: str,
+    progress_pct: int,
+    message: str,
+) -> None:
+    progress_pct = max(0, min(100, int(progress_pct)))
+    progress = {
+        "step": step,
+        "progress_pct": progress_pct,
+        "message": message,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE documents
+                   SET doc_metadata = COALESCE(doc_metadata, '{}'::jsonb) || $2::jsonb,
+                       updated_at = NOW()
+                 WHERE id = $1
+                """,
+                document_id,
+                json.dumps({"video_progress": progress}),
+            )
+            await conn.execute(
+                """
+                UPDATE video_documents
+                   SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+                       updated_at = NOW()
+                 WHERE document_id = $1
+                """,
+                document_id,
+                json.dumps({"progress": progress}),
+            )
+    except Exception as exc:
+        log.warning("Video progress update skipped for document=%s step=%s: %s", document_id, step, exc)
+
+
+def _phase_pct(start_pct: int, end_pct: int, completed: int, total: int) -> int:
+    if total <= 0:
+        return start_pct
+    ratio = max(0.0, min(1.0, completed / total))
+    return int(round(start_pct + (end_pct - start_pct) * ratio))
+
+
+def _safe_unlink(path: str | None, *, label: str = "temporary file") -> None:
+    if not path:
+        return
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        log.warning("Could not delete %s %s: %s", label, path, exc)
+
+
+def _ffmpeg_remote_input_options(source: str) -> list[str]:
+    if not str(source).startswith(("http://", "https://")):
+        return []
+    return [
+        "-rw_timeout",
+        str(FFMPEG_REMOTE_TIMEOUT_US),
+        "-reconnect",
+        "1",
+        "-reconnect_streamed",
+        "1",
+        "-reconnect_delay_max",
+        "10",
+    ]
+
+
+def _assert_remote_source_readable(url: str) -> None:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Range": "bytes=0-1023",
+            "User-Agent": "DocIntelVideoProcessor/1.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            status = getattr(response, "status", 200)
+            if status not in {200, 206}:
+                raise RuntimeError(f"signed read URL returned HTTP {status}")
+            response.read(1)
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"signed read URL returned HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"signed read URL is not reachable: {exc.reason}") from exc
+
+
+def _download_signed_url_to_temp_file(url: str, filename: str) -> str:
+    suffix = Path(filename or "").suffix or ".mp4"
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp_path = tmp.name
+    tmp.close()
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "DocIntelVideoProcessor/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            with open(tmp_path, "wb") as out:
+                shutil.copyfileobj(response, out, length=1024 * 1024)
+        return tmp_path
+    except Exception:
+        _safe_unlink(tmp_path, label="failed streaming fallback source file")
+        raise
+
+
+def _check_output_text(cmd: list[str]) -> str:
+    completed = subprocess.run(cmd, text=True, capture_output=True)
+    if completed.returncode != 0:
+        stderr = (completed.stderr or "").strip()
+        stdout = (completed.stdout or "").strip()
+        detail = stderr or stdout or f"exit code {completed.returncode}"
+        raise RuntimeError(detail[:2000])
+    return completed.stdout
+
+
 def _probe_video(path: str) -> dict[str, Any]:
     _require_binary("ffprobe")
     cmd = [
         "ffprobe",
         "-v",
         "error",
+        *(_ffmpeg_remote_input_options(path)),
         "-print_format",
         "json",
         "-show_format",
         "-show_streams",
         path,
     ]
-    data = json.loads(subprocess.check_output(cmd, text=True))
+    data = json.loads(_check_output_text(cmd))
     streams = data.get("streams") or []
     video = next((s for s in streams if s.get("codec_type") == "video"), {})
     audio = next((s for s in streams if s.get("codec_type") == "audio"), {})
@@ -367,6 +571,7 @@ def _sample_frames(path: str, duration: float, max_frames: int) -> list[tuple[in
             "-y",
             "-ss",
             str(timestamp),
+            *(_ffmpeg_remote_input_options(path)),
             "-i",
             path,
             "-frames:v",
@@ -391,13 +596,13 @@ async def _caption_frame(path: str, timestamp: float) -> str:
         return ""
 
 
-async def _transcribe_audio(path: str) -> str:
+async def _transcribe_audio(path: str, *, document_id: str | None = None) -> str:
     provider = os.getenv("VIDEO_TRANSCRIBE_PROVIDER") or os.getenv("LLM_PROVIDER", "openai")
     provider = provider.lower().strip()
     if provider == "openai":
         return await _transcribe_audio_openai(path)
     if provider in {"gemini", "google", "google_speech", "speech", "vertex"}:
-        return await _transcribe_audio_google_speech(path)
+        return await _transcribe_audio_google_speech(path, document_id=document_id)
     log.warning("Audio transcription skipped: unsupported provider %s", provider)
     return ""
 
@@ -411,7 +616,21 @@ async def _transcribe_audio_openai(path: str) -> str:
     tmp.close()
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-i", path, "-vn", "-acodec", "libmp3lame", "-ar", "16000", "-ac", "1", tmp.name],
+            [
+                "ffmpeg",
+                "-y",
+                *(_ffmpeg_remote_input_options(path)),
+                "-i",
+                path,
+                "-vn",
+                "-acodec",
+                "libmp3lame",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                tmp.name,
+            ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=True,
@@ -429,13 +648,10 @@ async def _transcribe_audio_openai(path: str) -> str:
         log.warning("Audio transcription skipped: %s", exc)
         return ""
     finally:
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
+        _safe_unlink(tmp.name, label="OpenAI audio transcript temp file")
 
 
-async def _transcribe_audio_google_speech(path: str) -> str:
+async def _transcribe_audio_google_speech(path: str, *, document_id: str | None = None) -> str:
     api_key = (
         os.getenv("GOOGLE_SPEECH_API_KEY")
         or os.getenv("GOOGLE_STT_API_KEY")
@@ -451,32 +667,96 @@ async def _transcribe_audio_google_speech(path: str) -> str:
     chunk_seconds = max(15, min(55, TRANSCRIBE_CHUNK_SECONDS))
     starts = [0.0] if duration <= 0 else [float(s) for s in range(0, int(math.ceil(duration)), chunk_seconds)]
     language_code = os.getenv("VIDEO_TRANSCRIBE_LANGUAGE_CODE", "en-US")
-    transcripts: list[str] = []
+    total = len(starts)
+    completed = 0
 
     try:
         import httpx
 
-        async with httpx.AsyncClient(timeout=90) as client:
-            for start in starts:
-                length = chunk_seconds if duration <= 0 else min(chunk_seconds, max(1.0, duration - start))
-                if length <= 0:
-                    continue
+        semaphore = asyncio.Semaphore(max(1, VIDEO_TRANSCRIBE_CONCURRENCY))
+
+        async def transcribe_one(index: int, start: float, client: Any) -> tuple[int, str]:
+            nonlocal completed
+            length = chunk_seconds if duration <= 0 else min(chunk_seconds, max(1.0, duration - start))
+            if length <= 0:
+                return index, ""
+            async with semaphore:
+                if document_id:
+                    await _update_video_progress(
+                        document_id,
+                        step="transcribing_audio",
+                        progress_pct=_phase_pct(26, 44, completed, total),
+                        message=f"Transcribing audio chunk {completed + 1} of {total}.",
+                    )
                 chunk_path = await asyncio.to_thread(_extract_audio_chunk, path, start, length)
                 try:
                     text = await _google_speech_recognize(client, api_key, chunk_path, language_code)
                 finally:
-                    try:
-                        os.unlink(chunk_path)
-                    except OSError:
-                        pass
+                    _safe_unlink(chunk_path, label="audio transcript chunk temp file")
+                completed += 1
+                if document_id:
+                    await _update_video_progress(
+                        document_id,
+                        step="transcribing_audio",
+                        progress_pct=_phase_pct(26, 44, completed, total),
+                        message=f"Transcribed audio chunk {completed} of {total}.",
+                    )
                 text = sanitize_text_for_storage(text).strip()
-                if text:
-                    end = start + length
-                    transcripts.append(f"[{_fmt_time(start)}-{_fmt_time(end)}] {text}")
-        return "\n".join(transcripts)
+                if not text:
+                    return index, ""
+                end = start + length
+                return index, f"[{_fmt_time(start)}-{_fmt_time(end)}] {text}"
+
+        async with httpx.AsyncClient(timeout=90) as client:
+            results = await asyncio.gather(*(transcribe_one(i, start, client) for i, start in enumerate(starts)))
+        return "\n".join(text for _, text in sorted(results) if text)
     except Exception as exc:
         log.warning("Google audio transcription skipped: %s", exc)
         return ""
+
+
+async def _process_frames_parallel(
+    *,
+    document_id: str,
+    frames_dir: str,
+    frame_paths: list[tuple[int, float, str]],
+) -> list[dict]:
+    if not frame_paths:
+        return []
+
+    total = len(frame_paths)
+    completed = 0
+    semaphore = asyncio.Semaphore(max(1, VIDEO_FRAME_CONCURRENCY))
+
+    async def process_one(item: tuple[int, float, str]) -> dict:
+        nonlocal completed
+        frame_index, timestamp, path = item
+        async with semaphore:
+            await _update_video_progress(
+                document_id,
+                step="processing_frames",
+                progress_pct=_phase_pct(46, 61, completed, total),
+                message=f"Uploading and captioning frame {completed + 1} of {total}.",
+            )
+            frame_gcs_path = f"{frames_dir}frame_{frame_index:04d}_{int(timestamp):06d}s.jpg"
+            await gcs.upload_bytes(frame_gcs_path, Path(path).read_bytes(), "image/jpeg")
+            caption = await _caption_frame(path, timestamp) if FRAME_CAPTION_ENABLED else ""
+            completed += 1
+            await _update_video_progress(
+                document_id,
+                step="processing_frames",
+                progress_pct=_phase_pct(46, 61, completed, total),
+                message=f"Processed frame {completed} of {total}.",
+            )
+            return {
+                "frame_index": frame_index,
+                "timestamp_seconds": timestamp,
+                "frame_path": frame_gcs_path,
+                "caption": caption,
+            }
+
+    frames = await asyncio.gather(*(process_one(item) for item in frame_paths))
+    return sorted(frames, key=lambda frame: frame["frame_index"])
 
 
 def _extract_audio_chunk(path: str, start: float, length: float) -> str:
@@ -490,6 +770,7 @@ def _extract_audio_chunk(path: str, start: float, length: float) -> str:
             str(max(0, start)),
             "-t",
             str(max(1, length)),
+            *(_ffmpeg_remote_input_options(path)),
             "-i",
             path,
             "-vn",
@@ -730,20 +1011,43 @@ async def _embed_generated_chunks(document_id: str, user_id: str, workspace_id: 
     from services.llm import embed
 
     await delete_document_vectors(document_id)
-    for chunk in chunks:
-        content = sanitize_text_for_storage(chunk["content"])
-        vector = await embed(content)
-        await store_chunk(
-            document_id=document_id,
-            user_id=user_id,
-            workspace_id=workspace_id,
-            chunk_index=chunk["chunk_index"],
-            chunk_total=len(chunks),
-            content=content,
-            embedding=vector,
-            chunk_metadata=chunk["chunk_metadata"],
-        )
-        await asyncio.sleep(0.08)
+    total = len(chunks)
+    if total == 0:
+        return
+
+    completed = 0
+    semaphore = asyncio.Semaphore(max(1, VIDEO_EMBED_CONCURRENCY))
+
+    async def embed_one(chunk: dict) -> None:
+        nonlocal completed
+        async with semaphore:
+            await _update_video_progress(
+                document_id,
+                step="embedding_chunks",
+                progress_pct=_phase_pct(88, 99, completed, total),
+                message=f"Embedding video chunk {completed + 1} of {total}.",
+            )
+            content = sanitize_text_for_storage(chunk["content"])
+            vector = await embed(content)
+            await store_chunk(
+                document_id=document_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                chunk_index=chunk["chunk_index"],
+                chunk_total=total,
+                content=content,
+                embedding=vector,
+                chunk_metadata=chunk["chunk_metadata"],
+            )
+            completed += 1
+            await _update_video_progress(
+                document_id,
+                step="embedding_chunks",
+                progress_pct=_phase_pct(88, 99, completed, total),
+                message=f"Embedded video chunk {completed} of {total}.",
+            )
+
+    await asyncio.gather(*(embed_one(chunk) for chunk in chunks))
 
 
 def _chunk(index: int, document_id: str, user_id: str, filename: str, chunk_type: str, start: float, end: float, content: str, extra: dict | None = None) -> dict:

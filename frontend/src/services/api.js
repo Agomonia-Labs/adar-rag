@@ -151,8 +151,9 @@ export async function deleteDocument(docId) {
 }
 
 // ── Video Intelligence ───────────────────────────────────────────────────────
-export async function listVideoDocuments() {
-  return handleRes(await fetch(`${BASE}/video/documents`, { headers: authHdr() }));
+export async function listVideoDocuments(workspaceId = null) {
+  const qs = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : '';
+  return handleRes(await fetch(`${BASE}/video/documents${qs}`, { headers: authHdr() }));
 }
 
 export async function processVideoDocument(docId, options = {}) {

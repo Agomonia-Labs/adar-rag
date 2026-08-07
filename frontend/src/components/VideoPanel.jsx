@@ -8,7 +8,7 @@ import {
   processVideoDocument,
 } from '../services/api.js';
 
-export default function VideoPanel({ onClose }) {
+export default function VideoPanel({ activeWorkspace = null, onClose }) {
   const [docs, setDocs] = useState([]);
   const [selectedId, setSelectedId] = useState('');
   const [timeline, setTimeline] = useState(null);
@@ -30,28 +30,57 @@ export default function VideoPanel({ onClose }) {
     status: true,
     ask: true,
     timeline: true,
-    frames: false,
+    frames: true,
   });
 
+  const workspaceId = activeWorkspace?.id || null;
   const selectedDoc = useMemo(() => docs.find(d => d.id === selectedId), [docs, selectedId]);
+  const progress = useMemo(() => buildProgress(status, selectedDoc), [status, selectedDoc]);
 
   useEffect(() => {
     refreshDocs();
-  }, []);
+  }, [workspaceId]);
 
   useEffect(() => {
     if (!selectedId) return;
-    loadStatus(selectedId);
-    loadTimeline(selectedId);
+    (async () => {
+      const latest = await loadStatus(selectedId);
+      await loadTimeline(selectedId, { keepExisting: !isVideoReadyForTimeline(latest) });
+    })();
     setAnswer(null);
   }, [selectedId]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const processing = ['running', 'processing', 'queued'].includes(String(status?.processing_status || selectedDoc?.processing_status || '').toLowerCase());
+    if (!processing) return;
+    const timer = setInterval(async () => {
+      const latest = await loadStatus(selectedId);
+      if (isVideoReadyForTimeline(latest)) {
+        await loadTimeline(selectedId, { keepExisting: true });
+      }
+      refreshDocs();
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [selectedId, status?.processing_status, selectedDoc?.processing_status, workspaceId]);
 
   async function refreshDocs() {
     setMessage('');
     try {
-      const data = await listVideoDocuments();
-      setDocs(data);
-      if (!selectedId && data.length) setSelectedId(data[0].id);
+      const data = await listVideoDocuments(workspaceId);
+      const scoped = data.filter(doc => (
+        workspaceId ? doc.workspace_id === workspaceId : !doc.workspace_id
+      ));
+      setDocs(scoped);
+      if (!scoped.some(doc => doc.id === selectedId)) {
+        setSelectedId(scoped[0]?.id || '');
+        if (!scoped.length) {
+          setStatus(null);
+          setTimeline(null);
+          setFrameUrls({});
+          setAnswer(null);
+        }
+      }
     } catch (err) {
       setMessage(err.message || 'Unable to load video documents.');
     }
@@ -60,21 +89,28 @@ export default function VideoPanel({ onClose }) {
   async function loadStatus(docId = selectedId) {
     if (!docId) return;
     try {
-      setStatus(await getVideoStatus(docId));
+      const latest = await getVideoStatus(docId);
+      setStatus(latest);
+      return latest;
     } catch {
       setStatus(null);
+      return null;
     }
   }
 
-  async function loadTimeline(docId = selectedId) {
+  async function loadTimeline(docId = selectedId, options = {}) {
     if (!docId) return;
     try {
       const data = await getVideoTimeline(docId);
       setTimeline(data);
       loadFrameUrls(docId, data.frames || []);
+      return data;
     } catch {
-      setTimeline(null);
-      setFrameUrls({});
+      if (!options.keepExisting) {
+        setTimeline(null);
+        setFrameUrls({});
+      }
+      return null;
     }
   }
 
@@ -100,6 +136,8 @@ export default function VideoPanel({ onClose }) {
     try {
       await processVideoDocument(selectedId, options);
       setMessage('Video processing started. Refresh status after a few seconds.');
+      setTimeline(null);
+      setFrameUrls({});
       await refreshDocs();
       await loadStatus(selectedId);
     } catch (err) {
@@ -115,8 +153,8 @@ export default function VideoPanel({ onClose }) {
     setMessage('');
     try {
       await refreshDocs();
-      await loadStatus(selectedId);
-      await loadTimeline(selectedId);
+      const latest = await loadStatus(selectedId);
+      await loadTimeline(selectedId, { keepExisting: !isVideoReadyForTimeline(latest) });
     } finally {
       setLoading(false);
     }
@@ -255,8 +293,26 @@ export default function VideoPanel({ onClose }) {
                   <div className="video-panel-metrics" style={s.metrics}>
                     <Metric label="Document" value={status?.document_status || selectedDoc?.status || '-'} />
                     <Metric label="Video" value={status?.processing_status || selectedDoc?.processing_status || 'not processed'} />
+                    <Metric label="Progress" value={`${progress.progress_pct}%`} />
                     <Metric label="Chunks" value={status?.chunk_count ?? selectedDoc?.chunk_count ?? 0} />
                     <Metric label="Duration" value={status?.duration_seconds ? formatTime(status.duration_seconds) : '-'} />
+                    <Metric label="Segments" value={timeline?.segments?.length ?? 0} />
+                    <Metric label="Frames" value={timeline?.frames?.length ?? 0} />
+                  </div>
+                  <div style={s.progressBox}>
+                    <div style={s.progressTop}>
+                      <strong style={s.progressStep}>{formatStep(progress.step)}</strong>
+                      <span style={progress.isStale ? s.progressStale : s.progressAge}>
+                        {progress.updated_at ? `Last updated ${formatAge(progress.updated_at)}` : 'Waiting for first update'}
+                      </span>
+                    </div>
+                    <div style={s.progressTrack}>
+                      <div style={{...s.progressFill, width: `${progress.progress_pct}%`}} />
+                    </div>
+                    <p style={s.progressMessage}>{progress.message || 'Processing status will appear here after the job starts.'}</p>
+                    {progress.isStale && (
+                      <p style={s.progressWarning}>Processing may be stalled. Refresh status or check backend logs if this does not change.</p>
+                    )}
                   </div>
                   {(status?.error_message || status?.document_error) && (
                     <p style={s.error}>{status.error_message || status.document_error}</p>
@@ -308,7 +364,11 @@ export default function VideoPanel({ onClose }) {
               </button>
               {openSections.timeline && (
                 !timeline?.segments?.length ? (
-                  <p style={s.empty}>Process the selected video to create timeline segments.</p>
+                  <p style={s.empty}>
+                    {isVideoReadyForTimeline(status || selectedDoc)
+                      ? 'No timeline segments were returned yet. Click Refresh status to reload timeline data.'
+                      : 'Timeline segments will appear automatically after video processing finishes.'}
+                  </p>
                 ) : (
                   <div className="video-panel-timeline" style={s.timeline}>
                     {timeline.segments.map(seg => (
@@ -333,7 +393,11 @@ export default function VideoPanel({ onClose }) {
               </button>
               {openSections.frames && (
                 !timeline?.frames?.length ? (
-                  <p style={s.empty}>Sampled frame previews will appear after processing.</p>
+                  <p style={s.empty}>
+                    {isVideoReadyForTimeline(status || selectedDoc)
+                      ? 'No sampled frames were returned yet. Click Refresh status to reload frame previews.'
+                      : 'Sampled frame previews will appear automatically after processing finishes.'}
+                  </p>
                 ) : (
                   <div className="video-panel-frame-grid" style={s.frameGrid}>
                     {timeline.frames.slice(0, 6).map(frame => (
@@ -364,6 +428,55 @@ function Metric({ label, value }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function buildProgress(status, selectedDoc) {
+  const source = status || selectedDoc || {};
+  const progressPct = Number(source.progress_pct ?? 0);
+  const updatedAt = source.progress_updated_at || source.video_updated_at || source.updated_at || '';
+  return {
+    step: source.progress_step || source.processing_status || 'not_started',
+    progress_pct: Number.isFinite(progressPct) ? Math.max(0, Math.min(100, progressPct)) : 0,
+    message: source.progress_message || '',
+    updated_at: updatedAt,
+    isStale: isProgressStale(updatedAt, source.processing_status),
+  };
+}
+
+function formatStep(value) {
+  return String(value || 'Not started')
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function formatAge(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'not available';
+  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (seconds < 10) return 'just now';
+  if (seconds < 60) return `${seconds} seconds ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+}
+
+function isProgressStale(updatedAt, status) {
+  const active = ['running', 'processing', 'queued'].includes(String(status || '').toLowerCase());
+  if (!active || !updatedAt) return false;
+  const date = new Date(updatedAt);
+  if (Number.isNaN(date.getTime())) return false;
+  return Date.now() - date.getTime() > 10 * 60 * 1000;
+}
+
+function isVideoReadyForTimeline(value) {
+  if (!value) return false;
+  const videoStatus = String(value.processing_status || '').toLowerCase();
+  const docStatus = String(value.document_status || value.status || '').toLowerCase();
+  return (
+    ['ready', 'completed', 'complete'].includes(videoStatus)
+    || ['chunked', 'embedded'].includes(docStatus)
   );
 }
 
@@ -411,8 +524,17 @@ const s = {
   band: { padding:12, border:'1px solid rgba(74,222,128,.14)', borderRadius:8, background:'rgba(255,255,255,.025)' },
   bandHead: { display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, flexWrap:'wrap' },
   sectionTitle: { margin:0, fontSize:15, color:'var(--tx)', letterSpacing:0, fontWeight:850 },
-  metrics: { display:'grid', gridTemplateColumns:'repeat(4, minmax(120px, 1fr))', gap:8 },
+  metrics: { display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(120px, 1fr))', gap:8 },
   metric: { padding:10, borderRadius:8, background:'var(--s2)', border:'1px solid var(--b2)', display:'flex', flexDirection:'column', gap:4 },
+  progressBox: { marginTop:10, padding:10, borderRadius:8, background:'rgba(0,0,0,.16)', border:'1px solid rgba(74,222,128,.14)' },
+  progressTop: { display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, flexWrap:'wrap', marginBottom:8 },
+  progressStep: { color:'#86efac', fontSize:13, fontWeight:950 },
+  progressAge: { color:'var(--muted2)', fontSize:11.5, fontWeight:800 },
+  progressStale: { color:'#fbbf24', fontSize:11.5, fontWeight:900 },
+  progressTrack: { height:9, borderRadius:999, background:'rgba(255,255,255,.08)', overflow:'hidden', border:'1px solid rgba(255,255,255,.06)' },
+  progressFill: { height:'100%', borderRadius:999, background:'linear-gradient(90deg,#22c55e,#86efac)', transition:'width .35s ease' },
+  progressMessage: { margin:'8px 0 0', color:'var(--tx2)', fontSize:12.5, lineHeight:1.45 },
+  progressWarning: { margin:'6px 0 0', color:'#fde68a', fontSize:12, lineHeight:1.45, fontWeight:800 },
   askRow: { display:'grid', gridTemplateColumns:'minmax(0,1fr) auto', gap:8, alignItems:'stretch' },
   textarea: { minHeight:74, resize:'vertical', padding:10, borderRadius:8, border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx)', fontSize:13, lineHeight:1.45 },
   answerBox: { marginTop:10, padding:11, borderRadius:8, border:'1px solid rgba(74,222,128,.18)', background:'rgba(74,222,128,.055)' },
