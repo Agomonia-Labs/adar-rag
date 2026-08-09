@@ -219,7 +219,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
       <div class="splash-en">DOCINTEL</div>
     </div>
   </div>
-  <div class="splash-tagline">Document Intelligence Platform</div>
+  <div class="splash-tagline">Document · Speech · Video Intelligence Platform</div>
   <div class="splash-cta">Tap anywhere to begin →</div>
 </div>
 
@@ -238,7 +238,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
       <div class="slide-dots" id="dots"></div>
     </div>
     <div class="tb-right nav-arrows">
-      <span class="slide-counter" id="counter">1 / 27</span>
+      <span class="slide-counter" id="counter">1 / 28</span>
       <button class="btn-icon" id="autoBtn" onclick="toggleAuto()">▶ Auto</button>
       <button class="nav-btn" id="prevBtn" onclick="goSlide(-1)">←</button>
       <button class="nav-btn" id="nextBtn" onclick="goSlide(1)">→</button>
@@ -256,10 +256,10 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
         <div class="slide-num">Welcome</div>
         <div class="slide-title" style="font-size:36px;text-align:center">আদর DocIntel</div>
         <div class="slide-sub" style="text-align:center;max-width:500px;margin:0 auto">
-          Your intelligent document analysis platform — upload, classify, detect language, embed, and chat with your documents using AI-powered semantic search
+          Your multimodal intelligence platform — upload documents, speech, transcripts, and videos, then classify, chunk, embed, search, and chat with grounded AI
         </div>
         <div class="mock-stats" style="margin-top:28px;justify-content:center;gap:32px">
-          <div class="mock-stat"><div class="mock-stat-val" style="color:#4ade80;font-size:28px">500</div><div class="mock-stat-lbl" style="font-size:11px">Docs per user</div></div>
+          <div class="mock-stat"><div class="mock-stat-val" style="color:#4ade80;font-size:28px">Multi</div><div class="mock-stat-lbl" style="font-size:11px">Docs · Speech · Video</div></div>
           <div class="mock-stat"><div class="mock-stat-val" style="color:#60a5fa;font-size:28px">pgvector</div><div class="mock-stat-lbl" style="font-size:11px">Vector search</div></div>
           <div class="mock-stat"><div class="mock-stat-val" style="color:#f59e0b;font-size:28px">5</div><div class="mock-stat-lbl" style="font-size:11px">Languages</div></div>
         </div>
@@ -272,10 +272,12 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Step 1</div>
-          <div class="slide-title">Secure Registration & Login</div>
-          <div class="slide-sub">Create your private workspace in seconds. Every account is isolated — your documents are never shared with other users.</div>
+          <div class="slide-title">Secure Registration, Login & MFA</div>
+          <div class="slide-sub">Create your private workspace in seconds. After password validation, DocIntel can require a 6-digit email OTP before issuing the final session token.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">🔐</span><span>JWT-based authentication — sessions persist across page refreshes</span></div>
+            <div class="feature-item"><span class="feature-icon">📧</span><span>Email OTP MFA — login returns a temporary challenge until the 6-digit code is verified</span></div>
+            <div class="feature-item"><span class="feature-icon">⏱</span><span>Codes expire in 5 minutes, allow 3 attempts, and support resend with a cooldown</span></div>
             <div class="feature-item"><span class="feature-icon">🛡</span><span>bcrypt password hashing — your credentials are never stored in plain text</span></div>
             <div class="feature-item"><span class="feature-icon">👤</span><span>Role-based access — regular users and system administrators</span></div>
           </div>
@@ -284,18 +286,29 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">docintel.adar.agomoniai.com</div></div>
           <div class="mockup-body" style="display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#f0fdf4,#ecfdf5)">
-            <div style="background:#fff;border-radius:16px;padding:28px 24px;width:280px;box-shadow:0 8px 32px rgba(21,128,61,.1);border:1px solid rgba(21,128,61,.12)">
+            <div style="background:#fff;border-radius:16px;padding:20px 18px;width:300px;box-shadow:0 8px 32px rgba(21,128,61,.1);border:1px solid rgba(21,128,61,.12)">
               <div style="text-align:center;margin-bottom:20px">
                 <div style="font-size:28px;margin-bottom:6px">🌿</div>
                 <div style="font-size:20px;font-weight:800;color:#15803d">আদর</div>
                 <div style="font-size:11px;color:#9ca3af;letter-spacing:1px">DocIntel</div>
               </div>
-              <div style="font-size:12px;color:#374151;font-weight:600;margin-bottom:4px">Email</div>
-              <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 11px;font-size:11px;color:#6b7280;margin-bottom:10px">user@example.com</div>
-              <div style="font-size:12px;color:#374151;font-weight:600;margin-bottom:4px">Password</div>
-              <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 11px;font-size:11px;color:#6b7280;margin-bottom:16px">••••••••••</div>
-              <div style="background:#15803d;color:#fff;border-radius:8px;padding:10px;text-align:center;font-size:13px;font-weight:700;letter-spacing:.2px">Sign in →</div>
-              <div style="text-align:center;margin-top:12px;font-size:11px;color:#9ca3af">No account? <span style="color:#15803d;font-weight:600">Create one</span></div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start">
+                <div>
+                  <div style="font-size:11px;color:#374151;font-weight:600;margin-bottom:4px">Email</div>
+                  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:7px 9px;font-size:10px;color:#6b7280;margin-bottom:8px">user@example.com</div>
+                  <div style="font-size:11px;color:#374151;font-weight:600;margin-bottom:4px">Password</div>
+                  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:7px 9px;font-size:10px;color:#6b7280;margin-bottom:10px">••••••••••</div>
+                  <div style="background:#15803d;color:#fff;border-radius:8px;padding:9px;text-align:center;font-size:12px;font-weight:700;letter-spacing:.2px">Sign in →</div>
+                </div>
+                <div style="border:1px solid rgba(21,128,61,.18);background:#f0fdf4;border-radius:12px;padding:10px;text-align:center">
+                  <div style="font-size:11px;font-weight:800;color:#15803d;margin-bottom:5px">Check your email</div>
+                  <div style="font-size:9.5px;color:#6b7280;line-height:1.35;margin-bottom:8px">Code sent to<br><strong style="color:#374151">us***@example.com</strong></div>
+                  <div style="letter-spacing:.28em;font-size:21px;font-weight:800;color:#14532d;background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:8px 4px;margin-bottom:8px">482913</div>
+                  <div style="background:#15803d;color:#fff;border-radius:8px;padding:7px;text-align:center;font-size:10.5px;font-weight:700">Verify code</div>
+                  <div style="font-size:8.5px;color:#9ca3af;margin-top:7px">Resend in 60s · 5 min expiry</div>
+                </div>
+              </div>
+              <div style="text-align:center;margin-top:12px;font-size:10.5px;color:#9ca3af">MFA can be bypassed per rollout email using <span style="color:#15803d;font-weight:700">MFA_BYPASS_EMAILS</span></div>
             </div>
           </div>
         </div>
@@ -710,6 +723,8 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
                 <th style="text-align:left;padding:5px 8px;color:#6b7280;font-weight:600">Key</th>
               </tr>
               <tr style="border-bottom:0.5px solid rgba(255,255,255,.05)"><td style="padding:5px 8px;color:#e5e7eb">POST /auth/login</td><td style="text-align:center;padding:5px 8px;color:#fbbf24">10/min</td><td style="padding:5px 8px;color:#9ca3af">IP</td></tr>
+              <tr style="background:rgba(255,255,255,.02);border-bottom:0.5px solid rgba(255,255,255,.05)"><td style="padding:5px 8px;color:#e5e7eb">POST /auth/verify-otp</td><td style="text-align:center;padding:5px 8px;color:#fbbf24">10/min</td><td style="padding:5px 8px;color:#9ca3af">IP</td></tr>
+              <tr style="border-bottom:0.5px solid rgba(255,255,255,.05)"><td style="padding:5px 8px;color:#e5e7eb">POST /auth/resend-otp</td><td style="text-align:center;padding:5px 8px;color:#fbbf24">10/min</td><td style="padding:5px 8px;color:#9ca3af">IP</td></tr>
               <tr style="background:rgba(255,255,255,.02);border-bottom:0.5px solid rgba(255,255,255,.05)"><td style="padding:5px 8px;color:#e5e7eb">POST /auth/register</td><td style="text-align:center;padding:5px 8px;color:#fbbf24">3/min</td><td style="padding:5px 8px;color:#9ca3af">IP</td></tr>
               <tr style="border-bottom:0.5px solid rgba(255,255,255,.05)"><td style="padding:5px 8px;color:#e5e7eb">POST /auth/forgot-password</td><td style="text-align:center;padding:5px 8px;color:#fbbf24">5/min</td><td style="padding:5px 8px;color:#9ca3af">IP</td></tr>
               <tr style="background:rgba(255,255,255,.02);border-bottom:0.5px solid rgba(255,255,255,.05)"><td style="padding:5px 8px;color:#e5e7eb">POST /chat/stream</td><td style="text-align:center;padding:5px 8px;color:#4ade80">30/min</td><td style="padding:5px 8px;color:#9ca3af">User</td></tr>
@@ -793,8 +808,61 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
     </div>
 
 
-    <!-- 13. Hybrid Search -->
+    <!-- 13. Video Intelligence -->
     <div class="slide" data-idx="13">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Media Intelligence</div>
+          <div class="slide-title">Video Intelligence Knowledgebase</div>
+          <div class="slide-sub">DocIntel now supports video as a first-class knowledge source alongside documents, speech, and transcripts. Uploaded videos become timestamped, searchable intelligence that can be used in the normal chat experience.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">🎬</span><span>Upload MP4 and other video assets, store source files in GCS, and process large media through signed URL and direct cloud upload flows</span></div>
+            <div class="feature-item"><span class="feature-icon">⚙</span><span>Extract metadata, duration, codec, resolution, audio signals, timeline segments, sampled frames, and transcript chunks</span></div>
+            <div class="feature-item"><span class="feature-icon">🧠</span><span>Convert transcript, frames, timestamps, and visual captions into searchable chunks with embeddings and RAG retrieval</span></div>
+            <div class="feature-item"><span class="feature-icon">⏱</span><span>Ask time-aware questions like "What was discussed from 1:00 to 3:00?" or "When did the key event happen?"</span></div>
+            <div class="feature-item"><span class="feature-icon">🛡</span><span>Use stage-level retries, fresh signed URLs, timeout handling, fallback paths, progress percentage, current step, and last-updated status</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(13)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">🎥 Video Intelligence</div></div>
+          <div class="mockup-body" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.25);border-radius:9px;padding:10px">
+                <div style="font-size:10px;color:#60a5fa;font-weight:800;margin-bottom:5px">Cloud video pipeline</div>
+                <div style="font-size:9px;color:#d1d5db;line-height:1.55">Upload → GCS → signed URL → metadata → audio transcript → frames → segments → chunks → embeddings</div>
+              </div>
+              <div style="background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.25);border-radius:9px;padding:10px">
+                <div style="font-size:10px;color:#4ade80;font-weight:800;margin-bottom:5px">Processing status</div>
+                <div style="height:7px;background:rgba(255,255,255,.08);border-radius:10px;overflow:hidden;margin-bottom:6px"><div style="width:72%;height:100%;background:linear-gradient(90deg,#15803d,#4ade80)"></div></div>
+                <div style="font-size:8.5px;color:#9ca3af">Transcribing audio · chunk 21 of 34 · updated 4s ago</div>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px">
+                <div style="background:rgba(255,255,255,.04);border-radius:7px;padding:7px;text-align:center"><div style="font-size:15px;color:#fbbf24;font-weight:800">32</div><div style="font-size:8px;color:#6b7280">segments</div></div>
+                <div style="background:rgba(255,255,255,.04);border-radius:7px;padding:7px;text-align:center"><div style="font-size:15px;color:#60a5fa;font-weight:800">12</div><div style="font-size:8px;color:#6b7280">frames</div></div>
+                <div style="background:rgba(255,255,255,.04);border-radius:7px;padding:7px;text-align:center"><div style="font-size:15px;color:#4ade80;font-weight:800">✓</div><div style="font-size:8px;color:#6b7280">embedded</div></div>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:10px">
+                <div style="font-size:10px;color:#e5e7eb;font-weight:800;margin-bottom:6px">Timeline Q&A</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.5;margin-bottom:7px">Question: What happens between 1:00 and 3:00?</div>
+                <div style="font-size:9px;color:#d1fae5;line-height:1.55">DocIntel retrieves timestamped transcript and frame evidence, then answers with the exact time range and supporting context.</div>
+              </div>
+              <div style="background:rgba(192,132,252,.08);border:1px solid rgba(192,132,252,.25);border-radius:9px;padding:10px">
+                <div style="font-size:10px;color:#c084fc;font-weight:800;margin-bottom:5px">Connected knowledgebase</div>
+                <div style="font-size:9px;color:#d1d5db;line-height:1.55">Video chunks can be searched together with PDFs, policies, contracts, clinical packets, tax files, and workspace transcripts.</div>
+              </div>
+              <div style="font-size:8.5px;color:#6b7280;line-height:1.45">Example use cases: training videos, clinical recordings, lease walkthroughs, sports highlights, product demos, meetings, audits, support calls, and field inspections.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- 14. Hybrid Search -->
+    <div class="slide" data-idx="14">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Retrieval</div>
@@ -807,7 +875,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div class="feature-item"><span class="feature-icon">🏆</span><span>Chunks found by both methods score highest — hybrid badge shows when both signals agree</span></div>
             <div class="feature-item"><span class="feature-icon">↩</span><span>Automatic fallback to vector-only when FTS returns zero results (stopword-only queries)</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(13)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(14)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">Hybrid Search Pipeline</div></div>
@@ -870,7 +938,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
     </div>
 
     <!-- 14. Gemini Re-ranking -->
-    <div class="slide" data-idx="14">
+    <div class="slide" data-idx="15">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Quality</div>
@@ -883,7 +951,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div class="feature-item"><span class="feature-icon">✦</span><span>Re-ranked badge appears on source cards — shows which chunks survived the re-ranking stage</span></div>
             <div class="feature-item"><span class="feature-icon">↩</span><span>Graceful fallback to retrieval order if Gemini re-rank fails</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(14)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(15)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">3-Stage RAG Pipeline</div></div>
@@ -943,20 +1011,20 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
     </div>
 
     <!-- 15. Horizontal Platform + Vertical Agentic AI -->
-    <div class="slide" data-idx="15">
+    <div class="slide" data-idx="16">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Vertical Product Layers</div>
           <div class="slide-title">Domain Agentic Workflows</div>
-          <div class="slide-sub">DocIntel uses one horizontal RAG, governance, and traceability platform, then adds specialized vertical workflows for healthcare, finance, lease management, and restaurant/menu intelligence.</div>
+          <div class="slide-sub">DocIntel uses one horizontal RAG, governance, and traceability platform, then adds specialized vertical workflows for healthcare, lease management, finance/tax readiness, and restaurant/menu intelligence.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">🎙</span><span>Clinical scribe — consent-based visit audio, 5-language transcription, SOAP note draft, patient summary, follow-up checklist, and After Visit Summary</span></div>
             <div class="feature-item"><span class="feature-icon">🏥</span><span>Clinical document intelligence — after-visit summaries, clinical notes, lab reports, medication lists, prior history, and care gaps</span></div>
             <div class="feature-item"><span class="feature-icon">🧾</span><span>Prior authorization workflow — payer criteria, evidence map, missing info packet, code readiness, coder approval, final packet PDF, and case tracker</span></div>
             <div class="feature-item"><span class="feature-icon">📄</span><span>Patient-ready AVS artifact — generate PDF, save to GCS, chunk, embed, and make it searchable for future chat</span></div>
             <div class="feature-item"><span class="feature-icon">👥</span><span>Healthcare review workbench — RBAC personas, editable packet sections, approval workflow, audit trail, and field-level change history</span></div>
-            <div class="feature-item"><span class="feature-icon">💼</span><span>Finance readiness — tax organizer, prior-year comparison, net worth, cash flow, retirement readiness, advisor questions, readiness score, and advisor packet PDF</span></div>
             <div class="feature-item"><span class="feature-icon">🏢</span><span>Lease intelligence — tabbed abstract, critical dates, obligations, amendment comparison, clause flags, risk flags, readable mobile cards, and approval workflow</span></div>
+            <div class="feature-item"><span class="feature-icon">💼</span><span>Finance & Tax readiness — MVP 1 tax submission plus MVP 2 financial planning profile, net worth, property tax assessment, property assessment, home equity, cash flow, retirement, insurance, estate readiness, hybrid extraction, and human-reviewed packets</span></div>
             <div class="feature-item"><span class="feature-icon">🍽</span><span>Restaurant scribe — segmented long recordings, full transcript, profile/menu extraction, deterministic item-price parsing, edit/approve/save</span></div>
             <div class="feature-item"><span class="feature-icon">🛒</span><span>Restaurant ordering — text or voice menu comparison, mobile comparison cards, collapsible cart, DB-backed restaurant/menu IDs, Stripe checkout, owner queue, and email notification</span></div>
             <div class="feature-item"><span class="feature-icon">⭐</span><span>Restaurant feedback — typed or voice feedback, semantic rating suggestion, verified-order ratings, owner response queue, and recommendation signals</span></div>
@@ -965,7 +1033,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div class="feature-item"><span class="feature-icon">🔎</span><span>Grounded RAG — cited answers across transcripts, clinical records, payer policy guides, and approved workflow outputs</span></div>
             <div class="feature-item"><span class="feature-icon">🔐</span><span>Governance — PHI/PII redaction, role-based workspaces, traces, audit logs, evaluation scores, and human approval</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(15)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(16)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">Vertical Workflows — Product Feature Map</div></div>
@@ -985,9 +1053,9 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
                 <div style="font-size:10px;font-weight:800;color:#fbbf24;margin-bottom:5px">Lease Intelligence</div>
                 <div style="font-size:9px;color:#9ca3af;line-height:1.55">Tabbed abstract<br/>Dates + obligations<br/>Clause + risk cards</div>
               </div>
-              <div style="background:rgba(96,165,250,.06);border:0.5px solid rgba(96,165,250,.22);border-radius:8px;padding:8px 9px">
-                <div style="font-size:10px;font-weight:800;color:#60a5fa;margin-bottom:5px">Finance Readiness</div>
-                <div style="font-size:9px;color:#9ca3af;line-height:1.55">Tax organizer<br/>Net worth + cash flow<br/>Advisor PDF packet</div>
+              <div style="background:rgba(192,132,252,.06);border:0.5px solid rgba(192,132,252,.22);border-radius:8px;padding:8px 9px">
+                <div style="font-size:10px;font-weight:800;color:#c084fc;margin-bottom:5px">Finance & Tax</div>
+                <div style="font-size:9px;color:#9ca3af;line-height:1.55">Tax + planning<br/>Net worth + cash flow<br/>Advisor review</div>
               </div>
               <div style="background:rgba(96,165,250,.06);border:0.5px solid rgba(96,165,250,.22);border-radius:8px;padding:8px 9px">
                 <div style="font-size:10px;font-weight:800;color:#60a5fa;margin-bottom:5px">Governance</div>
@@ -1008,9 +1076,6 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
                 <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Restaurant owner audio</span>
                 <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Saved transcripts</span>
                 <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Restaurant DB rows</span>
-                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(96,165,250,.08);color:#60a5fa;border:1px solid rgba(96,165,250,.18)">W-2 + 1040</span>
-                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(96,165,250,.08);color:#60a5fa;border:1px solid rgba(96,165,250,.18)">Brokerage + retirement</span>
-                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(96,165,250,.08);color:#60a5fa;border:1px solid rgba(96,165,250,.18)">Mortgage + property tax</span>
                 <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Collapsible carryout cart</span>
                 <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Mobile price cards</span>
                 <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">Customer ratings</span>
@@ -1019,6 +1084,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
                 <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(251,191,36,.08);color:#fbbf24;border:1px solid rgba(251,191,36,.18)">Prior auth packets</span>
                 <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(251,191,36,.08);color:#fbbf24;border:1px solid rgba(251,191,36,.18)">Coder-approved codes</span>
                 <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(96,165,250,.08);color:#60a5fa;border:1px solid rgba(96,165,250,.18)">Mobile Tags/Actions</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(192,132,252,.08);color:#c084fc;border:1px solid rgba(192,132,252,.18)">Tax readiness packets</span>
                 <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.05);color:#9ca3af">5 languages</span>
               </div>
             </div>
@@ -1053,10 +1119,10 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
                 <div style="font-size:9px;color:#9ca3af">Prior auth packet, missing information request, AVS-style header</div>
                 <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(96,165,250,.12);color:#60a5fa;border:1px solid rgba(96,165,250,.25)">Reviewer</span></div>
               </div>
-              <div style="display:grid;grid-template-columns:94px 1fr 78px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(96,165,250,.04)">
-                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Finance</div>
-                <div style="font-size:9px;color:#9ca3af">Tax organizer, planning profile, net worth, cash flow, retirement readiness, questions, score</div>
-                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(96,165,250,.12);color:#60a5fa;border:1px solid rgba(96,165,250,.25)">Advisor</span></div>
+              <div style="display:grid;grid-template-columns:94px 1fr 78px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(192,132,252,.04)">
+                <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Tax readiness</div>
+                <div style="font-size:9px;color:#9ca3af">W-2/1099 detection, missing docs, prior-year compare, CPA packet</div>
+                <div><span style="font-size:8.5px;padding:1px 5px;border-radius:20px;background:rgba(192,132,252,.12);color:#c084fc;border:1px solid rgba(192,132,252,.25)">CPA/EA</span></div>
               </div>
               <div style="display:grid;grid-template-columns:94px 1fr 78px;gap:4px;padding:6px 8px;border-top:0.5px solid rgba(255,255,255,.05);background:rgba(251,191,36,.05)">
                 <div style="font-size:9.5px;font-weight:600;color:#e5e7eb">Chat</div>
@@ -1082,7 +1148,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
 
 
     <!-- 17. Feedback on AI Responses -->
-    <div class="slide" data-idx="16">
+    <div class="slide" data-idx="17">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Quality Loop</div>
@@ -1095,7 +1161,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div class="feature-item"><span class="feature-icon">🎯</span><span>Selecting one rating dims the other — clear visual state: green for helpful, red for not helpful</span></div>
             <div class="feature-item"><span class="feature-icon">📊</span><span>Admins can review all feedback via the API — thumbs counts, recent ratings, and user emails</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(16)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(17)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">💬 Chat — Feedback</div></div>
@@ -1149,7 +1215,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
     </div>
 
     <!-- 18. Export -->
-    <div class="slide" data-idx="17">
+    <div class="slide" data-idx="18">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Export</div>
@@ -1162,7 +1228,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div class="feature-item"><span class="feature-icon">⚡</span><span>Instant client-side generation — no server round-trip, no waiting</span></div>
             <div class="feature-item"><span class="feature-icon">🌐</span><span>Open .md files in Notion, Obsidian, VS Code, Typora, or paste into any editor</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(17)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(18)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">Chat Export — Q3_Revenue_Analysis.md</div></div>
@@ -1213,7 +1279,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
 
 
     <!-- 19. Usage Metering -->
-    <div class="slide" data-idx="18">
+    <div class="slide" data-idx="19">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Metering</div>
@@ -1226,7 +1292,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div class="feature-item"><span class="feature-icon">🌡</span><span>Progress meters turn amber at 80% of your plan limit — visual warning before hitting the wall</span></div>
             <div class="feature-item"><span class="feature-icon">🛑</span><span>Over-limit requests return clear 403, 413, or 429 errors before consuming AI capacity</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(18)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(19)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">📊 Usage & Limits</div></div>
@@ -1306,7 +1372,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
     </div>
 
     <!-- 20. Tiered Limits & Admin -->
-    <div class="slide" data-idx="19">
+    <div class="slide" data-idx="20">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Billing</div>
@@ -1320,7 +1386,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div class="feature-item"><span class="feature-icon">🔧</span><span>Lease AI, voice transcription, and eval quotas are enforced alongside core RAG usage</span></div>
             <div class="feature-item"><span class="feature-icon">🛑</span><span>Exceeding limits returns HTTP 403, 413, or 429 with a clear upgrade message</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(19)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(20)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">⚙ Admin → Users</div></div>
@@ -1390,7 +1456,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
     <!-- 21. Summary -->
 
     <!-- 21. Team Workspaces -->
-    <div class="slide" data-idx="20">
+    <div class="slide" data-idx="21">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Collaboration</div>
@@ -1404,7 +1470,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div class="feature-item"><span class="feature-icon">🔀</span><span>Switch context with one click — workspace badge appears in the header, chat history and documents scope to that workspace automatically</span></div>
             <div class="feature-item"><span class="feature-icon">🗑</span><span>Delete protection — must type the workspace name exactly to confirm; warns about other members losing access</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(20)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(21)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">🏢 Workspaces — Q3 Finance Team</div></div>
@@ -1510,21 +1576,22 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
     </div>
 
 
-    <!-- 22. Email Verification -->
-    <div class="slide" data-idx="21">
+    <!-- 22. Email Verification + MFA -->
+    <div class="slide" data-idx="22">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Trust</div>
-          <div class="slide-title">Email Verification</div>
-          <div class="slide-sub">Every new account must verify their email address before logging in. A 24-hour link is sent automatically on registration. Admins are auto-verified. Existing accounts are grandfathered in.</div>
+          <div class="slide-title">Email Verification + Login MFA</div>
+          <div class="slide-sub">Every new account verifies email before first login, and verified users can be protected again at sign-in with a short-lived 6-digit OTP challenge.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">📧</span><span>Verification email sent immediately on registration — powered by Gmail SMTP</span></div>
+            <div class="feature-item"><span class="feature-icon">🔐</span><span>MFA after password check — the API returns mfa_required until OTP is confirmed</span></div>
+            <div class="feature-item"><span class="feature-icon">⏱</span><span>OTP is hashed in PostgreSQL, expires in 5 minutes, and is marked used after successful login</span></div>
             <div class="feature-item"><span class="feature-icon">🔒</span><span>Unverified accounts receive HTTP 403 on login with a clear message to check inbox</span></div>
             <div class="feature-item"><span class="feature-icon">🔄</span><span>Resend button available — new 24-hour link sent without revealing if email exists</span></div>
-            <div class="feature-item"><span class="feature-icon">👑</span><span>First user (admin) is auto-verified — no chicken-and-egg on fresh deployments</span></div>
             <div class="feature-item"><span class="feature-icon">🛡</span><span>Tokens stored as SHA-256 hashes — raw token never persisted to the database</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(21)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(22)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">📧 Check your inbox</div></div>
@@ -1566,13 +1633,29 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div style="background:rgba(248,113,113,.06);border:0.5px solid rgba(248,113,113,.2);border-radius:8px;padding:10px 12px;font-size:10.5px;color:#f87171">
               <strong>HTTP 403</strong> — Please verify your email address before logging in. Check your inbox or use the resend link.
             </div>
+
+            <!-- Login MFA -->
+            <div style="background:rgba(74,222,128,.06);border:0.5px solid rgba(74,222,128,.2);border-radius:10px;padding:12px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div style="font-size:10px;color:#4ade80;font-weight:800;text-transform:uppercase;letter-spacing:.45px">MFA login challenge</div>
+                <div style="font-size:9px;color:#fbbf24;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.2);border-radius:20px;padding:2px 7px">5 min</div>
+              </div>
+              <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:10px 12px;font-size:10px;color:#d1fae5;line-height:1.55">
+                <strong style="color:#f0fdf4">POST /auth/login</strong> returns <span style="color:#4ade80">mfa_required</span>, a temporary MFA token, and an email hint. The user enters the 6-digit code, then <strong style="color:#f0fdf4">/auth/verify-otp</strong> issues the normal access token.
+              </div>
+              <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+                <span style="font-size:9px;color:#4ade80;border:1px solid rgba(74,222,128,.25);background:rgba(74,222,128,.08);border-radius:20px;padding:2px 7px">3 attempts</span>
+                <span style="font-size:9px;color:#60a5fa;border:1px solid rgba(96,165,250,.25);background:rgba(96,165,250,.08);border-radius:20px;padding:2px 7px">resend cooldown</span>
+                <span style="font-size:9px;color:#fbbf24;border:1px solid rgba(251,191,36,.25);background:rgba(251,191,36,.08);border-radius:20px;padding:2px 7px">bypass env for rollout</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
     <!-- 23. Notifications + Audit Log -->
-    <div class="slide" data-idx="22">
+    <div class="slide" data-idx="23">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Ops & Compliance</div>
@@ -1588,7 +1671,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div class="feature-item"><span class="feature-icon">🧩</span><span>How it works — X-Trace-Id connects trace_flows, trace_spans, and trace_llm_events for one chat or voice request</span></div>
             <div class="feature-item"><span class="feature-icon">🗄</span><span>Stored in PostgreSQL audit_log and trace tables — query directly for compliance and debugging exports</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(22)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(23)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">⚙ Admin → Traces</div></div>
@@ -1649,7 +1732,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
 
 
     <!-- 24. Document Re-processing + Tags -->
-    <div class="slide" data-idx="23">
+    <div class="slide" data-idx="24">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Organisation</div>
@@ -1665,7 +1748,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div class="feature-item"><span class="feature-icon">📱</span><span>Mobile Tags menu — embedded status, workspace/personal scope, file type, language, chunk count, PII, and domain/type</span></div>
             <div class="feature-item"><span class="feature-icon">⋯</span><span>Mobile Actions menu — Source, Chunks, Summary, Lease, Healthcare, Embed/Re-embed, Retry, and Delete</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(23)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(24)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">📂 Documents — Tags & Filter</div></div>
@@ -1753,7 +1836,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
 
 
     <!-- 25. Stripe Billing and Payments -->
-    <div class="slide" data-idx="24">
+    <div class="slide" data-idx="25">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Monetisation</div>
@@ -1769,7 +1852,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div class="feature-item"><span class="feature-icon">🍽</span><span>Restaurant checkout — paid carryout orders return to the same workspace and enter the owner queue after webhook confirmation</span></div>
             <div class="feature-item"><span class="feature-icon">↩</span><span>Refund-on-reject — paid restaurant orders are refunded before being marked rejected</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(24)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(25)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">💳 Plans & Billing</div></div>
@@ -1836,7 +1919,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
 
 
     <!-- 25. Inline RAG Evaluation -->
-    <div class="slide" data-idx="25">
+    <div class="slide" data-idx="26">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Quality Assurance</div>
@@ -1851,7 +1934,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div class="feature-item"><span class="feature-icon">🏆</span><span>Graded 1–5: Excellent · Good · Acceptable · Poor · Fail — hover for judge reasoning</span></div>
             <div class="feature-item"><span class="feature-icon">🧭</span><span>Agent workflow eval API — stores overall score, gate status, metric scores, recommendations, and policy threshold</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(25)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(26)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">💬 Chat — with inline eval scores</div></div>
@@ -1936,31 +2019,32 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
       </div>
     </div>
 
-<div class="slide" data-idx="26">
+<div class="slide" data-idx="27">
       <div class="slide-inner full final-summary">
         <div style="font-size:28px;margin-bottom:4px">🌿</div>
         <div class="slide-num">আদর DocIntel</div>
-        <div class="slide-title" style="font-size:30px;text-align:center;margin-bottom:6px">Everything you need to work smarter with documents</div>
-        <div class="slide-sub" style="text-align:center;max-width:560px;margin:0 auto 24px">A complete self-service Document Intelligence Platform — from upload to insight in minutes.</div>
+          <div class="slide-title" style="font-size:30px;text-align:center;margin-bottom:6px">Everything you need to turn business content into intelligence</div>
+        <div class="slide-sub" style="text-align:center;max-width:620px;margin:0 auto 24px">A complete self-service intelligence platform for documents, speech, transcripts, and video — from upload to searchable insight in minutes.</div>
 
         <div class="final-grid">
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">📂</div><div class="sum-card-title" style="color:#60a5fa">Upload &amp; Store</div><ul class="sum-card-list"><li>Up to 500 documents</li><li>PDF, DOCX, CSV, Images</li><li>Secure Google Cloud Storage</li><li>Signed URL access</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">✂</div><div class="sum-card-title" style="color:#fbbf24">Chunk &amp; Index</div><ul class="sum-card-list"><li>Auto 350-word windows</li><li>Rich metadata per chunk</li><li>GCS path storage</li><li>Browse all chunks</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">⚡</div><div class="sum-card-title" style="color:#c084fc">Embed &amp; Search</div><ul class="sum-card-list"><li>Gemini Embedding-2</li><li>768-dim vectors</li><li>pgvector + HNSW index</li><li>Cosine similarity search</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">🎙</div><div class="sum-card-title" style="color:#4ade80">Voice Chat</div><ul class="sum-card-list"><li>Speak + auto-submit</li><li>Safari/Firefox fallback</li><li>Gemini transcription</li><li>Source-cited answers</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">🎥</div><div class="sum-card-title" style="color:#60a5fa">Video Intelligence</div><ul class="sum-card-list"><li>Metadata + transcript + frames</li><li>Timestamped segments</li><li>Signed URL processing</li><li>Video Q&A in normal chat</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(248,113,113,.12);color:#f87171">📝</div><div class="sum-card-title" style="color:#f87171">Summarize</div><ul class="sum-card-list"><li>5 summary types</li><li>Executive to Custom</li><li>Map-reduce for large docs</li><li>No embedding needed</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">⚙</div><div class="sum-card-title" style="color:#fbbf24">Admin Control</div><ul class="sum-card-list"><li>Real-time system stats</li><li>User management</li><li>Document oversight</li><li>Role-based access</li></ul></div>
-          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">🔐</div><div class="sum-card-title" style="color:#60a5fa">Security + PII</div><ul class="sum-card-list"><li>JWT + bcrypt auth</li><li>Upload-time masking</li><li>Chat + trace privacy</li><li>OCR spacing aware</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">🔐</div><div class="sum-card-title" style="color:#60a5fa">Security + PII</div><ul class="sum-card-list"><li>JWT + bcrypt + MFA</li><li>Upload-time masking</li><li>Chat + trace privacy</li><li>OCR spacing aware</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">🗂</div><div class="sum-card-title" style="color:#4ade80">Chat Sessions</div><ul class="sum-card-list"><li>PostgreSQL-persisted history</li><li>Auto-titled from question</li><li>Access from any device</li><li>Up to 50 sessions per user</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">🔀</div><div class="sum-card-title" style="color:#c084fc">Hybrid Search</div><ul class="sum-card-list"><li>pgvector cosine similarity</li><li>PostgreSQL BM25 full-text</li><li>Reciprocal Rank Fusion</li><li>⚡ hybrid / 🔤 keyword / 🔍 vector badges</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">✦</div><div class="sum-card-title" style="color:#fbbf24">Gemini Re-ranking</div><ul class="sum-card-list"><li>20 candidates → Gemini scores</li><li>Cross-encoder (query + chunk)</li><li>Top 6 sent to LLM</li><li>Fallback to retrieval order</li></ul></div>
-          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">⚙</div><div class="sum-card-title" style="color:#60a5fa">Vertical Agents</div><ul class="sum-card-list"><li>Lease + healthcare + finance + restaurant</li><li>Prior auth + advisor packet PDFs</li><li>Coder, reviewer, advisor workflows</li><li>Human approval + save</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">⚙</div><div class="sum-card-title" style="color:#60a5fa">Vertical Agents</div><ul class="sum-card-list"><li>Healthcare + lease + finance</li><li>Prior auth + tax readiness</li><li>Coder/CPA review packets</li><li>Human approval + save</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">👍</div><div class="sum-card-title" style="color:#4ade80">Feedback Loop</div><ul class="sum-card-list"><li>Thumbs up/down on AI responses</li><li>Persists across sessions</li><li>Saved to PostgreSQL with context</li><li>Admin feedback analytics API</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">↓</div><div class="sum-card-title" style="color:#fbbf24">Export</div><ul class="sum-card-list"><li>Chat → Markdown with sources</li><li>Summary → Markdown .md</li><li>Client-side, instant download</li><li>Notion / Obsidian / VS Code ready</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">📊</div><div class="sum-card-title" style="color:#60a5fa">Usage Metering</div><ul class="sum-card-list"><li>Tracks uploads, queries, embeds</li><li>Today vs all-time breakdown</li><li>Storage bytes per user</li><li>Live usage panel in header</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">🏷</div><div class="sum-card-title" style="color:#c084fc">Tiered Plans</div><ul class="sum-card-list"><li>Free / Pro / Enterprise tiers</li><li>Per-user DB enforcement</li><li>Admin tier change dropdown</li><li>HTTP 403/429 on limit breach</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">🏢</div><div class="sum-card-title" style="color:#4ade80">Team Workspaces</div><ul class="sum-card-list"><li>Owner / Editor / Viewer roles</li><li>Invite teammates by email</li><li>Workspace-scoped docs + chat</li><li>Switch context in one click</li></ul></div>
-          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">📧</div><div class="sum-card-title" style="color:#60a5fa">Email Verification</div><ul class="sum-card-list"><li>Verify before first login</li><li>24-hour token via Gmail SMTP</li><li>Resend button available</li><li>Admin auto-verified</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">📧</div><div class="sum-card-title" style="color:#60a5fa">Email Trust</div><ul class="sum-card-list"><li>Verify before first login</li><li>6-digit MFA login code</li><li>Resend button available</li><li>Gmail SMTP branded email</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">🧭</div><div class="sum-card-title" style="color:#fbbf24">Traceability</div><ul class="sum-card-list"><li>Question-level traces</li><li>Spans + LLM events</li><li>Retrieved chunk inspection</li><li>Admin trace viewer</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">💳</div><div class="sum-card-title" style="color:#c084fc">Stripe Payments</div><ul class="sum-card-list"><li>Subscriptions + restaurant checkout</li><li>Same-workspace return</li><li>Paid owner queue</li><li>Reject → refund</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">📊</div><div class="sum-card-title" style="color:#4ade80">Inline Eval</div><ul class="sum-card-list"><li>Auto-scores every chat answer</li><li>🎯 Relevance · 🔍 Specificity · ⚖️ Confidence</li><li>Grades 1–5 with judge reasoning</li><li>On-demand for summaries & compare</li></ul></div>
@@ -1983,7 +2067,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
           <span>🐘 pgvector</span><span>☁ Google Cloud</span><span>🤖 Gemini AI</span><span>⚡ FastAPI</span><span>⚛ React</span><span>🔥 Firebase</span>
         </div>
 
-        <button class="btn-speak" style="margin:20px auto 0" onclick="speakSlide(26)">🔊 Play narration</button>
+        <button class="btn-speak" style="margin:20px auto 0" onclick="speakSlide(27)">🔊 Play narration</button>
       </div>
     </div>
 
@@ -1992,8 +2076,8 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
 
 <script>
 const SLIDES = [
-  { text: "Welcome to আদর DocIntel — a self-service document intelligence platform from Agomonia Labs. Upload documents, classify them automatically, ask questions in natural language, and get grounded answers from your own content. The platform now supports multilingual workflows, including English, Spanish, Bengali, Hindi, and Arabic." },
-  { text: "Getting started is simple. Users register with email and password, verify their email, and enter a private workspace protected by JWT sessions and bcrypt password hashing. Regular users and administrators see the right tools for their role, without exposing anyone else's data." },
+  { text: "Welcome to আদর DocIntel — a self-service intelligence platform from Agomonia Labs for documents, speech, transcripts, and video. Upload content, classify it automatically, ask questions in natural language, and get grounded answers from your own knowledgebase. The platform supports multilingual workflows, including English, Spanish, Bengali, Hindi, and Arabic." },
+  { text: "Getting started is simple. Users register with email and password, verify their email, and enter a private workspace protected by JWT sessions, bcrypt password hashing, and email OTP multi-factor authentication. After a valid password, DocIntel can send a 6-digit login code, verify it through a temporary MFA token, and only then issue the normal access token." },
   { text: "Upload PDF, Word, CSV, image, and text files. Originals are stored securely in Google Cloud Storage and opened only through time-limited signed URLs. During ingestion, DocIntel can redact PII before chunking and embedding, then classifies the document type, detects the language, and stores those labels directly on the document card. Redaction masks emails, phones, Social Security numbers, credit cards, dates of birth, bank or account identifiers, and IP addresses." },
   { text: "After extraction, DocIntel chunks content into 350-word semantic windows with overlap and rich metadata. If privacy is enabled, redaction happens before chunks are written and before vectors are generated. The detector is spacing-aware, so OCR variants like jane dot doe at example dot com, 123 space 45 space 6789, or date of birth with spaces around slashes are still masked." },
   { text: "The document list is not just storage. You can open the source, inspect chunks, reclassify a document, retry failed processing, and select specific chunks for targeted summarization. Each card shows status, type, domain, language, file size, chunk count, and whether PII redaction was applied. On mobile, each document uses a compact Tags menu for metadata and an Actions menu for Source, Chunks, Summary, Lease, Healthcare, Embed, Re-embed, Retry, and Delete. The chunk viewer also has a privacy toggle for safe raw-text review." },
@@ -2005,20 +2089,21 @@ const SLIDES = [
   { text: "Password reset is fully implemented. Users request a reset link by email, the token is stored as a SHA-256 hash, and links expire after one hour. The raw token only exists in the email, keeping the database clean and safer." },
   { text: "Rate limiting protects every major endpoint. Login, registration, password reset, upload, chat, and summarization each have clear limits. When a user exceeds a limit, the API returns a direct HTTP 429 message instead of failing mysteriously." },
   { text: "Chat history is persistent in PostgreSQL. Conversations auto-save after responses, sessions are titled from the first question, and the sidebar restores previous chats with questions, answers, feedback, and source citations intact." },
+  { text: "Video Intelligence turns uploaded video into a searchable knowledgebase. DocIntel stores the source in cloud storage, processes large media through signed URL and direct cloud upload flows, extracts metadata, audio transcripts, sampled frames, timeline segments, and timestamped chunks, then embeds the result for normal RAG chat. Users can ask what happened in a time range, find when an event occurred, summarize a recording, compare video evidence with documents, and connect training videos, meetings, product demos, clinical recordings, lease walkthroughs, sports highlights, audits, and support calls with the rest of the workspace knowledgebase." },
   { text: "Retrieval uses hybrid search. pgvector finds semantic matches, PostgreSQL full-text search catches exact names, invoice numbers, dates, and product codes, and Reciprocal Rank Fusion combines both lists so exact and conceptual matches work together." },
   { text: "Re-ranking improves the final context. Gemini reads each query and candidate chunk together, scores true relevance, and passes the top chunks into answer generation. If re-ranking fails, DocIntel falls back gracefully to retrieval order." },
-  { text: "DocIntel's vertical layer brings domain-specific agentic workflows on top of the same horizontal RAG and governance foundation. In healthcare, users can confirm consent, record or upload a patient-doctor conversation in English, Spanish, Bangla, Hindi, or Arabic, generate a transcript, create a SOAP note draft, write a patient-friendly summary, extract follow-up actions, generate an After Visit Summary, and save the visit as a searchable clinical document. The After Visit Summary can become a patient-ready PDF artifact that is saved to Google Cloud Storage, chunked, embedded, and available for future chat. The Healthcare Review Workbench adds RBAC personas, editable packet sections, tabbed clinical sections, approval workflow, audit trail, and field-level change history so teams know who changed what. Prior authorization agents map payer criteria to supporting evidence, identify missing information, generate missing-information requests, recommend candidate diagnosis, procedure, medication, and supply codes, require coder approval, run a readiness checklist, generate a polished prior authorization packet PDF, and track the case through submission status. In finance, DocIntel classifies W-2s, prior-year returns, brokerage, retirement, mortgage, property tax, charitable, bank, and credit card documents, then organizes tax submission readiness, net worth, cash flow, client planning profile, retirement readiness, advisor questions, planning readiness score, human review, approval, and a backend-generated advisor packet PDF. In lease management, agents extract tabbed abstracts, critical dates, obligations, clause flags, risk flags, and amendment comparisons, with readable mobile cards for long clause and risk text. In the restaurant vertical, owners can record long menu conversations as audio segments, save the full transcript, run extraction on transcript text, combine LLM extraction with deterministic item-price parsing, edit and approve restaurant profile and menu rows, and make menus searchable for conversational food discovery. Food lovers can type or speak questions like compare goat dum biryani prices, see restaurant ID and menu item ID from the structured database, view compact mobile comparison cards instead of wide tables, add visible answer rows to a collapsible carryout cart, adjust quantity or remove items, enter customer email, review restaurant contact details, pay through Stripe Checkout, return to the same workspace, and track the paid order in customer history. Restaurant owners process paid submitted orders, and when a paid order is rejected DocIntel attempts the Stripe refund before marking it rejected. Voice feedback is transcribed, editable before submission, and semantic sentiment can suggest a rating, tags, and topic signals. Verified order feedback updates rating badges, restaurant owners can respond in a feedback queue, and recommendations use menu match, price, ratings, verified feedback, and intent-specific sentiment signals. The result is a governed self-service product for patients, caregivers, clinicians, finance teams, advisors, lease teams, restaurant owners, operations teams, billing teams, food lovers, and compliance reviewers." },
+  { text: "DocIntel's vertical layer brings domain-specific agentic workflows on top of the same horizontal RAG and governance foundation. In healthcare, users can confirm consent, record or upload a patient-doctor conversation in English, Spanish, Bangla, Hindi, or Arabic, generate a transcript, create a SOAP note draft, write a patient-friendly summary, extract follow-up actions, generate an After Visit Summary, and save the visit as a searchable clinical document. Prior authorization agents map payer criteria to supporting evidence, identify missing information, recommend candidate codes for coder review, run a readiness checklist, generate a polished packet PDF, and track submission status. In lease management, agents extract tabbed abstracts, critical dates, obligations, clause flags, risk flags, and amendment comparisons, with readable mobile cards for long clause and risk text. In finance and tax, DocIntel supports MVP 1 tax submission readiness and MVP 2 financial planning readiness. MVP 1 uses OCR, chunking, embeddings, deterministic regex extraction, form-specific parsers, coordinate-aware IRS parsing, missing-document checks, prior-year comparison, and CPA or EA review packets. MVP 2 extends the same foundation into a planning profile, net worth snapshot, property assessment and home-equity snapshot, cash-flow snapshot, retirement readiness, insurance readiness, estate readiness, tax planning signals, advisor questions, and human-reviewed advisor packets. In the restaurant vertical, owners can record long menu conversations, extract and approve restaurant and menu rows, support conversational food discovery, process paid carryout orders, and capture verified feedback. The result is a governed self-service product for patients, caregivers, clinicians, CPA and tax teams, financial advisors, lease teams, restaurant owners, operations teams, billing teams, food lovers, and compliance reviewers." },
   { text: "Quality feedback is built into the loop. Users can rate answers with thumbs up or down, and the rating is saved with the question and answer context. Gemini also scores answer quality for relevance, specificity, and confidence." },
   { text: "Exports are one click. Chat sessions and summaries download as Markdown files directly from the browser, including full answers and source citation blocks, ready for Notion, Obsidian, Confluence, or a plain text review workflow." },
-  { text: "Usage metering runs in real time and is now strict enforcement, not just reporting. The Usage panel shows plan tier, document count, upload file size, storage used, daily chat queries, embedding chunks, summaries, compares, lease AI actions, voice transcriptions, eval cases, and all-time activity. During launch, Free subscriptions get enterprise-equivalent limits through August 31, 2026. Quota is reserved atomically before expensive model work starts, so concurrent requests cannot bypass the tier limit." },
+  { text: "Usage metering runs in real time and is now strict enforcement, not just reporting. The Usage panel shows plan tier, document count, upload file size, storage used, daily chat queries, embedding chunks, summaries, compares, lease AI actions, healthcare actions, finance and tax actions, voice transcriptions, eval cases, and all-time activity. During launch, Free subscriptions get enterprise-equivalent limits through August 31, 2026. Quota is reserved atomically before expensive model work starts, so concurrent requests cannot bypass the tier limit." },
   { text: "Billing and payments use Stripe with Free, Pro, and Enterprise tiers plus restaurant carryout checkout. For a limited launch period, the Free subscription includes enterprise-equivalent capabilities through August 31, 2026. Restaurant payments return customers to the same workspace, confirm paid orders by webhook, and refund paid orders before marking them rejected. Pro remains available at 20 dollars per month, and Enterprise remains the long-term paid tier for unlimited documents, unlimited daily workflows, and 10 gigabyte file support. Plan state syncs on login from the Stripe API." },
   { text: "Team workspaces turn DocIntel into a shared environment. Owners manage members, editors upload and embed, and viewers chat and search read-only. Documents, tags, summaries, and chat sessions stay scoped to the selected workspace." },
-  { text: "Email verification is required before first login. Verification links last 24 hours, resend is available, and the first deployment user is auto-verified so an administrator can bootstrap the system cleanly." },
+  { text: "Email verification is required before first login, and multi-factor authentication protects later sign-ins. Verification links last 24 hours. Login OTP codes expire after 5 minutes, allow 3 attempts, can be resent with a cooldown, and are stored only as hashes. During rollout, selected emails can bypass MFA using an environment variable." },
   { text: "Privacy, audit, and traceability work together. Teams cannot trust a document AI system by looking only at the final answer. In legal, financial, policy, and multilingual workflows, admins need to know which chunks were retrieved, how they were ranked, what prompt was sent, what tools ran, whether PII privacy mode was enabled, what the model returned, and where a failure happened. DocIntel assigns every chat or voice question an X-Trace-Id, stores the overall flow in trace flows, records each step in trace spans, stores LLM and tool events, and lets admins inspect the complete path from user input to cited answer." },
   { text: "Document recovery and organization keep the library healthy. Retry reprocesses failed files from the original GCS source. Tags create color-coded collections like Q3 Finance or Legal, and filters combine name, tag, status, type, and sort order. On phones, metadata moves into a Tags menu and document operations move into an Actions menu, keeping each card readable while preserving the full desktop workflow." },
   { text: "The production stack is Google Cloud end to end: FastAPI on Cloud Run, React on Firebase Hosting, Cloud SQL Postgres with pgvector, Google Cloud Storage, Secret Manager, Gmail SMTP, Stripe, and Gemini through REST APIs for embeddings, chat, reranking, classification, and audio transcription. Production migration is explicit: back up Cloud SQL, deploy the backend first, confirm trace tables in the health check, then deploy the frontend." },
   { text: "Evaluation helps teams trust the system. Chat answers are graded for relevance, specificity, and confidence, while summaries and comparisons can be evaluated on demand. Agent workflows now have a backend evaluation API that persists overall score, metric scores, pass or needs-review gate status, recommendations, policy threshold, and audit history for each run." },
-  { text: "That's আদর DocIntel: a responsive React app and horizontal RAG governance platform with vertical agentic AI layers for lease management, healthcare, finance, restaurants, brokerage, legal, biotech, and beyond. Teams can use it from desktop or mobile browser to upload, redact PII, classify, detect language, chunk, embed, speak or type in five languages, record clinical visits or restaurant menu conversations, generate searchable transcripts, create patient-ready After Visit Summary PDFs, retrieve, re-rank, trace the full AI flow, summarize, compare, run domain agents, evaluate workflow quality, review with RBAC personas, track field-level changes, organize, collaborate, bill, audit, and deploy. Healthcare teams can run prior authorization from payer policy to evidence mapping, coder-approved codes, readiness checklist, missing-information request, final packet PDF, and case tracker. Finance teams can move from tax organizer to net worth, cash flow, retirement readiness, advisor questions, readiness scoring, approval, and a generated advisor packet PDF. Lease teams can review abstracts, dates, obligations, clause flags, and risk flags in focused tabs with readable mobile cards. Restaurant users can search menus conversationally, compare prices in mobile-friendly cards, add answer-backed menu rows to a collapsible carryout cart, edit quantity, review restaurant details, pay through Stripe Checkout, return to the same workspace, route paid orders to the right restaurant owner queue, refund rejected paid orders, leave verified feedback, and see ratings influence recommendations. Try the power of DocIntel with limited-use free self-service access, now available from Agomonia Labs on the ADAR platform for multilingual document intelligence." }
+  { text: "That's আদর DocIntel: a responsive React app and horizontal RAG governance platform with secure login, email verification, MFA, and vertical agentic AI layers for lease management, healthcare, finance, tax, restaurants, brokerage, legal, biotech, and beyond. Teams can use it from desktop or mobile browser to upload documents, speech, transcripts, and videos; redact PII; classify; detect language; chunk; embed; speak or type in five languages; process video into metadata, transcript, frames, timeline segments, and timestamped chunks; retrieve; re-rank; trace the full AI flow; summarize; compare; run domain agents; evaluate workflow quality; review with RBAC personas; track field-level changes; organize; collaborate; bill; audit; and deploy. Healthcare teams can run prior authorization from payer policy to evidence mapping, coder-approved codes, readiness checklist, missing-information request, final packet PDF, and case tracker. Tax and financial planning teams can reuse uploaded records to create readiness packets, net worth snapshots, cash-flow snapshots, retirement signals, advisor questions, and approved advisor packets. Lease teams can review abstracts, dates, obligations, clause flags, and risk flags. Restaurant users can search menus conversationally, compare prices, place paid carryout orders, and leave verified feedback. Try the power of DocIntel with limited-use free self-service access, now available from Agomonia Labs on the ADAR platform for multimodal intelligence." }
 ];
 
 let current = 0;
