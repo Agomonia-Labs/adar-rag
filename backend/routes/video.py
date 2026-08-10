@@ -26,6 +26,7 @@ class ProcessVideoRequest(BaseModel):
     max_frames: int = 12
     segment_seconds: int = 60
     embed_after_processing: bool = True
+    transcript_language: str = "auto"
 
 
 class VideoUploadSessionRequest(BaseModel):
@@ -47,6 +48,7 @@ class VideoUploadCompleteRequest(BaseModel):
     max_frames: int = 12
     segment_seconds: int = 60
     embed_after_processing: bool = True
+    transcript_language: str = "auto"
 
 
 class VideoQuestionRequest(BaseModel):
@@ -182,6 +184,7 @@ async def complete_video_upload(
             max_frames=body.max_frames,
             segment_seconds=body.segment_seconds,
             embed_after_processing=body.embed_after_processing,
+            transcript_language=body.transcript_language,
         )
 
     return {
@@ -260,6 +263,7 @@ async def process_video(
         max_frames=body.max_frames,
         segment_seconds=body.segment_seconds,
         embed_after_processing=body.embed_after_processing,
+        transcript_language=body.transcript_language,
     )
     return {"message": "Video processing started", "doc_id": doc_id}
 

@@ -6,6 +6,7 @@ import {
   getVideoTimeline,
   listVideoDocuments,
   processVideoDocument,
+  uploadLargeVideoDocument,
 } from '../services/api.js';
 
 export default function VideoPanel({ activeWorkspace = null, onClose }) {
@@ -16,6 +17,8 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState('');
   const [message, setMessage] = useState('');
   const [frameUrls, setFrameUrls] = useState({});
   const [options, setOptions] = useState({
@@ -23,8 +26,10 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
     max_frames: 12,
     segment_seconds: 60,
     embed_after_processing: true,
+    transcript_language: 'auto',
   });
   const [openSections, setOpenSections] = useState({
+    upload: true,
     uploaded: true,
     process: true,
     status: true,
@@ -64,7 +69,7 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
     return () => clearInterval(timer);
   }, [selectedId, status?.processing_status, selectedDoc?.processing_status, workspaceId]);
 
-  async function refreshDocs() {
+  async function refreshDocs(preferredId = '') {
     setMessage('');
     try {
       const data = await listVideoDocuments(workspaceId);
@@ -72,17 +77,23 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
         workspaceId ? doc.workspace_id === workspaceId : !doc.workspace_id
       ));
       setDocs(scoped);
-      if (!scoped.some(doc => doc.id === selectedId)) {
-        setSelectedId(scoped[0]?.id || '');
+      const nextSelectedId = preferredId || selectedId;
+      if (!scoped.some(doc => doc.id === nextSelectedId)) {
+        const fallbackId = scoped[0]?.id || '';
+        setSelectedId(fallbackId);
         if (!scoped.length) {
           setStatus(null);
           setTimeline(null);
           setFrameUrls({});
           setAnswer(null);
         }
+      } else if (preferredId) {
+        setSelectedId(preferredId);
       }
+      return scoped;
     } catch (err) {
       setMessage(err.message || 'Unable to load video documents.');
+      return [];
     }
   }
 
@@ -126,6 +137,46 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
       }
     }));
     setFrameUrls(next);
+  }
+
+  async function uploadVideo(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!isSupportedVideoFile(file)) {
+      setMessage('Please select a supported video file such as MP4, MOV, M4V, AVI, MKV, or WebM.');
+      return;
+    }
+    setUploading(true);
+    setLoading(true);
+    setMessage('');
+    setUploadProgress(`Uploading ${file.name} directly to cloud storage...`);
+    try {
+      const result = await uploadLargeVideoDocument(file, workspaceId, {
+        rightsConfirmed: options.rights_confirmed,
+        processAfterUpload: false,
+        embedAfterProcessing: options.embed_after_processing,
+        maxFrames: options.max_frames,
+        segmentSeconds: options.segment_seconds,
+        transcriptLanguage: options.transcript_language,
+      });
+      const uploadedId = getUploadedDocumentId(result);
+      setUploadProgress('Upload complete. Refreshing workspace video list...');
+      const refreshedDocs = await refreshDocs(uploadedId);
+      const matchedDoc = findUploadedVideo(refreshedDocs, uploadedId, file);
+      if (matchedDoc?.id) {
+        setSelectedId(matchedDoc.id);
+        await loadStatus(matchedDoc.id);
+      }
+      setOpenSections(prev => ({ ...prev, uploaded: true, process: true }));
+      setMessage('Video uploaded and selected. Select Process Video when you are ready to create timeline, frames, transcript, chunks, and embeddings.');
+    } catch (err) {
+      setMessage(err.message || 'Video upload failed.');
+    } finally {
+      setUploading(false);
+      setLoading(false);
+      setUploadProgress('');
+    }
   }
 
   async function startProcessing() {
@@ -195,6 +246,31 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
             </div>
 
             <section style={s.sideSection}>
+              <button type="button" style={s.collapseHead} onClick={() => toggleSection('upload')}>
+                <span style={s.collapseTitle}>Upload Video</span>
+                <span style={s.collapseIcon}>{openSections.upload ? '−' : '+'}</span>
+              </button>
+              {openSections.upload && (
+                <div className="video-panel-upload-box" style={s.uploadBox}>
+                  <label style={uploading || loading ? s.uploadPickerDisabled : s.uploadPicker}>
+                    <span>{uploading ? 'Uploading video...' : 'Choose video from Photo Library or Files'}</span>
+                    <input
+                      type="file"
+                      accept="video/*,.mp4,.mov,.m4v,.avi,.mkv,.webm,.qt"
+                      disabled={uploading || loading}
+                      onChange={uploadVideo}
+                      style={s.hiddenFileInput}
+                    />
+                  </label>
+                  <p style={s.uploadHint}>
+                    Mobile videos upload directly to cloud storage first, then appear in this workspace for processing.
+                  </p>
+                  {uploadProgress && <div style={s.uploadProgress}>{uploadProgress}</div>}
+                </div>
+              )}
+            </section>
+
+            <section style={s.sideSection}>
               <button type="button" style={s.collapseHead} onClick={() => toggleSection('uploaded')}>
                 <span style={s.collapseTitle}>Uploaded Video</span>
                 <span style={s.collapseIcon}>{openSections.uploaded ? '−' : '+'}</span>
@@ -251,6 +327,19 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
                     />
                     Embed after processing
                   </label>
+                  <label style={s.label}>Transcript language</label>
+                  <select
+                    value={options.transcript_language}
+                    onChange={e => setOptions(o => ({ ...o, transcript_language: e.target.value }))}
+                    style={s.select}
+                  >
+                    <option value="auto">Auto detect</option>
+                    <option value="en-US">English</option>
+                    <option value="hi-IN">Hindi</option>
+                    <option value="bn-IN">Bangla</option>
+                    <option value="ar-XA">Arabic</option>
+                    <option value="es-ES">Spanish</option>
+                  </select>
                   <label style={s.label}>Max sampled frames</label>
                   <input
                     type="number"
@@ -480,6 +569,38 @@ function isVideoReadyForTimeline(value) {
   );
 }
 
+function isSupportedVideoFile(file) {
+  const name = String(file?.name || '').toLowerCase();
+  const type = String(file?.type || '').toLowerCase();
+  return type.startsWith('video/') || /\.(mp4|mov|m4v|avi|mkv|webm|qt)$/.test(name);
+}
+
+function getUploadedDocumentId(result) {
+  return (
+    result?.document?.id
+    || result?.document_id
+    || result?.doc_id
+    || result?.id
+    || result?.documents?.[0]?.id
+    || result?.uploaded?.[0]?.id
+    || ''
+  );
+}
+
+function findUploadedVideo(docs, uploadedId, file) {
+  if (!Array.isArray(docs) || !docs.length) return null;
+  if (uploadedId) {
+    const byId = docs.find(doc => doc.id === uploadedId);
+    if (byId) return byId;
+  }
+  const filename = String(file?.name || '').toLowerCase();
+  if (filename) {
+    const byName = docs.find(doc => String(doc.original_name || doc.filename || '').toLowerCase() === filename);
+    if (byName) return byName;
+  }
+  return docs[0] || null;
+}
+
 function formatTime(seconds) {
   const total = Math.max(0, Math.floor(Number(seconds) || 0));
   const h = Math.floor(total / 3600);
@@ -502,6 +623,12 @@ const s = {
   label: { fontSize:11, color:'var(--muted2)', fontWeight:800, textTransform:'uppercase', letterSpacing:.5 },
   select: { width:'100%', padding:'9px 10px', borderRadius:8, border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx)', fontSize:13 },
   input: { width:'100%', padding:'8px 10px', borderRadius:8, border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx)', fontSize:13 },
+  uploadBox: { display:'flex', flexDirection:'column', gap:8, padding:10, borderTop:'1px solid var(--b2)' },
+  uploadPicker: { display:'flex', minHeight:42, alignItems:'center', justifyContent:'center', textAlign:'center', padding:'9px 10px', borderRadius:8, border:'1px solid rgba(74,222,128,.35)', background:'rgba(22,163,74,.18)', color:'#dcfce7', fontWeight:850, cursor:'pointer', fontSize:13, lineHeight:1.25 },
+  uploadPickerDisabled: { display:'flex', minHeight:42, alignItems:'center', justifyContent:'center', textAlign:'center', padding:'9px 10px', borderRadius:8, border:'1px solid rgba(148,163,184,.22)', background:'rgba(148,163,184,.12)', color:'var(--muted2)', fontWeight:850, cursor:'not-allowed', fontSize:13, lineHeight:1.25 },
+  hiddenFileInput: { position:'absolute', width:1, height:1, opacity:0, pointerEvents:'none' },
+  uploadHint: { margin:0, color:'var(--muted2)', fontSize:12, lineHeight:1.45 },
+  uploadProgress: { padding:'7px 8px', borderRadius:7, background:'rgba(59,130,246,.12)', border:'1px solid rgba(59,130,246,.25)', color:'#bfdbfe', fontSize:12, lineHeight:1.4 },
   uploadedBox: { display:'flex', flexDirection:'column', gap:8, padding:10, borderTop:'1px solid var(--b2)' },
   uploadedHead: { display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 },
   miniBtn: { padding:'4px 8px', borderRadius:7, border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx)', fontWeight:750, cursor:'pointer', fontSize:11 },
@@ -566,6 +693,7 @@ if (typeof window !== 'undefined') {
       .video-panel-toolbar { display: none !important; }
       .video-panel-sidebar select, .video-panel-sidebar input { min-height: 38px !important; font-size: 13px !important; }
       .video-panel-sidebar strong { max-height: 34px !important; overflow: hidden !important; }
+      .video-panel-upload-box { padding: 8px !important; gap: 7px !important; }
       .video-panel-uploaded { padding: 8px !important; gap: 7px !important; }
       .video-panel-options { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 7px !important; padding: 8px !important; }
       .video-panel-options label { min-width: 0 !important; }

@@ -11,7 +11,7 @@ function token()   { return localStorage.getItem('token'); }
 function authHdr() { return { Authorization: `Bearer ${token()}` }; }
 function isVideoFile(file) {
   const name = (file?.name || '').toLowerCase();
-  return (file?.type || '').startsWith('video/') || /\.(mp4|mov|m4v|avi|mkv|webm)$/.test(name);
+  return (file?.type || '').startsWith('video/') || /\.(mp4|mov|m4v|avi|mkv|webm|qt)$/.test(name);
 }
 
 async function handleRes(res) {
@@ -121,6 +121,7 @@ export async function uploadLargeVideoDocument(file, workspaceId = null, options
       max_frames: options.maxFrames || 12,
       segment_seconds: options.segmentSeconds || 60,
       embed_after_processing: options.embedAfterProcessing !== false,
+      transcript_language: options.transcriptLanguage || 'auto',
     }),
   }));
 }

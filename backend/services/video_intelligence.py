@@ -58,6 +58,7 @@ async def process_video_document(
     max_frames: int = DEFAULT_MAX_FRAMES,
     segment_seconds: int = DEFAULT_SEGMENT_SECONDS,
     embed_after_processing: bool = True,
+    transcript_language: str = "auto",
 ) -> dict[str, Any]:
     pool = get_pool()
     job_id = str(uuid4())
@@ -81,6 +82,7 @@ async def process_video_document(
                 "max_frames": max_frames,
                 "segment_seconds": segment_seconds,
                 "embed_after_processing": embed_after_processing,
+                "transcript_language": transcript_language,
             }),
         )
         await conn.execute(
@@ -212,12 +214,13 @@ async def process_video_document(
                 stage_name="transcribing_audio",
                 progress_pct=26,
                 message="Retrying remote audio transcription with a fresh signed URL.",
-                run_stage=lambda ref: _transcribe_audio(ref, document_id=document_id),
+                run_stage=lambda ref: _transcribe_audio(ref, document_id=document_id, transcript_language=transcript_language),
             )
         else:
             transcript = await _transcribe_audio(
                 source_ref,
                 document_id=document_id,
+                transcript_language=transcript_language,
             ) if TRANSCRIBE_AUDIO_ENABLED else ""
         await _update_video_progress(
             document_id,
@@ -736,13 +739,13 @@ async def _caption_frame(path: str, timestamp: float) -> str:
         return ""
 
 
-async def _transcribe_audio(path: str, *, document_id: str | None = None) -> str:
+async def _transcribe_audio(path: str, *, document_id: str | None = None, transcript_language: str = "auto") -> str:
     provider = os.getenv("VIDEO_TRANSCRIBE_PROVIDER") or os.getenv("LLM_PROVIDER", "openai")
     provider = provider.lower().strip()
     if provider == "openai":
         return await _transcribe_audio_openai(path)
     if provider in {"gemini", "google", "google_speech", "speech", "vertex"}:
-        return await _transcribe_audio_google_speech(path, document_id=document_id)
+        return await _transcribe_audio_google_speech(path, document_id=document_id, transcript_language=transcript_language)
     log.warning("Audio transcription skipped: unsupported provider %s", provider)
     return ""
 
@@ -791,7 +794,7 @@ async def _transcribe_audio_openai(path: str) -> str:
         _safe_unlink(tmp.name, label="OpenAI audio transcript temp file")
 
 
-async def _transcribe_audio_google_speech(path: str, *, document_id: str | None = None) -> str:
+async def _transcribe_audio_google_speech(path: str, *, document_id: str | None = None, transcript_language: str = "auto") -> str:
     api_key = (
         os.getenv("GOOGLE_SPEECH_API_KEY")
         or os.getenv("GOOGLE_STT_API_KEY")
@@ -806,7 +809,7 @@ async def _transcribe_audio_google_speech(path: str, *, document_id: str | None 
     duration = _probe_video(path).get("duration_seconds") or 0
     chunk_seconds = max(15, min(55, TRANSCRIBE_CHUNK_SECONDS))
     starts = [0.0] if duration <= 0 else [float(s) for s in range(0, int(math.ceil(duration)), chunk_seconds)]
-    language_code = os.getenv("VIDEO_TRANSCRIBE_LANGUAGE_CODE", "en-US")
+    language_code, alternative_language_codes = _resolve_transcript_languages(transcript_language)
     total = len(starts)
     completed = 0
 
@@ -838,7 +841,7 @@ async def _transcribe_audio_google_speech(path: str, *, document_id: str | None 
                             progress_pct=_phase_pct(26, 44, completed, total),
                             message=f"Sending audio chunk {index + 1} of {total} to speech recognition.",
                         )
-                    text = await _google_speech_recognize(client, api_key, chunk_path, language_code)
+                    text = await _google_speech_recognize(client, api_key, chunk_path, language_code, alternative_language_codes)
                     text = sanitize_text_for_storage(text).strip()
                     if not text:
                         return index, ""
@@ -948,17 +951,39 @@ def _extract_audio_chunk(path: str, start: float, length: float) -> str:
         raise
 
 
-async def _google_speech_recognize(client: Any, api_key: str, audio_path: str, language_code: str) -> str:
+def _resolve_transcript_languages(transcript_language: str | None) -> tuple[str, list[str]]:
+    supported = {
+        "en-US": "en-US",
+        "hi-IN": "hi-IN",
+        "bn-IN": "bn-IN",
+        "ar-XA": "ar-XA",
+        "es-ES": "es-ES",
+    }
+    requested = (transcript_language or "auto").strip()
+    env_default = os.getenv("VIDEO_TRANSCRIBE_LANGUAGE_CODE", "en-US")
+    if requested in supported:
+        return supported[requested], []
+    if requested.lower() == "auto":
+        primary = env_default if env_default in supported else "en-US"
+        alternatives = [code for code in ["hi-IN", "bn-IN", "ar-XA", "es-ES", "en-US"] if code != primary]
+        return primary, alternatives
+    return env_default, []
+
+
+async def _google_speech_recognize(client: Any, api_key: str, audio_path: str, language_code: str, alternative_language_codes: list[str] | None = None) -> str:
     with open(audio_path, "rb") as f:
         audio_b64 = base64.b64encode(f.read()).decode()
+    config = {
+        "encoding": "FLAC",
+        "sampleRateHertz": 16000,
+        "languageCode": language_code,
+        "enableAutomaticPunctuation": True,
+        "model": os.getenv("GOOGLE_SPEECH_MODEL", "latest_long"),
+    }
+    if alternative_language_codes:
+        config["alternativeLanguageCodes"] = alternative_language_codes[:4]
     payload = {
-        "config": {
-            "encoding": "FLAC",
-            "sampleRateHertz": 16000,
-            "languageCode": language_code,
-            "enableAutomaticPunctuation": True,
-            "model": os.getenv("GOOGLE_SPEECH_MODEL", "latest_long"),
-        },
+        "config": config,
         "audio": {"content": audio_b64},
     }
     resp = await client.post(
