@@ -92,6 +92,32 @@ ALTER TABLE documents
     ADD COLUMN IF NOT EXISTS doc_language  TEXT DEFAULT 'en',
     ADD COLUMN IF NOT EXISTS classified_at TIMESTAMPTZ;
 
+-- Guest try-before-signup sessions. Guest documents still use the normal
+-- documents/chunks pipeline, but are scoped by a random browser-held token.
+CREATE TABLE IF NOT EXISTS guest_sessions (
+    id                    UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    token_hash            TEXT        UNIQUE NOT NULL,
+    guest_user_id          UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    claimed_by_user_id     UUID        REFERENCES users(id) ON DELETE SET NULL,
+    claimed_at             TIMESTAMPTZ,
+    expires_at             TIMESTAMPTZ NOT NULL,
+    upload_count           INTEGER     NOT NULL DEFAULT 0,
+    query_count            INTEGER     NOT NULL DEFAULT 0,
+    created_at             TIMESTAMPTZ DEFAULT NOW(),
+    updated_at             TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_guest_sessions_token_hash ON guest_sessions(token_hash);
+CREATE INDEX IF NOT EXISTS idx_guest_sessions_expires_at ON guest_sessions(expires_at);
+
+ALTER TABLE documents
+    ADD COLUMN IF NOT EXISTS guest_session_id UUID REFERENCES guest_sessions(id) ON DELETE SET NULL;
+
+ALTER TABLE document_chunks
+    ADD COLUMN IF NOT EXISTS guest_session_id UUID REFERENCES guest_sessions(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_docs_guest_session ON documents(guest_session_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_guest_session ON document_chunks(guest_session_id);
+
 
 -- Hybrid search: full-text search vector column
 ALTER TABLE document_chunks
@@ -253,23 +279,6 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_prt_token_hash ON password_reset_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_prt_user_id    ON password_reset_tokens(user_id);
-
--- Email OTP challenges for login MFA
-CREATE TABLE IF NOT EXISTS login_mfa_challenges (
-    id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id        UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    email          TEXT        NOT NULL,
-    code_hash      TEXT        NOT NULL,
-    mfa_token_hash TEXT        NOT NULL UNIQUE,
-    expires_at     TIMESTAMPTZ NOT NULL,
-    attempts       INTEGER     NOT NULL DEFAULT 0,
-    used           BOOLEAN     NOT NULL DEFAULT FALSE,
-    sent_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_at     TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_mfa_user_id ON login_mfa_challenges(user_id);
-CREATE INDEX IF NOT EXISTS idx_mfa_token_hash ON login_mfa_challenges(mfa_token_hash);
-CREATE INDEX IF NOT EXISTS idx_mfa_expires_at ON login_mfa_challenges(expires_at);
 
 -- Chat sessions (persistent across devices)
 CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -532,157 +541,6 @@ CREATE INDEX IF NOT EXISTS idx_vafc_run      ON vertical_agent_field_changes(run
 CREATE INDEX IF NOT EXISTS idx_vafc_doc      ON vertical_agent_field_changes(document_id);
 CREATE INDEX IF NOT EXISTS idx_vafc_user     ON vertical_agent_field_changes(user_id);
 CREATE INDEX IF NOT EXISTS idx_vafc_created  ON vertical_agent_field_changes(created_at DESC);
-
--- Video Intelligence foundation.
--- The source file stays in documents. These tables add time-aware metadata,
--- segments, sampled frames, transcript chunks, detected events, and job state.
-CREATE TABLE IF NOT EXISTS video_documents (
-    id                 UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    document_id         UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    user_id             UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    workspace_id        UUID        REFERENCES workspaces(id) ON DELETE SET NULL,
-    source_type         TEXT        NOT NULL DEFAULT 'upload',
-    source_url          TEXT,
-    rights_confirmed    BOOLEAN     NOT NULL DEFAULT FALSE,
-    duration_seconds    NUMERIC(12,3),
-    fps                 NUMERIC(8,3),
-    width               INTEGER,
-    height              INTEGER,
-    codec               TEXT,
-    audio_codec         TEXT,
-    bitrate             BIGINT,
-    frame_count         BIGINT,
-    gcs_video_path      TEXT,
-    gcs_audio_path      TEXT,
-    gcs_frames_dir      TEXT,
-    gcs_clips_dir       TEXT,
-    processing_status   TEXT        NOT NULL DEFAULT 'pending',
-    error_message       TEXT,
-    metadata            JSONB       NOT NULL DEFAULT '{}'::jsonb,
-    created_at          TIMESTAMPTZ DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(document_id)
-);
-CREATE INDEX IF NOT EXISTS idx_video_documents_doc       ON video_documents(document_id);
-CREATE INDEX IF NOT EXISTS idx_video_documents_user      ON video_documents(user_id);
-CREATE INDEX IF NOT EXISTS idx_video_documents_workspace ON video_documents(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_video_documents_status    ON video_documents(processing_status);
-
-CREATE TABLE IF NOT EXISTS video_segments (
-    id                 UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    document_id         UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    video_document_id   UUID        NOT NULL REFERENCES video_documents(id) ON DELETE CASCADE,
-    segment_index       INTEGER     NOT NULL,
-    start_seconds       NUMERIC(12,3) NOT NULL,
-    end_seconds         NUMERIC(12,3) NOT NULL,
-    segment_type        TEXT        NOT NULL DEFAULT 'scene',
-    title               TEXT        NOT NULL DEFAULT '',
-    summary             TEXT        NOT NULL DEFAULT '',
-    transcript          TEXT        NOT NULL DEFAULT '',
-    ocr_text            TEXT        NOT NULL DEFAULT '',
-    thumbnail_path      TEXT,
-    clip_path           TEXT,
-    confidence          FLOAT,
-    metadata            JSONB       NOT NULL DEFAULT '{}'::jsonb,
-    created_at          TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(video_document_id, segment_index)
-);
-CREATE INDEX IF NOT EXISTS idx_video_segments_doc    ON video_segments(document_id);
-CREATE INDEX IF NOT EXISTS idx_video_segments_video  ON video_segments(video_document_id);
-CREATE INDEX IF NOT EXISTS idx_video_segments_time   ON video_segments(video_document_id, start_seconds, end_seconds);
-CREATE INDEX IF NOT EXISTS idx_video_segments_type   ON video_segments(segment_type);
-
-CREATE TABLE IF NOT EXISTS video_frames (
-    id                 UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    document_id         UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    video_document_id   UUID        NOT NULL REFERENCES video_documents(id) ON DELETE CASCADE,
-    segment_id          UUID        REFERENCES video_segments(id) ON DELETE SET NULL,
-    frame_index         INTEGER     NOT NULL,
-    timestamp_seconds   NUMERIC(12,3) NOT NULL,
-    frame_path          TEXT        NOT NULL,
-    thumbnail_path      TEXT,
-    caption             TEXT        NOT NULL DEFAULT '',
-    ocr_text            TEXT        NOT NULL DEFAULT '',
-    perceptual_hash     TEXT,
-    metadata            JSONB       NOT NULL DEFAULT '{}'::jsonb,
-    created_at          TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(video_document_id, frame_index)
-);
-CREATE INDEX IF NOT EXISTS idx_video_frames_doc      ON video_frames(document_id);
-CREATE INDEX IF NOT EXISTS idx_video_frames_video    ON video_frames(video_document_id);
-CREATE INDEX IF NOT EXISTS idx_video_frames_segment  ON video_frames(segment_id);
-CREATE INDEX IF NOT EXISTS idx_video_frames_time     ON video_frames(video_document_id, timestamp_seconds);
-CREATE INDEX IF NOT EXISTS idx_video_frames_hash     ON video_frames(perceptual_hash);
-
-CREATE TABLE IF NOT EXISTS video_transcript_chunks (
-    id                 UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    document_id         UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    video_document_id   UUID        NOT NULL REFERENCES video_documents(id) ON DELETE CASCADE,
-    segment_id          UUID        REFERENCES video_segments(id) ON DELETE SET NULL,
-    chunk_index         INTEGER     NOT NULL,
-    start_seconds       NUMERIC(12,3) NOT NULL,
-    end_seconds         NUMERIC(12,3) NOT NULL,
-    speaker             TEXT,
-    transcript          TEXT        NOT NULL,
-    language            TEXT        NOT NULL DEFAULT 'en',
-    metadata            JSONB       NOT NULL DEFAULT '{}'::jsonb,
-    created_at          TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(video_document_id, chunk_index)
-);
-CREATE INDEX IF NOT EXISTS idx_video_transcript_doc      ON video_transcript_chunks(document_id);
-CREATE INDEX IF NOT EXISTS idx_video_transcript_video    ON video_transcript_chunks(video_document_id);
-CREATE INDEX IF NOT EXISTS idx_video_transcript_segment  ON video_transcript_chunks(segment_id);
-CREATE INDEX IF NOT EXISTS idx_video_transcript_time     ON video_transcript_chunks(video_document_id, start_seconds, end_seconds);
-
-CREATE TABLE IF NOT EXISTS video_events (
-    id                 UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    document_id         UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    video_document_id   UUID        NOT NULL REFERENCES video_documents(id) ON DELETE CASCADE,
-    segment_id          UUID        REFERENCES video_segments(id) ON DELETE SET NULL,
-    event_index         INTEGER     NOT NULL,
-    event_type          TEXT        NOT NULL,
-    domain              TEXT        NOT NULL DEFAULT 'general',
-    start_seconds       NUMERIC(12,3) NOT NULL,
-    end_seconds         NUMERIC(12,3),
-    title               TEXT        NOT NULL DEFAULT '',
-    description         TEXT        NOT NULL DEFAULT '',
-    actor               TEXT,
-    object              TEXT,
-    location            TEXT,
-    confidence          FLOAT,
-    evidence            JSONB       NOT NULL DEFAULT '[]'::jsonb,
-    metadata            JSONB       NOT NULL DEFAULT '{}'::jsonb,
-    created_at          TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(video_document_id, event_index)
-);
-CREATE INDEX IF NOT EXISTS idx_video_events_doc       ON video_events(document_id);
-CREATE INDEX IF NOT EXISTS idx_video_events_video     ON video_events(video_document_id);
-CREATE INDEX IF NOT EXISTS idx_video_events_segment   ON video_events(segment_id);
-CREATE INDEX IF NOT EXISTS idx_video_events_domain    ON video_events(domain);
-CREATE INDEX IF NOT EXISTS idx_video_events_type      ON video_events(event_type);
-CREATE INDEX IF NOT EXISTS idx_video_events_time      ON video_events(video_document_id, start_seconds, end_seconds);
-
-CREATE TABLE IF NOT EXISTS video_processing_jobs (
-    id                 UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    document_id         UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    video_document_id   UUID        REFERENCES video_documents(id) ON DELETE CASCADE,
-    user_id             UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    workspace_id        UUID        REFERENCES workspaces(id) ON DELETE SET NULL,
-    job_type            TEXT        NOT NULL,
-    status              TEXT        NOT NULL DEFAULT 'pending',
-    input_data          JSONB       NOT NULL DEFAULT '{}'::jsonb,
-    output_data         JSONB       NOT NULL DEFAULT '{}'::jsonb,
-    error_message       TEXT,
-    started_at          TIMESTAMPTZ,
-    completed_at        TIMESTAMPTZ,
-    created_at          TIMESTAMPTZ DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_video_jobs_doc       ON video_processing_jobs(document_id);
-CREATE INDEX IF NOT EXISTS idx_video_jobs_video     ON video_processing_jobs(video_document_id);
-CREATE INDEX IF NOT EXISTS idx_video_jobs_user      ON video_processing_jobs(user_id);
-CREATE INDEX IF NOT EXISTS idx_video_jobs_status    ON video_processing_jobs(status);
-CREATE INDEX IF NOT EXISTS idx_video_jobs_type      ON video_processing_jobs(job_type);
 
 CREATE TABLE IF NOT EXISTS restaurants (
     id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),

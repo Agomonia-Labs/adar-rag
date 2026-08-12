@@ -9,6 +9,11 @@ const LONG_BASE = STREAM_BASE;
 
 function token()   { return localStorage.getItem('token'); }
 function authHdr() { return { Authorization: `Bearer ${token()}` }; }
+function guestToken() { return localStorage.getItem('guest_token'); }
+function guestHdr() {
+  const t = guestToken();
+  return t ? { 'X-Guest-Token': t } : {};
+}
 function isVideoFile(file) {
   const name = (file?.name || '').toLowerCase();
   return (file?.type || '').startsWith('video/') || /\.(mp4|mov|m4v|avi|mkv|webm|qt)$/.test(name);
@@ -16,17 +21,8 @@ function isVideoFile(file) {
 
 async function handleRes(res) {
   if (res.ok) return res.json();
-  const traceId = res.headers.get('x-trace-id');
-  const contentType = res.headers.get('content-type') || '';
-  let detail = '';
-  if (contentType.includes('application/json')) {
-    const e = await res.json().catch(() => ({}));
-    detail = e.detail || e.message || '';
-  } else {
-    detail = (await res.text().catch(() => '')).replace(/\s+/g, ' ').trim();
-  }
-  const suffix = traceId ? ` (trace ${traceId})` : '';
-  throw new Error(detail ? `HTTP ${res.status}: ${detail.slice(0, 240)}${suffix}` : `HTTP ${res.status}${suffix}`);
+  const e = await res.json().catch(() => ({}));
+  throw new Error(e.detail || e.message || `HTTP ${res.status}`);
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -65,15 +61,122 @@ export async function getMe() {
   return handleRes(await fetch(`${BASE}/auth/me`, { headers: authHdr() }));
 }
 
+// ── Guest preview ────────────────────────────────────────────────────────────
+export async function createGuestSession() {
+  const data = await handleRes(await fetch(`${BASE}/guest/session`, { method:'POST' }));
+  localStorage.setItem('guest_token', data.guest_token);
+  localStorage.setItem('guest_session_id', data.guest_session_id);
+  localStorage.setItem('guest_expires_at', data.expires_at);
+  return data;
+}
+
+export async function ensureGuestSession() {
+  if (guestToken()) {
+    return {
+      guest_token: guestToken(),
+      guest_session_id: localStorage.getItem('guest_session_id'),
+      expires_at: localStorage.getItem('guest_expires_at'),
+    };
+  }
+  return createGuestSession();
+}
+
+export async function uploadGuestDocuments(files, options = {}) {
+  await ensureGuestSession();
+  const form = new FormData();
+  for (const f of files) form.append('files', f);
+  if (options.redactPii) form.append('redact_pii', 'true');
+  return handleRes(await fetch(`${BASE}/guest/upload`, { method:'POST', headers:guestHdr(), body:form }));
+}
+
+export async function listGuestDocuments() {
+  await ensureGuestSession();
+  return handleRes(await fetch(`${BASE}/guest/documents`, { headers:guestHdr() }));
+}
+
+export async function triggerGuestEmbed(docId) {
+  await ensureGuestSession();
+  return handleRes(await fetch(`${BASE}/guest/documents/${docId}/embed`, { method:'POST', headers:guestHdr() }));
+}
+
+export async function claimGuestSession() {
+  if (!guestToken()) return { claimed:false };
+  const data = await handleRes(await fetch(`${BASE}/guest/claim`, { method:'POST', headers:{ ...authHdr(), ...guestHdr() } }));
+  localStorage.removeItem('guest_token');
+  localStorage.removeItem('guest_session_id');
+  localStorage.removeItem('guest_expires_at');
+  return data;
+}
+
+export async function streamGuestChat({ question, documentIds, history = [], redactPii = false }, { onToken, onDone, onError }) {
+  await ensureGuestSession();
+  const res = await fetch(`${STREAM_BASE}/guest/chat/stream`, {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', ...guestHdr() },
+    body: JSON.stringify({ question, document_ids: documentIds, history, redact_pii: redactPii }),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    onError?.(e.detail || `HTTP ${res.status}`);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finished = false;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream:true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      let ev; try { ev = JSON.parse(line.slice(6)); } catch { continue; }
+      if (ev.type === 'token') onToken?.(ev.text);
+      if (ev.type === 'done') { onDone?.(ev.sources || [], null, ev); finished = true; break; }
+      if (ev.type === 'error') { onError?.(ev.error); finished = true; break; }
+    }
+    if (finished) return;
+  }
+}
+
+export async function streamGuestSummary({ documentIds, summaryType = 'executive', redactPii = false }, { onToken, onMeta, onDone, onError }) {
+  await ensureGuestSession();
+  const res = await fetch(`${STREAM_BASE}/guest/summarize/stream`, {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', ...guestHdr() },
+    body: JSON.stringify({ document_ids: documentIds, summary_type: summaryType, redact_pii: redactPii }),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    onError?.(e.detail || `HTTP ${res.status}`);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finished = false;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream:true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      let ev; try { ev = JSON.parse(line.slice(6)); } catch { continue; }
+      if (ev.type === 'token') onToken?.(ev.text);
+      if (ev.type === 'meta') onMeta?.(ev);
+      if (ev.type === 'done') { onDone?.(ev); finished = true; break; }
+      if (ev.type === 'error') { onError?.(ev.error); finished = true; break; }
+    }
+    if (finished) return;
+  }
+}
+
 // ── Documents ─────────────────────────────────────────────────────────────────
 export async function uploadDocuments(files, workspaceId = null, options = {}) {
-  const largeFiles = [...files].filter(f => f.size > 31 * 1024 * 1024 && !isVideoFile(f));
-  if (largeFiles.length) {
-    const names = largeFiles.map(f => `${f.name} (${(f.size / 1024 / 1024).toFixed(1)} MB)`).join(', ');
-    throw new Error(
-      `Large upload blocked before sending: ${names}. Current production document upload goes through the /api proxy and can fail around 32 MiB before backend logs appear. Use a file under 30 MB for this path. Large videos use the direct-to-GCS upload flow.`
-    );
-  }
   const form = new FormData();
   for (const f of files) form.append('files', f);
   if (options.redactPii) form.append('redact_pii', 'true');

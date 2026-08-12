@@ -6,17 +6,17 @@ import BillingPanel     from './components/BillingPanel.jsx';
 import WorkspacesTab    from './components/WorkspacesTab.jsx';
 import DocumentsTab    from './components/DocumentsTab.jsx';
 import ChatTab         from './components/ChatTab.jsx';
+import GuestTryPanel   from './components/GuestTryPanel.jsx';
 import AdminDashboard  from './components/AdminDashboard.jsx';
 import HealthcarePanel from './components/HealthcarePanel.jsx';
-import FinanceTaxPanel from './components/FinanceTaxPanel.jsx';
 import RestaurantPanel from './components/RestaurantPanel.jsx';
-import VideoPanel from './components/VideoPanel.jsx';
 import { ToastContainer } from './components/Toast.jsx';
-import { getMe, getWorkspace }       from './services/api.js';
+import { claimGuestSession, getMe, getWorkspace }       from './services/api.js';
 import { LANGUAGES, getLanguage, getStrings } from './i18n.js';
 
 export default function App() {
   const [authPage,     setAuthPage]     = useState('login');
+  const [showAuth,     setShowAuth]     = useState(false);
   const [user,         setUser]         = useState(null);
   const [checking,     setChecking]     = useState(true);
   const [tab,          setTab]          = useState('documents');
@@ -25,9 +25,7 @@ export default function App() {
   const [showVerticals,    setShowVerticals]    = useState(false);
   const [showMainMenu,     setShowMainMenu]     = useState(false);
   const [showNewVisit,     setShowNewVisit]     = useState(false);
-  const [showFinanceTaxPanel, setShowFinanceTaxPanel] = useState(false);
   const [showRestaurantPanel, setShowRestaurantPanel] = useState(false);
-  const [showVideoPanel, setShowVideoPanel] = useState(false);
   const [openLeasePickerKey, setOpenLeasePickerKey] = useState(0);
   const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0);
   const [activeWorkspace,  setActiveWorkspace]  = useState(null);
@@ -111,11 +109,20 @@ export default function App() {
     if (!isMobile) setShowMainMenu(false);
   }, [isMobile]);
 
-  const handleLogin = data => {
+  const handleLogin = async data => {
     localStorage.setItem('token',     data.access_token);
     localStorage.setItem('user_role', data.role);
     setUser({ id:data.user_id, email:data.email, full_name:data.full_name, role:data.role });
     setTab(data.role==='admin'?'admin':'documents');
+    setShowAuth(false);
+    if (localStorage.getItem('guest_token')) {
+      try {
+        await claimGuestSession();
+        setDocumentsRefreshKey(k => k + 1);
+      } catch (e) {
+        console.warn('Guest workspace claim failed:', e);
+      }
+    }
   };
 
   const handleLogout = () => { localStorage.clear(); setUser(null); setEmbeddedDocs([]); setTab('documents'); };
@@ -130,7 +137,9 @@ export default function App() {
   }
 
   if (!user) {
-    return <AuthFlow onLogin={handleLogin} />;
+    return showAuth
+      ? <AuthFlow onLogin={handleLogin} />
+      : <GuestTryPanel onSignIn={() => setShowAuth(true)} />;
   }
 
   const isAdmin = user.role==='admin';
@@ -170,16 +179,6 @@ export default function App() {
     setShowRestaurantPanel(true);
   };
 
-  const openFinanceTaxWorkflow = () => {
-    closeMenus();
-    setShowFinanceTaxPanel(true);
-  };
-
-  const openVideoWorkflow = () => {
-    closeMenus();
-    setShowVideoPanel(true);
-  };
-
   return (
     <>
       <ToastContainer />
@@ -201,18 +200,6 @@ export default function App() {
           workspaceId={activeWorkspace?.id || null}
           activeWorkspace={activeWorkspace}
           onClose={() => setShowRestaurantPanel(false)}
-        />
-      )}
-      {showFinanceTaxPanel && (
-        <FinanceTaxPanel
-          activeWorkspace={activeWorkspace}
-          onClose={() => setShowFinanceTaxPanel(false)}
-        />
-      )}
-      {showVideoPanel && (
-        <VideoPanel
-          activeWorkspace={activeWorkspace}
-          onClose={() => setShowVideoPanel(false)}
         />
       )}
       <div style={s.shell}>
@@ -298,24 +285,6 @@ export default function App() {
                       onClick={openLeaseDocuments}>
                       <span>🏢</span>
                       <span>Open lease documents</span>
-                    </button>
-                  </div>
-                  <div style={s.verticalGroup}>
-                    <div style={s.verticalGroupTitle}>Finance & Tax</div>
-                    <button
-                      style={s.verticalItem}
-                      onClick={openFinanceTaxWorkflow}>
-                      <span>💼</span>
-                      <span>Tax & Financial Planning Readiness</span>
-                    </button>
-                  </div>
-                  <div style={s.verticalGroup}>
-                    <div style={s.verticalGroupTitle}>Video Intelligence</div>
-                    <button
-                      style={s.verticalItem}
-                      onClick={openVideoWorkflow}>
-                      <span>🎬</span>
-                      <span>Video Timeline & Q&A</span>
                     </button>
                   </div>
                   <div style={s.verticalGroup}>
@@ -411,14 +380,6 @@ export default function App() {
                 <button type="button" style={s.menuItem} onClick={openLeaseDocuments}>
                   <span>🏢</span>
                   <span>Lease · Open lease documents</span>
-                </button>
-                <button type="button" style={s.menuItem} onClick={openFinanceTaxWorkflow}>
-                  <span>💼</span>
-                  <span>Finance & Tax · Tax & Financial Planning Readiness</span>
-                </button>
-                <button type="button" style={s.menuItem} onClick={openVideoWorkflow}>
-                  <span>🎬</span>
-                  <span>Video Intelligence · Timeline & Q&A</span>
                 </button>
                 <button type="button" style={s.menuItem} onClick={openRestaurantWorkflow}>
                   <span>🍽</span>
