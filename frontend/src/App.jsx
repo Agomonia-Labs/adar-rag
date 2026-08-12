@@ -7,6 +7,7 @@ import WorkspacesTab    from './components/WorkspacesTab.jsx';
 import DocumentsTab    from './components/DocumentsTab.jsx';
 import ChatTab         from './components/ChatTab.jsx';
 import GuestTryPanel   from './components/GuestTryPanel.jsx';
+import HelpGuidePanel  from './components/HelpGuidePanel.jsx';
 import AdminDashboard  from './components/AdminDashboard.jsx';
 import HealthcarePanel from './components/HealthcarePanel.jsx';
 import RestaurantPanel from './components/RestaurantPanel.jsx';
@@ -22,6 +23,7 @@ export default function App() {
   const [tab,          setTab]          = useState('documents');
   const [showUsage,        setShowUsage]        = useState(false);
   const [showBilling,      setShowBilling]      = useState(false);
+  const [showHelpGuide,    setShowHelpGuide]    = useState(false);
   const [showVerticals,    setShowVerticals]    = useState(false);
   const [showMainMenu,     setShowMainMenu]     = useState(false);
   const [showNewVisit,     setShowNewVisit]     = useState(false);
@@ -139,7 +141,12 @@ export default function App() {
   if (!user) {
     return showAuth
       ? <AuthFlow onLogin={handleLogin} />
-      : <GuestTryPanel onSignIn={() => setShowAuth(true)} />;
+      : (
+        <>
+          <GuestTryPanel onSignIn={() => setShowAuth(true)} onOpenGuide={() => setShowHelpGuide(true)} />
+          {showHelpGuide && <HelpGuidePanel onClose={() => setShowHelpGuide(false)} initialSection="quick-start" />}
+        </>
+      );
   }
 
   const isAdmin = user.role==='admin';
@@ -184,6 +191,7 @@ export default function App() {
       <ToastContainer />
       {showUsage && <UsagePanel onClose={() => setShowUsage(false)} onUpgrade={() => { setShowUsage(false); setShowBilling(true); }} />}
       {showBilling && <BillingPanel onClose={() => setShowBilling(false)} />}
+      {showHelpGuide && <HelpGuidePanel onClose={() => setShowHelpGuide(false)} initialSection="quick-start" />}
       {showNewVisit && (
         <HealthcarePanel
           newVisit
@@ -321,6 +329,12 @@ export default function App() {
               📊 {t.usage}
             </button>
             <button
+              style={s.helpBtn}
+              onClick={() => setShowHelpGuide(true)}
+              title="Open DocIntel user guide">
+              📘 Guide
+            </button>
+            <button
               style={{ fontSize:12, padding:isMobile?'5px 9px':'5px 12px', background:'rgba(192,132,252,.1)',
                        color:'#c084fc', border:'1px solid rgba(192,132,252,.3)',
                        borderRadius:'var(--r)', cursor:'pointer', fontWeight:600 }}
@@ -397,6 +411,10 @@ export default function App() {
                   <span>💳</span>
                   <span>{t.plans}</span>
                 </button>
+                <button type="button" style={s.menuItem} onClick={() => { closeMenus(); setShowHelpGuide(true); }}>
+                  <span>📘</span>
+                  <span>DocIntel User Guide</span>
+                </button>
                 <label style={s.menuLangWrap} title={t.language}>
                   <span>🌐</span>
                   <span>{t.language}</span>
@@ -470,6 +488,7 @@ const s = {
   verticalGroupTitle:{ fontSize:10, color:'var(--muted2)', textTransform:'uppercase', letterSpacing:'.8px', fontWeight:800, padding:'2px 4px' },
   verticalItem:{ display:'flex', alignItems:'center', gap:8, width:'100%', padding:'8px 9px', background:'var(--s2)', border:'1px solid var(--b2)', color:'var(--tx)', borderRadius:7, cursor:'pointer', fontSize:12, fontWeight:700, textAlign:'left' },
   verticalItemDisabled:{ opacity:.45, cursor:'not-allowed' },
+  helpBtn:{ fontSize:12, padding:'5px 12px', background:'rgba(74,222,128,.08)', color:'#4ade80', border:'1px solid rgba(74,222,128,.28)', borderRadius:'var(--r)', cursor:'pointer', fontWeight:700 },
   langWrap:  { display:'flex', alignItems:'center', gap:5, padding:'4px 8px', border:'1px solid var(--b2)', borderRadius:'var(--r)', background:'var(--s2)' },
   langSelect:{ width:'auto', minWidth:78, padding:'2px 4px', border:'none', boxShadow:'none', background:'transparent', color:'var(--tx2)', fontSize:12, cursor:'pointer' },
   signOutBtn:{ padding:'6px 14px', fontSize:12, fontWeight:500, background:'transparent', border:'1px solid var(--b2)', color:'var(--muted2)', borderRadius:'var(--r)', cursor:'pointer', transition:'all .15s' },

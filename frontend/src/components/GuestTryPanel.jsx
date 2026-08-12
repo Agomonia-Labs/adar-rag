@@ -25,7 +25,7 @@ const SUMMARY_TYPES = [
   { key:'detailed', icon:'📄', label:'Detailed' },
 ];
 
-export default function GuestTryPanel({ onSignIn }) {
+export default function GuestTryPanel({ onSignIn, onOpenGuide }) {
   const [docs, setDocs] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -182,6 +182,7 @@ export default function GuestTryPanel({ onSignIn }) {
                 ⬆ {busy ? 'Uploading...' : 'Upload and try'}
               </button>
               <button style={s.secondary} onClick={onSignIn}>Sign in / create account</button>
+              <button style={s.guideBtn} onClick={onOpenGuide}>📘 User guide</button>
               {isMobile && <button style={s.refresh} onClick={loadDocs}>Refresh workspace</button>}
             </div>
             {isMobile && (
@@ -381,6 +382,7 @@ const s = {
   actionsMobile:{ flexDirection:'column' },
   primary:{ border:0, borderRadius:8, padding:'12px 16px', background:'#22c55e', color:'#052e16', fontWeight:900, cursor:'pointer' },
   secondary:{ border:'1px solid rgba(74,222,128,.35)', borderRadius:8, padding:'12px 16px', background:'rgba(74,222,128,.08)', color:'#86efac', fontWeight:800, cursor:'pointer' },
+  guideBtn:{ border:'1px solid rgba(96,165,250,.32)', borderRadius:8, padding:'12px 16px', background:'rgba(96,165,250,.08)', color:'#93c5fd', fontWeight:800, cursor:'pointer' },
   error:{ marginTop:14, padding:12, border:'1px solid rgba(248,113,113,.35)', background:'rgba(248,113,113,.1)', color:'#fecaca', borderRadius:8, fontSize:13 },
   panel:{ alignSelf:'center', background:'var(--s1)', border:'1px solid var(--b1)', borderRadius:10, padding:16, boxShadow:'0 24px 80px rgba(0,0,0,.35)' },
   panelMobile:{ alignSelf:'stretch', padding:10, borderRadius:9, boxShadow:'0 14px 42px rgba(0,0,0,.32)' },
