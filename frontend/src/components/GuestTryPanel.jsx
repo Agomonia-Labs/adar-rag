@@ -25,6 +25,41 @@ const SUMMARY_TYPES = [
   { key:'detailed', icon:'📄', label:'Detailed' },
 ];
 
+const SUGGESTED_QUESTIONS = [
+  'What are the most important points?',
+  'What risks or obligations should I review?',
+  'What information appears to be missing?',
+];
+
+const EXPERIENCE_STEPS = [
+  { number:'01', title:'Understand', text:'Turn uploaded content into structured, readable summaries.' },
+  { number:'02', title:'Ask', text:'Use natural language to explore the content that matters to you.' },
+  { number:'03', title:'Verify', text:'Review grounded answers tied to the processed source.' },
+  { number:'04', title:'Continue', text:'Create a workspace to preserve and extend the intelligence.' },
+];
+
+const CAPABILITIES = [
+  { icon:'📄', title:'Documents', text:'PDFs, notes, forms, policies, contracts, images, CSVs, and transcripts.' },
+  { icon:'🎙️', title:'Speech', text:'Bring spoken knowledge into the same searchable intelligence layer.' },
+  { icon:'🎥', title:'Video', text:'Create timestamp-aware transcripts, frames, segments, and grounded Q&A.' },
+  { icon:'⚙️', title:'Workflows', text:'Move from understanding to review, approval, packets, and action.' },
+];
+
+const INDUSTRIES = [
+  ['🏥', 'Healthcare', 'Clinical, AVS, coding, and prior authorization workflows'],
+  ['📊', 'Finance', 'Tax submission and financial planning readiness'],
+  ['🏢', 'Lease', 'Abstracts, obligations, dates, clauses, and risks'],
+  ['🎬', 'Video Intelligence', 'Searchable moments, transcripts, frames, and timestamps'],
+];
+
+const ARCHITECTURE_FLOW = [
+  { step:'01', title:'Upload & store', text:'Documents, speech, and video are securely saved to cloud storage.', state:'Uploading' },
+  { step:'02', title:'Extract & chunk', text:'Text, transcripts, frames, metadata, and timestamps become structured chunks.', state:'Processing' },
+  { step:'03', title:'Summarize & embed', text:'Chunks support direct summaries; embeddings store semantic context in pgvector.', state:'Knowledge index' },
+  { step:'04', title:'Retrieve & reason', text:'RAG selects relevant evidence for grounded Q&A, comparison, and citations.', state:'Intelligence' },
+  { step:'05', title:'Review & act', text:'People verify results and continue into domain workflows and decisions.', state:'Human review' },
+];
+
 export default function GuestTryPanel({ onSignIn, onOpenGuide, onOpenHelpCenter }) {
   const [docs, setDocs] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -36,6 +71,7 @@ export default function GuestTryPanel({ onSignIn, onOpenGuide, onOpenHelpCenter 
   const [summarizing, setSummarizing] = useState(false);
   const [summaryProgress, setSummaryProgress] = useState('');
   const [asking, setAsking] = useState(false);
+  const [detailTab, setDetailTab] = useState('');
   const [openSections, setOpenSections] = useState({
     intro: false,
     documents: true,
@@ -50,9 +86,8 @@ export default function GuestTryPanel({ onSignIn, onOpenGuide, onOpenHelpCenter 
   const embeddedDocs = useMemo(() => docs.filter(d => d.status === 'embedded'), [docs]);
   const summaryDocs = useMemo(() => docs.filter(d => ['chunked', 'embedding', 'embedded'].includes(d.status)), [docs]);
   const processing = docs.some(d => ['uploading', 'chunking', 'embedding'].includes(d.status));
-  const isOpen = key => !isMobile || openSections[key];
+  const isOpen = key => key === 'intro' && !isMobile ? true : openSections[key];
   const toggleSection = key => {
-    if (!isMobile) return;
     setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
@@ -100,6 +135,13 @@ export default function GuestTryPanel({ onSignIn, onOpenGuide, onOpenHelpCenter 
     } finally {
       setBusy(false);
     }
+  };
+
+  const trySample = () => {
+    const sample = new File([
+      `ADAR DocIntel Sample Brief\n\nProject: Customer onboarding modernization\nOwner: Operations and Technology\nTarget date: October 15\n\nThe organization plans to consolidate onboarding policies, training notes, support transcripts, and approval checklists into one searchable workspace. The first release must support document summaries, grounded questions, source review, and role-based access.\n\nKey risks include incomplete source material, inconsistent policy versions, unclear ownership, and insufficient reviewer capacity. Before launch, the team must confirm the authoritative policy set, assign reviewers, complete a privacy assessment, and approve the rollout plan.`,
+    ], 'docintel-sample-brief.txt', { type:'text/plain' });
+    upload([sample]);
   };
 
   const embed = async doc => {
@@ -164,32 +206,57 @@ export default function GuestTryPanel({ onSignIn, onOpenGuide, onOpenHelpCenter 
   return (
     <div style={{...s.shell, ...(isMobile ? s.shellMobile : {})}}>
       <section style={{...s.hero, ...(isMobile ? s.heroMobile : {})}}>
-        <div style={{...s.brand, ...(isMobile ? s.brandMobile : {})}}>🌿 <span>আদর</span><strong>DocIntel</strong></div>
-        <h1 style={{...s.h1, ...(isMobile ? s.h1Mobile : {})}}>DocIntel Guest Preview</h1>
+        <div style={s.topbar}>
+          <div style={{...s.brand, ...(isMobile ? s.brandMobile : {})}}>🌿 <span>আদর</span><strong>ADAR DocIntel</strong></div>
+        </div>
+        <div style={s.heroLabel}>Guest Preview · No account required</div>
+        <div style={{...s.heroTitleRow, ...(isMobile ? s.heroTitleRowMobile : {})}}>
+          <h1 style={{...s.h1, ...(isMobile ? s.h1Mobile : {})}}>Connect Content Through Intelligent Knowledge</h1>
+          {!isMobile && (
+            <details style={s.actionMenu}>
+              <summary style={s.actionMenuTrigger}>Next action ▾</summary>
+              <div style={s.actionMenuList}>
+                <button style={{...s.actionMenuItem, ...s.actionMenuPrimary}} onClick={() => fileRef.current?.click()} disabled={busy}>⬆ {busy ? 'Uploading...' : 'Upload and try'}</button>
+                <button style={s.actionMenuItem} onClick={trySample} disabled={busy}>▶ Explore with a sample</button>
+                <button style={s.actionMenuItem} onClick={onSignIn}>Sign in / create account</button>
+                <button style={s.actionMenuItem} onClick={onOpenGuide}>📘 User guide</button>
+                <button style={s.actionMenuItem} onClick={onOpenHelpCenter}>📘 Help Center</button>
+                <a href="/demo.docintel.html" style={{...s.actionMenuItem, ...s.guideLink}}>▶ See the platform end to end</a>
+              </div>
+            </details>
+          )}
+        </div>
         {isMobile && (
           <button type="button" style={s.heroToggle} onClick={() => toggleSection('intro')}>
-            <span>Upload / sign in options</span>
+            <span>Start the guest preview</span>
             <span style={s.chevron}>{openSections.intro ? '⌃' : '⌄'}</span>
           </button>
         )}
         {isOpen('intro') && (
           <div style={isMobile ? s.heroBodyMobile : undefined}>
-            <p style={{...s.copy, ...(isMobile ? s.copyMobile : {})}}>
-              Upload a PDF, document, image, CSV, note, or transcript. DocIntel will process it into searchable chunks so you can preview grounded Q&A, then sign in to save the workspace.
+            <p style={{...s.copy, ...s.heroIntroCopy, ...(isMobile ? s.copyMobile : {})}}>
+              Upload your own file or use the sample brief to generate summaries, ask grounded questions, and turn scattered information into searchable, actionable knowledge.
             </p>
-            <div style={{...s.actions, ...(isMobile ? s.actionsMobile : {})}}>
+            {isMobile && <div style={{...s.actions, ...s.actionsMobile}}>
               <button style={s.primary} onClick={() => fileRef.current?.click()} disabled={busy}>
                 ⬆ {busy ? 'Uploading...' : 'Upload and try'}
               </button>
+              <button style={s.sampleBtn} onClick={trySample} disabled={busy}>▶ Explore with a sample</button>
               <button style={s.secondary} onClick={onSignIn}>Sign in / create account</button>
               <button style={s.guideBtn} onClick={onOpenGuide}>📘 User guide</button>
               <button style={s.guideBtn} onClick={onOpenHelpCenter}>📘 Help Center</button>
+              <a href="/demo.docintel.html" style={{...s.guideBtn, ...s.guideLink}}>▶ See the platform end to end</a>
               {isMobile && <button style={s.refresh} onClick={loadDocs}>Refresh workspace</button>}
+            </div>}
+            <div style={s.trustRow}>
+              <span>✓ No account required</span>
+              <span>✓ Isolated guest session</span>
+              <span>✓ Guest files expire automatically</span>
             </div>
             {isMobile && (
               <div style={s.guestWorkspaceInfo}>
                 <strong>Guest preview workspace</strong>
-                <span>Limited preview. Sign in to save, download, share, and continue later.</span>
+                <span style={s.guestNoticeText}>Limited preview. Sign in to save, download, share, and continue later.</span>
               </div>
             )}
             {isMobile && (
@@ -232,7 +299,7 @@ export default function GuestTryPanel({ onSignIn, onOpenGuide, onOpenHelpCenter 
           <div style={s.panelHead}>
             <div>
               <h2 style={s.h2}>Guest preview workspace</h2>
-              <p style={s.muted}>Limited preview. Sign in to save, download, share, and continue later.</p>
+              <p style={{...s.muted, ...s.guestNotice}}>Limited preview. Sign in to save, download, share, and continue later.</p>
             </div>
             <button style={s.refresh} onClick={loadDocs}>Refresh</button>
           </div>
@@ -242,7 +309,7 @@ export default function GuestTryPanel({ onSignIn, onOpenGuide, onOpenHelpCenter 
           <button type="button" style={{...s.mobileSectionHead, ...(isMobile ? {} : s.mobileSectionHeadDesktop)}} onClick={() => toggleSection('documents')}>
             <span>Uploaded documents</span>
             <span style={s.sectionBadge}>{docs.length ? `${docs.length} file${docs.length > 1 ? 's' : ''}` : 'Empty'}</span>
-            {isMobile && <span style={s.chevron}>{openSections.documents ? '⌃' : '⌄'}</span>}
+            <span style={s.chevron}>{openSections.documents ? '⌃' : '⌄'}</span>
           </button>
           {isOpen('documents') && (
             <div style={{...s.docList, ...(isMobile ? s.docListMobile : {})}}>
@@ -288,9 +355,10 @@ export default function GuestTryPanel({ onSignIn, onOpenGuide, onOpenHelpCenter 
             <button type="button" style={s.sectionCollapseHead} onClick={() => toggleSection('summary')}>
               <div>
                 <strong style={s.sectionTitle}>Summary preview</strong>
-                <p style={s.sectionHint}>Choose the review style that best fits the document.</p>
+                <p style={{...s.sectionHint, ...s.summarySupport}}>Choose the review style that best fits the document.</p>
               </div>
               <span style={s.sectionBadge}>{summaryDocs.length ? `${summaryDocs.length} processed file${summaryDocs.length > 1 ? 's' : ''}` : 'Process a file first'}</span>
+              <span style={s.chevron}>{openSections.summary ? '⌃' : '⌄'}</span>
             </button>
           )}
           {isOpen('summary') && (
@@ -328,28 +396,33 @@ export default function GuestTryPanel({ onSignIn, onOpenGuide, onOpenHelpCenter 
               <p style={s.sectionHint}>Ask grounded questions against the embedded guest documents.</p>
             </div>
             <span style={s.sectionBadge}>{embeddedDocs.length ? `${embeddedDocs.length} ready` : 'Embed first'}</span>
-            {isMobile && <span style={s.chevron}>{openSections.qa ? '⌃' : '⌄'}</span>}
+            <span style={s.chevron}>{openSections.qa ? '⌃' : '⌄'}</span>
           </button>
           {isOpen('qa') && (
-            <div style={{...s.chatBox, ...(isMobile ? s.chatBoxMobile : {})}}>
-              <textarea
-                value={question}
-                onChange={e => setQuestion(e.target.value)}
-                placeholder={embeddedDocs.length ? 'Ask a question about the uploaded file...' : 'Embed a processed file to enable Q&A...'}
-                style={{...s.textarea, ...(isMobile ? s.textareaMobile : {})}}
-                disabled={!embeddedDocs.length || asking}
-              />
-              <button style={{...s.askBtn, ...(isMobile ? s.askBtnMobile : {})}} onClick={ask} disabled={!embeddedDocs.length || !question.trim() || asking}>
-                {asking ? 'Asking...' : 'Ask preview question'}
-              </button>
-            </div>
+            <>
+              <div style={s.questionChips}>
+                {SUGGESTED_QUESTIONS.map(item => <button key={item} style={s.questionChip} onClick={() => setQuestion(item)} disabled={!embeddedDocs.length}>{item}</button>)}
+              </div>
+              <div style={{...s.chatBox, ...(isMobile ? s.chatBoxMobile : {})}}>
+                <textarea
+                  value={question}
+                  onChange={e => setQuestion(e.target.value)}
+                  placeholder={embeddedDocs.length ? 'Ask a question about the uploaded file...' : 'Process a file to enable grounded Q&A...'}
+                  style={{...s.textarea, ...(isMobile ? s.textareaMobile : {})}}
+                  disabled={!embeddedDocs.length || asking}
+                />
+                <button style={{...s.askBtn, ...(isMobile ? s.askBtnMobile : {})}} onClick={ask} disabled={!embeddedDocs.length || !question.trim() || asking}>
+                  {asking ? 'Asking...' : 'Ask DocIntel'}
+                </button>
+              </div>
+            </>
           )}
         </div>
         {answer && (
           <div style={s.resultCard}>
             <button type="button" style={s.resultLabelButton} onClick={() => toggleSection('answer')}>
               <span>DocIntel answer</span>
-              {isMobile && <span style={s.chevron}>{openSections.answer ? '⌃' : '⌄'}</span>}
+              <span style={s.chevron}>{openSections.answer ? '⌃' : '⌄'}</span>
             </button>
             {isOpen('answer') && (
               <div style={{...s.answer, ...(isMobile ? s.answerMobile : {})}}>
@@ -359,38 +432,118 @@ export default function GuestTryPanel({ onSignIn, onOpenGuide, onOpenHelpCenter 
           </div>
         )}
       </section>
+
+      <section style={s.detailsSection}>
+        <div style={{...s.detailsHead, ...(isMobile ? s.detailsHeadMobile : {})}}>
+          <div>
+            <strong style={s.detailsTitle}>Explore ADAR DocIntel</strong>
+            <span style={s.detailsHint}>Open only the product information you want to see.</span>
+          </div>
+          <div style={{...s.detailTabs, ...(isMobile ? s.detailTabsMobile : {})}}>
+            {[
+              ['journey', 'How it works'],
+              ['capabilities', 'Capabilities'],
+              ['industries', 'Industries'],
+              ['architecture', 'Architecture'],
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                style={{...s.detailTab, ...(detailTab === key ? s.detailTabOn : {})}}
+                onClick={() => setDetailTab(current => current === key ? '' : key)}
+              >{label}</button>
+            ))}
+          </div>
+        </div>
+
+        {detailTab === 'journey' && (
+          <div style={{...s.stepGrid, ...(isMobile ? s.stepGridMobile : {})}}>
+            {EXPERIENCE_STEPS.map(step => (
+              <div key={step.number} style={s.stepItem}><span style={s.stepNumber}>{step.number}</span><strong>{step.title}</strong><p>{step.text}</p></div>
+            ))}
+          </div>
+        )}
+        {detailTab === 'capabilities' && (
+          <div style={{...s.capabilityGrid, ...(isMobile ? s.capabilityGridMobile : {})}}>
+            {CAPABILITIES.map(item => <div key={item.title} style={s.capabilityItem}><span>{item.icon}</span><div><strong>{item.title}</strong><p>{item.text}</p></div></div>)}
+          </div>
+        )}
+        {detailTab === 'industries' && (
+          <div style={{...s.industryGrid, ...(isMobile ? s.industryGridMobile : {})}}>
+            {INDUSTRIES.map(([icon, title, text]) => <div key={title} style={s.industryItem}><span style={s.industryIcon}>{icon}</span><strong>{title}</strong><p>{text}</p></div>)}
+          </div>
+        )}
+        {detailTab === 'architecture' && (
+          <div style={{...s.architectureTab, ...(isMobile ? s.architectureTabMobile : {})}}>
+            <p style={s.landingCopy}>ADAR DocIntel connects extraction, chunking, embeddings, retrieval, AI reasoning, and human review across documents, speech, and video.</p>
+            <div style={{...s.architectureFlow, ...(isMobile ? s.architectureFlowMobile : {})}} role="img" aria-label="ADAR DocIntel ingestion and intelligence workflow">
+              {ARCHITECTURE_FLOW.map((item, index) => (
+                <React.Fragment key={item.step}>
+                  <div style={s.architectureNode}>
+                    <div style={s.architectureNodeHead}><span style={s.architectureStep}>{item.step}</span><span style={s.architectureState}>{item.state}</span></div>
+                    <strong style={s.architectureNodeTitle}>{item.title}</strong>
+                    <p style={s.architectureNodeText}>{item.text}</p>
+                  </div>
+                  {index < ARCHITECTURE_FLOW.length - 1 && <span style={{...s.architectureArrow, ...(isMobile ? s.architectureArrowMobile : {})}} aria-hidden="true">→</span>}
+                </React.Fragment>
+              ))}
+            </div>
+            <div style={s.architectureSafety}>
+              <strong>Operational controls</strong>
+              <span>Stage-level status, retries, failure handling, source cleanup, and complete deletion keep the workflow observable and recoverable.</span>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <footer style={s.footer}>Agomonia Labs · ADAR DocIntel · Document, Speech, and Video Intelligence</footer>
     </div>
   );
 }
 
 const s = {
-  shell:{ height:'100vh', display:'flex', flexDirection:'column', alignItems:'center', gap:10, padding:'clamp(12px, 2.4vw, 24px)', background:'var(--bg)', color:'var(--tx)', overflow:'hidden' },
+  shell:{ minHeight:'100vh', height:'100vh', display:'flex', flexDirection:'column', alignItems:'center', gap:10, padding:'clamp(10px, 1.5vw, 16px)', background:'var(--bg)', color:'var(--tx)', overflowY:'auto', overflowX:'hidden', WebkitOverflowScrolling:'touch' },
   shellMobile:{ minHeight:'100dvh', display:'flex', flexDirection:'column', gap:10, padding:'10px', overflowY:'auto', WebkitOverflowScrolling:'touch' },
-  hero:{ width:'min(1120px, 100%)', flexShrink:0, border:'1px solid var(--b1)', background:'linear-gradient(135deg, var(--s1), rgba(34,197,94,.06))', borderRadius:10, padding:'clamp(12px, 1.8vw, 16px)', boxShadow:'0 14px 44px rgba(0,0,0,.22)' },
+  hero:{ width:'min(1180px, 100%)', flexShrink:0, border:'1px solid rgba(74,222,128,.18)', background:'var(--s1)', borderRadius:8, padding:'clamp(11px, 1.4vw, 16px)', boxShadow:'0 12px 34px rgba(0,0,0,.22)', position:'relative', overflow:'visible' },
+  heroTitleRow:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:16 },
+  heroTitleRowMobile:{ display:'block' },
   heroMobile:{ alignSelf:'stretch', maxWidth:'none' },
-  brand:{ display:'flex', alignItems:'center', gap:8, color:'#4ade80', fontWeight:800, marginBottom:6, fontSize:13 },
+  topbar:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, marginBottom:6 },
+  brand:{ display:'flex', alignItems:'center', gap:8, color:'#4ade80', fontWeight:800, fontSize:13 },
   brandMobile:{ marginBottom:8 },
-  h1:{ fontSize:'clamp(26px, 3vw, 34px)', lineHeight:1.08, margin:'0 0 8px', letterSpacing:0 },
-  h1Mobile:{ fontSize:28, margin:'0 0 8px' },
+  topSignIn:{ border:'1px solid var(--b2)', background:'transparent', color:'var(--tx)', borderRadius:7, padding:'8px 13px', fontWeight:800, cursor:'pointer' },
+  heroLabel:{ color:'#86efac', fontSize:10, fontWeight:900, textTransform:'uppercase', letterSpacing:'.7px', marginBottom:5 },
+  h1:{ maxWidth:980, fontSize:'clamp(21px, 2.1vw, 27px)', lineHeight:1.15, margin:'0 0 6px', letterSpacing:0 },
+  h1Mobile:{ fontSize:20, lineHeight:1.18, margin:'0 0 7px' },
+  heroLead:{ maxWidth:980, color:'var(--tx2)', fontSize:12.5, lineHeight:1.45, margin:'0 0 7px' },
   heroToggle:{ width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, border:'1px solid var(--teal-mid)', background:'var(--teal-soft)', color:'var(--teal)', borderRadius:8, padding:'8px 10px', cursor:'pointer', fontSize:12, fontWeight:900 },
   heroBodyMobile:{ marginTop:8, border:'1px solid var(--b1)', background:'var(--s1)', borderRadius:8, padding:10 },
   guestWorkspaceInfo:{ display:'flex', flexDirection:'column', gap:2, marginTop:8, padding:'8px 9px', border:'1px solid var(--b1)', background:'var(--s2)', borderRadius:8, color:'var(--tx2)', fontSize:11, lineHeight:1.35 },
+  guestNoticeText:{ marginTop:4, padding:'6px 8px', borderLeft:'3px solid #38bdf8', borderRadius:6, background:'rgba(56,189,248,.08)', color:'#bae6fd', fontWeight:700 },
   inlineDocuments:{ marginTop:8, border:'1px solid var(--b1)', background:'var(--s2)', borderRadius:8, padding:8 },
   inlineDocumentsHead:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, color:'var(--tx)', fontSize:12, fontWeight:900 },
-  copy:{ color:'var(--tx2)', fontSize:13.5, lineHeight:1.45, margin:'0 0 10px', maxWidth:900 },
+  copy:{ color:'var(--tx2)', fontSize:13.5, lineHeight:1.55, margin:'0 0 12px', maxWidth:900 },
   copyMobile:{ fontSize:13, lineHeight:1.45, margin:'0 0 12px' },
   actions:{ display:'flex', gap:10, flexWrap:'wrap' },
+  actionMenu:{ position:'relative', flex:'0 0 auto', zIndex:6 },
+  actionMenuTrigger:{ listStyle:'none', minWidth:130, padding:'9px 12px', border:'1px solid rgba(74,222,128,.35)', borderRadius:7, background:'rgba(74,222,128,.1)', color:'#86efac', fontSize:11, fontWeight:900, textAlign:'center', cursor:'pointer', userSelect:'none' },
+  actionMenuList:{ position:'absolute', top:'calc(100% + 6px)', right:0, width:230, display:'grid', gap:5, padding:7, border:'1px solid var(--b2)', borderRadius:8, background:'var(--s2)', boxShadow:'0 18px 40px rgba(0,0,0,.42)' },
+  actionMenuItem:{ boxSizing:'border-box', width:'100%', minHeight:35, display:'flex', alignItems:'center', padding:'8px 10px', border:'1px solid var(--b1)', borderRadius:6, background:'var(--s3)', color:'var(--tx)', fontSize:11, fontWeight:800, textAlign:'left', textDecoration:'none', cursor:'pointer' },
+  actionMenuPrimary:{ borderColor:'rgba(74,222,128,.35)', background:'#166534', color:'#fff' },
   actionsMobile:{ flexDirection:'column' },
   primary:{ border:0, borderRadius:8, padding:'9px 12px', background:'#22c55e', color:'#052e16', fontSize:12, fontWeight:900, cursor:'pointer' },
+  sampleBtn:{ border:'1px solid rgba(96,165,250,.38)', borderRadius:8, padding:'9px 12px', background:'rgba(96,165,250,.1)', color:'#bfdbfe', fontSize:12, fontWeight:900, cursor:'pointer' },
   secondary:{ border:'1px solid rgba(74,222,128,.35)', borderRadius:8, padding:'9px 12px', background:'rgba(74,222,128,.08)', color:'#86efac', fontSize:12, fontWeight:800, cursor:'pointer' },
   guideBtn:{ border:'1px solid rgba(96,165,250,.32)', borderRadius:8, padding:'9px 12px', background:'rgba(96,165,250,.08)', color:'#93c5fd', fontSize:12, fontWeight:800, cursor:'pointer' },
+  trustRow:{ display:'flex', flexWrap:'wrap', gap:'5px 16px', marginTop:9, color:'#a7f3d0', fontSize:10.5, fontWeight:700 },
   error:{ marginTop:8, padding:9, border:'1px solid rgba(248,113,113,.35)', background:'rgba(248,113,113,.1)', color:'#fecaca', borderRadius:8, fontSize:13 },
-  panel:{ width:'min(1120px, 100%)', flex:'1 1 auto', minHeight:0, overflowY:'auto', background:'var(--s1)', border:'1px solid var(--b1)', borderRadius:10, padding:12, boxShadow:'0 20px 64px rgba(0,0,0,.32)' },
-  panelMobile:{ alignSelf:'stretch', padding:10, borderRadius:9, boxShadow:'0 14px 42px rgba(0,0,0,.32)' },
+  panel:{ width:'min(1180px, 100%)', flex:'0 0 auto', minHeight:310, maxHeight:'64vh', overflowY:'auto', background:'var(--s1)', border:'1px solid var(--b1)', borderRadius:8, padding:10, boxShadow:'0 14px 40px rgba(0,0,0,.26)' },
+  panelMobile:{ alignSelf:'stretch', minHeight:0, maxHeight:'none', overflowY:'visible', padding:10, borderRadius:9, boxShadow:'0 14px 42px rgba(0,0,0,.32)' },
   panelHead:{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, marginBottom:8 },
   panelHeadMobile:{ gap:8, marginBottom:8 },
   h2:{ margin:0, fontSize:18 },
   muted:{ margin:'4px 0 0', color:'#7f927f', fontSize:12 },
+  guestNotice:{ display:'inline-block', padding:'6px 9px', borderLeft:'3px solid #38bdf8', borderRadius:6, background:'rgba(56,189,248,.08)', color:'#bae6fd', fontWeight:700 },
+  summarySupport:{ display:'inline-block', padding:'5px 8px', borderLeft:'3px solid #38bdf8', borderRadius:6, background:'rgba(56,189,248,.08)', color:'#bae6fd', fontWeight:700 },
   refresh:{ border:'1px solid rgba(148,163,184,.25)', background:'#122414', color:'#cbd5e1', borderRadius:7, padding:'7px 10px', cursor:'pointer' },
   mobileSection:{ marginTop:8 },
   mobileSectionHead:{ width:'100%', display:'flex', alignItems:'center', gap:8, justifyContent:'space-between', border:'1px solid var(--b1)', background:'var(--s2)', color:'var(--tx)', borderRadius:8, padding:'9px 10px', cursor:'pointer', fontWeight:900, textAlign:'left' },
@@ -421,6 +574,8 @@ const s = {
   summarySelectCompact:{ width:'100%', minWidth:0, minHeight:34, border:'1px solid var(--b2)', background:'var(--s3)', color:'var(--tx)', borderRadius:8, padding:'6px 8px', fontSize:12, fontWeight:800, outline:'none' },
   summaryTypeBtn:{ border:'1px solid var(--b2)', background:'var(--s3)', color:'var(--tx2)', borderRadius:20, padding:'8px 11px', cursor:'pointer', fontSize:12, fontWeight:900 },
   summaryTypeBtnOn:{ borderColor:'rgba(74,222,128,.35)', background:'rgba(74,222,128,.12)', color:'#4ade80', boxShadow:'0 0 0 2px rgba(74,222,128,.07)' },
+  questionChips:{ display:'flex', flexWrap:'wrap', gap:7, marginTop:10 },
+  questionChip:{ border:'1px solid rgba(96,165,250,.25)', background:'rgba(96,165,250,.07)', color:'#bfdbfe', borderRadius:18, padding:'6px 10px', fontSize:11, fontWeight:700, cursor:'pointer' },
   summaryProgress:{ marginTop:10, color:'#fde68a', fontSize:12, fontWeight:800 },
   resultCard:{ marginTop:12, border:'1px solid var(--b1)', background:'var(--s2)', borderRadius:10, overflow:'hidden' },
   resultLabel:{ padding:'9px 11px', borderBottom:'1px solid var(--b1)', background:'var(--s3)', color:'var(--muted)', fontSize:12, fontWeight:900, textTransform:'uppercase', letterSpacing:'.4px' },
@@ -435,6 +590,48 @@ const s = {
   askBtnMobile:{ minHeight:42, padding:'10px 14px' },
   answer:{ maxHeight:220, overflowY:'auto', padding:12, background:'var(--bg)', color:'var(--tx)', lineHeight:1.75, fontSize:14 },
   answerMobile:{ maxHeight:'42dvh', overflowY:'auto', WebkitOverflowScrolling:'touch' },
+  detailsSection:{ width:'min(1180px,100%)', padding:10, border:'1px solid var(--b1)', borderRadius:8, background:'var(--s1)' },
+  detailsHead:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:16 },
+  detailsHeadMobile:{ alignItems:'stretch', flexDirection:'column', gap:8 },
+  detailsTitle:{ display:'block', color:'var(--tx)', fontSize:14 },
+  detailsHint:{ display:'block', color:'#7f927f', fontSize:10.5, marginTop:2 },
+  detailTabs:{ display:'flex', alignItems:'center', flexWrap:'wrap', gap:6 },
+  detailTabsMobile:{ display:'grid', gridTemplateColumns:'repeat(2,minmax(0,1fr))' },
+  detailTab:{ border:'1px solid var(--b2)', borderRadius:7, padding:'7px 10px', background:'var(--s2)', color:'var(--tx2)', fontSize:11, fontWeight:800, cursor:'pointer' },
+  detailTabOn:{ borderColor:'rgba(74,222,128,.38)', background:'rgba(74,222,128,.12)', color:'#86efac' },
+  architectureTab:{ display:'grid', gridTemplateColumns:'1fr', gap:14, marginTop:10, paddingTop:10, borderTop:'1px solid var(--b1)' },
+  architectureTabMobile:{ gridTemplateColumns:'1fr' },
+  landingSection:{ width:'min(1180px, 100%)', padding:'clamp(24px, 3.5vw, 38px) clamp(4px, 1.5vw, 12px)' },
+  landingTitle:{ maxWidth:820, margin:'0 0 8px', color:'var(--tx)', fontSize:'clamp(22px, 2.5vw, 32px)', lineHeight:1.12, letterSpacing:0 },
+  landingCopy:{ maxWidth:820, margin:0, color:'var(--tx2)', fontSize:13, lineHeight:1.55 },
+  heroIntroCopy:{ maxWidth:900, padding:'8px 10px', borderLeft:'3px solid #38bdf8', borderRadius:6, background:'rgba(56,189,248,.08)', color:'#bae6fd', fontWeight:700 },
+  stepGrid:{ display:'grid', gridTemplateColumns:'repeat(4, minmax(0,1fr))', gap:1, marginTop:16, background:'var(--b1)', border:'1px solid var(--b1)' },
+  stepGridMobile:{ gridTemplateColumns:'1fr' },
+  stepItem:{ minWidth:0, minHeight:118, display:'flex', flexDirection:'column', alignItems:'flex-start', gap:5, padding:14, background:'var(--s1)' },
+  stepNumber:{ color:'#4ade80', fontSize:11, fontWeight:900 },
+  landingBand:{ width:'100%', display:'grid', gridTemplateColumns:'minmax(0,1fr) minmax(320px,.75fr)', alignItems:'center', gap:'clamp(22px, 3vw, 40px)', padding:'clamp(26px, 4vw, 44px) max(20px, calc((100vw - 1180px)/2))', background:'#102410', borderTop:'1px solid var(--b1)', borderBottom:'1px solid var(--b1)' },
+  landingBandMobile:{ gridTemplateColumns:'1fr', padding:'28px 14px' },
+  bandCopy:{ minWidth:0 },
+  capabilityGrid:{ display:'grid', gridTemplateColumns:'repeat(2,minmax(0,1fr))', gap:8, marginTop:14 },
+  capabilityGridMobile:{ gridTemplateColumns:'1fr', gap:6 },
+  capabilityItem:{ minWidth:0, display:'flex', alignItems:'flex-start', gap:8, padding:'8px 0', borderTop:'1px solid var(--b1)' },
+  architectureFlow:{ display:'grid', gridTemplateColumns:'minmax(0,1fr) 22px minmax(0,1fr) 22px minmax(0,1fr) 22px minmax(0,1fr) 22px minmax(0,1fr)', alignItems:'stretch', gap:4, padding:12, border:'1px solid rgba(74,222,128,.22)', borderRadius:8, background:'#07110d' },
+  architectureFlowMobile:{ gridTemplateColumns:'1fr', gap:5, padding:9 },
+  architectureNode:{ minWidth:0, padding:11, border:'1px solid var(--b2)', borderRadius:7, background:'var(--s2)' },
+  architectureNodeHead:{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:6, marginBottom:9 },
+  architectureStep:{ color:'#4ade80', fontSize:10, fontWeight:900 },
+  architectureState:{ maxWidth:'70%', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', padding:'3px 6px', borderRadius:5, background:'rgba(96,165,250,.1)', color:'#bfdbfe', fontSize:9, fontWeight:800 },
+  architectureNodeTitle:{ display:'block', color:'var(--tx)', fontSize:12, lineHeight:1.3 },
+  architectureNodeText:{ margin:'5px 0 0', color:'var(--tx2)', fontSize:10.5, lineHeight:1.45 },
+  architectureArrow:{ display:'flex', alignItems:'center', justifyContent:'center', color:'#4ade80', fontSize:19, fontWeight:900 },
+  architectureArrowMobile:{ minHeight:15, transform:'rotate(90deg)' },
+  architectureSafety:{ display:'flex', alignItems:'center', gap:10, padding:'9px 11px', borderLeft:'3px solid #f59e0b', background:'rgba(245,158,11,.07)', color:'var(--tx2)', fontSize:10.5, lineHeight:1.45 },
+  industryGrid:{ display:'grid', gridTemplateColumns:'repeat(4,minmax(0,1fr))', gap:8, marginTop:16 },
+  industryGridMobile:{ gridTemplateColumns:'1fr' },
+  industryItem:{ minWidth:0, padding:13, border:'1px solid var(--b1)', borderRadius:8, background:'var(--s1)' },
+  industryIcon:{ display:'block', fontSize:20, marginBottom:8 },
+  guideLink:{ boxSizing:'border-box', textDecoration:'none' },
+  footer:{ width:'min(1180px,100%)', padding:'16px 4px 28px', color:'#7f927f', fontSize:11, textAlign:'center' },
 };
 
 function useIsMobile() {

@@ -73,9 +73,7 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
     setMessage('');
     try {
       const data = await listVideoDocuments(workspaceId);
-      const scoped = data.filter(doc => (
-        workspaceId ? doc.workspace_id === workspaceId : !doc.workspace_id
-      ));
+      const scoped = Array.isArray(data) ? data : [];
       setDocs(scoped);
       const nextSelectedId = preferredId || selectedId;
       if (!scoped.some(doc => doc.id === nextSelectedId)) {
@@ -235,6 +233,9 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
           <div>
             <p style={s.eyebrow}>DocIntel Video</p>
             <h2 style={s.title}>Video Intelligence Workflow</h2>
+            <p style={s.workspaceHint}>
+              {activeWorkspace?.name ? `Workspace: ${activeWorkspace.name}` : 'Personal workspace'}
+            </p>
           </div>
           <button type="button" style={s.closeBtn} onClick={onClose}>x</button>
         </div>
@@ -282,7 +283,11 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
                     <button type="button" style={s.miniBtn} onClick={refreshDocs}>Refresh</button>
                   </div>
                   <select value={selectedId} onChange={e => setSelectedId(e.target.value)} style={s.select}>
-                    {!docs.length && <option value="">No video documents found</option>}
+                    {!docs.length && (
+                      <option value="">
+                        {workspaceId ? 'No video documents found in this workspace' : 'No personal video documents found'}
+                      </option>
+                    )}
                     {docs.map(doc => (
                       <option key={doc.id} value={doc.id}>
                         {doc.original_name}
@@ -296,6 +301,7 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
                       <div style={s.docPills}>
                         <span style={s.pill}>{selectedDoc.status}</span>
                         <span style={s.pill}>{selectedDoc.processing_status || 'not processed'}</span>
+                        <span style={s.pill}>{selectedDoc.workspace_id ? 'Workspace' : 'Personal'}</span>
                         {selectedDoc.duration_seconds ? <span style={s.muted}>{formatTime(selectedDoc.duration_seconds)}</span> : null}
                       </div>
                     </div>
@@ -615,6 +621,7 @@ const s = {
   header: { display:'flex', justifyContent:'space-between', alignItems:'center', gap:12, padding:'14px 16px', borderBottom:'1px solid rgba(74,222,128,.16)', flexShrink:0 },
   eyebrow: { margin:0, fontSize:11, color:'#86efac', textTransform:'uppercase', letterSpacing:1, fontWeight:800 },
   title: { margin:'2px 0 0', fontSize:18, color:'var(--tx)', letterSpacing:0 },
+  workspaceHint: { margin:'4px 0 0', color:'var(--muted2)', fontSize:12, lineHeight:1.35 },
   closeBtn: { width:34, height:34, borderRadius:8, border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx)', cursor:'pointer', fontWeight:900 },
   body: { flex:1, minHeight:0, display:'grid', gridTemplateColumns:'300px minmax(0,1fr)', overflow:'hidden' },
   sidebar: { borderRight:'1px solid rgba(74,222,128,.14)', padding:12, overflowY:'auto', display:'flex', flexDirection:'column', gap:10 },

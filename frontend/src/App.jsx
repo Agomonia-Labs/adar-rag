@@ -12,6 +12,8 @@ import HelpCenterPanel from './components/HelpCenterPanel.jsx';
 import AdminDashboard  from './components/AdminDashboard.jsx';
 import HealthcarePanel from './components/HealthcarePanel.jsx';
 import RestaurantPanel from './components/RestaurantPanel.jsx';
+import VideoPanel      from './components/VideoPanel.jsx';
+import FinanceTaxPanel from './components/FinanceTaxPanel.jsx';
 import { ToastContainer } from './components/Toast.jsx';
 import { claimGuestSession, getMe, getWorkspace }       from './services/api.js';
 import { LANGUAGES, getLanguage, getStrings } from './i18n.js';
@@ -30,7 +32,10 @@ export default function App() {
   const [showMainMenu,     setShowMainMenu]     = useState(false);
   const [showNewVisit,     setShowNewVisit]     = useState(false);
   const [showRestaurantPanel, setShowRestaurantPanel] = useState(false);
+  const [showVideoPanel,   setShowVideoPanel]   = useState(false);
+  const [showFinanceTaxPanel, setShowFinanceTaxPanel] = useState(false);
   const [openLeasePickerKey, setOpenLeasePickerKey] = useState(0);
+  const [openHealthcarePickerKey, setOpenHealthcarePickerKey] = useState(0);
   const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0);
   const [activeWorkspace,  setActiveWorkspace]  = useState(null);
   const [uiLang,           setUiLang]           = useState(() => localStorage.getItem('ui_lang') || 'en');
@@ -188,9 +193,25 @@ export default function App() {
     setOpenLeasePickerKey(k => k + 1);
   };
 
+  const openPriorAuthDocuments = () => {
+    closeMenus();
+    setTab('documents');
+    setOpenHealthcarePickerKey(k => k + 1);
+  };
+
   const openRestaurantWorkflow = () => {
     closeMenus();
     setShowRestaurantPanel(true);
+  };
+
+  const openVideoWorkflow = () => {
+    closeMenus();
+    setShowVideoPanel(true);
+  };
+
+  const openFinanceTaxWorkflow = () => {
+    closeMenus();
+    setShowFinanceTaxPanel(true);
   };
 
   return (
@@ -216,6 +237,18 @@ export default function App() {
           workspaceId={activeWorkspace?.id || null}
           activeWorkspace={activeWorkspace}
           onClose={() => setShowRestaurantPanel(false)}
+        />
+      )}
+      {showVideoPanel && (
+        <VideoPanel
+          activeWorkspace={activeWorkspace}
+          onClose={() => setShowVideoPanel(false)}
+        />
+      )}
+      {showFinanceTaxPanel && (
+        <FinanceTaxPanel
+          activeWorkspace={activeWorkspace}
+          onClose={() => setShowFinanceTaxPanel(false)}
         />
       )}
       <div style={s.shell}>
@@ -293,6 +326,12 @@ export default function App() {
                       <span>🎙</span>
                       <span>New clinical visit</span>
                     </button>
+                    <button
+                      style={s.verticalItem}
+                      onClick={openPriorAuthDocuments}>
+                      <span>🏥</span>
+                      <span>Prior Authorization Workflow</span>
+                    </button>
                   </div>
                   <div style={s.verticalGroup}>
                     <div style={s.verticalGroupTitle}>Lease</div>
@@ -310,6 +349,24 @@ export default function App() {
                       onClick={openRestaurantWorkflow}>
                       <span>🍽</span>
                       <span>Restaurant Menu Scribe & Carryout Orders</span>
+                    </button>
+                  </div>
+                  <div style={s.verticalGroup}>
+                    <div style={s.verticalGroupTitle}>Video</div>
+                    <button
+                      style={s.verticalItem}
+                      onClick={openVideoWorkflow}>
+                      <span>🎥</span>
+                      <span>Video Intelligence Workflow</span>
+                    </button>
+                  </div>
+                  <div style={s.verticalGroup}>
+                    <div style={s.verticalGroupTitle}>Finance</div>
+                    <button
+                      style={s.verticalItem}
+                      onClick={openFinanceTaxWorkflow}>
+                      <span>💼</span>
+                      <span>Tax & Financial Planning Readiness</span>
                     </button>
                   </div>
                 </div>
@@ -405,6 +462,10 @@ export default function App() {
                   <span>🎙</span>
                   <span>Health Care · New clinical visit</span>
                 </button>
+                <button type="button" style={s.menuItem} onClick={openPriorAuthDocuments}>
+                  <span>🏥</span>
+                  <span>Health Care · Prior Authorization Workflow</span>
+                </button>
                 <button type="button" style={s.menuItem} onClick={openLeaseDocuments}>
                   <span>🏢</span>
                   <span>Lease · Open lease documents</span>
@@ -412,6 +473,14 @@ export default function App() {
                 <button type="button" style={s.menuItem} onClick={openRestaurantWorkflow}>
                   <span>🍽</span>
                   <span>Restaurant · Menu Scribe & Carryout Orders</span>
+                </button>
+                <button type="button" style={s.menuItem} onClick={openVideoWorkflow}>
+                  <span>🎥</span>
+                  <span>Video Intelligence Workflow</span>
+                </button>
+                <button type="button" style={s.menuItem} onClick={openFinanceTaxWorkflow}>
+                  <span>💼</span>
+                  <span>Tax & Financial Planning Readiness</span>
                 </button>
               </section>
 
@@ -461,7 +530,7 @@ export default function App() {
               onSwitchWorkspace={ws => { setActiveWorkspace(ws); setTab('documents'); }}
             />
           )}
-          {tab==='documents' && <div style={{ height:'100%', overflowY:'auto' }}><DocumentsTab onEmbedChange={setEmbeddedDocs} activeWorkspace={activeWorkspace} refreshKey={documentsRefreshKey} openLeasePickerKey={openLeasePickerKey} /></div>}
+          {tab==='documents' && <div style={{ height:'100%', overflowY:'auto' }}><DocumentsTab onEmbedChange={setEmbeddedDocs} activeWorkspace={activeWorkspace} refreshKey={documentsRefreshKey} openLeasePickerKey={openLeasePickerKey} openHealthcarePickerKey={openHealthcarePickerKey} /></div>}
           {tab==='chat'      && <ChatTab embeddedDocs={embeddedDocs} activeWorkspace={activeWorkspace} />}
           {tab==='admin' && isAdmin && <div style={{ height:'100%', overflowY:'auto' }}><AdminDashboard /></div>}
         </div>
@@ -500,7 +569,7 @@ const s = {
   userMini:{ textAlign:'left', flex:'0 0 auto', maxWidth:150, minWidth:118, overflow:'hidden' },
   verticalWrap:{ position:'relative', flexShrink:0 },
   verticalBtn:{ fontSize:12, padding:'5px 12px', background:'rgba(74,222,128,.08)', color:'#4ade80', border:'1px solid rgba(74,222,128,.28)', borderRadius:'var(--r)', cursor:'pointer', fontWeight:700 },
-  verticalMenu:{ position:'absolute', top:'calc(100% + 8px)', right:0, width:230, background:'#0f1f0f', border:'1px solid rgba(74,222,128,.18)', borderRadius:8, boxShadow:'0 18px 48px rgba(0,0,0,.45)', padding:8, zIndex:80, display:'flex', flexDirection:'column', gap:8 },
+  verticalMenu:{ position:'absolute', top:'calc(100% + 8px)', right:0, width:310, background:'#0f1f0f', border:'1px solid rgba(74,222,128,.18)', borderRadius:8, boxShadow:'0 18px 48px rgba(0,0,0,.45)', padding:8, zIndex:80, display:'flex', flexDirection:'column', gap:8 },
   verticalMenuMobile:{ position:'fixed', top:'max(10px, env(safe-area-inset-top))', left:10, right:10, width:'auto', maxHeight:'calc(100dvh - 20px)', overflowY:'auto', zIndex:9999, padding:10 },
   verticalGroup:{ display:'flex', flexDirection:'column', gap:5 },
   verticalGroupTitle:{ fontSize:10, color:'var(--muted2)', textTransform:'uppercase', letterSpacing:'.8px', fontWeight:800, padding:'2px 4px' },

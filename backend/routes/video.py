@@ -210,7 +210,11 @@ async def list_video_documents(
     rows = await db.fetch(
         """
         SELECT d.id, d.original_name, d.file_type, d.status, d.chunk_count,
-               d.error_message, d.doc_type, d.doc_domain, d.workspace_id, d.doc_metadata,
+               d.error_message, d.doc_type, d.doc_domain,
+               COALESCE(d.workspace_id, vd.workspace_id) AS workspace_id,
+               d.workspace_id AS document_workspace_id,
+               vd.workspace_id AS video_workspace_id,
+               d.doc_metadata,
                vd.id AS video_id, vd.processing_status, vd.duration_seconds,
                vd.width, vd.height, vd.frame_count, vd.updated_at AS video_updated_at,
                vd.metadata AS video_metadata
@@ -218,8 +222,8 @@ async def list_video_documents(
         LEFT JOIN video_documents vd ON vd.document_id = d.id
         WHERE d.status != 'deleted'
           AND (
-            ($2::uuid IS NULL AND d.workspace_id IS NULL AND d.user_id = $1)
-            OR ($2::uuid IS NOT NULL AND d.workspace_id = $2::uuid)
+            ($2::uuid IS NULL AND COALESCE(d.workspace_id, vd.workspace_id) IS NULL AND d.user_id = $1)
+            OR ($2::uuid IS NOT NULL AND COALESCE(d.workspace_id, vd.workspace_id) = $2::uuid)
           )
           AND (
             d.file_type = 'video'
@@ -407,15 +411,16 @@ async def ask_video(doc_id: str, body: VideoQuestionRequest, current_user: Curre
 async def _get_accessible_document(db, doc_id: str, user_id: str) -> dict:
     row = await db.fetchrow(
         """
-        SELECT d.*
+        SELECT d.*, COALESCE(d.workspace_id, vd.workspace_id) AS effective_workspace_id
         FROM documents d
+        LEFT JOIN video_documents vd ON vd.document_id = d.id
         WHERE d.id = $1
           AND d.status != 'deleted'
           AND (
             d.user_id = $2
             OR EXISTS (
               SELECT 1 FROM workspace_members wm
-               WHERE wm.workspace_id = d.workspace_id
+               WHERE wm.workspace_id = COALESCE(d.workspace_id, vd.workspace_id)
                  AND wm.user_id = $2
             )
           )
@@ -425,13 +430,18 @@ async def _get_accessible_document(db, doc_id: str, user_id: str) -> dict:
     )
     if not row:
         raise HTTPException(404, "Document not found")
-    return dict(row)
+    data = dict(row)
+    if not data.get("workspace_id") and data.get("effective_workspace_id"):
+        data["workspace_id"] = data["effective_workspace_id"]
+    return data
 
 
 def _video_doc_row(row) -> dict:
     data = _jsonable(dict(row))
     data["id"] = str(data["id"])
     data["workspace_id"] = str(data["workspace_id"]) if data.get("workspace_id") else None
+    data["document_workspace_id"] = str(data["document_workspace_id"]) if data.get("document_workspace_id") else None
+    data["video_workspace_id"] = str(data["video_workspace_id"]) if data.get("video_workspace_id") else None
     data["video_id"] = str(data["video_id"]) if data.get("video_id") else None
     return _with_video_progress(data)
 

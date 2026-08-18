@@ -9,10 +9,6 @@ import {
   fetchHealthcareAgentRun,
   fetchLatestHealthcareAgentWorkflow,
   generateAfterVisitSummaryPdf,
-  generatePriorAuthMissingInfoPdf,
-  generatePriorAuthPacketPdf,
-  listDocuments,
-  listWorkspaceDocuments,
   rerunHealthcareTranscriptionWorkflow,
   runHealthcareAgentWorkflow,
   runHealthcareTranscriptionWorkflow,
@@ -49,17 +45,6 @@ const WORKFLOWS = {
   },
 };
 
-const PRIOR_AUTH_CASE_STATUSES = [
-  { value: 'draft', label: 'Draft', description: 'Case is being prepared before submission.' },
-  { value: 'ready_to_submit', label: 'Ready', description: 'Packet is complete and ready for payer submission.' },
-  { value: 'submitted', label: 'Submitted', description: 'Packet was submitted to the payer.' },
-  { value: 'pending_payer', label: 'Pending payer', description: 'Waiting on payer review or additional request.' },
-  { value: 'approved', label: 'Approved', description: 'Payer approved the requested service.' },
-  { value: 'denied', label: 'Denied', description: 'Payer denied the request and denial details should be captured.' },
-  { value: 'appeal_needed', label: 'Appeal/P2P', description: 'Appeal or peer-to-peer review is needed.' },
-  { value: 'closed', label: 'Closed', description: 'Case is complete and closed.' },
-];
-
 function supportedAudioMimeType() {
   if (!window.MediaRecorder?.isTypeSupported) return '';
   return [
@@ -75,9 +60,10 @@ function stopMediaTracks(ref) {
   if (ref) ref.current = null;
 }
 
-export default function HealthcarePanel({ doc, onClose, newVisit = false, workspaceId = null, onCreated }) {
+export default function HealthcarePanel({ doc, onClose, newVisit = false, workspaceId = null, onCreated, initialTab = null }) {
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState(newVisit ? 'scribe' : 'clinical');
+  const startingTab = newVisit ? 'scribe' : (doc?.id && WORKFLOWS[initialTab] ? initialTab : 'clinical');
+  const [activeTab, setActiveTab] = useState(startingTab);
   const [runs, setRuns] = useState({ clinical: null, priorAuth: null, scribe: null });
   const [editedPackets, setEditedPackets] = useState({ clinical: null, priorAuth: null, scribe: null });
   const [evaluations, setEvaluations] = useState({ clinical: null, priorAuth: null, scribe: null });
@@ -86,10 +72,6 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
   const [accessContexts, setAccessContexts] = useState({ clinical: null, priorAuth: null, scribe: null });
   const [selectedPersonas, setSelectedPersonas] = useState({ clinical: '', priorAuth: '', scribe: '' });
   const [changeHistories, setChangeHistories] = useState({ clinical: [], priorAuth: [], scribe: [] });
-  const [policyDocs, setPolicyDocs] = useState([]);
-  const [selectedPolicyIds, setSelectedPolicyIds] = useState([]);
-  const [policyDocsLoading, setPolicyDocsLoading] = useState(false);
-  const [policyPickerOpen, setPolicyPickerOpen] = useState(false);
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordedAudio, setRecordedAudio] = useState(null);
@@ -120,8 +102,6 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
       setAccessContexts({ clinical: null, priorAuth: null, scribe: null });
       setSelectedPersonas({ clinical: '', priorAuth: '', scribe: '' });
       setChangeHistories({ clinical: [], priorAuth: [], scribe: [] });
-      setPolicyDocs([]);
-      setSelectedPolicyIds([]);
       setActiveTab('scribe');
       return () => {
         alive = false;
@@ -135,9 +115,7 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
     setAccessContexts({ clinical: null, priorAuth: null, scribe: null });
     setSelectedPersonas({ clinical: '', priorAuth: '', scribe: '' });
     setChangeHistories({ clinical: [], priorAuth: [], scribe: [] });
-    setPolicyDocs([]);
-    setSelectedPolicyIds([]);
-    setActiveTab(newVisit ? 'scribe' : 'clinical');
+    setActiveTab(newVisit ? 'scribe' : (doc?.id && WORKFLOWS[initialTab] ? initialTab : 'clinical'));
     Object.entries(WORKFLOWS).forEach(([key, cfg]) => {
       fetchLatestHealthcareAgentWorkflow(doc.id, cfg.workflowId)
         .then(data => {
@@ -156,35 +134,7 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
       alive = false;
       stopMediaTracks(streamRef);
     };
-  }, [doc?.id, newVisit]);
-
-  useEffect(() => {
-    let alive = true;
-    if (!doc?.id) return () => { alive = false; };
-    setPolicyDocsLoading(true);
-    const loader = doc.workspace_id ? listWorkspaceDocuments(doc.workspace_id) : listDocuments();
-    loader
-      .then(data => {
-        if (!alive) return;
-        const docs = Array.isArray(data) ? data : data.documents || [];
-        const candidates = docs
-          .filter(item => item.id !== doc.id)
-          .filter(item => ['payer_policy', 'medical_policy', 'prior_authorization'].includes(item.doc_type))
-          .filter(item => ['chunked', 'embedding', 'embedded'].includes(item.status))
-          .filter(item => !doc.workspace_id || item.workspace_id === doc.workspace_id)
-          .slice()
-          .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
-        setPolicyDocs(candidates);
-        setSelectedPolicyIds(prev => prev.filter(id => candidates.some(item => item.id === id)));
-      })
-      .catch(() => {
-        if (alive) setPolicyDocs([]);
-      })
-      .finally(() => {
-        if (alive) setPolicyDocsLoading(false);
-      });
-    return () => { alive = false; };
-  }, [doc?.id, doc?.workspace_id]);
+  }, [doc?.id, newVisit, initialTab]);
 
   const hydrateEditedPacket = (key, value) => {
     const packet = packetFromRun(value);
@@ -232,7 +182,7 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
     if (!doc?.id) return;
     setLoading(true);
     try {
-      const data = await runPriorAuthWorkflow(doc.id, selectedPolicyIds);
+      const data = await runPriorAuthWorkflow(doc.id);
       setActiveTab('priorAuth');
       updateRun('priorAuth', data);
       updateEval('priorAuth', null);
@@ -313,12 +263,6 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
       } catch (_) {}
       recorderRef.current.stop();
     }
-  };
-
-  const togglePolicyDoc = id => {
-    setSelectedPolicyIds(prev => (
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
-    ));
   };
 
   const handleAudioSelected = (file) => {
@@ -445,64 +389,6 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
     }
   };
 
-  const generatePriorAuthPdf = async () => {
-    const key = 'priorAuth';
-    const agentRun = runs[key];
-    if (!agentRun?.run_id) return;
-    setLoading(true);
-    try {
-      const reviewPacket = editedPackets[key] || packetFromRun(agentRun) || {};
-      const draft = await saveHealthcareReviewDraft(agentRun.run_id, {
-        reviewPacket,
-        notes: approvalNotes[key] || '',
-        persona: selectedPersonas[key] || accessContexts[key]?.default_persona || '',
-      });
-      updateRun(key, draft);
-      await refreshChangeHistory(key, draft.run_id);
-      const data = await generatePriorAuthPacketPdf(agentRun.run_id);
-      if (data.document) {
-        onCreated?.(data.document);
-      }
-      if (data.download_url) {
-        window.open(data.download_url, '_blank', 'noopener,noreferrer');
-      }
-      toast('Prior authorization packet PDF generated, saved, chunked, and embedded', 'success');
-    } catch (e) {
-      toast(e.message || 'Could not generate prior authorization packet PDF', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const generateMissingInfoPdf = async () => {
-    const key = 'priorAuth';
-    const agentRun = runs[key];
-    if (!agentRun?.run_id) return;
-    setLoading(true);
-    try {
-      const reviewPacket = editedPackets[key] || packetFromRun(agentRun) || {};
-      const draft = await saveHealthcareReviewDraft(agentRun.run_id, {
-        reviewPacket,
-        notes: approvalNotes[key] || '',
-        persona: selectedPersonas[key] || accessContexts[key]?.default_persona || '',
-      });
-      updateRun(key, draft);
-      await refreshChangeHistory(key, draft.run_id);
-      const data = await generatePriorAuthMissingInfoPdf(agentRun.run_id);
-      if (data.document) {
-        onCreated?.(data.document);
-      }
-      if (data.download_url) {
-        window.open(data.download_url, '_blank', 'noopener,noreferrer');
-      }
-      toast('Missing information request PDF generated, saved, chunked, and embedded', 'success');
-    } catch (e) {
-      toast(e.message || 'Could not generate missing information request PDF', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   async function refreshAccessContext(key, runId, alive = true) {
     if (!runId) return null;
     try {
@@ -536,76 +422,42 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
   const accessContext = accessContexts[activeTab];
   const selectedPersona = selectedPersonas[activeTab] || accessContext?.default_persona || '';
   const summaryText = workflowSummary(activeTab, packet);
-  const isMobile = useIsMobile();
 
   return (
-    <div style={{...s.backdrop, ...(isMobile ? s.backdropMobile : {})}}>
-      <div style={{...s.panel, ...(isMobile ? s.panelMobile : {})}}>
-        <div style={{...s.head, ...(isMobile ? s.headMobile : {})}}>
-          <div style={isMobile ? s.headTextMobile : undefined}>
+    <div style={s.backdrop}>
+      <div style={s.panel}>
+        <div style={s.head}>
+          <div>
             <div style={s.kicker}>Healthcare / Clinical Document Intelligence</div>
-            <h2 style={{...s.title, ...(isMobile ? s.titleMobile : {})}}>{doc?.id ? `Healthcare workflow: ${doc.original_name}` : 'New clinical visit transcription'}</h2>
+            <h2 style={s.title}>{doc?.id ? `Healthcare workflow: ${doc.original_name}` : 'New clinical visit transcription'}</h2>
           </div>
           <button style={s.close} onClick={onClose}>x</button>
         </div>
 
-        <div style={{...s.actions, ...(isMobile ? s.actionsMobile : {})}}>
-          <div style={{...s.tabs, ...(isMobile ? s.tabsMobile : {})}}>
+        <div style={s.actions}>
+          <div style={s.tabs}>
             {Object.entries(WORKFLOWS).filter(([key]) => doc?.id || key === 'scribe').map(([key, cfg]) => (
-              <button key={key} style={{...(activeTab === key ? s.tabActive : s.tab), ...(isMobile ? s.tabMobile : {})}} onClick={() => setActiveTab(key)}>
+              <button key={key} style={activeTab === key ? s.tabActive : s.tab} onClick={() => setActiveTab(key)}>
                 {cfg.label}
                 {runs[key]?.status && <span style={s.tabStatus}>{runs[key].status}</span>}
               </button>
             ))}
           </div>
           {activeTab === 'clinical' ? (
-            <button style={{...s.primary, ...(isMobile ? s.topRunButtonMobile : {})}} disabled={loading || !['chunked','embedding','embedded'].includes(doc?.status)} onClick={runWorkflow}>
+            <button style={s.primary} disabled={loading || !['chunked','embedding','embedded'].includes(doc?.status)} onClick={runWorkflow}>
               {loading ? 'Running...' : runs.clinical ? 'Re-run clinical workflow' : 'Run clinical workflow'}
             </button>
           ) : activeTab === 'priorAuth' ? (
-            <button style={{...s.secondary, ...(isMobile ? s.topRunButtonMobile : {})}} disabled={loading || !['chunked','embedding','embedded'].includes(doc?.status)} onClick={runPriorAuth}>
+            <button style={s.secondary} disabled={loading || !['chunked','embedding','embedded'].includes(doc?.status)} onClick={runPriorAuth}>
               {loading ? 'Running...' : runs.priorAuth ? 'Re-run prior auth workflow' : 'Run prior auth workflow'}
             </button>
           ) : (
-            <button style={{...s.scribeButton, ...(isMobile ? s.topRunButtonMobile : {})}} disabled={loading || recording || (!(audioFile || recordedAudio) && !runs.scribe) || ((audioFile || recordedAudio) && !consentConfirmed)} onClick={runScribe}>
+            <button style={s.scribeButton} disabled={loading || recording || (!(audioFile || recordedAudio) && !runs.scribe) || ((audioFile || recordedAudio) && !consentConfirmed)} onClick={runScribe}>
               {loading ? 'Running...' : runs.scribe ? 'Re-run clinical scribe' : 'Run clinical scribe'}
             </button>
           )}
-          {!isMobile && <span style={s.hint}>{doc?.id ? 'Assistive workflow only. Requires citations, PHI governance, and human approval.' : 'Brand-new visit mode creates a transcript document, embeds it, and saves the scribe packet for later chat.'}</span>}
+          <span style={s.hint}>{doc?.id ? 'Assistive workflow only. Requires citations, PHI governance, and human approval.' : 'Brand-new visit mode creates a transcript document, embeds it, and saves the scribe packet for later chat.'}</span>
         </div>
-
-        {activeTab === 'priorAuth' && (
-          <div style={{...s.policyPicker, ...(isMobile ? s.policyPickerMobile : {})}}>
-            <div style={s.policyPickerHead}>
-              <strong>Payer policy documents</strong>
-              <span>{policyDocsLoading ? 'Loading...' : selectedPolicyIds.length ? `${selectedPolicyIds.length} selected` : 'Auto-pick latest if none selected'}</span>
-              {isMobile && (
-                <button type="button" style={s.policyToggle} onClick={() => setPolicyPickerOpen(prev => !prev)}>
-                  {policyPickerOpen ? 'Hide' : 'Select'}
-                </button>
-              )}
-            </div>
-            {(!isMobile || policyPickerOpen) && (!policyDocs.length ? (
-              <div style={s.policyEmpty}>Upload and embed a payer policy, medical policy, or prior authorization guide in this workspace before running MVP1.</div>
-            ) : (
-              <div style={{...s.policyList, ...(isMobile ? s.policyListMobile : {})}}>
-                {policyDocs.slice(0, 8).map(item => (
-                  <label key={item.id} style={s.policyItem}>
-                    <input
-                      type="checkbox"
-                      checked={selectedPolicyIds.includes(item.id)}
-                      onChange={() => togglePolicyDoc(item.id)}
-                    />
-                    <span>
-                      <b>{item.original_name || item.name || item.id}</b>
-                      <small>{item.doc_type} · {item.status}</small>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            ))}
-          </div>
-        )}
 
         {activeTab === 'scribe' && (
           <div style={s.scribeTools}>
@@ -667,9 +519,9 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
           </div>
         )}
 
-        <div style={{...s.scroll, ...(isMobile ? s.scrollMobile : {})}}>
+        <div style={s.scroll}>
           {!agentRun ? <div style={s.empty}>{activeConfig.empty}</div> : (
-            <div style={{...s.body, ...(isMobile ? s.bodyMobile : {})}}>
+            <div style={s.body}>
               <section style={s.section}>
                 <h3 style={s.h3}>Agent Steps</h3>
                 <div style={s.steps}>
@@ -724,37 +576,25 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
                   onPersonaChange={value => setSelectedPersonas(prev => ({ ...prev, [activeTab]: value }))}
                 />
                 {agentRun.status === 'pending_approval' && (
-                  <ExpandableTextarea
-                    title="Approval notes"
+                  <textarea
                     value={approvalNotes[activeTab] || ''}
-                    onChange={value=>setApprovalNotes(prev => ({ ...prev, [activeTab]: value }))}
+                    onChange={e=>setApprovalNotes(prev => ({ ...prev, [activeTab]: e.target.value }))}
                     placeholder="Approval notes..."
-                    inputStyle={s.notes}
-                    rows={3}
+                    style={s.notes}
                   />
                 )}
               </section>
 
               <WorkbenchOverview activeTab={activeTab} packet={packet} run={agentRun} evaluation={agentEvaluation} />
+              <ChangeHistory changes={changeHistories[activeTab] || []} />
 
               {activeTab === 'priorAuth' ? (
-                <PriorAuthPacket
-                  packet={packet}
-                  onPatch={updatePacket}
-                  onGeneratePriorAuthPdf={generatePriorAuthPdf}
-                  onGenerateMissingInfoPdf={generateMissingInfoPdf}
-                  loading={loading}
-                  reviewerPersona={selectedPersona}
-                  accessContext={accessContext}
-                  changeHistory={changeHistories[activeTab] || []}
-                />
+                <PriorAuthPacket packet={packet} onPatch={updatePacket} />
               ) : activeTab === 'scribe' ? (
                 <ClinicalScribePacket packet={packet} onPatch={updatePacket} onGenerateAvsPdf={generateAvsPdf} loading={loading} />
               ) : (
-                <ClinicalPacket packet={packet} onPatch={updatePacket} changeHistory={changeHistories[activeTab] || []} />
+                <ClinicalPacket packet={packet} onPatch={updatePacket} />
               )}
-
-              {activeTab === 'scribe' && <ChangeHistory changes={changeHistories[activeTab] || []} />}
             </div>
           )}
         </div>
@@ -763,720 +603,70 @@ export default function HealthcarePanel({ doc, onClose, newVisit = false, worksp
   );
 }
 
-function ClinicalPacket({ packet, onPatch, changeHistory = [] }) {
-  const [clinicalTab, setClinicalTab] = useState('summary');
+function ClinicalPacket({ packet, onPatch }) {
   return (
     <>
       <PatientContext packet={packet} onPatch={onPatch} />
 
-      <div style={s.priorAuthSubTabs}>
-        {[
-          ['summary', 'Clinical Summary'],
-          ['assessments', 'Assessments mentioned'],
-          ['plan', 'Plan'],
-          ['instructions', 'Patient instructions'],
-          ['labs', 'Lab Results'],
-          ['medications', 'Medication Review'],
-          ['followups', 'Follow-Ups / Care Gaps'],
-          ['risks', 'Risk & Safety Flags'],
-          ['governance', 'PHI / Governance'],
-          ['history', 'Field-Level Change History'],
-        ].map(([key, label]) => (
-          <button key={key} type="button" style={clinicalTab === key ? s.priorAuthSubTabActive : s.priorAuthSubTab} onClick={() => setClinicalTab(key)}>
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {clinicalTab === 'summary' && (
-        <section style={s.section}>
-          <h3 style={s.h3}>Clinical Summary</h3>
-          <EditableText value={packet.clinical_summary?.summary || ''} onChange={value => onPatch(['clinical_summary','summary'], value)} placeholder="Clinical summary..." />
-        </section>
-      )}
-
-      {clinicalTab === 'assessments' && (
-        <section style={s.section}>
-          <Rows rows={packet.clinical_summary?.diagnoses_or_assessments_mentioned || []} cols={['text','source','confidence']} title="Assessments mentioned" editable onChange={rows => onPatch(['clinical_summary','diagnoses_or_assessments_mentioned'], rows)} />
-        </section>
-      )}
-
-      {clinicalTab === 'plan' && (
-        <section style={s.section}>
-          <Rows rows={packet.clinical_summary?.plan || []} cols={['item','source','confidence']} title="Plan" editable onChange={rows => onPatch(['clinical_summary','plan'], rows)} />
-        </section>
-      )}
-
-      {clinicalTab === 'instructions' && (
-        <section style={s.section}>
-          <Rows rows={packet.clinical_summary?.patient_instructions || []} cols={['instruction','source','confidence']} title="Patient instructions" editable onChange={rows => onPatch(['clinical_summary','patient_instructions'], rows)} />
-        </section>
-      )}
-
-      {clinicalTab === 'labs' && (
-        <section style={s.section}>
-          <h3 style={s.h3}>Lab Results</h3>
-          <EditableText value={packet.lab_results?.summary || ''} onChange={value => onPatch(['lab_results','summary'], value)} placeholder="Lab summary..." />
-          <Rows rows={packet.lab_results?.lab_results || []} cols={['test_name','result_value','unit','reference_range','abnormal_flag','collection_date','source']} editable onChange={rows => onPatch(['lab_results','lab_results'], rows)} />
-        </section>
-      )}
-
-      {clinicalTab === 'medications' && (
-        <section style={s.section}>
-          <h3 style={s.h3}>Medication Review</h3>
-          <Rows rows={packet.medication_review?.medications || []} cols={['name','dose','route','frequency','start_date','stop_date','prescriber','source']} title="Medications" editable onChange={rows => onPatch(['medication_review','medications'], rows)} />
-          <Rows rows={packet.medication_review?.review_flags || []} cols={['priority','finding','source','recommended_review']} title="Review flags" editable onChange={rows => onPatch(['medication_review','review_flags'], rows)} />
-        </section>
-      )}
-
-      {clinicalTab === 'followups' && (
-        <section style={s.section}>
-          <h3 style={s.h3}>Follow-Ups / Care Gaps</h3>
-          <Rows rows={packet.care_gaps?.follow_ups || []} cols={['task','due_date','responsible_party','priority','source']} title="Follow-ups" editable onChange={rows => onPatch(['care_gaps','follow_ups'], rows)} />
-          <Rows rows={packet.care_gaps?.pending_items || []} cols={['item','priority','source']} title="Pending items" editable onChange={rows => onPatch(['care_gaps','pending_items'], rows)} />
-          <Rows rows={packet.care_gaps?.care_gaps || []} cols={['gap','source','recommended_review']} title="Care gaps" editable onChange={rows => onPatch(['care_gaps','care_gaps'], rows)} />
-        </section>
-      )}
-
-      {clinicalTab === 'risks' && (
-        <section style={s.section}>
-          <Rows rows={packet.risk_safety?.risk_flags || []} cols={['risk_level','category','finding','source','recommended_review']} title="Risk & Safety Flags" editable onChange={rows => onPatch(['risk_safety','risk_flags'], rows)} />
-        </section>
-      )}
-
-      {clinicalTab === 'governance' && (
-        <section style={s.section}>
-          <h3 style={s.h3}>PHI / Governance</h3>
-          <EditableText value={packet.phi_governance?.summary || ''} onChange={value => onPatch(['phi_governance','summary'], value)} placeholder="Governance summary..." />
-          <div style={s.meta}>PHI categories: {(packet.phi_governance?.phi_categories || []).join(', ') || 'none listed'}</div>
-          <Rows rows={packet.phi_governance?.redaction_recommendations || []} cols={['field','recommendation','reason','source']} title="Redaction recommendations" editable onChange={rows => onPatch(['phi_governance','redaction_recommendations'], rows)} />
-          <Rows rows={packet.phi_governance?.governance_notes || []} cols={['control','note']} title="Governance notes" editable onChange={rows => onPatch(['phi_governance','governance_notes'], rows)} />
-        </section>
-      )}
-
-      {clinicalTab === 'history' && <ChangeHistory changes={changeHistory} />}
-    </>
-  );
-}
-
-function PriorAuthPacket({ packet, onPatch, onGeneratePriorAuthPdf, onGenerateMissingInfoPdf, loading, reviewerPersona, accessContext, changeHistory = [] }) {
-  const [priorAuthTab, setPriorAuthTab] = useState('packet');
-  const [packetTab, setPacketTab] = useState('overview');
-  const [expandedField, setExpandedField] = useState(null);
-  const codeReadiness = buildCodeReadiness(packet);
-  const readinessChecklist = buildPriorAuthReadinessChecklist(packet);
-  const reviewer = buildCoderReviewer(reviewerPersona, accessContext);
-  const caseTracker = buildPriorAuthCaseTracker(packet);
-  const finalPacketBlocked = readinessChecklist.items.some(item => item.required && item.status === 'blocked');
-  const narrativeText = packet.prior_auth_packet?.medical_necessity_narrative || packet.prior_auth_packet?.packet_summary || '';
-  const decisionText = packet.prior_auth_packet?.recommended_decision || 'needs review';
-  const recommendCodes = () => {
-    onPatch(['code_recommendations'], generateCodeRecommendations(packet));
-  };
-  const markCodeRows = status => {
-    const rows = packet.code_recommendations?.candidates || [];
-    onPatch(['code_recommendations','candidates'], rows.map(row => {
-      const missingCode = !row.code || row.code === 'needs_lookup';
-      const nextStatus = status === 'coder_approved' && missingCode ? 'coder_review_required' : status;
-      return applyCodeReviewStatus(row, nextStatus, reviewer, missingCode);
-    }));
-  };
-  const updateCodeRows = rows => onPatch(['code_recommendations','candidates'], rows);
-  const setReadinessOverride = (item, override) => {
-    const current = packet.prior_auth_readiness_overrides || {};
-    if (!override) {
-      const next = { ...current };
-      delete next[item.key];
-      onPatch(['prior_auth_readiness_overrides'], next);
-      return;
-    }
-    onPatch(['prior_auth_readiness_overrides', item.key], {
-      reason: current[item.key]?.reason || '',
-      reviewed_by: reviewer.label,
-      reviewed_at: new Date().toISOString(),
-    });
-  };
-  const setOverrideReason = (item, reason) => {
-    onPatch(['prior_auth_readiness_overrides', item.key], {
-      ...(packet.prior_auth_readiness_overrides?.[item.key] || {}),
-      reason,
-      reviewed_by: packet.prior_auth_readiness_overrides?.[item.key]?.reviewed_by || reviewer.label,
-      reviewed_at: packet.prior_auth_readiness_overrides?.[item.key]?.reviewed_at || new Date().toISOString(),
-    });
-  };
-  const patchCase = value => onPatch(['prior_auth_case'], stampPriorAuthCase(value, reviewer));
-  const updateCaseField = (field, value) => patchCase({ ...caseTracker, [field]: value });
-  const moveCaseStatus = (status, note = '') => {
-    patchCase(transitionPriorAuthCaseStatus(caseTracker, status, note, reviewer));
-  };
-  const updateSubmissionDoc = (index, field, value) => {
-    const docs = caseTracker.submission_documents || [];
-    patchCase({
-      ...caseTracker,
-      submission_documents: docs.map((row, i) => i === index ? { ...row, [field]: value } : row),
-    });
-  };
-  const addSubmissionDoc = () => {
-    patchCase({
-      ...caseTracker,
-      submission_documents: [
-        ...(caseTracker.submission_documents || []),
-        { type: 'attachment', name: '', document_id: '', status: 'planned' },
-      ],
-    });
-  };
-  const removeSubmissionDoc = index => {
-    patchCase({
-      ...caseTracker,
-      submission_documents: (caseTracker.submission_documents || []).filter((_, i) => i !== index),
-    });
-  };
-  return (
-    <>
-      <PatientContext packet={packet} onPatch={onPatch} />
-      <div style={s.priorAuthSubTabs}>
-        <button type="button" style={priorAuthTab === 'packet' ? s.priorAuthSubTabActive : s.priorAuthSubTab} onClick={() => setPriorAuthTab('packet')}>
-          Packet
-        </button>
-        <button type="button" style={priorAuthTab === 'case' ? s.priorAuthSubTabActive : s.priorAuthSubTab} onClick={() => setPriorAuthTab('case')}>
-          Case tracker
-        </button>
-      </div>
-      {priorAuthTab === 'case' ? (
-        <PriorAuthCaseTracker
-          tracker={caseTracker}
-          onField={updateCaseField}
-          onStatus={moveCaseStatus}
-          onDoc={updateSubmissionDoc}
-          onAddDoc={addSubmissionDoc}
-          onRemoveDoc={removeSubmissionDoc}
-        />
-      ) : (
-      <>
-        <div style={s.priorAuthSubTabs}>
-          {[
-            ['overview', 'Overview'],
-            ['payerCriteria', 'Payer criteria'],
-            ['checklist', 'Checklist'],
-            ['evidence', 'Evidence map'],
-            ['missing', 'Missing items'],
-            ['actions', 'Next actions'],
-            ['history', 'Change history'],
-          ].map(([key, label]) => (
-            <button key={key} type="button" style={packetTab === key ? s.priorAuthSubTabActive : s.priorAuthSubTab} onClick={() => setPacketTab(key)}>
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {packetTab === 'overview' && (
-          <section style={s.section}>
-            <div style={s.sectionHead}>
-              <h3 style={s.h3}>Prior Authorization Packet</h3>
-              <button
-                type="button"
-                style={s.pdfBtn}
-                disabled={loading || !packet.prior_auth_packet || finalPacketBlocked}
-                title={finalPacketBlocked ? 'Resolve or override required checklist items before generating final PDF' : 'Generate prior authorization packet PDF'}
-                onClick={onGeneratePriorAuthPdf}>
-                Generate packet PDF
-              </button>
-              <button
-                type="button"
-                style={s.secondarySmall}
-                disabled={loading || !packet.gap_detection}
-                onClick={onGenerateMissingInfoPdf}>
-                Missing info request
-              </button>
-            </div>
-            <PriorAuthReadinessChecklist
-              checklist={readinessChecklist}
-              overrides={packet.prior_auth_readiness_overrides || {}}
-              onOverride={setReadinessOverride}
-              onReason={setOverrideReason}
-            />
-            <CodeReadinessPanel readiness={codeReadiness} />
-            <section style={s.subSection}>
-              <div style={s.tableHead}>
-                <div>
-                  <div style={s.tableTitle}>Coder review workflow</div>
-                  <div style={s.meta}>AI fills candidate diagnosis, procedure, medication, and supply code rows. Certified coder must approve or edit before final packet use.</div>
-                </div>
-                <div style={s.inlineActions}>
-                  <button type="button" style={s.rowBtn} onClick={recommendCodes}>AI recommend codes</button>
-                  <button type="button" style={s.rowBtn} disabled={!packet.code_recommendations?.candidates?.length} onClick={() => markCodeRows('coder_approved')}>Approve coded rows</button>
-                  <button type="button" style={s.rowBtn} disabled={!packet.code_recommendations?.candidates?.length} onClick={() => markCodeRows('coder_review_required')}>Needs coder review</button>
-                </div>
-              </div>
-              <CoderReviewPanel
-                rows={packet.code_recommendations?.candidates || []}
-                onChange={updateCodeRows}
-                reviewer={reviewer}
-              />
-            </section>
-            <div style={s.expandableField}>
-              <div style={s.expandableFieldHead}>
-                <strong>Prior authorization narrative</strong>
-                <button type="button" style={s.rowBtn} onClick={() => setExpandedField('narrative')}>Expand</button>
-              </div>
-              <EditableText value={narrativeText} onChange={value => onPatch(['prior_auth_packet','medical_necessity_narrative'], value)} placeholder="Prior authorization narrative..." />
-              {expandedField === 'narrative' && (
-                <ExpandedTextEditor
-                  title="Prior authorization narrative"
-                  value={narrativeText}
-                  placeholder="Prior authorization narrative..."
-                  onChange={value => onPatch(['prior_auth_packet','medical_necessity_narrative'], value)}
-                  onClose={() => setExpandedField(null)}
-                />
-              )}
-            </div>
-            <button type="button" style={s.decisionBox} onClick={() => setExpandedField('decision')}>
-              <strong>Decision</strong>
-              <span>{decisionText}</span>
-              <small>Tap to view or edit full text</small>
-            </button>
-            {expandedField === 'decision' && (
-              <ExpandedTextEditor
-                title="Decision"
-                value={decisionText}
-                placeholder="Decision or reviewer comments..."
-                onChange={value => onPatch(['prior_auth_packet','recommended_decision'], value)}
-                onClose={() => setExpandedField(null)}
-              />
-            )}
-            <Rows rows={packet.policy_documents || []} cols={['document_name','doc_type','document_id']} title="Policy documents used" />
-          </section>
-        )}
-
-        {packetTab === 'payerCriteria' && (
-          <section style={s.section}>
-            <Rows rows={packet.policy_criteria?.criteria || []} cols={['criterion_id','criterion','required','category','source']} title="Payer criteria" editable onChange={rows => onPatch(['policy_criteria','criteria'], rows)} />
-          </section>
-        )}
-
-        {packetTab === 'checklist' && (
-          <section style={s.section}>
-            <Rows rows={packet.prior_auth_packet?.criteria_checklist || []} cols={['criterion','status','evidence','source']} title="Criteria checklist" editable onChange={rows => onPatch(['prior_auth_packet','criteria_checklist'], rows)} />
-          </section>
-        )}
-
-        {packetTab === 'evidence' && (
-          <section style={s.section}>
-            <Rows rows={packet.evidence_map?.criteria_matches || []} cols={['criterion_id','status','patient_evidence','policy_source','patient_source','confidence']} title="Criteria evidence map" editable onChange={rows => onPatch(['evidence_map','criteria_matches'], rows)} />
-          </section>
-        )}
-
-        {packetTab === 'missing' && (
-          <section style={s.section}>
-            <Rows rows={packet.gap_detection?.missing_items || []} cols={['item','reason','priority','source']} title="Missing items" editable onChange={rows => onPatch(['gap_detection','missing_items'], rows)} />
-            <Rows rows={packet.gap_detection?.submission_risks || []} cols={['risk','priority','recommended_action']} title="Submission risks" editable onChange={rows => onPatch(['gap_detection','submission_risks'], rows)} />
-          </section>
-        )}
-
-        {packetTab === 'actions' && (
-          <section style={s.section}>
-            <Rows rows={packet.prior_auth_packet?.next_actions || []} cols={['action','owner','priority']} title="Next actions" editable onChange={rows => onPatch(['prior_auth_packet','next_actions'], rows)} />
-          </section>
-        )}
-
-        {packetTab === 'history' && <ChangeHistory changes={changeHistory} />}
-      </>
-      )}
-    </>
-  );
-}
-
-function CodeReadinessPanel({ readiness }) {
-  return (
-    <div style={s.codeReadiness}>
-      <div style={s.codeReadinessHead}>
-        <strong>Code readiness</strong>
-        <span style={readiness.ready ? s.readyPill : s.reviewPill}>{readiness.ready ? 'Ready for coder review' : 'Needs coding review'}</span>
-      </div>
-      <div style={s.codeGrid}>
-        {readiness.items.map(item => (
-          <div key={item.label} style={s.codeItem}>
-            <b>{item.label}</b>
-            <span>{item.value}</span>
-          </div>
-        ))}
-      </div>
-      <div style={s.notice}>{readiness.notice}</div>
-    </div>
-  );
-}
-
-function ExpandedTextEditor({ title, value, placeholder, onChange, onClose }) {
-  return (
-    <div style={s.expandInline}>
-      <section style={s.expandPanel}>
-        <div style={s.expandHead}>
-          <strong>{title}</strong>
-          <button type="button" style={s.expandClose} onClick={onClose}>x</button>
-        </div>
-        <div style={s.expandBody}>
-          <textarea
-            value={value}
-            onChange={e => onChange(e.target.value)}
-            placeholder={placeholder}
-            style={s.expandTextarea}
-          />
-        </div>
+      <section style={s.section}>
+        <h3 style={s.h3}>Clinical Summary</h3>
+        <EditableText value={packet.clinical_summary?.summary || ''} onChange={value => onPatch(['clinical_summary','summary'], value)} placeholder="Clinical summary..." />
+        <Rows rows={packet.clinical_summary?.diagnoses_or_assessments_mentioned || []} cols={['text','source','confidence']} title="Assessments mentioned" editable onChange={rows => onPatch(['clinical_summary','diagnoses_or_assessments_mentioned'], rows)} />
+        <Rows rows={packet.clinical_summary?.plan || []} cols={['item','source','confidence']} title="Plan" editable onChange={rows => onPatch(['clinical_summary','plan'], rows)} />
+        <Rows rows={packet.clinical_summary?.patient_instructions || []} cols={['instruction','source','confidence']} title="Patient instructions" editable onChange={rows => onPatch(['clinical_summary','patient_instructions'], rows)} />
       </section>
-    </div>
+
+      <section style={s.section}>
+        <h3 style={s.h3}>Lab Results</h3>
+        <EditableText value={packet.lab_results?.summary || ''} onChange={value => onPatch(['lab_results','summary'], value)} placeholder="Lab summary..." />
+        <Rows rows={packet.lab_results?.lab_results || []} cols={['test_name','result_value','unit','reference_range','abnormal_flag','collection_date','source']} editable onChange={rows => onPatch(['lab_results','lab_results'], rows)} />
+      </section>
+
+      <section style={s.section}>
+        <h3 style={s.h3}>Medication Review</h3>
+        <Rows rows={packet.medication_review?.medications || []} cols={['name','dose','route','frequency','start_date','stop_date','prescriber','source']} title="Medications" editable onChange={rows => onPatch(['medication_review','medications'], rows)} />
+        <Rows rows={packet.medication_review?.review_flags || []} cols={['priority','finding','source','recommended_review']} title="Review flags" editable onChange={rows => onPatch(['medication_review','review_flags'], rows)} />
+      </section>
+
+      <section style={s.section}>
+        <h3 style={s.h3}>Follow-Ups / Care Gaps</h3>
+        <Rows rows={packet.care_gaps?.follow_ups || []} cols={['task','due_date','responsible_party','priority','source']} title="Follow-ups" editable onChange={rows => onPatch(['care_gaps','follow_ups'], rows)} />
+        <Rows rows={packet.care_gaps?.pending_items || []} cols={['item','priority','source']} title="Pending items" editable onChange={rows => onPatch(['care_gaps','pending_items'], rows)} />
+        <Rows rows={packet.care_gaps?.care_gaps || []} cols={['gap','source','recommended_review']} title="Care gaps" editable onChange={rows => onPatch(['care_gaps','care_gaps'], rows)} />
+      </section>
+
+      <section style={s.section}>
+        <h3 style={s.h3}>Risk & Safety Flags</h3>
+        <Rows rows={packet.risk_safety?.risk_flags || []} cols={['risk_level','category','finding','source','recommended_review']} editable onChange={rows => onPatch(['risk_safety','risk_flags'], rows)} />
+      </section>
+
+      <section style={s.section}>
+        <h3 style={s.h3}>PHI / Governance</h3>
+        <EditableText value={packet.phi_governance?.summary || ''} onChange={value => onPatch(['phi_governance','summary'], value)} placeholder="Governance summary..." />
+        <div style={s.meta}>PHI categories: {(packet.phi_governance?.phi_categories || []).join(', ') || 'none listed'}</div>
+        <Rows rows={packet.phi_governance?.redaction_recommendations || []} cols={['field','recommendation','reason','source']} title="Redaction recommendations" editable onChange={rows => onPatch(['phi_governance','redaction_recommendations'], rows)} />
+        <Rows rows={packet.phi_governance?.governance_notes || []} cols={['control','note']} title="Governance notes" editable onChange={rows => onPatch(['phi_governance','governance_notes'], rows)} />
+      </section>
+    </>
   );
 }
 
-function PriorAuthCaseTracker({ tracker, onField, onStatus, onDoc, onAddDoc, onRemoveDoc }) {
-  const statusMeta = priorAuthStatusMeta(tracker.status);
-  const docs = tracker.submission_documents || [];
-  const history = tracker.status_history || [];
+function PriorAuthPacket({ packet, onPatch }) {
   return (
-    <section style={s.caseTracker}>
-      <div style={s.caseTrackerHead}>
-        <div style={s.readinessChecklistTitle}>
-          <strong>Prior auth case tracker</strong>
-          <span>{statusMeta.description}</span>
-        </div>
-        <span style={statusMeta.style}>{statusMeta.label}</span>
-      </div>
-      <div style={s.statusRail}>
-        {PRIOR_AUTH_CASE_STATUSES.map(item => (
-          <button
-            key={item.value}
-            type="button"
-            style={tracker.status === item.value ? s.statusStepActive : s.statusStep}
-            onClick={() => onStatus(item.value, `Moved to ${item.label}`)}>
-            {item.label}
-          </button>
-        ))}
-      </div>
-      <div style={s.caseGrid}>
-        <label style={s.compactField}>Case owner
-          <input style={s.compactInput} value={tracker.owner || ''} onChange={e => onField('owner', e.target.value)} placeholder="Prior auth specialist" />
-        </label>
-        <label style={s.compactField}>Payer
-          <input style={s.compactInput} value={tracker.payer_name || ''} onChange={e => onField('payer_name', e.target.value)} placeholder="Payer name" />
-        </label>
-        <label style={s.compactField}>Member / policy ID
-          <input style={s.compactInput} value={tracker.member_id || ''} onChange={e => onField('member_id', e.target.value)} placeholder="Member ID" />
-        </label>
-        <label style={s.compactField}>Priority
-          <select style={s.compactSelect} value={tracker.priority || 'routine'} onChange={e => onField('priority', e.target.value)}>
-            <option value="routine">Routine</option>
-            <option value="urgent">Urgent</option>
-            <option value="expedited">Expedited</option>
-          </select>
-        </label>
-        <label style={s.compactField}>Submission channel
-          <select style={s.compactSelect} value={tracker.submission_channel || 'not_selected'} onChange={e => onField('submission_channel', e.target.value)}>
-            <option value="not_selected">Not selected</option>
-            <option value="payer_portal">Payer portal</option>
-            <option value="fax">Fax</option>
-            <option value="phone">Phone</option>
-            <option value="e_submit">Electronic submission</option>
-            <option value="mail">Mail</option>
-          </select>
-        </label>
-        <label style={s.compactField}>Portal / fax / destination
-          <input style={s.compactInput} value={tracker.submission_destination || ''} onChange={e => onField('submission_destination', e.target.value)} placeholder="Portal URL, fax, queue, or payer contact" />
-        </label>
-        <label style={s.compactField}>Payer reference #
-          <input style={s.compactInput} value={tracker.payer_reference_number || ''} onChange={e => onField('payer_reference_number', e.target.value)} placeholder="Auth/case/reference number" />
-        </label>
-        <label style={s.compactField}>Submitted date
-          <input type="date" style={s.compactInput} value={tracker.submitted_at || ''} onChange={e => onField('submitted_at', e.target.value)} />
-        </label>
-        <label style={s.compactField}>Next follow-up
-          <input type="date" style={s.compactInput} value={tracker.next_follow_up_at || ''} onChange={e => onField('next_follow_up_at', e.target.value)} />
-        </label>
-        <label style={s.compactField}>Expected decision
-          <input type="date" style={s.compactInput} value={tracker.expected_decision_by || ''} onChange={e => onField('expected_decision_by', e.target.value)} />
-        </label>
-        <label style={s.compactField}>Decision
-          <select style={s.compactSelect} value={tracker.decision || 'pending'} onChange={e => onField('decision', e.target.value)}>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="denied">Denied</option>
-            <option value="partial_approval">Partial approval</option>
-            <option value="withdrawn">Withdrawn</option>
-          </select>
-        </label>
-        <label style={s.compactField}>Decision date
-          <input type="date" style={s.compactInput} value={tracker.decision_date || ''} onChange={e => onField('decision_date', e.target.value)} />
-        </label>
-      </div>
-      <label style={s.compactField}>Status note
-        <ExpandableTextarea
-          title="Status note"
-          value={tracker.status_note || ''}
-          onChange={value => onField('status_note', value)}
-          placeholder="Submission note, payer call summary, denial reason, or follow-up instructions..."
-          inputStyle={s.compactText}
-          rows={2}
-        />
-      </label>
-      <div style={s.statusActions}>
-        <button type="button" style={s.rowBtn} onClick={() => onStatus('ready_to_submit', 'Packet marked ready to submit')}>Ready to submit</button>
-        <button type="button" style={s.rowBtn} onClick={() => onStatus('submitted', 'Packet submitted to payer')}>Submitted</button>
-        <button type="button" style={s.rowBtn} onClick={() => onStatus('pending_payer', 'Waiting on payer decision')}>Pending payer</button>
-        <button type="button" style={s.approveBtn} onClick={() => onStatus('approved', 'Payer approved the request')}>Approved</button>
-        <button type="button" style={s.rejectBtn} onClick={() => onStatus('denied', 'Payer denied the request')}>Denied</button>
-        <button type="button" style={s.rowBtn} onClick={() => onStatus('appeal_needed', 'Appeal or peer-to-peer review needed')}>Appeal/P2P</button>
-      </div>
-      <div style={s.caseColumns}>
-        <section style={s.caseSubPanel}>
-          <div style={s.tableHead}>
-            <div>
-              <div style={s.tableTitle}>Submission packet contents</div>
-              <div style={s.meta}>Track what will be sent or what was sent to the payer.</div>
-            </div>
-            <button type="button" style={s.rowBtn} onClick={onAddDoc}>Add item</button>
-          </div>
-          {!docs.length ? (
-            <div style={s.emptyLine}>No submission items tracked yet.</div>
-          ) : docs.map((row, index) => (
-            <div key={`${row.type || 'doc'}-${index}`} style={s.submissionDocRow}>
-              <select style={s.compactSelect} value={row.type || 'attachment'} onChange={e => onDoc(index, 'type', e.target.value)}>
-                <option value="prior_auth_packet">Prior auth packet</option>
-                <option value="order">Order</option>
-                <option value="encounter_note">Encounter note</option>
-                <option value="payer_policy">Payer policy</option>
-                <option value="imaging_report">Imaging report</option>
-                <option value="lab">Lab</option>
-                <option value="attachment">Attachment</option>
-              </select>
-              <input style={s.compactInput} value={row.name || ''} onChange={e => onDoc(index, 'name', e.target.value)} placeholder="Document name" />
-              <input style={s.compactInput} value={row.document_id || ''} onChange={e => onDoc(index, 'document_id', e.target.value)} placeholder="Document ID" />
-              <select style={s.compactSelect} value={row.status || 'planned'} onChange={e => onDoc(index, 'status', e.target.value)}>
-                <option value="planned">Planned</option>
-                <option value="included">Included</option>
-                <option value="sent">Sent</option>
-                <option value="missing">Missing</option>
-              </select>
-              <button type="button" style={s.deleteBtn} onClick={() => onRemoveDoc(index)}>Remove</button>
-            </div>
-          ))}
-        </section>
-        <section style={s.caseSubPanel}>
-          <div style={s.tableTitle}>Status history</div>
-          {!history.length ? (
-            <div style={s.emptyLine}>No status changes yet.</div>
-          ) : history.slice().reverse().map((item, index) => (
-            <div key={`${item.status || 'status'}-${item.updated_at || index}`} style={s.historyMini}>
-              <strong>{priorAuthStatusMeta(item.status).label}</strong>
-              <span>{item.note || 'Status updated'}</span>
-              <small>{item.updated_by || 'Reviewer'} · {formatDateTime(item.updated_at)}</small>
-            </div>
-          ))}
-        </section>
-      </div>
-    </section>
-  );
-}
-
-function PriorAuthReadinessChecklist({ checklist, overrides, onOverride, onReason }) {
-  return (
-    <section style={checklist.blocked ? s.readinessChecklistBlocked : s.readinessChecklist}>
-      <div style={s.readinessChecklistHead}>
-        <div style={s.readinessChecklistTitle}>
-          <strong>Prior auth readiness checklist</strong>
-          <span>{checklist.ready ? 'Ready for final packet generation' : 'Resolve or override required items before final PDF'}</span>
-        </div>
-        <span style={checklist.ready ? s.readyPill : s.reviewPill}>
-          {checklist.ready ? 'Ready' : `${checklist.blockedCount} blocked`}
-        </span>
-      </div>
-      <div style={s.readinessItems}>
-        {checklist.items.map(item => {
-          const override = overrides[item.key] || null;
-          return (
-            <div key={item.key} style={item.status === 'blocked' ? s.readinessItemBlocked : s.readinessItem}>
-              <div style={s.readinessItemTop}>
-                <span style={readinessStatusStyle(item.status)}>{readinessStatusLabel(item.status)}</span>
-                {item.required && <span style={s.requiredPill}>Required</span>}
-              </div>
-              <strong>{item.label}</strong>
-              <p>{item.detail}</p>
-              {item.status === 'blocked' || item.status === 'overridden' ? (
-                <div style={s.overrideBox}>
-                  <label style={s.compactField}>Override reason
-                    <ExpandableTextarea
-                      title={`${item.label} override reason`}
-                      value={override?.reason || ''}
-                      onChange={value => onReason(item, value)}
-                      placeholder="Explain why this can proceed despite the checklist item..."
-                      inputStyle={s.compactText}
-                      rows={2}
-                    />
-                  </label>
-                  <div style={s.overrideActions}>
-                    {item.status === 'blocked' ? (
-                      <button type="button" style={s.rowBtn} onClick={() => onOverride(item, true)}>Override</button>
-                    ) : (
-                      <button type="button" style={s.deleteBtn} onClick={() => onOverride(item, false)}>Remove override</button>
-                    )}
-                    {override?.reviewed_by && <span>{override.reviewed_by}</span>}
-                    {override?.reviewed_at && <span>{new Date(override.reviewed_at).toLocaleString()}</span>}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function CoderReviewPanel({ rows, onChange, reviewer }) {
-  const updateCell = (index, col, value) => {
-    const next = rows.map((row, i) => i === index ? { ...row, [col]: normalizeCellValue(col, value) } : row);
-    onChange?.(next);
-  };
-  const addRow = () => onChange?.([...rows, codeCandidate('CPT/HCPCS', 'needs_lookup', 'Manual code review item', 'Added by reviewer.', 0.4)]);
-  const deleteRow = index => onChange?.(rows.filter((_, i) => i !== index));
-  const setStatus = (index, status) => {
-    const next = rows.map((row, i) => {
-      if (i !== index) return row;
-      const missingCode = !row.code || row.code === 'needs_lookup';
-      const nextStatus = status === 'coder_approved' && missingCode ? 'coder_review_required' : status;
-      return applyCodeReviewStatus(row, nextStatus, reviewer, missingCode);
-    });
-    onChange?.(next);
-  };
-  const summary = codeReviewSummary(rows);
-  const groups = groupCodeRows(rows);
-  if (!rows.length) {
-    return (
-      <div style={s.codeEmpty}>
-        <strong>No code rows yet</strong>
-        <span>Generate AI recommendations or add a manual row for coder review.</span>
-        <button type="button" style={s.rowBtn} onClick={addRow}>Add manual row</button>
-      </div>
-    );
-  }
-  return (
-    <div style={s.codePanel}>
-      <div style={summary.ready ? s.codeSummaryReady : s.codeSummaryReview}>
-        <div>
-          <strong>{summary.ready ? 'Ready for packet' : 'Coder review needed'}</strong>
-          <p>{summary.ready ? 'Required diagnosis and procedure/service codes are approved.' : 'Approve required coded rows before using them as final packet codes.'}</p>
-        </div>
-        <div style={s.codeCounts}>
-          <span>{summary.approved} approved</span>
-          <span>{summary.lookup} lookup</span>
-          <span>{summary.needsChange} needs change</span>
-          <span>{summary.rejected} rejected</span>
-        </div>
-      </div>
-      {groups.map(group => (
-        <section key={group.key} style={s.codeGroup}>
-          <div style={s.codeGroupHead}>
-            <strong>{group.label}</strong>
-            <span>{group.items.length} row{group.items.length === 1 ? '' : 's'}</span>
-          </div>
-          <div style={s.codeCards}>
-            {group.items.map(({ row, index }) => (
-              <CodeReviewCard
-                key={`${row.code_set || 'code'}-${row.code || 'lookup'}-${index}`}
-                row={row}
-                index={index}
-                updateCell={updateCell}
-                setStatus={setStatus}
-                deleteRow={deleteRow}
-              />
-            ))}
-          </div>
-        </section>
-      ))}
-      <button type="button" style={s.rowBtn} onClick={addRow}>Add manual row</button>
-    </div>
-  );
-}
-
-function CodeReviewCard({ row, index, updateCell, setStatus, deleteRow }) {
-  const missingCode = !row.code || row.code === 'needs_lookup';
-  const status = row.review_status || 'coder_review_required';
-  return (
-    <article style={missingCode ? s.codeCardWarn : s.codeCard}>
-      <div style={s.codeCardTop}>
-        <div style={s.codeIdentity}>
-          <span style={s.codeSetPill}>{row.code_set || 'Code'}</span>
-          <input value={row.code || ''} onChange={e => updateCell(index, 'code', e.target.value)} style={missingCode ? s.codeInputWarn : s.codeInput} placeholder="needs_lookup" />
-        </div>
-        <span style={statusStyle(status)}>{statusLabel(status)}</span>
-      </div>
-      {missingCode && <div style={s.lookupWarning}>Coder must enter a final code before approval.</div>}
-      <div style={s.codeMainGrid}>
-        <label style={s.compactField}>Code set
-          <select value={row.code_set || 'CPT/HCPCS'} onChange={e => updateCell(index, 'code_set', e.target.value)} style={s.compactSelect}>
-            <option value="ICD-10-CM">ICD-10-CM</option>
-            <option value="CPT">CPT</option>
-            <option value="HCPCS">HCPCS</option>
-            <option value="CPT/HCPCS">CPT/HCPCS</option>
-            <option value="RxNorm">RxNorm</option>
-            <option value="NDC">NDC</option>
-            <option value="RxNorm/NDC">RxNorm/NDC</option>
-          </select>
-        </label>
-        <label style={s.compactField}>Status
-          <select value={status} onChange={e => setStatus(index, e.target.value)} style={s.compactSelect}>
-            <option value="coder_review_required">Needs review</option>
-            <option value="needs_change">Needs change</option>
-            <option value="coder_approved">Approved</option>
-            <option value="rejected">Rejected</option>
-          </select>
-        </label>
-      </div>
-      <label style={s.compactField}>Description
-        <ExpandableTextarea title="Code description" value={row.description || ''} onChange={value => updateCell(index, 'description', value)} inputStyle={s.compactText} rows={2} />
-      </label>
-      <label style={s.compactField}>Reviewer note
-        <ExpandableTextarea title="Reviewer note" value={row.reviewer_note || ''} onChange={value => updateCell(index, 'reviewer_note', value)} inputStyle={s.compactText} rows={2} />
-      </label>
-      <details style={s.codeDetails}>
-        <summary>Advanced coding details</summary>
-        <div style={s.advancedGrid}>
-          <label style={s.compactField}>Modifier<input value={row.modifier || ''} onChange={e => updateCell(index, 'modifier', e.target.value)} style={s.compactInput} /></label>
-          <label style={s.compactField}>Units<input value={row.units || ''} onChange={e => updateCell(index, 'units', e.target.value)} style={s.compactInput} /></label>
-          <label style={s.compactField}>Laterality
-            <select value={row.laterality || ''} onChange={e => updateCell(index, 'laterality', e.target.value)} style={s.compactSelect}>
-              <option value="">Not applicable</option>
-              <option value="left">left</option>
-              <option value="right">right</option>
-              <option value="bilateral">bilateral</option>
-            </select>
-          </label>
-          <label style={s.compactField}>Place of service
-            <select value={row.place_of_service || ''} onChange={e => updateCell(index, 'place_of_service', e.target.value)} style={s.compactSelect}>
-              <option value="">Not selected</option>
-              <option value="office">office</option>
-              <option value="outpatient hospital">outpatient hospital</option>
-              <option value="ambulatory surgical center">ambulatory surgical center</option>
-              <option value="home">home</option>
-              <option value="inpatient hospital">inpatient hospital</option>
-            </select>
-          </label>
-          <label style={s.compactField}>Reference source<input value={row.reference_source || ''} onChange={e => updateCell(index, 'reference_source', e.target.value)} style={s.compactInput} /></label>
-          <label style={s.compactField}>Payer rule match<input value={row.payer_rule_match || ''} onChange={e => updateCell(index, 'payer_rule_match', e.target.value)} style={s.compactInput} /></label>
-          <label style={s.compactField}>Basis<ExpandableTextarea title="Coding basis" value={row.basis || ''} onChange={value => updateCell(index, 'basis', value)} inputStyle={s.compactText} rows={2} /></label>
-          <label style={s.compactField}>Confidence<input value={String(row.confidence ?? '')} onChange={e => updateCell(index, 'confidence', e.target.value)} style={s.compactInput} /></label>
-        </div>
-      </details>
-      {(row.reviewed_by || row.reviewed_at) && (
-        <div style={s.reviewStamp}>
-          {row.reviewed_by && <span>{row.reviewed_by}</span>}
-          {row.reviewed_at && <span>{new Date(row.reviewed_at).toLocaleString()}</span>}
-        </div>
-      )}
-      <div style={s.codeActions}>
-        <button type="button" style={s.approveBtn} onClick={() => setStatus(index, 'coder_approved')}>Approve</button>
-        <button type="button" style={s.rowBtn} onClick={() => setStatus(index, 'needs_change')}>Needs change</button>
-        <button type="button" style={s.rejectBtn} onClick={() => setStatus(index, 'rejected')}>Reject</button>
-        <button type="button" style={s.deleteBtn} onClick={() => deleteRow(index)}>Remove</button>
-      </div>
-    </article>
+    <>
+      <PatientContext packet={packet} onPatch={onPatch} />
+      <section style={s.section}>
+        <h3 style={s.h3}>Prior Authorization Packet</h3>
+        <EditableText value={packet.prior_auth_packet?.medical_necessity_narrative || packet.prior_auth_packet?.packet_summary || ''} onChange={value => onPatch(['prior_auth_packet','medical_necessity_narrative'], value)} placeholder="Prior authorization narrative..." />
+        <div style={s.meta}>Decision: {packet.prior_auth_packet?.recommended_decision || 'needs review'}</div>
+        <Rows rows={packet.policy_documents || []} cols={['document_name','doc_type','document_id']} title="Policy documents used" />
+        <Rows rows={packet.policy_criteria?.criteria || []} cols={['criterion_id','criterion','required','category','source']} title="Payer criteria" editable onChange={rows => onPatch(['policy_criteria','criteria'], rows)} />
+        <Rows rows={packet.evidence_map?.criteria_matches || []} cols={['criterion_id','status','patient_evidence','policy_source','patient_source','confidence']} title="Criteria evidence map" editable onChange={rows => onPatch(['evidence_map','criteria_matches'], rows)} />
+        <Rows rows={packet.gap_detection?.missing_items || []} cols={['item','reason','priority','source']} title="Missing items" editable onChange={rows => onPatch(['gap_detection','missing_items'], rows)} />
+        <Rows rows={packet.gap_detection?.submission_risks || []} cols={['risk','priority','recommended_action']} title="Submission risks" editable onChange={rows => onPatch(['gap_detection','submission_risks'], rows)} />
+        <Rows rows={packet.prior_auth_packet?.next_actions || []} cols={['action','owner','priority']} title="Next actions" editable onChange={rows => onPatch(['prior_auth_packet','next_actions'], rows)} />
+      </section>
+    </>
   );
 }
 
@@ -1739,19 +929,18 @@ function WorkbenchOverview({ activeTab, packet, run, evaluation }) {
 function ReviewerControls({ accessContext, personaCatalog, selectedPersona, onPersonaChange }) {
   const available = accessContext?.personas?.length ? accessContext.personas : [selectedPersona].filter(Boolean);
   const persona = personaCatalog.find(item => item.id === selectedPersona) || accessContext?.persona_scopes?.[selectedPersona] || {};
-  const isMobile = useIsMobile();
   return (
-    <div style={{...s.reviewerBox, ...(isMobile ? s.reviewerBoxMobile : {})}}>
-      <div style={{...s.reviewerField, ...(isMobile ? s.reviewerFieldMobile : {})}}>
+    <div style={s.reviewerBox}>
+      <div style={s.reviewerField}>
         <strong>Reviewer persona</strong>
-        <select value={selectedPersona || ''} onChange={e => onPersonaChange(e.target.value)} style={{...s.select, ...(isMobile ? s.reviewerSelectMobile : {})}}>
+        <select value={selectedPersona || ''} onChange={e => onPersonaChange(e.target.value)} style={s.select}>
           {available.map(id => {
             const item = personaCatalog.find(p => p.id === id) || { label: id };
             return <option key={id} value={id}>{item.label || id}</option>;
           })}
         </select>
       </div>
-      <div style={{...s.reviewerScope, ...(isMobile ? s.reviewerScopeMobile : {})}}>
+      <div style={s.reviewerScope}>
         <strong>Scope</strong>
         <span>{persona.scope || 'Workspace persona controls what this reviewer can edit and approve.'}</span>
         <small>Workspace role: {accessContext?.workspace_role || 'loading'} · Approval: {persona.can_approve ? 'allowed' : 'not allowed'}</small>
@@ -1783,559 +972,6 @@ function ChangeHistory({ changes }) {
       )}
     </section>
   );
-}
-
-function generateCodeRecommendations(packet) {
-  const request = packet.prior_auth_request || {};
-  const requestedItem = fieldValue(request.requested_item);
-  const existingRows = packet.code_recommendations?.candidates || [];
-  const packetText = collectPacketText(packet).join(' ');
-  const candidates = [
-    ...diagnosisCodeCandidates(request, packetText),
-    ...serviceCodeCandidates(requestedItem, request.service_category, packetText),
-    ...medicationCodeCandidates(packet),
-    ...explicitCodeCandidates(packetText),
-  ];
-  return {
-    generated_at: new Date().toISOString(),
-    guardrail: 'AI-recommended candidate codes only. Certified coder or qualified billing reviewer must validate final ICD/CPT/HCPCS/RxNorm/NDC codes using current licensed references before payer submission.',
-    candidates: mergeCodeCandidates(dedupeCodeCandidates(candidates), existingRows),
-  };
-}
-
-function diagnosisCodeCandidates(request, packetText = '') {
-  const candidates = [];
-  const diagnoses = Array.isArray(request.diagnoses) ? request.diagnoses : [];
-  diagnoses.forEach(item => {
-    const description = item.description || item.indication || item.value || 'Diagnosis or indication';
-    if (item.code) {
-      candidates.push(codeCandidate('ICD-10-CM', item.code, description, 'Extracted diagnosis code from clinical/request packet.', item.confidence ?? 0.78));
-    } else if (description) {
-      const inferred = inferredDiagnosisCodeCandidates(description);
-      if (inferred.length) candidates.push(...inferred);
-      else candidates.push(codeCandidate('ICD-10-CM', 'needs_lookup', description, 'Diagnosis or indication is present, but ICD-10-CM code needs coder lookup/validation.', 0.45));
-    }
-  });
-  if (!candidates.some(row => row.code && row.code !== 'needs_lookup')) {
-    candidates.push(...inferredDiagnosisCodeCandidates(packetText));
-  }
-  if (!candidates.length && (request.summary || request.clinical_rationale?.length)) {
-    candidates.push(codeCandidate('ICD-10-CM', 'needs_lookup', 'Diagnosis / indication needs coding review', 'Clinical rationale exists, but a diagnosis code was not extracted.', 0.35));
-  }
-  return candidates;
-}
-
-function serviceCodeCandidates(requestedItem, serviceCategory, packetText) {
-  const description = requestedItem || serviceCategory || 'Requested service/procedure';
-  const candidates = [];
-  const cptCodes = extractCodes(packetText, /\b(?:CPT|procedure code|service code)[:#\s-]*(\d{5})\b/gi, 'CPT');
-  const hcpcsCodes = extractCodes(packetText, /\b(?:HCPCS|supply code)[:#\s-]*([A-Z]\d{4})\b/gi, 'HCPCS');
-  cptCodes.forEach(code => candidates.push(codeCandidate('CPT', code, description, 'Extracted from explicit CPT/procedure code text in packet.', 0.78)));
-  hcpcsCodes.forEach(code => candidates.push(codeCandidate('HCPCS', code, description, 'Extracted from explicit HCPCS/supply code text in packet.', 0.78)));
-  if (!candidates.length) {
-    candidates.push(...inferredServiceCodeCandidates(`${description} ${packetText}`));
-  }
-  if (!candidates.length && description) {
-    candidates.push(codeCandidate('CPT/HCPCS', 'needs_lookup', description, 'Requested service is present; coder should select CPT/HCPCS based on order, payer rule, and current code reference.', 0.4));
-  }
-  return candidates;
-}
-
-function medicationCodeCandidates(packet) {
-  const meds = [
-    ...(packet.medication_review?.medications || []),
-    ...(packet.medications || []),
-    ...(packet.prior_auth_request?.medications || []),
-  ];
-  return meds
-    .map(item => {
-      const name = item.name || item.medication || item.drug_name || item.value || '';
-      if (!name) return null;
-      const existing = item.ndc || item.rxnorm || item.code || '';
-      const codeSet = item.ndc ? 'NDC' : item.rxnorm ? 'RxNorm' : 'RxNorm/NDC';
-      return codeCandidate(
-        codeSet,
-        existing || 'needs_lookup',
-        [name, item.dose, item.route, item.frequency].filter(Boolean).join(' ') || name,
-        existing ? 'Extracted medication code from packet.' : 'Medication is present; pharmacy/coder should validate RxNorm or NDC when needed by payer.',
-        existing ? 0.75 : 0.38
-      );
-    })
-    .filter(Boolean);
-}
-
-function explicitCodeCandidates(text) {
-  const candidates = [];
-  extractCodes(text, /\b(?:ICD-?10(?:-CM)?|diagnosis code)[:#\s-]*([A-TV-Z][0-9][0-9AB](?:\.[0-9A-TV-Z]{1,4})?)\b/gi, 'ICD-10-CM')
-    .forEach(code => candidates.push(codeCandidate('ICD-10-CM', code, 'Diagnosis code found in packet text', 'Extracted from explicit ICD/diagnosis code text.', 0.78)));
-  extractCodes(text, /\b(?:CPT|procedure code|service code)[:#\s-]*(\d{5})\b/gi, 'CPT')
-    .forEach(code => candidates.push(codeCandidate('CPT', code, 'Procedure code found in packet text', 'Extracted from explicit CPT/procedure code text.', 0.78)));
-  extractCodes(text, /\b(?:HCPCS|supply code)[:#\s-]*([A-Z]\d{4})\b/gi, 'HCPCS')
-    .forEach(code => candidates.push(codeCandidate('HCPCS', code, 'HCPCS code found in packet text', 'Extracted from explicit HCPCS/supply code text.', 0.78)));
-  extractCodes(text, /\b(?:NDC)[:#\s-]*(\d{4,5}-\d{3,4}-\d{1,2})\b/gi, 'NDC')
-    .forEach(code => candidates.push(codeCandidate('NDC', code, 'Medication NDC found in packet text', 'Extracted from explicit NDC text.', 0.78)));
-  return candidates;
-}
-
-function inferredDiagnosisCodeCandidates(text) {
-  const value = String(text || '').toLowerCase();
-  const rows = [];
-  if (/(radiculopathy|radicular|sciatica|leg pain|radiating pain)/i.test(value)) {
-    rows.push(codeCandidate('ICD-10-CM', 'M54.16', 'Lumbar radiculopathy / radicular low back pain', 'AI-inferred diagnosis candidate from clinical indication text. Coder must validate before use.', 0.55));
-  }
-  if (/(low back pain|lower back pain|lumbar pain|back pain)/i.test(value)) {
-    rows.push(codeCandidate('ICD-10-CM', 'M54.50', 'Low back pain, unspecified', 'AI-inferred diagnosis candidate from clinical indication text. Coder must validate specificity before use.', 0.52));
-  }
-  if (/(spinal stenosis|lumbar stenosis)/i.test(value)) {
-    rows.push(codeCandidate('ICD-10-CM', 'M48.061', 'Spinal stenosis, lumbar region without neurogenic claudication', 'AI-inferred diagnosis candidate from clinical indication text. Coder must validate specificity before use.', 0.5));
-  }
-  return rows;
-}
-
-function inferredServiceCodeCandidates(text) {
-  const value = String(text || '').toLowerCase();
-  const rows = [];
-  if (/mri/.test(value) && /(lumbar|l-spine|l spine|lower back)/.test(value)) {
-    const hasWithout = /(without contrast|w\/o contrast|wo contrast|no contrast)/.test(value);
-    const hasWithAndWithout = /(with and without contrast|w\/wo contrast|w and wo contrast)/.test(value);
-    const hasWith = /(with contrast|w contrast)/.test(value);
-    const code = hasWithAndWithout ? '72158' : hasWith && !hasWithout ? '72149' : '72148';
-    const contrast = hasWithAndWithout ? 'with and without contrast' : hasWith && !hasWithout ? 'with contrast' : 'without contrast';
-    rows.push(codeCandidate('CPT', code, `MRI lumbar spine ${contrast}`, 'AI-inferred CPT candidate from requested service text. Coder must validate order, contrast, payer rule, and current CPT reference before use.', 0.56));
-  } else if (/mri/.test(value) && /(cervical|c-spine|c spine|neck)/.test(value)) {
-    rows.push(codeCandidate('CPT', '72141', 'MRI cervical spine without contrast', 'AI-inferred CPT candidate from requested service text. Coder must validate contrast and current CPT reference before use.', 0.5));
-  } else if (/mri/.test(value) && /(brain|head)/.test(value)) {
-    rows.push(codeCandidate('CPT', '70551', 'MRI brain without contrast', 'AI-inferred CPT candidate from requested service text. Coder must validate contrast and current CPT reference before use.', 0.5));
-  }
-  return rows;
-}
-
-function extractCodes(text, pattern) {
-  const codes = [];
-  String(text || '').replace(pattern, (_, code) => {
-    if (code) codes.push(String(code).toUpperCase());
-    return _;
-  });
-  return codes;
-}
-
-function collectPacketText(value, collected = []) {
-  if (value == null) return collected;
-  if (typeof value === 'string' || typeof value === 'number') {
-    collected.push(String(value));
-    return collected;
-  }
-  if (Array.isArray(value)) {
-    value.forEach(item => collectPacketText(item, collected));
-    return collected;
-  }
-  if (typeof value === 'object') {
-    Object.values(value).forEach(item => collectPacketText(item, collected));
-  }
-  return collected;
-}
-
-function codeCandidate(codeSet, code, description, basis, confidence) {
-  return {
-    code_set: codeSet,
-    code,
-    description,
-    basis,
-    modifier: '',
-    units: '',
-    laterality: '',
-    place_of_service: '',
-    reference_source: '',
-    payer_rule_match: '',
-    confidence,
-    review_status: 'coder_review_required',
-    reviewer_note: '',
-    reviewed_by: '',
-    reviewed_at: '',
-  };
-}
-
-function dedupeCodeCandidates(candidates) {
-  const seen = new Set();
-  return candidates.filter(item => {
-    const key = `${item.code_set}:${item.code}:${item.description}`.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function mergeCodeCandidates(candidates, existingRows) {
-  const existingByKey = new Map((existingRows || []).map(row => [`${row.code_set}:${row.code}:${row.description}`.toLowerCase(), row]));
-  const merged = candidates.map(row => {
-    const existing = existingByKey.get(`${row.code_set}:${row.code}:${row.description}`.toLowerCase());
-    return existing ? { ...row, ...existing } : row;
-  });
-  (existingRows || []).forEach(row => {
-    const key = `${row.code_set}:${row.code}:${row.description}`.toLowerCase();
-    const hasExact = merged.some(item => `${item.code_set}:${item.code}:${item.description}`.toLowerCase() === key);
-    const hasBetterCandidate = row.code === 'needs_lookup' && merged.some(item => (
-      item.code_set === row.code_set
-      && item.code
-      && item.code !== 'needs_lookup'
-      && String(item.description || '').toLowerCase() === String(row.description || '').toLowerCase()
-    ));
-    if (!hasExact && !hasBetterCandidate) {
-      merged.push(row);
-    }
-  });
-  return merged;
-}
-
-function buildPriorAuthReadinessChecklist(packet) {
-  const request = packet.prior_auth_request || {};
-  const priorPacket = packet.prior_auth_packet || {};
-  const policyDocs = packet.policy_documents || [];
-  const criteria = packet.policy_criteria?.criteria || [];
-  const evidenceMatches = packet.evidence_map?.criteria_matches || [];
-  const missingItems = packet.gap_detection?.missing_items || [];
-  const overrides = packet.prior_auth_readiness_overrides || {};
-  const requestedItem = request.requested_item?.value || '';
-  const approvedCodes = packet.code_recommendations?.candidates?.filter(isCoderApprovedCode) || [];
-  const approvedIcd = approvedCodes.some(row => row.code_set === 'ICD-10-CM');
-  const approvedProcedure = approvedCodes.some(row => ['CPT','HCPCS','CPT/HCPCS'].includes(row.code_set));
-  const hasDiagnosis = (request.diagnoses || []).some(item => item.code || item.description || item.value);
-  const hasMedicalNecessity = Boolean(priorPacket.medical_necessity_narrative || priorPacket.packet_summary);
-  const unresolvedMissing = missingItems.filter(item => String(item.priority || '').toLowerCase() === 'high' || item.item);
-  const baseItems = [
-    priorAuthReadinessItem('requested_service', 'Requested service', Boolean(requestedItem && requestedItem !== 'Not found'), 'Service/procedure is identified, including order details when available.', true),
-    priorAuthReadinessItem('diagnosis_icd', 'Diagnosis / ICD-10-CM', hasDiagnosis && approvedIcd, hasDiagnosis ? 'Diagnosis is present; ICD-10-CM must be coder-approved.' : 'Diagnosis or clinical indication is missing.', true),
-    priorAuthReadinessItem('procedure_code', 'Procedure / service coding', approvedProcedure, 'CPT/HCPCS code, modifier, units, laterality, and place of service should be reviewed when relevant.', true),
-    priorAuthReadinessItem('payer_policy', 'Payer policy', policyDocs.length > 0, policyDocs.length ? `${policyDocs.length} payer policy document${policyDocs.length === 1 ? '' : 's'} selected.` : 'Select at least one payer policy document.', true),
-    priorAuthReadinessItem('criteria_mapping', 'Criteria mapping', criteria.length > 0 && evidenceMatches.length > 0, `${criteria.length} criteria and ${evidenceMatches.length} evidence match${evidenceMatches.length === 1 ? '' : 'es'} found.`, true),
-    priorAuthReadinessItem('missing_evidence', 'Missing evidence', unresolvedMissing.length === 0, unresolvedMissing.length ? `${unresolvedMissing.length} missing item${unresolvedMissing.length === 1 ? '' : 's'} still need resolution or override.` : 'No unresolved missing evidence items remain.', true),
-    priorAuthReadinessItem('medical_necessity', 'Medical necessity narrative', hasMedicalNecessity, hasMedicalNecessity ? 'Medical necessity narrative is available for human review.' : 'Generate or edit the medical necessity narrative.', true),
-    priorAuthReadinessItem('human_review', 'Human review', Boolean(priorPacket.recommended_decision), 'Reviewer should save draft and approve packet after checklist completion.', false),
-  ].map(item => applyReadinessOverride(item, overrides[item.key]));
-  const blockedCount = baseItems.filter(item => item.required && item.status === 'blocked').length;
-  return { items: baseItems, blocked: blockedCount > 0, blockedCount, ready: blockedCount === 0 };
-}
-
-function priorAuthReadinessItem(key, label, ready, detail, required = true) {
-  return {
-    key,
-    label,
-    required,
-    detail,
-    status: ready ? 'ready' : required ? 'blocked' : 'needs_review',
-  };
-}
-
-function buildPriorAuthCaseTracker(packet) {
-  const existing = packet.prior_auth_case || {};
-  const request = packet.prior_auth_request || {};
-  const policyDocs = packet.policy_documents || [];
-  const context = packet.patient_context || {};
-  const requestedItem = fieldValue(request.requested_item);
-  const urgency = fieldValue(request.urgency) || 'routine';
-  const firstPolicy = policyDocs[0] || {};
-  const seedDocs = [];
-  if (packet.prior_auth_packet) {
-    seedDocs.push({
-      type: 'prior_auth_packet',
-      name: 'Prior authorization packet PDF',
-      document_id: existing.packet_document_id || '',
-      status: existing.packet_document_id ? 'included' : 'planned',
-    });
-  }
-  if (requestedItem) {
-    seedDocs.push({
-      type: 'order',
-      name: `${requestedItem} order/request`,
-      document_id: '',
-      status: 'planned',
-    });
-  }
-  policyDocs.slice(0, 3).forEach(item => {
-    seedDocs.push({
-      type: 'payer_policy',
-      name: item.document_name || item.original_name || item.name || 'Payer policy',
-      document_id: item.document_id || item.id || '',
-      status: 'included',
-    });
-  });
-  const submissionDocs = Array.isArray(existing.submission_documents) && existing.submission_documents.length
-    ? existing.submission_documents
-    : seedDocs;
-  const status = existing.status || 'draft';
-  return {
-    case_id: existing.case_id || `PA-${Date.now().toString(36).toUpperCase()}`,
-    status,
-    status_note: existing.status_note || '',
-    payer_name: existing.payer_name || firstPolicy.payer_name || firstPolicy.document_name || '',
-    member_id: existing.member_id || fieldValue(context.member_id) || '',
-    owner: existing.owner || '',
-    priority: existing.priority || urgency,
-    requested_service: existing.requested_service || requestedItem,
-    submission_channel: existing.submission_channel || 'not_selected',
-    submission_destination: existing.submission_destination || '',
-    payer_reference_number: existing.payer_reference_number || '',
-    submitted_at: normalizeDateInput(existing.submitted_at),
-    next_follow_up_at: normalizeDateInput(existing.next_follow_up_at),
-    expected_decision_by: normalizeDateInput(existing.expected_decision_by),
-    decision: existing.decision || (['approved','denied'].includes(status) ? status : 'pending'),
-    decision_date: normalizeDateInput(existing.decision_date),
-    denial_reason: existing.denial_reason || '',
-    packet_document_id: existing.packet_document_id || '',
-    submission_documents: submissionDocs,
-    status_history: Array.isArray(existing.status_history) ? existing.status_history : [],
-    last_updated_by: existing.last_updated_by || '',
-    last_updated_at: existing.last_updated_at || '',
-  };
-}
-
-function stampPriorAuthCase(value, reviewer) {
-  return {
-    ...value,
-    last_updated_by: reviewer?.label || value.last_updated_by || '',
-    last_updated_at: new Date().toISOString(),
-  };
-}
-
-function transitionPriorAuthCaseStatus(tracker, status, note, reviewer) {
-  const now = new Date().toISOString();
-  const next = {
-    ...tracker,
-    status,
-    status_note: note || tracker.status_note || '',
-    last_updated_by: reviewer?.label || '',
-    last_updated_at: now,
-    status_history: [
-      ...(tracker.status_history || []),
-      {
-        status,
-        note: note || '',
-        updated_by: reviewer?.label || '',
-        updated_at: now,
-      },
-    ],
-  };
-  if (status === 'submitted' && !next.submitted_at) next.submitted_at = todayInputValue();
-  if (status === 'approved' || status === 'denied') {
-    next.decision = status;
-    if (!next.decision_date) next.decision_date = todayInputValue();
-  }
-  return next;
-}
-
-function priorAuthStatusMeta(status) {
-  const item = PRIOR_AUTH_CASE_STATUSES.find(row => row.value === status) || PRIOR_AUTH_CASE_STATUSES[0];
-  const style = status === 'approved'
-    ? s.statusApproved
-    : status === 'denied'
-    ? s.statusRejected
-    : status === 'appeal_needed'
-    ? s.statusChange
-    : ['submitted', 'pending_payer', 'ready_to_submit'].includes(status)
-    ? s.statusReview
-    : s.readyPill;
-  return { ...item, style };
-}
-
-function normalizeDateInput(value) {
-  if (!value) return '';
-  const text = String(value);
-  return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : '';
-}
-
-function todayInputValue() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function formatDateTime(value) {
-  if (!value) return 'No timestamp';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString();
-}
-
-function fieldValue(value) {
-  if (!value) return '';
-  if (typeof value === 'object') return value.value || value.text || value.label || '';
-  return value;
-}
-
-function applyReadinessOverride(item, override) {
-  if (!override) return item;
-  if (item.status === 'ready') return item;
-  return { ...item, status: 'overridden', detail: `${item.detail} Override: ${override.reason || 'No reason provided.'}` };
-}
-
-function readinessStatusLabel(status) {
-  if (status === 'ready') return 'Ready';
-  if (status === 'overridden') return 'Overridden';
-  if (status === 'blocked') return 'Blocked';
-  return 'Needs review';
-}
-
-function readinessStatusStyle(status) {
-  if (status === 'ready') return s.statusApproved;
-  if (status === 'overridden') return s.statusChange;
-  if (status === 'blocked') return s.statusRejected;
-  return s.statusReview;
-}
-
-function codeReviewSummary(rows) {
-  const approved = rows.filter(isCoderApprovedCode).length;
-  const lookup = rows.filter(row => !row.code || row.code === 'needs_lookup').length;
-  const needsChange = rows.filter(row => row.review_status === 'needs_change').length;
-  const rejected = rows.filter(row => row.review_status === 'rejected').length;
-  const approvedIcd = rows.some(row => isCoderApprovedCode(row) && row.code_set === 'ICD-10-CM');
-  const approvedProcedure = rows.some(row => isCoderApprovedCode(row) && ['CPT','HCPCS','CPT/HCPCS'].includes(row.code_set));
-  return { approved, lookup, needsChange, rejected, ready: approvedIcd && approvedProcedure };
-}
-
-function groupCodeRows(rows) {
-  const groups = [
-    { key: 'diagnosis', label: 'Diagnosis codes', items: [] },
-    { key: 'procedure', label: 'Procedure / service codes', items: [] },
-    { key: 'medication', label: 'Medication / supply codes', items: [] },
-    { key: 'lookup', label: 'Lookup needed', items: [] },
-  ];
-  rows.forEach((row, index) => {
-    const item = { row, index };
-    if (!row.code || row.code === 'needs_lookup') {
-      groups[3].items.push(item);
-    } else if (row.code_set === 'ICD-10-CM') {
-      groups[0].items.push(item);
-    } else if (['CPT','HCPCS','CPT/HCPCS'].includes(row.code_set)) {
-      groups[1].items.push(item);
-    } else {
-      groups[2].items.push(item);
-    }
-  });
-  return groups.filter(group => group.items.length);
-}
-
-function statusLabel(status) {
-  if (status === 'coder_approved') return 'Approved';
-  if (status === 'needs_change') return 'Needs change';
-  if (status === 'rejected') return 'Rejected';
-  return 'Needs review';
-}
-
-function statusStyle(status) {
-  if (status === 'coder_approved') return s.statusApproved;
-  if (status === 'needs_change') return s.statusChange;
-  if (status === 'rejected') return s.statusRejected;
-  return s.statusReview;
-}
-
-function buildCoderReviewer(reviewerPersona, accessContext) {
-  const persona = reviewerPersona || accessContext?.default_persona || 'coder_reviewer';
-  const role = accessContext?.workspace_role || 'workspace_role_unknown';
-  return {
-    label: `${persona} (${role})`,
-    persona,
-    role,
-  };
-}
-
-function applyCodeReviewStatus(row, status, reviewer, missingCode = false) {
-  const now = new Date().toISOString();
-  const stampStatus = ['coder_approved', 'needs_change', 'rejected'].includes(status);
-  const defaultNotes = [
-    'Certified coder/billing reviewer approved for packet use.',
-    'Enter final code before approving for packet use.',
-    'Coder requested a code change before packet use.',
-    'Coder rejected this candidate for packet use.',
-    'Coder review required before packet use.',
-  ];
-  const generatedNote = (
-    status === 'coder_approved'
-      ? 'Certified coder/billing reviewer approved for packet use.'
-      : missingCode ? 'Enter final code before approving for packet use.'
-      : status === 'needs_change' ? 'Coder requested a code change before packet use.'
-      : status === 'rejected' ? 'Coder rejected this candidate for packet use.'
-      : 'Coder review required before packet use.'
-  );
-  const note = !row.reviewer_note || defaultNotes.includes(row.reviewer_note) ? generatedNote : row.reviewer_note;
-  return {
-    ...row,
-    review_status: status,
-    reviewer_note: note,
-    reviewed_by: stampStatus ? reviewer.label : '',
-    reviewed_at: stampStatus ? now : '',
-  };
-}
-
-function buildCodeReadiness(packet) {
-  const request = packet.prior_auth_request || {};
-  const diagnoses = Array.isArray(request.diagnoses) ? request.diagnoses : [];
-  const diagnosisCodes = diagnoses.map(item => item?.code).filter(Boolean);
-  const codeCandidates = packet.code_recommendations?.candidates || [];
-  const approvedCodes = codeCandidates.filter(isCoderApprovedCode);
-  const icdCandidates = codeCandidates.filter(item => item.code_set === 'ICD-10-CM' && item.code && item.code !== 'needs_lookup');
-  const procedureCandidates = codeCandidates.filter(item => ['CPT','HCPCS','CPT/HCPCS'].includes(item.code_set) && item.code && item.code !== 'needs_lookup');
-  const approvedIcd = approvedCodes.filter(item => item.code_set === 'ICD-10-CM');
-  const approvedProcedure = approvedCodes.filter(item => ['CPT','HCPCS','CPT/HCPCS'].includes(item.code_set));
-  const approvedMedication = approvedCodes.filter(item => ['RxNorm','NDC','RxNorm/NDC'].includes(item.code_set));
-  const reviewedCodes = codeCandidates.filter(item => {
-    const status = String(item.review_status || '').toLowerCase();
-    return status.includes('approved') || status.includes('reviewed');
-  });
-  const missingItems = packet.gap_detection?.missing_items || [];
-  const missingText = missingItems.map(item => `${item.item || ''} ${item.reason || ''}`).join(' ').toLowerCase();
-  const requestedItem = request.requested_item?.value || 'requested service not found';
-  const serviceCategory = request.service_category || 'unknown';
-  const procedureDetails = describeProcedureDetails(requestedItem, serviceCategory);
-  const hasCptGap = missingText.includes('cpt');
-  const hasIcdGap = missingText.includes('icd') || missingText.includes('diagnosis code');
-  const ready = approvedIcd.length > 0 && approvedProcedure.length > 0;
-  return {
-    ready,
-    items: [
-      {
-        label: 'ICD-10-CM',
-        value: approvedIcd.length
-          ? `Coder approved: ${approvedIcd.map(item => item.code).join(', ')}`
-          : icdCandidates.length
-          ? `AI candidate${icdCandidates.length === 1 ? '' : 's'} need approval: ${icdCandidates.map(item => item.code).join(', ')}`
-          : diagnosisCodes.length ? `Extracted candidate${diagnosisCodes.length === 1 ? '' : 's'}: ${diagnosisCodes.join(', ')}` : 'Missing or not confirmed',
-      },
-      {
-        label: 'CPT / HCPCS',
-        value: approvedProcedure.length
-          ? `Coder approved: ${approvedProcedure.map(item => item.code).join(', ')}`
-          : procedureCandidates.length
-          ? `AI candidate${procedureCandidates.length === 1 ? '' : 's'} need approval: ${procedureCandidates.map(item => item.code).join(', ')}`
-          : hasCptGap ? 'Missing from order/request' : 'Needs coder lookup/validation',
-      },
-      {
-        label: 'Medication / supply',
-        value: approvedMedication.length
-          ? `Coder approved: ${approvedMedication.map(item => item.code).join(', ')}`
-          : codeCandidates.some(item => ['RxNorm','NDC','RxNorm/NDC'].includes(item.code_set)) ? 'Medication code candidates need approval' : procedureDetails,
-      },
-      {
-        label: 'Coder review',
-        value: reviewedCodes.length ? `${reviewedCodes.length} code row${reviewedCodes.length === 1 ? '' : 's'} marked reviewed/approved` : 'Approve or edit code rows before generating final packet',
-      },
-    ],
-    notice: 'Code readiness is a pre-prior-auth review step. AI-recommended values are candidates only. Edit rows as needed and mark coder_approved before final packet use.',
-  };
-}
-
-function isCoderApprovedCode(item) {
-  const status = String(item.review_status || '').toLowerCase();
-  return item.code && item.code !== 'needs_lookup' && (status.includes('approved') || status.includes('reviewed'));
-}
-
-function describeProcedureDetails(requestedItem, serviceCategory) {
-  const text = String(requestedItem || '').toLowerCase();
-  const details = [];
-  if (text.includes('mri')) details.push('MRI');
-  if (text.includes('lumbar')) details.push('lumbar spine');
-  if (text.includes('with and without contrast')) details.push('with and without contrast');
-  else if (text.includes('without contrast')) details.push('without contrast');
-  else if (text.includes('with contrast')) details.push('with contrast');
-  else if (text.includes('mri')) details.push('contrast status needs confirmation');
-  return details.length ? details.join(' · ') : `Confirm procedure details for ${serviceCategory || 'requested service'}`;
 }
 
 function buildReadiness(activeTab, packet, run, evaluation) {
@@ -2379,7 +1015,6 @@ async function waitForAgentRun(runId, onUpdate) {
 }
 
 function Rows({ rows, cols, title, editable = false, onChange = null }) {
-  const isMobile = useIsMobile();
   const updateCell = (index, col, value) => {
     const next = rows.map((row, i) => i === index ? { ...row, [col]: normalizeCellValue(col, value) } : row);
     onChange?.(next);
@@ -2398,36 +1033,6 @@ function Rows({ rows, cols, title, editable = false, onChange = null }) {
         <div style={s.emptySmall}>
           None found. {editable && <button type="button" style={s.linkBtn} onClick={addRow}>Add one</button>}
         </div>
-      ) : isMobile ? (
-        <div style={s.mobileRowCards}>
-          {rows.map((row, i) => (
-            <article key={i} style={s.mobileRowCard}>
-              <div style={s.mobileRowHead}>
-                <strong style={s.mobileRowTitle}>{mobileRowTitle(row, cols, i)}</strong>
-                {editable && <button type="button" style={s.deleteBtn} onClick={() => deleteRow(i)}>Remove</button>}
-              </div>
-              <div style={s.mobileRowFields}>
-                {cols.map(c => (
-                  <label key={c} style={s.mobileRowField}>
-                    <span>{c.replaceAll('_',' ')}</span>
-                    {editable ? (
-                      <ExpandableTextarea
-                        title={c.replaceAll('_',' ')}
-                        value={String(row[c] ?? '')}
-                        onChange={value => updateCell(i, c, value)}
-                        placeholder={c.replaceAll('_',' ')}
-                        rows={String(row[c] ?? '').length > 96 ? 5 : 2}
-                        inputStyle={s.mobileCellInput}
-                      />
-                    ) : (
-                      <strong>{String(row[c] ?? '') || '—'}</strong>
-                    )}
-                  </label>
-                ))}
-              </div>
-            </article>
-          ))}
-        </div>
       ) : (
         <div style={s.tableWrap}>
           <table style={s.table}>
@@ -2438,12 +1043,10 @@ function Rows({ rows, cols, title, editable = false, onChange = null }) {
                   {cols.map(c => (
                     <td key={c} style={s.td}>
                       {editable ? (
-                        <ExpandableTextarea
-                          title={c.replaceAll('_',' ')}
+                        <textarea
                           value={String(row[c] ?? '')}
-                          onChange={value => updateCell(i, c, value)}
-                          placeholder={c.replaceAll('_',' ')}
-                          inputStyle={s.cellInput}
+                          onChange={e => updateCell(i, c, e.target.value)}
+                          style={s.cellInput}
                           rows={String(row[c] ?? '').length > 80 ? 3 : 1}
                         />
                       ) : String(row[c] ?? '')}
@@ -2460,46 +1063,13 @@ function Rows({ rows, cols, title, editable = false, onChange = null }) {
   );
 }
 
-function mobileRowTitle(row, cols, index) {
-  const firstValue = cols.map(col => row[col]).find(value => value != null && String(value).trim());
-  return firstValue ? String(firstValue) : `Row ${index + 1}`;
-}
-
-function ExpandableTextarea({ title = 'Text', value, onChange, placeholder, inputStyle, rows = 3 }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div style={s.textareaExpandWrap}>
-      <textarea
-        value={value || ''}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
-        style={inputStyle}
-        rows={rows}
-      />
-      <button type="button" style={s.textareaExpandBtn} onClick={() => setExpanded(prev => !prev)}>
-        {expanded ? 'Collapse' : 'Expand'}
-      </button>
-      {expanded && (
-        <ExpandedTextEditor
-          title={title}
-          value={value || ''}
-          placeholder={placeholder}
-          onChange={onChange}
-          onClose={() => setExpanded(false)}
-        />
-      )}
-    </div>
-  );
-}
-
 function EditableText({ value, onChange, placeholder }) {
   return (
-    <ExpandableTextarea
-      title={placeholder || 'Text'}
+    <textarea
       value={value || ''}
-      onChange={onChange}
+      onChange={e => onChange(e.target.value)}
       placeholder={placeholder}
-      inputStyle={s.textEdit}
+      style={s.textEdit}
       rows={3}
     />
   );
@@ -2538,21 +1108,6 @@ function normalizeCellValue(col, value) {
   return value;
 }
 
-function useIsMobile(breakpoint = 760) {
-  const get = () => typeof window !== 'undefined' && window.innerWidth <= breakpoint;
-  const [mobile, setMobile] = useState(get);
-  useEffect(() => {
-    const onResize = () => setMobile(get());
-    window.addEventListener('resize', onResize);
-    window.addEventListener('orientationchange', onResize);
-    return () => {
-      window.removeEventListener('resize', onResize);
-      window.removeEventListener('orientationchange', onResize);
-    };
-  }, [breakpoint]);
-  return mobile;
-}
-
 function collectSources(packet) {
   const found = new Set();
   collectLeafObjects(packet).forEach(item => {
@@ -2575,41 +1130,23 @@ function formatChangeValue(value) {
 
 const s = {
   backdrop:{position:'fixed',inset:0,background:'rgba(0,0,0,.62)',zIndex:5000,display:'flex',alignItems:'center',justifyContent:'center',padding:20},
-  backdropMobile:{padding:4,alignItems:'stretch',justifyContent:'stretch'},
   panel:{width:'min(1120px,96vw)',height:'min(92vh,920px)',overflow:'hidden',display:'flex',flexDirection:'column',background:'var(--s1)',border:'1px solid var(--b1)',borderRadius:8,boxShadow:'0 24px 80px rgba(0,0,0,.55)'},
-  panelMobile:{width:'calc(100vw - 8px)',height:'calc(100dvh - 8px)',maxHeight:'calc(100dvh - 8px)',borderRadius:8},
   head:{display:'flex',justifyContent:'space-between',gap:16,padding:'16px 18px',borderBottom:'1px solid var(--b1)',background:'var(--s2)'},
-  headMobile:{padding:'9px 10px',gap:8},
-  headTextMobile:{minWidth:0,overflow:'hidden'},
   kicker:{fontSize:11,color:'#f87171',fontWeight:800,textTransform:'uppercase',letterSpacing:1.2},
   title:{fontSize:18,margin:'4px 0 0',lineHeight:1.3},
-  titleMobile:{fontSize:14,margin:'2px 0 0',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'},
   close:{background:'transparent',border:'1px solid var(--b2)',color:'var(--tx)',borderRadius:8,width:32,height:32,cursor:'pointer'},
   actions:{display:'flex',alignItems:'center',gap:12,padding:'12px 18px',borderBottom:'1px solid var(--b1)',background:'rgba(248,113,113,.04)',flexWrap:'wrap'},
-  actionsMobile:{padding:'6px 8px',gap:6,alignItems:'center'},
   tabs:{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center',width:'100%'},
-  tabsMobile:{flex:'1 1 auto',minWidth:0,width:'auto',flexWrap:'nowrap',overflowX:'auto',WebkitOverflowScrolling:'touch',paddingBottom:2},
   tab:{display:'inline-flex',alignItems:'center',gap:8,background:'var(--s3)',border:'1px solid var(--b2)',color:'var(--tx2)',borderRadius:8,padding:'7px 10px',fontSize:12,fontWeight:800,cursor:'pointer'},
   tabActive:{display:'inline-flex',alignItems:'center',gap:8,background:'rgba(248,113,113,.14)',border:'1px solid rgba(248,113,113,.36)',color:'#fecaca',borderRadius:8,padding:'7px 10px',fontSize:12,fontWeight:900,cursor:'pointer'},
-  tabMobile:{flex:'0 0 auto',justifyContent:'center',padding:'6px 9px',fontSize:11,whiteSpace:'nowrap'},
   tabStatus:{fontSize:10,textTransform:'uppercase',color:'#4ade80',background:'rgba(74,222,128,.1)',border:'1px solid rgba(74,222,128,.22)',borderRadius:20,padding:'1px 6px'},
   primary:{background:'#b91c1c',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:800,cursor:'pointer'},
   secondary:{background:'#2563eb',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:800,cursor:'pointer'},
   scribeButton:{background:'#047857',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:800,cursor:'pointer'},
-  topRunButtonMobile:{padding:'6px 9px',fontSize:11,minHeight:30,flex:'0 1 auto'},
   approve:{background:'#2563eb',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:12,fontWeight:800,cursor:'pointer'},
   secondarySmall:{background:'var(--s3)',color:'var(--tx)',border:'1px solid var(--b2)',borderRadius:8,padding:'8px 12px',fontSize:12,fontWeight:800,cursor:'pointer'},
   reviewActions:{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'},
-  inlineActions:{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'},
   hint:{fontSize:12,color:'var(--muted2)'},
-  policyPicker:{display:'flex',flexDirection:'column',gap:8,padding:'10px 18px',borderBottom:'1px solid var(--b1)',background:'rgba(37,99,235,.07)'},
-  policyPickerMobile:{padding:'6px 8px',gap:6,maxHeight:150,overflowY:'auto',WebkitOverflowScrolling:'touch',flex:'0 0 auto'},
-  policyPickerHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,fontSize:12,color:'var(--tx2)',flexWrap:'wrap'},
-  policyToggle:{background:'var(--s3)',border:'1px solid var(--b2)',color:'var(--tx)',borderRadius:7,padding:'4px 8px',fontSize:11,fontWeight:900,cursor:'pointer'},
-  policyList:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:8},
-  policyListMobile:{gridTemplateColumns:'1fr',gap:6},
-  policyItem:{display:'flex',alignItems:'flex-start',gap:8,border:'1px solid var(--b2)',background:'rgba(255,255,255,.035)',borderRadius:8,padding:9,fontSize:12,color:'var(--tx2)',cursor:'pointer'},
-  policyEmpty:{fontSize:12,color:'#fbbf24',border:'1px solid rgba(251,191,36,.24)',background:'rgba(251,191,36,.07)',borderRadius:8,padding:9},
   scribeTools:{display:'flex',alignItems:'center',gap:10,padding:'10px 18px',borderBottom:'1px solid var(--b1)',background:'rgba(4,120,87,.07)',flexWrap:'wrap'},
   checkLabel:{display:'inline-flex',alignItems:'center',gap:8,fontSize:12,color:'var(--tx2)',fontWeight:700},
   select:{background:'var(--s3)',border:'1px solid var(--b2)',borderRadius:8,color:'var(--tx)',padding:'7px 9px',fontSize:12},
@@ -2620,15 +1157,10 @@ const s = {
   clearBtn:{background:'transparent',border:'1px solid rgba(248,113,113,.3)',borderRadius:8,color:'#f87171',padding:'7px 11px',fontSize:12,fontWeight:800,cursor:'pointer'},
   recordingStatus:{fontSize:12,color:'#a7f3d0'},
   scroll:{flex:1,minHeight:0,overflowY:'auto',display:'flex',flexDirection:'column'},
-  scrollMobile:{overflowY:'auto',WebkitOverflowScrolling:'touch',overscrollBehavior:'contain',minHeight:0},
   body:{padding:18,display:'flex',flexDirection:'column',gap:16},
-  bodyMobile:{padding:10,gap:10,paddingBottom:28},
   section:{border:'1px solid var(--b1)',background:'var(--s2)',borderRadius:8,padding:14},
   sectionHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,marginBottom:10,flexWrap:'wrap'},
   pdfBtn:{background:'#0e7490',color:'#fff',border:'none',borderRadius:8,padding:'7px 11px',fontSize:12,fontWeight:900,cursor:'pointer'},
-  priorAuthSubTabs:{display:'flex',gap:6,alignItems:'center',overflowX:'auto',WebkitOverflowScrolling:'touch',border:'1px solid var(--b1)',background:'rgba(255,255,255,.025)',borderRadius:8,padding:6},
-  priorAuthSubTab:{flex:'0 0 auto',background:'transparent',border:'1px solid transparent',color:'var(--tx2)',borderRadius:7,padding:'7px 10px',fontSize:12,fontWeight:900,cursor:'pointer',whiteSpace:'nowrap'},
-  priorAuthSubTabActive:{flex:'0 0 auto',background:'rgba(96,165,250,.16)',border:'1px solid rgba(96,165,250,.42)',color:'#bfdbfe',borderRadius:7,padding:'7px 10px',fontSize:12,fontWeight:900,cursor:'pointer',whiteSpace:'nowrap'},
   workbench:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:14,border:'1px solid rgba(14,165,233,.24)',background:'rgba(14,165,233,.06)',borderRadius:8,padding:14},
   workbenchPane:{minWidth:0},
   readinessGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8},
@@ -2640,80 +1172,25 @@ const s = {
   summary:{fontSize:13,lineHeight:1.65,color:'var(--tx)'},
   meta:{fontSize:11,color:'var(--muted2)',marginTop:8},
   guardrail:{fontSize:11,color:'#fbbf24',marginTop:8},
-  reviewerBox:{display:'grid',gridTemplateColumns:'minmax(130px,1fr) minmax(0,3fr)',gap:12,marginTop:12,border:'1px solid rgba(125,211,252,.18)',background:'rgba(14,165,233,.05)',borderRadius:8,padding:10},
-  reviewerBoxMobile:{gridTemplateColumns:'minmax(82px,1fr) minmax(0,3fr)',gap:8,padding:8},
-  reviewerField:{display:'flex',flexDirection:'column',gap:6,fontSize:12,minWidth:0},
-  reviewerFieldMobile:{fontSize:11},
-  reviewerSelectMobile:{width:'100%',minWidth:0,fontSize:11,padding:'6px 6px'},
-  reviewerScope:{display:'flex',flexDirection:'column',gap:5,fontSize:12,color:'var(--tx2)',minWidth:0,overflowWrap:'anywhere'},
-  reviewerScopeMobile:{fontSize:11,lineHeight:1.35},
+  reviewerBox:{display:'grid',gridTemplateColumns:'minmax(180px,240px) minmax(0,1fr)',gap:12,marginTop:12,border:'1px solid rgba(125,211,252,.18)',background:'rgba(14,165,233,.05)',borderRadius:8,padding:10},
+  reviewerField:{display:'flex',flexDirection:'column',gap:6,fontSize:12},
+  reviewerScope:{display:'flex',flexDirection:'column',gap:5,fontSize:12,color:'var(--tx2)'},
   grid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:10},
   field:{border:'1px solid var(--b1)',borderRadius:8,padding:10,background:'rgba(255,255,255,.03)',display:'flex',flexDirection:'column',gap:5},
   inlineInput:{background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:6,color:'var(--tx)',padding:'7px 8px',fontSize:13,width:'100%'},
-  textareaExpandWrap:{display:'flex',flexDirection:'column',gap:6,minWidth:0,width:'100%'},
-  textareaExpandBtn:{alignSelf:'flex-end',background:'var(--s3)',border:'1px solid var(--b2)',color:'var(--tx)',borderRadius:7,padding:'4px 8px',fontSize:11,fontWeight:900,cursor:'pointer'},
   textEdit:{width:'100%',minHeight:78,background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:8,color:'var(--tx)',padding:10,fontSize:13,lineHeight:1.55,resize:'vertical'},
-  expandableField:{display:'flex',flexDirection:'column',gap:7,minWidth:0},
-  expandableFieldHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,color:'var(--tx)',fontSize:12},
-  decisionBox:{display:'flex',flexDirection:'column',gap:6,border:'1px solid var(--b1)',background:'rgba(255,255,255,.035)',borderRadius:8,padding:10,marginTop:10,color:'var(--tx2)',fontSize:13,lineHeight:1.55,whiteSpace:'pre-wrap',overflowWrap:'anywhere',wordBreak:'break-word',minWidth:0,width:'100%',textAlign:'left',cursor:'pointer'},
-  expandInline:{position:'relative',zIndex:1,display:'block',marginTop:8},
-  expandPanel:{position:'relative',width:'100%',height:'min(62vh,560px)',minHeight:320,background:'#0f172a',border:'1px solid rgba(148,163,184,.35)',borderRadius:8,boxShadow:'0 12px 32px rgba(0,0,0,.35)',display:'flex',flexDirection:'column',overflow:'hidden'},
-  expandHead:{position:'sticky',top:0,zIndex:2,display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,padding:'10px 12px',borderBottom:'1px solid rgba(148,163,184,.25)',background:'#111827',fontSize:14,color:'#f8fafc',flex:'0 0 auto',minHeight:54},
-  expandClose:{background:'#1f2937',border:'1px solid rgba(248,250,252,.4)',color:'#fff',borderRadius:8,width:42,height:42,cursor:'pointer',fontWeight:900,fontSize:20,lineHeight:1,flex:'0 0 auto'},
-  expandBody:{flex:1,minHeight:0,overflow:'hidden',display:'flex',background:'#020617'},
-  expandTextarea:{flex:1,width:'100%',height:'100%',minHeight:0,background:'#020617',border:'none',color:'#f8fafc',padding:14,fontSize:16,lineHeight:1.55,resize:'none',outline:'none',overflowY:'scroll',WebkitOverflowScrolling:'touch',touchAction:'pan-y'},
   avsGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))',gap:10,marginTop:10},
   avsLabel:{display:'flex',flexDirection:'column',gap:6,fontSize:12,fontWeight:800,color:'var(--tx2)'},
   tableHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,margin:'0 0 6px'},
   tableTitle:{fontSize:12,fontWeight:800,color:'var(--tx)',margin:'0 0 6px'},
   rowBtn:{background:'var(--s3)',border:'1px solid var(--b2)',color:'var(--tx)',borderRadius:7,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'},
   linkBtn:{background:'transparent',border:'none',color:'#7dd3fc',fontSize:12,fontWeight:800,cursor:'pointer',padding:0},
-  deleteBtn:{background:'transparent',border:'1px solid rgba(248,113,113,.28)',color:'#fca5a5',borderRadius:7,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer',flex:'0 0 auto',whiteSpace:'nowrap'},
+  deleteBtn:{background:'transparent',border:'1px solid rgba(248,113,113,.28)',color:'#fca5a5',borderRadius:7,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'},
   cellInput:{width:'100%',minWidth:120,background:'rgba(0,0,0,.12)',border:'1px solid transparent',borderRadius:6,color:'var(--tx2)',fontSize:12,lineHeight:1.4,padding:6,resize:'vertical'},
-  cellSelect:{width:'100%',minWidth:145,background:'rgba(0,0,0,.12)',border:'1px solid var(--b2)',borderRadius:6,color:'var(--tx2)',fontSize:12,lineHeight:1.4,padding:6},
-  rowActionStack:{display:'flex',flexDirection:'column',gap:6,minWidth:116},
-  approveBtn:{background:'rgba(74,222,128,.12)',border:'1px solid rgba(74,222,128,.34)',color:'#bbf7d0',borderRadius:7,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'},
-  rejectBtn:{background:'rgba(248,113,113,.12)',border:'1px solid rgba(248,113,113,.34)',color:'#fecaca',borderRadius:7,padding:'5px 8px',fontSize:11,fontWeight:800,cursor:'pointer'},
-  codePanel:{display:'flex',flexDirection:'column',gap:12},
-  codeEmpty:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.03)',borderRadius:8,padding:14,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap',fontSize:12,color:'var(--tx2)'},
-  codeSummaryReady:{border:'1px solid rgba(74,222,128,.28)',background:'rgba(74,222,128,.08)',borderRadius:8,padding:12,display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'},
-  codeSummaryReview:{border:'1px solid rgba(251,191,36,.28)',background:'rgba(251,191,36,.08)',borderRadius:8,padding:12,display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'},
-  codeCounts:{display:'flex',gap:7,flexWrap:'wrap',fontSize:11,color:'var(--tx2)'},
-  codeGroup:{display:'flex',flexDirection:'column',gap:8},
-  codeGroupHead:{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',fontSize:12,color:'var(--tx2)',borderBottom:'1px solid var(--b1)',paddingBottom:6},
-  codeCards:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:10},
-  codeCard:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.035)',borderRadius:8,padding:12,display:'flex',flexDirection:'column',gap:10,minWidth:0},
-  codeCardWarn:{border:'1px solid rgba(251,191,36,.32)',background:'rgba(251,191,36,.065)',borderRadius:8,padding:12,display:'flex',flexDirection:'column',gap:10,minWidth:0},
-  codeCardTop:{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap'},
-  codeIdentity:{display:'flex',alignItems:'center',gap:8,minWidth:0,flex:'1 1 180px'},
-  codeSetPill:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#bae6fd',border:'1px solid rgba(125,211,252,.26)',background:'rgba(14,165,233,.09)',borderRadius:20,padding:'4px 7px',whiteSpace:'nowrap'},
-  codeInput:{minWidth:0,flex:'1 1 110px',background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:7,color:'var(--tx)',fontWeight:900,padding:'7px 8px',fontSize:13},
-  codeInputWarn:{minWidth:0,flex:'1 1 110px',background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.34)',borderRadius:7,color:'#fde68a',fontWeight:900,padding:'7px 8px',fontSize:13},
-  statusApproved:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#bbf7d0',background:'rgba(74,222,128,.1)',border:'1px solid rgba(74,222,128,.3)',borderRadius:20,padding:'4px 8px'},
-  statusChange:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#fde68a',background:'rgba(251,191,36,.1)',border:'1px solid rgba(251,191,36,.3)',borderRadius:20,padding:'4px 8px'},
-  statusRejected:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#fecaca',background:'rgba(248,113,113,.1)',border:'1px solid rgba(248,113,113,.3)',borderRadius:20,padding:'4px 8px'},
-  statusReview:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#bfdbfe',background:'rgba(96,165,250,.1)',border:'1px solid rgba(96,165,250,.3)',borderRadius:20,padding:'4px 8px'},
-  lookupWarning:{fontSize:12,color:'#fbbf24',border:'1px solid rgba(251,191,36,.24)',background:'rgba(251,191,36,.07)',borderRadius:8,padding:'7px 8px'},
-  codeMainGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8},
-  compactField:{display:'flex',flexDirection:'column',gap:5,fontSize:11,fontWeight:800,color:'var(--muted2)'},
-  compactInput:{background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:7,color:'var(--tx)',padding:'7px 8px',fontSize:12,width:'100%'},
-  compactSelect:{background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:7,color:'var(--tx)',padding:'7px 8px',fontSize:12,width:'100%'},
-  compactText:{background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:7,color:'var(--tx)',padding:'7px 8px',fontSize:12,lineHeight:1.45,width:'100%',resize:'vertical'},
-  codeDetails:{border:'1px solid var(--b1)',borderRadius:8,padding:9,background:'rgba(0,0,0,.12)',fontSize:12,color:'var(--tx2)'},
-  advancedGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8,marginTop:10},
-  reviewStamp:{display:'flex',gap:8,flexWrap:'wrap',fontSize:11,color:'var(--muted2)',borderTop:'1px solid var(--b1)',paddingTop:8},
-  codeActions:{display:'flex',gap:7,flexWrap:'wrap'},
   tableWrap:{overflowX:'auto',border:'1px solid var(--b2)',borderRadius:8,background:'rgba(0,0,0,.16)'},
   table:{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:760},
   th:{textAlign:'left',textTransform:'capitalize',fontSize:11,fontWeight:800,color:'var(--tx)',background:'rgba(255,255,255,.06)',borderRight:'1px solid var(--b2)',borderBottom:'1px solid var(--b2)',padding:'8px 10px',verticalAlign:'top',whiteSpace:'nowrap'},
   td:{color:'var(--tx2)',borderRight:'1px solid var(--b2)',borderBottom:'1px solid var(--b2)',padding:'8px 10px',verticalAlign:'top',lineHeight:1.45,minWidth:110,maxWidth:320,whiteSpace:'normal',overflowWrap:'anywhere'},
-  mobileRowCards:{display:'flex',flexDirection:'column',gap:9},
-  mobileRowCard:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.035)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:9,minWidth:0},
-  mobileRowHead:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:8,color:'var(--tx)',fontSize:12,overflowWrap:'anywhere'},
-  mobileRowTitle:{minWidth:0,flex:'1 1 auto',lineHeight:1.35,overflowWrap:'anywhere'},
-  mobileRowFields:{display:'grid',gridTemplateColumns:'1fr',gap:7},
-  mobileRowField:{display:'flex',flexDirection:'column',gap:4,border:'1px solid var(--b1)',background:'rgba(0,0,0,.12)',borderRadius:7,padding:'7px 8px',fontSize:11,color:'var(--muted2)',textTransform:'capitalize',minWidth:0},
-  mobileCellInput:{width:'100%',minHeight:48,background:'rgba(0,0,0,.14)',border:'1px solid var(--b2)',borderRadius:7,color:'var(--tx)',padding:'8px 9px',fontSize:16,lineHeight:1.4,resize:'vertical',overflowY:'auto'},
   workflowHead:{display:'flex',justifyContent:'space-between',gap:12,alignItems:'flex-start',flexWrap:'wrap'},
   steps:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(210px,1fr))',gap:8,marginTop:10},
   step:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.03)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:4},
@@ -2726,36 +1203,6 @@ const s = {
   recs:{marginTop:10,display:'flex',flexDirection:'column',gap:6},
   rec:{fontSize:12,color:'var(--tx2)',border:'1px solid rgba(251,191,36,.2)',background:'rgba(251,191,36,.06)',borderRadius:8,padding:'7px 9px'},
   notice:{fontSize:12,color:'#fbbf24',border:'1px solid rgba(251,191,36,.24)',background:'rgba(251,191,36,.07)',borderRadius:8,padding:10,marginBottom:10},
-  subSection:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.025)',borderRadius:8,padding:12,margin:'10px 0 12px'},
-  readinessChecklist:{border:'1px solid rgba(74,222,128,.24)',background:'rgba(74,222,128,.055)',borderRadius:8,padding:12,margin:'10px 0 12px',display:'flex',flexDirection:'column',gap:10},
-  readinessChecklistBlocked:{border:'1px solid rgba(248,113,113,.28)',background:'rgba(248,113,113,.06)',borderRadius:8,padding:12,margin:'10px 0 12px',display:'flex',flexDirection:'column',gap:10},
-  readinessChecklistHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,flexWrap:'wrap',fontSize:13,color:'var(--tx)'},
-  readinessChecklistTitle:{display:'flex',flexDirection:'column',gap:3},
-  readinessItems:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(230px,1fr))',gap:9},
-  readinessItem:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.035)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:7,fontSize:12,color:'var(--tx2)'},
-  readinessItemBlocked:{border:'1px solid rgba(248,113,113,.3)',background:'rgba(248,113,113,.075)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:7,fontSize:12,color:'var(--tx2)'},
-  readinessItemTop:{display:'flex',alignItems:'center',gap:6,justifyContent:'space-between',flexWrap:'wrap'},
-  requiredPill:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#fbbf24',border:'1px solid rgba(251,191,36,.26)',background:'rgba(251,191,36,.08)',borderRadius:20,padding:'3px 7px'},
-  overrideBox:{display:'flex',flexDirection:'column',gap:7,borderTop:'1px solid var(--b1)',paddingTop:7},
-  overrideActions:{display:'flex',gap:7,alignItems:'center',flexWrap:'wrap',fontSize:11,color:'var(--muted2)'},
-  caseTracker:{border:'1px solid rgba(59,130,246,.25)',background:'rgba(59,130,246,.055)',borderRadius:8,padding:12,margin:'10px 0 12px',display:'flex',flexDirection:'column',gap:12},
-  caseTrackerHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,flexWrap:'wrap',fontSize:13,color:'var(--tx)'},
-  statusRail:{display:'flex',gap:7,overflowX:'auto',paddingBottom:2},
-  statusStep:{flex:'0 0 auto',background:'rgba(255,255,255,.04)',border:'1px solid var(--b2)',color:'var(--tx2)',borderRadius:20,padding:'6px 9px',fontSize:11,fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'},
-  statusStepActive:{flex:'0 0 auto',background:'rgba(96,165,250,.16)',border:'1px solid rgba(96,165,250,.45)',color:'#bfdbfe',borderRadius:20,padding:'6px 9px',fontSize:11,fontWeight:900,cursor:'pointer',whiteSpace:'nowrap'},
-  caseGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:9},
-  statusActions:{display:'flex',gap:7,alignItems:'center',flexWrap:'wrap'},
-  caseColumns:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:10},
-  caseSubPanel:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.03)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:8,minWidth:0},
-  submissionDocRow:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(135px,1fr))',gap:7,alignItems:'center'},
-  historyMini:{border:'1px solid var(--b1)',background:'rgba(0,0,0,.12)',borderRadius:8,padding:8,display:'flex',flexDirection:'column',gap:3,fontSize:12,color:'var(--tx2)'},
-  emptyLine:{fontSize:12,color:'var(--muted2)',border:'1px dashed var(--b2)',borderRadius:8,padding:10},
-  codeReadiness:{border:'1px solid rgba(14,165,233,.24)',background:'rgba(14,165,233,.06)',borderRadius:8,padding:12,margin:'10px 0 12px',display:'flex',flexDirection:'column',gap:10},
-  codeReadinessHead:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,fontSize:13,color:'var(--tx)',flexWrap:'wrap'},
-  readyPill:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#4ade80',background:'rgba(74,222,128,.1)',border:'1px solid rgba(74,222,128,.28)',borderRadius:20,padding:'3px 8px'},
-  reviewPill:{fontSize:10,textTransform:'uppercase',fontWeight:900,color:'#fbbf24',background:'rgba(251,191,36,.1)',border:'1px solid rgba(251,191,36,.28)',borderRadius:20,padding:'3px 8px'},
-  codeGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:8},
-  codeItem:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.035)',borderRadius:8,padding:10,display:'flex',flexDirection:'column',gap:5,fontSize:12,color:'var(--tx2)'},
   historyList:{display:'flex',flexDirection:'column',gap:8},
   historyItem:{border:'1px solid var(--b1)',background:'rgba(255,255,255,.03)',borderRadius:8,padding:10},
   historyTop:{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',fontSize:12},

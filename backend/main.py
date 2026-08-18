@@ -130,6 +130,7 @@ _ROUTERS = [
     ("routes.billing",        "billing_router",        "/api/billing",       ["billing"]),
     ("routes.evals",          "evals_router",          "/api/evals",         ["evals"]),
     ("routes.voice",          "voice_router",          "/api/voice",         ["voice"]),
+    ("routes.video",          "video_router",          "/api/video",         ["video"]),
     ("routes.guest",          "guest_router",          "/api/guest",         ["guest"]),
     ("routes.traces",         "traces_router",         "/api/traces",        ["traces"]),
     ("routes.lease",          "lease_router",          "/api/lease",         ["lease"]),

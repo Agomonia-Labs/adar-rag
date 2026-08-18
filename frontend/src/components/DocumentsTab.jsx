@@ -1,6 +1,6 @@
 // src/components/DocumentsTab.jsx
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { uploadDocuments, uploadLargeVideoDocument, listDocuments, listWorkspaceDocuments, getViewUrl, triggerEmbed, deleteDocument, retryDocument,
+import { uploadDocuments, listDocuments, listWorkspaceDocuments, getViewUrl, triggerEmbed, deleteDocument, retryDocument,
          listTags, createTag, deleteTag, assignTag, removeTagAssignment, reclassifyDocument, fetchLatestLeaseAgentWorkflow } from '../services/api.js';
 import { toast } from './Toast.jsx';
 import ChunksViewer from './ChunksViewer.jsx';
@@ -12,7 +12,6 @@ import HealthcarePanel from './HealthcarePanel.jsx';
 const MAX_FILES = parseInt(import.meta.env.VITE_MAX_UPLOAD_FILES || '500');
 
 const STATUS = {
-  uploaded:  { strip:'#38bdf8', bg:'rgba(56,189,248,.1)',  color:'#38bdf8', label:'Ready for video processing' },
   uploading: { strip:'#94a3b8', bg:'rgba(148,163,184,.1)', color:'#94a3b8', label:'Uploading…'     },
   chunking:  { strip:'#fbbf24', bg:'rgba(251,191,36,.1)',  color:'#fbbf24', label:'Chunking…'      },
   chunked:   { strip:'#60a5fa', bg:'rgba(96,165,250,.1)',  color:'#60a5fa', label:'Ready to embed' },
@@ -21,7 +20,7 @@ const STATUS = {
   error:     { strip:'#f87171', bg:'rgba(248,113,113,.1)', color:'#f87171', label:'Error'           },
 };
 
-const ICONS = { pdf:'📄', docx:'📝', csv:'📊', image:'🖼', video:'🎬', text:'📃', '?':'📁' };
+const ICONS = { pdf:'📄', docx:'📝', csv:'📊', image:'🖼', text:'📃', '?':'📁' };
 
 const DOC_TYPE_LABELS = {
   contract:'Contract', agreement:'Agreement', nda:'NDA', lease:'Lease',
@@ -31,7 +30,7 @@ const DOC_TYPE_LABELS = {
   cam_reconciliation:'CAM Recon',
   employment_contract:'Employment', terms_of_service:'Terms',
   invoice:'Invoice', receipt:'Receipt', purchase_order:'PO',
-  financial_statement:'Financial', audit_report:'Audit', tax:'Tax Return', tax_return:'Tax Return',
+  financial_statement:'Financial', audit_report:'Audit', tax_return:'Tax',
   report:'Report', proposal:'Proposal', presentation:'Slides', memo:'Memo',
   resume:'Resume', cv:'CV', job_description:'JD', offer_letter:'Offer',
   medical_record:'Medical', prescription:'Rx', lab_report:'Lab', clinical_notes:'Clinical',
@@ -59,13 +58,9 @@ const DOMAIN_ICONS = {
 const LANGUAGE_LABELS = { en:'English', es:'Español', bn:'বাংলা', hi:'हिन्दी', ar:'العربية' };
 const fmtSz = b => b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
 const LEASE_DOC_TYPES = new Set(['lease', 'lease_amendment', 'lease_extension']);
-const DIRECT_VIDEO_UPLOAD_BYTES = 31 * 1024 * 1024;
-const isVideoUpload = file => {
-  const name = (file?.name || '').toLowerCase();
-  return (file?.type || '').startsWith('video/') || /\.(mp4|mov|m4v|avi|mkv|webm)$/.test(name);
-};
+const HEALTHCARE_DOC_TYPES = new Set(['medical_record','prescription','lab_report','clinical_notes','after_visit_summary','medication_list','discharge_summary','referral','imaging_report','prior_authorization','payer_policy','medical_policy']);
 
-export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKey = 0, openLeasePickerKey = 0 }) {
+export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKey = 0, openLeasePickerKey = 0, openHealthcarePickerKey = 0 }) {
   const [docs,    setDocs]    = useState([]);
   const [loading, setLoading] = useState(true);
   const [drag,    setDrag]    = useState(false);
@@ -75,6 +70,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
   const [compare, setCompare] = useState(null);
   const [leasePanel, setLeasePanel] = useState(null);
   const [showLeasePicker, setShowLeasePicker] = useState(false);
+  const [showHealthcarePicker, setShowHealthcarePicker] = useState(false);
   const [leaseWorkflowStatus, setLeaseWorkflowStatus] = useState({});
   const [leaseStatusLoading, setLeaseStatusLoading] = useState(false);
   const [healthcarePanel, setHealthcarePanel] = useState(null);
@@ -136,7 +132,12 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
     if (openLeasePickerKey > 0) setShowLeasePicker(true);
   }, [openLeasePickerKey]);
 
+  useEffect(() => {
+    if (openHealthcarePickerKey > 0) setShowHealthcarePicker(true);
+  }, [openHealthcarePickerKey]);
+
   const leaseDocs = docs.filter(isLeaseDocument);
+  const healthcareDocs = docs.filter(isHealthcareDocument);
 
   useEffect(() => {
     let alive = true;
@@ -161,18 +162,9 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
     if (ex+files.length>MAX_FILES){ toast(`Max ${MAX_FILES} docs. Have ${ex}; can add ${MAX_FILES-ex} more.`,'error'); return; }
     setBusy(true);
     try{
-      const directVideos = files.filter(f => isVideoUpload(f) && f.size > DIRECT_VIDEO_UPLOAD_BYTES);
-      const regularFiles = files.filter(f => !directVideos.includes(f));
-      if (regularFiles.length) {
-        await uploadDocuments(regularFiles, activeWorkspace?.id || null, { redactPii: redactPiiOnUpload });
-      }
-      for (const file of directVideos) {
-        toast(`Uploading large video directly: ${file.name}`, 'info');
-        await uploadLargeVideoDocument(file, activeWorkspace?.id || null);
-      }
+      await uploadDocuments(files, activeWorkspace?.id || null, { redactPii: redactPiiOnUpload });
       await loadDocs();
-      const directMsg = directVideos.length ? ` (${directVideos.length} large video${directVideos.length>1?'s':''} uploaded directly)` : '';
-      toast(`${files.length} file${files.length>1?'s':''} uploaded${redactPiiOnUpload && regularFiles.length ? ' with PII redaction' : ''}${directMsg}`,'success');
+      toast(`${files.length} file${files.length>1?'s':''} uploaded${redactPiiOnUpload ? ' with PII redaction' : ''}`,'success');
     }
     catch(e){ toast(e.message,'error'); }
     finally{ setBusy(false); }
@@ -314,7 +306,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
           onClick={()=>fileRef.current?.click()} role="button" tabIndex={0}>
           <div style={{fontSize:30,marginBottom:6}}>⬆</div>
           <p style={{fontWeight:600,fontSize:13,color:'#4ade80'}}>{drag?'Drop to upload':'Drop files or click to upload'}</p>
-          <p style={{fontSize:11,color:'var(--muted2)',marginTop:3}}>PDF · DOCX · CSV · Images · Video · TXT · MD &nbsp;·&nbsp; {MAX_FILES-total} slots remaining</p>
+          <p style={{fontSize:11,color:'var(--muted2)',marginTop:3}}>PDF · DOCX · CSV · Images · TXT &nbsp;·&nbsp; {MAX_FILES-total} slots remaining</p>
           <label onClick={e=>e.stopPropagation()} style={s.privacyToggle}>
             <input
               type="checkbox"
@@ -329,7 +321,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
         </div>
       )}
 
-      <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.csv,.txt,.md,.markdown,.png,.jpg,.jpeg,.gif,.webp,.tiff,.mp4,.mov,.m4v,.avi,.mkv,.webm,video/mp4,video/quicktime,video/webm"
+      <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.csv,.txt,.png,.jpg,.jpeg,.gif,.webp,.tiff"
         style={{display:'none'}} onChange={e=>{handleFiles(e.target.files);e.target.value='';}} />
 
       {!isMobile && <div style={s.hint}>
@@ -504,13 +496,80 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
           onClose={() => setShowLeasePicker(false)}
         />
       )}
-      {healthcarePanel && <HealthcarePanel doc={healthcarePanel.doc} onClose={()=>setHealthcarePanel(null)} />}
+      {showHealthcarePicker && (
+        <HealthcareDocumentPicker
+          docs={healthcareDocs}
+          loading={loading}
+          onOpen={doc => {
+            setShowHealthcarePicker(false);
+            setHealthcarePanel({doc, initialTab: 'priorAuth'});
+          }}
+          onClose={() => setShowHealthcarePicker(false)}
+        />
+      )}
+      {healthcarePanel && <HealthcarePanel doc={healthcarePanel.doc} initialTab={healthcarePanel.initialTab} onClose={()=>setHealthcarePanel(null)} />}
     </div>
   );
 }
 
 function isLeaseDocument(doc) {
   return LEASE_DOC_TYPES.has(doc.doc_type);
+}
+
+function isHealthcareDocument(doc) {
+  return HEALTHCARE_DOC_TYPES.has(doc.doc_type) || doc.doc_domain === 'medical';
+}
+
+function HealthcareDocumentPicker({ docs, loading, onOpen, onClose }) {
+  return (
+    <div style={s.modalBackdrop}>
+      <div style={s.leasePicker}>
+        <div style={s.leasePickerHead}>
+          <div>
+            <div style={s.leaseKicker}>Healthcare / Prior Authorization</div>
+            <h2 style={s.leasePickerTitle}>Open prior authorization workflow</h2>
+            <p style={s.leasePickerSub}>Select a healthcare, payer policy, medical policy, imaging, clinical, or prior authorization document. The panel opens directly on the Prior auth workflow tab.</p>
+          </div>
+          <button style={s.closeBtn} onClick={onClose}>✕</button>
+        </div>
+
+        {loading ? (
+          <div style={s.leasePickerEmpty}>Loading healthcare documents…</div>
+        ) : docs.length === 0 ? (
+          <div style={s.leasePickerEmpty}>
+            <div style={{fontSize:32,opacity:.35,marginBottom:8}}>🏥</div>
+            <div style={{fontWeight:700,color:'var(--tx)',marginBottom:4}}>No healthcare documents found</div>
+            <div style={{fontSize:12,color:'var(--muted2)',lineHeight:1.5}}>Upload or re-classify documents as clinical notes, medical record, payer policy, medical policy, imaging report, or prior authorization, then open this workflow again.</div>
+          </div>
+        ) : (
+          <div style={s.leasePickerList}>
+            {docs.map(doc => {
+              const label = DOC_TYPE_LABELS[doc.doc_type] || doc.doc_type || 'Healthcare';
+              return (
+                <button key={doc.id} style={s.leaseRow} onClick={() => onOpen(doc)}>
+                  <div style={s.leaseRowIcon}>🏥</div>
+                  <div style={{minWidth:0,flex:1}}>
+                    <div style={s.leaseRowName}>{doc.original_name}</div>
+                    <div style={s.leaseRowMeta}>
+                      <span>{label}</span>
+                      <span>{doc.status}</span>
+                      {doc.chunk_count ? <span>{doc.chunk_count} chunks</span> : null}
+                    </div>
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:5}}>
+                    <span style={{...s.workflowBadge, ...(['chunked','embedding','embedded'].includes(doc.status) ? s.workflowReady : s.workflowMissing)}}>
+                      {['chunked','embedding','embedded'].includes(doc.status) ? 'Ready' : 'Needs processing'}
+                    </span>
+                    <span style={s.leaseOpenHint}>Open prior auth</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function LeaseDocumentPicker({ docs, loading, statusLoading, workflowStatus, onOpen, onClose }) {
@@ -571,41 +630,21 @@ function Stat({v,l,c}){ return <div style={{textAlign:'center',minWidth:50}}><di
 
 function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSummarize,onLease,onHealthcare,onRetry,onReclassify,onDelete,allTags=[],onTagAssign,onTagRemove}){
   const [conf,setConf]=useState(false);
-  const [showTagMenu,setShowTagMenu]=useState(false);
-  const [showActionMenu,setShowActionMenu]=useState(false);
   const isMobile = useIsMobile();
   const cfg=STATUS[doc.status]||{strip:'#6b7280',bg:'rgba(107,114,128,.1)',color:'#6b7280',label:doc.status};
   const spin=['chunking','embedding','uploading'].includes(doc.status);
   const canSum=['chunked','embedding','embedded'].includes(doc.status);
   const canLease = ['lease','lease_amendment','lease_extension','contract','agreement','rent_roll','estoppel','appraisal','inspection_report','property_management_agreement','cam_reconciliation'].includes(doc.doc_type) || doc.doc_domain === 'legal';
-  const canHealthcare = ['medical_record','prescription','lab_report','clinical_notes','after_visit_summary','medication_list','discharge_summary','referral','imaging_report','prior_authorization','payer_policy','medical_policy'].includes(doc.doc_type) || doc.doc_domain === 'medical';
-  const docDomain = doc.doc_domain || 'general';
-  const domainColor = DOMAIN_COLORS[docDomain] || '#94a3b8';
-  const domainIcon = DOMAIN_ICONS[docDomain] || '⚪';
-  const docTypeLabel = doc.doc_type ? (DOC_TYPE_LABELS[doc.doc_type] || doc.doc_type) : 'Classifying';
-  const metaTags = [
-    { label: cfg.label, color: cfg.color, bg: cfg.bg, border: `${cfg.strip}40` },
-    { label: doc.workspace_id ? 'Workspace' : 'Personal', color: doc.workspace_id ? '#4ade80' : '#94a3b8', bg: doc.workspace_id ? 'rgba(74,222,128,.1)' : 'rgba(148,163,184,.06)', border: doc.workspace_id ? 'rgba(74,222,128,.25)' : 'rgba(148,163,184,.16)' },
-    { label: (doc.file_type || '?').toUpperCase(), color: 'var(--muted2)' },
-    { label: LANGUAGE_LABELS[doc.doc_language] || doc.doc_language || 'English', color: 'var(--muted2)' },
-    { label: fmtSz(doc.file_size), color: 'var(--muted2)' },
-    ...(doc.chunk_count > 0 ? [{ label: `${doc.chunk_count} chunks`, color: 'var(--muted2)' }] : []),
-    ...(doc.doc_metadata?.pii_redaction?.enabled ? [{ label: 'PII redacted', color:'#fbbf24', bg:'rgba(251,191,36,.08)', border:'rgba(251,191,36,.25)' }] : []),
-    { label: `${domainIcon} ${docTypeLabel}`, color: domainColor, bg: `${domainColor}18`, border: `${domainColor}35`, canReclassify: Boolean(doc.doc_type) },
-  ];
-  const closeMenus = () => {
-    setShowTagMenu(false);
-    setShowActionMenu(false);
-  };
+  const canHealthcare = isHealthcareDocument(doc);
   return (
     <div style={{...s.card,...(selected?s.cardSel:{})}}>
       <div style={{...s.cardInner, ...(isMobile ? s.cardInnerMobile : {})}}>
         <div style={{...s.strip,background:cfg.strip}}/>
         {canSum && <input type="checkbox" checked={selected} onChange={onSelect} style={s.cardCheckbox}/>}
         <span style={{fontSize:isMobile ? 18 : 22,flexShrink:0}}>{ICONS[doc.file_type||'?']||'📁'}</span>
-        <div style={{...s.info, ...(isMobile ? s.infoMobile : {})}}>
+        <div style={s.info}>
           <p style={{...s.name, ...(isMobile ? s.nameMobile : {})}} title={doc.original_name}>{doc.original_name}</p>
-          {!isMobile && <div style={s.meta}>
+          <div style={{...s.meta, ...(isMobile ? s.metaMobile : {})}}>
             <span style={{...s.badge2,background:cfg.bg,color:cfg.color,border:`1px solid ${cfg.strip}30`}}>
               {spin && <span style={{display:'inline-block',animation:'spin .8s linear infinite',marginRight:3}}>⟳</span>}
               {cfg.label}
@@ -652,23 +691,7 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
                 </span>
               );
             })()}
-          </div>}
-          {isMobile && (
-            <div style={s.mobileDocCardMenus}>
-              <button
-                type="button"
-                style={{...s.docMenuButton, ...(showTagMenu ? s.docMenuButtonActive : {})}}
-                onClick={() => { setShowTagMenu(v => !v); setShowActionMenu(false); }}>
-                Tags
-              </button>
-              <button
-                type="button"
-                style={{...s.docMenuButton, ...(showActionMenu ? s.docMenuButtonActive : {})}}
-                onClick={() => { setShowActionMenu(v => !v); setShowTagMenu(false); }}>
-                Actions
-              </button>
-            </div>
-          )}
+          </div>
           {doc.error_message && <p style={{fontSize:11,color:'var(--red)',marginTop:4}}>{doc.error_message}</p>}
           {conf && (
             <div style={s.conf}>
@@ -679,64 +702,9 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
           )}
         </div>
       </div>
-      {isMobile && showTagMenu && (
-        <div style={s.mobileCardMenu}>
-          <div style={s.mobileMenuSectionTitle}>Document tags</div>
-          <div style={s.mobileTagGrid}>
-            {metaTags.map(tag => (
-              <span key={tag.label} style={{...s.mobileTagChip, color:tag.color, background:tag.bg || 'rgba(255,255,255,.035)', borderColor:tag.border || 'var(--b1)'}}>
-                {tag.label}
-                {tag.canReclassify && (
-                  <button type="button" onClick={async e=>{e.stopPropagation(); await onReclassify?.();}} title="Re-classify this document" style={s.mobileInlineIconBtn}>
-                    ↺
-                  </button>
-                )}
-              </span>
-            ))}
-          </div>
-          {allTags.length > 0 && (
-            <>
-              <div style={s.mobileMenuSectionTitle}>Custom tags</div>
-              <div style={s.mobileTagGrid}>
-                {(doc.tags||[]).length === 0 && <span style={s.mobileMenuEmpty}>No custom tags</span>}
-                {(doc.tags||[]).map(t => (
-                  <span key={t.id} style={{...s.mobileTagChip, background:`${t.color}20`, color:t.color, borderColor:`${t.color}40`}}>
-                    {t.name}
-                    <button onClick={e=>{e.stopPropagation();onTagRemove?.(t.id);}} style={s.mobileInlineIconBtn}>✕</button>
-                  </span>
-                ))}
-              </div>
-              {allTags.filter(t=>!(doc.tags||[]).find(dt=>dt.id===t.id)).length > 0 && (
-                <select defaultValue="" onChange={e=>{if(e.target.value){onTagAssign?.(e.target.value);e.target.value='';}}} style={s.mobileMenuSelect}>
-                  <option value="">Add custom tag…</option>
-                  {allTags.filter(t=>!(doc.tags||[]).find(dt=>dt.id===t.id)).map(t=>(
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
-              )}
-            </>
-          )}
-        </div>
-      )}
-      {isMobile && showActionMenu && (
-        <div style={s.mobileCardMenu}>
-          <div style={s.mobileMenuSectionTitle}>Document actions</div>
-          <div style={s.mobileActionGrid}>
-            <Btn mobile onClick={()=>{closeMenus();onViewSource();}} disabled={['uploading','chunking'].includes(doc.status)}>🔗 Source</Btn>
-            {canSum && <Btn mobile onClick={()=>{closeMenus();onViewChunks();}}>📋 Chunks</Btn>}
-            {canSum && <Btn mobile onClick={()=>{closeMenus();onSummarize();}} accent>📝 Summary</Btn>}
-            {canSum && canLease && <Btn mobile onClick={()=>{closeMenus();onLease();}} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>🏢 Lease</Btn>}
-            {canSum && canHealthcare && <Btn mobile onClick={()=>{closeMenus();onHealthcare();}} style={{color:'#f87171',borderColor:'rgba(248,113,113,.3)',background:'rgba(248,113,113,.08)'}}>⚕ Healthcare</Btn>}
-            {doc.status==='error' && <Btn mobile onClick={()=>{closeMenus();onRetry();}} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>↻ Retry</Btn>}
-            {doc.status==='chunked' && <Btn mobile onClick={()=>{closeMenus();onEmbed();}} primary>⚡ Embed</Btn>}
-            {doc.status==='embedded' && <Btn mobile onClick={()=>{closeMenus();onEmbed();}}>↩ Re-embed</Btn>}
-            {!conf && <Btn mobile onClick={()=>{closeMenus();setConf(true);}} danger>🗑 Delete</Btn>}
-          </div>
-        </div>
-      )}
       {/* Tag chips */}
-      {allTags.length > 0 && !isMobile && (
-        <div style={s.tagRow}>
+      {allTags.length > 0 && (
+        <div style={{ ...(isMobile ? s.tagRowMobile : s.tagRow) }}>
           {(doc.tags||[]).map(t => (
             <span key={t.id} style={{ display:'inline-flex', alignItems:'center', gap:2, padding:'1px 7px', borderRadius:20, fontSize:10.5, fontWeight:600, background:`${t.color}20`, color:t.color, border:`1px solid ${t.color}40` }}>
               {t.name}
@@ -755,20 +723,18 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
           )}
         </div>
       )}
-      {!isMobile && (
-        <div style={s.footer}>
-          <Btn onClick={onViewSource} disabled={['uploading','chunking'].includes(doc.status)}>🔗 Source</Btn>
-          {canSum && <Btn onClick={onViewChunks}>📋 Chunks</Btn>}
-          {canSum && <Btn onClick={onSummarize} accent>📝 Summary</Btn>}
-          {canSum && canLease && <Btn onClick={onLease} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>🏢 Lease</Btn>}
-          {canSum && canHealthcare && <Btn onClick={onHealthcare} style={{color:'#f87171',borderColor:'rgba(248,113,113,.3)',background:'rgba(248,113,113,.08)'}}>⚕ Healthcare</Btn>}
-          {doc.status==='error'    && <Btn onClick={onRetry} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>↻ Retry</Btn>}
-          {doc.status==='chunked'  && <Btn onClick={onEmbed} primary>⚡ Embed</Btn>}
-          {doc.status==='embedded' && <Btn onClick={onEmbed}>↩ Re-embed</Btn>}
-          <div style={{flex:1}}/>
-          {!conf && <Btn onClick={()=>setConf(true)} danger>🗑 Delete</Btn>}
-        </div>
-      )}
+      <div style={{...s.footer, ...(isMobile ? s.footerMobile : {})}}>
+        <Btn mobile={isMobile} onClick={onViewSource} disabled={['uploading','chunking'].includes(doc.status)}>🔗 Source</Btn>
+        {canSum && <Btn mobile={isMobile} onClick={onViewChunks}>📋 Chunks</Btn>}
+        {canSum && <Btn mobile={isMobile} onClick={onSummarize} accent>📝 Summary</Btn>}
+        {canSum && canLease && <Btn mobile={isMobile} onClick={onLease} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>🏢 Lease</Btn>}
+        {canSum && canHealthcare && <Btn mobile={isMobile} onClick={onHealthcare} style={{color:'#f87171',borderColor:'rgba(248,113,113,.3)',background:'rgba(248,113,113,.08)'}}>⚕ Healthcare</Btn>}
+        {doc.status==='error'    && <Btn mobile={isMobile} onClick={onRetry} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>↻ Retry</Btn>}
+        {doc.status==='chunked'  && <Btn mobile={isMobile} onClick={onEmbed} primary>⚡ Embed</Btn>}
+        {doc.status==='embedded' && <Btn mobile={isMobile} onClick={onEmbed}>↩ Re-embed</Btn>}
+        {!isMobile && <div style={{flex:1}}/>}
+        {!conf && <Btn mobile={isMobile} onClick={()=>setConf(true)} danger>🗑 Delete</Btn>}
+      </div>
     </div>
   );
 }
@@ -818,24 +784,12 @@ const s={
   cardInnerMobile:{gap:7,padding:'9px 9px 7px 10px'},
   strip:   {width:4,alignSelf:'stretch',borderRadius:2,flexShrink:0,margin:'-11px 0 -11px -14px',marginRight:4},
   info:    {flex:1,minWidth:0},
-  infoMobile:{minWidth:0,overflow:'hidden'},
   name:    {fontSize:13.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:5,color:'var(--tx)'},
-  nameMobile:{fontSize:12.5,marginBottom:4,whiteSpace:'normal',textOverflow:'clip',overflow:'visible',overflowWrap:'anywhere',wordBreak:'break-word',lineHeight:1.35,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical'},
+  nameMobile:{fontSize:12.5,marginBottom:4},
   meta:    {display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'},
   metaMobile:{flexWrap:'nowrap',overflowX:'auto',overflowY:'hidden',WebkitOverflowScrolling:'touch',paddingBottom:2,gap:4,scrollbarWidth:'none'},
   badge2:  {display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:20,fontSize:11,fontWeight:600,whiteSpace:'nowrap',flex:'0 0 auto'},
   mt:      {fontSize:11,color:'var(--muted2)',whiteSpace:'nowrap',flex:'0 0 auto'},
-  mobileDocCardMenus:{display:'flex',gap:6,alignItems:'center',marginTop:6},
-  docMenuButton:{height:28,display:'inline-flex',alignItems:'center',justifyContent:'center',border:'1px solid var(--b2)',background:'rgba(255,255,255,.035)',color:'var(--tx2)',borderRadius:8,padding:'0 10px',fontSize:11,fontWeight:800,cursor:'pointer'},
-  docMenuButtonActive:{color:'#4ade80',borderColor:'rgba(74,222,128,.35)',background:'rgba(74,222,128,.1)'},
-  mobileCardMenu:{margin:'0 9px 8px 27px',padding:9,border:'1px solid var(--b1)',borderRadius:9,background:'rgba(0,0,0,.16)',display:'flex',flexDirection:'column',gap:8},
-  mobileMenuSectionTitle:{fontSize:10.5,fontWeight:900,color:'var(--muted2)',textTransform:'uppercase',letterSpacing:.5},
-  mobileTagGrid:{display:'flex',flexWrap:'wrap',gap:6},
-  mobileTagChip:{display:'inline-flex',alignItems:'center',gap:4,minHeight:24,maxWidth:'100%',boxSizing:'border-box',padding:'3px 8px',borderRadius:20,border:'1px solid var(--b1)',fontSize:11,fontWeight:750,lineHeight:1.25,overflowWrap:'anywhere'},
-  mobileInlineIconBtn:{background:'transparent',border:'none',color:'inherit',cursor:'pointer',fontSize:10,padding:'0 1px',lineHeight:1,opacity:.72},
-  mobileMenuSelect:{width:'100%',height:31,background:'var(--s3)',color:'var(--tx2)',border:'1px dashed var(--b2)',borderRadius:8,padding:'0 8px',fontSize:11,fontWeight:700},
-  mobileMenuEmpty:{fontSize:11,color:'var(--muted2)',padding:'3px 0'},
-  mobileActionGrid:{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:7},
   tagRow:{display:'flex',flexWrap:'wrap',gap:4,padding:'0 14px 7px',alignItems:'center'},
   tagRowMobile:{display:'flex',flexWrap:'nowrap',gap:4,padding:'0 9px 6px',alignItems:'center',overflowX:'auto',overflowY:'hidden',WebkitOverflowScrolling:'touch',scrollbarWidth:'none'},
   footer:  {display:'flex',gap:5,padding:'7px 14px',borderTop:'1px solid var(--b1)',background:'rgba(0,0,0,.15)',flexWrap:'wrap'},
