@@ -8,6 +8,7 @@ import DocumentsTab    from './components/DocumentsTab.jsx';
 import ChatTab         from './components/ChatTab.jsx';
 import GuestTryPanel   from './components/GuestTryPanel.jsx';
 import HelpGuidePanel  from './components/HelpGuidePanel.jsx';
+import HelpCenterPanel from './components/HelpCenterPanel.jsx';
 import AdminDashboard  from './components/AdminDashboard.jsx';
 import HealthcarePanel from './components/HealthcarePanel.jsx';
 import RestaurantPanel from './components/RestaurantPanel.jsx';
@@ -24,6 +25,7 @@ export default function App() {
   const [showUsage,        setShowUsage]        = useState(false);
   const [showBilling,      setShowBilling]      = useState(false);
   const [showHelpGuide,    setShowHelpGuide]    = useState(false);
+  const [showHelpCenter,   setShowHelpCenter]   = useState(false);
   const [showVerticals,    setShowVerticals]    = useState(false);
   const [showMainMenu,     setShowMainMenu]     = useState(false);
   const [showNewVisit,     setShowNewVisit]     = useState(false);
@@ -143,8 +145,13 @@ export default function App() {
       ? <AuthFlow onLogin={handleLogin} />
       : (
         <>
-          <GuestTryPanel onSignIn={() => setShowAuth(true)} onOpenGuide={() => setShowHelpGuide(true)} />
+          <GuestTryPanel
+            onSignIn={() => setShowAuth(true)}
+            onOpenGuide={() => setShowHelpGuide(true)}
+            onOpenHelpCenter={() => setShowHelpCenter(true)}
+          />
           {showHelpGuide && <HelpGuidePanel onClose={() => setShowHelpGuide(false)} initialSection="quick-start" />}
+          {showHelpCenter && <HelpCenterPanel onClose={() => setShowHelpCenter(false)} />}
         </>
       );
   }
@@ -192,6 +199,7 @@ export default function App() {
       {showUsage && <UsagePanel onClose={() => setShowUsage(false)} onUpgrade={() => { setShowUsage(false); setShowBilling(true); }} />}
       {showBilling && <BillingPanel onClose={() => setShowBilling(false)} />}
       {showHelpGuide && <HelpGuidePanel onClose={() => setShowHelpGuide(false)} initialSection="quick-start" />}
+      {showHelpCenter && <HelpCenterPanel onClose={() => setShowHelpCenter(false)} />}
       {showNewVisit && (
         <HealthcarePanel
           newVisit
@@ -335,6 +343,12 @@ export default function App() {
               📘 Guide
             </button>
             <button
+              style={s.helpBtn}
+              onClick={() => setShowHelpCenter(true)}
+              title="Open DocIntel Help Center">
+              📘 Help Center
+            </button>
+            <button
               style={{ fontSize:12, padding:isMobile?'5px 9px':'5px 12px', background:'rgba(192,132,252,.1)',
                        color:'#c084fc', border:'1px solid rgba(192,132,252,.3)',
                        borderRadius:'var(--r)', cursor:'pointer', fontWeight:600 }}
@@ -414,6 +428,10 @@ export default function App() {
                 <button type="button" style={s.menuItem} onClick={() => { closeMenus(); setShowHelpGuide(true); }}>
                   <span>📘</span>
                   <span>DocIntel User Guide</span>
+                </button>
+                <button type="button" style={s.menuItem} onClick={() => { closeMenus(); setShowHelpCenter(true); }}>
+                  <span>📘</span>
+                  <span>DocIntel Help Center</span>
                 </button>
                 <label style={s.menuLangWrap} title={t.language}>
                   <span>🌐</span>

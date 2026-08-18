@@ -10,9 +10,31 @@ const LONG_BASE = STREAM_BASE;
 function token()   { return localStorage.getItem('token'); }
 function authHdr() { return { Authorization: `Bearer ${token()}` }; }
 function guestToken() { return localStorage.getItem('guest_token'); }
+const GUEST_EXPIRY_SKEW_MS = 5 * 60 * 1000;
+
 function guestHdr() {
   const t = guestToken();
   return t ? { 'X-Guest-Token': t } : {};
+}
+function clearGuestSession() {
+  localStorage.removeItem('guest_token');
+  localStorage.removeItem('guest_session_id');
+  localStorage.removeItem('guest_expires_at');
+}
+function guestSessionExpiredLocally() {
+  const expiresAt = localStorage.getItem('guest_expires_at');
+  if (!expiresAt) return false;
+  const expiresMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiresMs)) return true;
+  return expiresMs <= Date.now() + GUEST_EXPIRY_SKEW_MS;
+}
+function isGuestAuthError(status, detail = '') {
+  const text = String(detail || '').toLowerCase();
+  return status === 401 && text.includes('guest session') && (
+    text.includes('expired') ||
+    text.includes('invalid') ||
+    text.includes('required')
+  );
 }
 function isVideoFile(file) {
   const name = (file?.name || '').toLowerCase();
@@ -71,14 +93,30 @@ export async function createGuestSession() {
 }
 
 export async function ensureGuestSession() {
-  if (guestToken()) {
+  if (guestToken() && !guestSessionExpiredLocally()) {
     return {
       guest_token: guestToken(),
       guest_session_id: localStorage.getItem('guest_session_id'),
       expires_at: localStorage.getItem('guest_expires_at'),
     };
   }
+  clearGuestSession();
   return createGuestSession();
+}
+
+async function handleGuestRes(res, retryRequest) {
+  if (res.ok) return res.json();
+  const e = await res.json().catch(() => ({}));
+  const detail = e.detail || e.message || `HTTP ${res.status}`;
+  if (retryRequest && isGuestAuthError(res.status, detail)) {
+    clearGuestSession();
+    await createGuestSession();
+    const retryRes = await retryRequest();
+    if (retryRes.ok) return retryRes.json();
+    const retryErr = await retryRes.json().catch(() => ({}));
+    throw new Error(retryErr.detail || retryErr.message || `HTTP ${retryRes.status}`);
+  }
+  throw new Error(detail);
 }
 
 export async function uploadGuestDocuments(files, options = {}) {
@@ -86,17 +124,20 @@ export async function uploadGuestDocuments(files, options = {}) {
   const form = new FormData();
   for (const f of files) form.append('files', f);
   if (options.redactPii) form.append('redact_pii', 'true');
-  return handleRes(await fetch(`${BASE}/guest/upload`, { method:'POST', headers:guestHdr(), body:form }));
+  const request = () => fetch(`${BASE}/guest/upload`, { method:'POST', headers:guestHdr(), body:form });
+  return handleGuestRes(await request(), request);
 }
 
 export async function listGuestDocuments() {
   await ensureGuestSession();
-  return handleRes(await fetch(`${BASE}/guest/documents`, { headers:guestHdr() }));
+  const request = () => fetch(`${BASE}/guest/documents`, { headers:guestHdr() });
+  return handleGuestRes(await request(), request);
 }
 
 export async function triggerGuestEmbed(docId) {
   await ensureGuestSession();
-  return handleRes(await fetch(`${BASE}/guest/documents/${docId}/embed`, { method:'POST', headers:guestHdr() }));
+  const request = () => fetch(`${BASE}/guest/documents/${docId}/embed`, { method:'POST', headers:guestHdr() });
+  return handleGuestRes(await request());
 }
 
 export async function claimGuestSession() {
@@ -117,7 +158,9 @@ export async function streamGuestChat({ question, documentIds, history = [], red
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
-    onError?.(e.detail || `HTTP ${res.status}`);
+    const detail = e.detail || `HTTP ${res.status}`;
+    if (isGuestAuthError(res.status, detail)) clearGuestSession();
+    onError?.(isGuestAuthError(res.status, detail) ? 'Guest preview expired. A new guest workspace is ready; please upload the file again to continue.' : detail);
     return;
   }
   const reader = res.body.getReader();
@@ -150,7 +193,9 @@ export async function streamGuestSummary({ documentIds, summaryType = 'executive
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
-    onError?.(e.detail || `HTTP ${res.status}`);
+    const detail = e.detail || `HTTP ${res.status}`;
+    if (isGuestAuthError(res.status, detail)) clearGuestSession();
+    onError?.(isGuestAuthError(res.status, detail) ? 'Guest preview expired. A new guest workspace is ready; please upload the file again to continue.' : detail);
     return;
   }
   const reader = res.body.getReader();

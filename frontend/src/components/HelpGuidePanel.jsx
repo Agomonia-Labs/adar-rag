@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import HelpVoiceControls from './HelpVoiceControls.jsx';
 
 const GUIDE_SECTIONS = [
   {
@@ -150,6 +151,7 @@ export default function HelpGuidePanel({ onClose, initialSection = 'quick-start'
     () => GUIDE_SECTIONS.find(item => item.key === active) || GUIDE_SECTIONS[0],
     [active],
   );
+  const sectionVoiceText = useMemo(() => guideSectionToText(section), [section]);
 
   return (
     <div style={s.overlay} role="dialog" aria-modal="true" aria-label="DocIntel user guide">
@@ -182,10 +184,11 @@ export default function HelpGuidePanel({ onClose, initialSection = 'quick-start'
           <main style={s.content}>
             <div style={s.sectionHero}>
               <span style={s.sectionIcon}>{section.icon}</span>
-              <div>
+              <div style={s.sectionHeroCopy}>
                 <h3 style={s.sectionTitle}>{section.title}</h3>
                 <p style={s.sectionSummary}>{section.summary}</p>
               </div>
+              <HelpVoiceControls text={sectionVoiceText} label="Listen" />
             </div>
 
             <section style={s.card}>
@@ -212,6 +215,17 @@ export default function HelpGuidePanel({ onClose, initialSection = 'quick-start'
       </div>
     </div>
   );
+}
+
+function guideSectionToText(section) {
+  return [
+    section.title,
+    section.summary,
+    'How to use it.',
+    ...(section.steps || []).map((step, index) => `${index + 1}. ${step}`),
+    'Good to know.',
+    ...(section.tips || []),
+  ].join('\n');
 }
 
 function QuickCard({ title, text }) {
@@ -241,7 +255,8 @@ const s = {
   navItem:{ display:'flex', alignItems:'center', gap:8, width:'100%', border:'1px solid var(--b1)', background:'var(--s2)', color:'var(--tx2)', borderRadius:8, padding:'9px 10px', cursor:'pointer', textAlign:'left', fontSize:12.5, fontWeight:800, whiteSpace:'nowrap' },
   navItemActive:{ borderColor:'rgba(74,222,128,.42)', background:'rgba(74,222,128,.12)', color:'#4ade80' },
   content:{ minHeight:0, overflowY:'auto', padding:'18px 20px', background:'var(--s1)' },
-  sectionHero:{ display:'flex', alignItems:'flex-start', gap:12, padding:14, border:'1px solid var(--teal-mid)', background:'linear-gradient(135deg, var(--s2), rgba(74,222,128,.08))', borderRadius:10, marginBottom:12 },
+  sectionHero:{ display:'flex', alignItems:'flex-start', gap:12, flexWrap:'wrap', padding:14, border:'1px solid var(--teal-mid)', background:'linear-gradient(135deg, var(--s2), rgba(74,222,128,.08))', borderRadius:10, marginBottom:12 },
+  sectionHeroCopy:{ minWidth:0, flex:1 },
   sectionIcon:{ fontSize:28, lineHeight:1 },
   sectionTitle:{ margin:0, color:'var(--tx)', fontSize:20, lineHeight:1.2 },
   sectionSummary:{ margin:'5px 0 0', color:'var(--tx2)', fontSize:13, lineHeight:1.5 },

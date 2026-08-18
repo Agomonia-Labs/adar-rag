@@ -1,6 +1,6 @@
 # Adar DocIntel
 
-Adar DocIntel is a self-service multimodal intelligence platform from Agomonia Labs for documents, speech, transcripts, and video. It combines horizontal RAG capabilities with domain-specific Agentic AI workflows for healthcare, lease management, finance/tax readiness, restaurant menu intelligence, video intelligence, and other knowledge-heavy verticals.
+Adar DocIntel is a self-service document, speech, and video intelligence platform from Agomonia Labs. It combines horizontal RAG capabilities with domain-specific Agentic AI workflows for healthcare, lease management, restaurant menu intelligence, tax and financial planning readiness, and other knowledge-heavy verticals.
 
 - Product: https://docintel.adar.agomoniai.com
 - Product demo: https://docintel.adar.agomoniai.com/demo.docintel.html
@@ -8,11 +8,12 @@ Adar DocIntel is a self-service multimodal intelligence platform from Agomonia L
 
 ## What DocIntel Does
 
-DocIntel turns documents, speech, transcripts, videos, and structured domain workflows into searchable, reviewable, conversational intelligence.
+DocIntel turns documents, speech transcripts, videos, and structured domain workflows into searchable, reviewable, conversational intelligence.
 
 Core capabilities:
 
-- Upload PDFs, DOCX, CSV, text files, images, audio, video, and domain-specific content sets.
+- Try DocIntel before signup through Guest Preview, then sign in to save and continue the workspace.
+- Upload PDFs, DOCX, CSV, text files, images, audio, video, and domain-specific document sets.
 - Extract text with document parsers and OCR support for scanned/image documents.
 - Detect document language and support multilingual interaction in English, Spanish, Bengali, Hindi, and Arabic.
 - Classify documents with Gemini using `GOOGLE_AI_KEY`.
@@ -21,9 +22,9 @@ Core capabilities:
 - Chat with citations, source previews, streaming answers, and optional PII redaction.
 - Summarize documents and multi-document sets.
 - Compare documents and domain objects.
-- Use compact mobile document cards with per-document `Tags` and `Actions` menus so metadata and workflow actions remain usable on phones.
 - Use voice input for chat and workflow intake where browser support is available.
-- Process videos into metadata, audio transcripts, sampled frames, timestamped segments, searchable chunks, embeddings, and time-aware Q&A.
+- Process video into metadata, sampled frames, transcripts, timestamped segments, embeddings, and timestamp-aware Q&A.
+- Open an in-app DocIntel User Guide from guest preview, desktop header, or mobile menu.
 - Track traces, spans, retrieved context, tool calls, LLM prompts/responses, evaluations, usage, and audit history.
 - Manage workspaces, RBAC, usage tiers, billing/subscription state, and admin controls.
 
@@ -33,7 +34,7 @@ DocIntel is intentionally split into a reusable horizontal layer and specialized
 
 | Layer | Purpose |
 | --- | --- |
-| Horizontal multimodal intelligence | Ingestion, OCR, speech/video processing, classification, language support, chunking, embeddings, hybrid search, rerank, chat, summaries, compare, PII redaction, tracing, evaluation, governance, RBAC, usage metering |
+| Horizontal knowledge intelligence | Ingestion, OCR, transcript/video processing, classification, language support, chunking, embeddings, hybrid search, rerank, chat, summaries, compare, PII redaction, tracing, evaluation, governance, RBAC, usage metering |
 | Vertical Agentic AI workflows | Domain-specific orchestration using configurable agents, tools, review screens, approvals, persistence, and searchable outputs |
 | Operational workflow layer | Approval queues, carryout orders, after-visit summary artifacts, obligation checklists, owner queues, notifications, and audit trails |
 
@@ -50,6 +51,21 @@ DocIntel is intentionally split into a reusable horizontal layer and specialized
 7. User can embed chunks into pgvector.
 8. The document becomes available for chat, search, summarize, compare, and vertical workflows.
 
+### Guest Preview and User Guide
+
+DocIntel supports a lightweight guest experience before signup.
+
+Guest Preview capabilities:
+
+- Upload supported documents without creating an account first.
+- Process, chunk, and embed guest documents.
+- Ask grounded Q&A over embedded guest documents.
+- Generate executive, key points, by-section, and detailed summaries.
+- Use a mobile-friendly collapsible layout for upload, documents, summary, and Q&A.
+- Sign in to claim the guest session and continue in a saved workspace.
+
+The in-app DocIntel User Guide is available from Guest Preview, the signed-in desktop header, and the mobile menu. It includes quick-start guidance for documents, Q&A, summaries, video intelligence, healthcare, lease, tax and financial planning readiness, workspaces, roles, and troubleshooting.
+
 ### Classification
 
 DocIntel classifies documents by domain and type, such as:
@@ -59,8 +75,6 @@ DocIntel classifies documents by domain and type, such as:
 - Lease extension/amendment
 - Healthcare clinical document
 - Healthcare prior authorization document
-- Finance/tax document
-- W-2, 1099, K-1, mortgage interest, charitable receipt, prior-year return, business expense, brokerage, and retirement documents
 - Restaurant/menu document
 
 Classification is powered by Gemini and uses `GOOGLE_AI_KEY`. The implementation logs confidence, source, sample size, and fallback reason so silent failures are visible.
@@ -121,30 +135,21 @@ Browser note:
 
 ### Video Intelligence
 
-DocIntel treats video as another enterprise knowledge asset, not only a media file.
+DocIntel can treat video as a first-class knowledge source.
 
-Video support includes:
+Video workflow capabilities:
 
-- Large video upload through standard upload for smaller files and direct-to-GCS upload for larger production files.
-- Secure source storage in Google Cloud Storage with signed URL access.
-- Video metadata extraction: duration, codec, resolution, bitrate, frame count, and audio codec.
-- Audio extraction and transcription into timestamped text chunks.
-- Representative frame sampling with visual caption support.
-- Timeline segmentation so transcript and frame evidence are organized by time range.
-- Searchable video chunks with start/end timestamps, transcript text, frame context, and metadata.
-- Embedding into pgvector so video can be queried through normal DocIntel Chat.
-- Time-aware Q&A, such as asking what happened from `1:00` to `3:00`, when a topic appeared, or what key events occurred.
-- Cross-asset retrieval so video evidence can be searched alongside PDFs, contracts, policies, clinical packets, tax files, meeting transcripts, and other workspace documents.
-- Stage-level retries, fresh signed URLs, timeout handling, fallback paths, progress percentage, current processing step, last-updated status, and email notification when processing completes or fails.
+- Upload small videos through the standard upload path and large videos through a direct-to-cloud path.
+- Extract video metadata with duration, format, and stream details.
+- Sample representative frames.
+- Extract or generate transcripts based on the selected language or auto-detection.
+- Split transcript and timeline content into timestamped segments.
+- Store video metadata, timeline, frames, and chunks for retrieval.
+- Embed timestamped video chunks into the same searchable knowledge layer.
+- Ask timestamp-aware questions such as “what happened between 1:00 and 3:00?”
+- Show processing progress, current step, percent complete, and last updated time.
 
-Example video use cases:
-
-- Product demos and training recordings.
-- Meeting recordings and support calls.
-- Sports highlights and event analysis.
-- Clinical recordings and healthcare workflow review.
-- Lease walkthroughs and property inspections.
-- Compliance audits, operations reviews, and field service videos.
+Video Intelligence works alongside documents and speech transcripts so teams can search policies, contracts, notes, transcripts, and videos through one connected intelligence layer.
 
 ### PII Redaction
 
@@ -200,8 +205,6 @@ Features:
 - Generate obligation checklist.
 - Review clause flags.
 - Review risk flags.
-- Navigate Summary, Lease Abstract, Critical Dates, Obligation Checklist, Clause Flags, and Risk Flags in separate tabs.
-- Use mobile-friendly row cards for long critical-date, obligation, clause, and risk text.
 - Save approved abstract and approved workflow output.
 - Reuse saved lease abstract in agentic workflow.
 
@@ -259,25 +262,8 @@ Prior authorization flow:
 2. Read patient evidence from clinical documents.
 3. Read payer policy criteria.
 4. Map each payer criterion to patient evidence.
-5. Recommend candidate ICD-10-CM, CPT/HCPCS, RxNorm, NDC, or lookup-needed code rows for coder review.
-6. Ask a certified coder or qualified reviewer to approve, edit, request changes, or reject code rows.
-7. Identify missing evidence and submission risk.
-8. Use the Prior Auth Readiness Checklist to block or override final packet generation.
-9. Track case owner, payer, submission channel, reference number, follow-up dates, and decision status.
-10. Generate human-review prior authorization packet or missing information packet PDF.
-
-Prior authorization workspace:
-
-- Overview
-- Payer criteria
-- Criteria checklist
-- Criteria evidence map
-- Missing items
-- Next actions
-- Field-level change history
-- Case tracker
-- Code readiness and coder approval
-- Readiness checklist
+5. Identify missing evidence and submission risk.
+6. Generate human-review prior authorization packet.
 
 Healthcare personas:
 
@@ -287,99 +273,7 @@ Healthcare personas:
 - Small clinic staff: reduce documentation work and coordinate follow-ups.
 - Care coordinator: view patient story across documents and visits.
 - Prior authorization team: find evidence faster and check policy readiness.
-- Certified coder/billing reviewer: approve or modify AI-suggested diagnosis, procedure, medication, and supply codes before packet generation.
-- Case owner/submission coordinator: track submission readiness, payer reference, follow-up, decision, denial, or appeal status.
 - Compliance team: inspect PHI flags, traceability, approvals, and field changes.
-
-### Finance & Tax Submission Readiness
-
-The finance/tax vertical supports CPA/EA tax preparation intake, review, and financial planning readiness.
-
-Implemented workflows:
-
-- MVP 1 - Tax Submission Readiness.
-- MVP 2 - Financial Planning Readiness.
-
-Architecture approach:
-
-- Use OCR/text extraction to turn PDFs, scans, images, and statement files into readable text before workflow processing.
-- Use chunking to keep local tax context together, such as box labels with values, line numbers with amounts, payer sections with tables, and prior-year return pages with related schedules.
-- Use embeddings and pgvector for semantic discovery across differently worded documents, such as `federal withholding`, `Box 2`, `W-2 tax withheld`, or brokerage cost-basis language.
-- Use deterministic extraction and regular expressions for exact tax fields where known structures exist, including W-2 boxes, Form 1040 lines, 1098 mortgage fields, brokerage proceeds/cost basis, retirement contributions, and charitable donation amounts.
-- Use coordinate-aware parsing where PDF text order is unreliable, especially for layout-heavy IRS forms where labels and amounts may be separated visually from text extraction order.
-- Use AI for classification, summarization, missing-information reasoning, reviewer-friendly explanations, and workflow recommendations.
-- Use the workflow layer to orchestrate document intake, tax organizer extraction, missing document detection, prior-year comparison, CPA/EA packet creation, approval, audit, and persistence.
-- Use human review as the final control so CPA/EA or qualified reviewers can inspect, edit, approve, or reject extracted values before the packet is considered final.
-
-Features:
-
-- Select ready tax documents from the existing document library.
-- Enter client name, tax year, filing status, and reviewer notes.
-- Classify likely W-2, 1099, K-1, mortgage interest, charitable receipt, property tax, property tax assessment, business expense, brokerage, retirement, and prior-year return documents.
-- Extract tax organizer signals such as detected forms, tax year, filing status, taxpayer/dependent signals, evidence signals, exact dollar amounts, income categories, and deduction/credit support.
-- Run a missing document checklist for common tax-prep gaps.
-- Compare selected documents against prior-year return availability and Form 1040 baseline fields.
-- Generate a CPA/EA review packet draft.
-- Approve reviewed packet output and download a Markdown packet from the browser.
-- Store the run and step results in the existing vertical workflow tables.
-
-MVP 2 Financial Planning Readiness:
-
-- Select planning documents such as W-2s, 1099s, prior-year returns, brokerage statements, retirement statements, mortgage documents, county property assessments, property tax assessment statements, insurance policies, estate documents, bank/loan statements, and client notes.
-- Build a financial planning profile with client, household, document, and evidence signals.
-- Generate a net worth snapshot with asset signals, liability signals, total assets, total liabilities, and estimated net worth.
-- Capture real estate planning signals from county property assessments, property tax assessment statements, including parcel, property address, assessed value, market total, land value, improvement value, tax year, and active exemptions.
-- Estimate draft home equity by comparing uploaded property assessment value against detected mortgage principal for advisor review.
-- Generate a cash-flow snapshot with income signals, known expense/savings signals, estimated annual income, known annual expenses, and estimated known surplus.
-- Review retirement readiness from contribution, employer match, balance, distribution, rollover, and gap signals.
-- Review insurance readiness by detecting policy documents and coverage areas that need review.
-- Review estate readiness by detecting wills, trusts, POA, healthcare directives, beneficiary documents, and related readiness gaps.
-- Surface tax planning signals from prior-year returns and investment documents.
-- Produce missing planning documents, advisor questions, next actions, and an advisor review packet.
-- Approve or withdraw the advisor packet using the same finance/tax run approval workflow.
-
-Tax submission flow:
-
-1. Upload W-2, 1099, mortgage, charitable, prior-year return, and supporting tax documents.
-2. Wait for documents to chunk or embed.
-3. Open `Verticals` and choose `Finance & Tax - Tax Submission Readiness`.
-4. Select tax documents.
-5. Enter client name, tax year, filing status, and reviewer notes.
-6. Run MVP 1.
-7. Review detected forms, income summary, deduction/credit summary, missing items, client questions, and prior-year comparison notes.
-8. Download the CPA review packet or approve the reviewed packet.
-
-Financial planning flow:
-
-1. Upload tax, asset, debt, retirement, property assessment, insurance, estate, and supporting planning documents.
-2. Wait for documents to chunk or embed.
-3. Open `Verticals` and choose `Finance & Tax`.
-4. Select `MVP 2 - Financial planning`.
-5. Select planning documents.
-6. Enter client name, planning year, household status, and reviewer notes.
-7. Run MVP 2.
-8. Review overview, organizer, net worth, cash flow, planning readiness, missing items, and advisor packet.
-9. Download the advisor packet or approve the reviewed packet.
-
-Finance/tax personas:
-
-- Client/taxpayer: provides documents and answers missing-information questions.
-- Tax preparer: reviews organizer data and verifies uploaded evidence.
-- CPA/EA reviewer: approves final values, tax positions, and filing readiness.
-- Financial advisor: uses the same document base for planning follow-up when appropriate.
-- Insurance advisor: reviews policy availability, coverage areas, premiums, beneficiaries, and missing policy gaps.
-- Estate attorney: reviews estate document availability, POA, healthcare directive, trust/will status, and beneficiary alignment.
-- Compliance/admin: inspects audit, usage, and workflow traceability.
-
-Guardrail: DocIntel output is AI-assisted review material, not final tax, investment, legal, insurance, estate, or filing advice. Qualified professionals must review final decisions.
-
-## Mobile Demo Notes
-
-On mobile, the Documents tab is optimized around compact document cards:
-
-1. Open `Tags` on a document to view status, workspace/personal scope, file type, language, file size, chunk count, PII status, and domain/type such as Healthcare, Lease, or Prior Auth.
-2. Open `Actions` to run the same document actions available on desktop: Source, Chunks, Summary, Lease, Healthcare, Embed/Re-embed, Retry, and Delete.
-3. In Healthcare and Lease workflows, use the tab bars to move between focused sections instead of scrolling through one long page.
 
 ### Restaurant Menu Scribe and Carryout Orders
 
@@ -440,6 +334,21 @@ Ordering rules:
 - Feedback tied to an accessible order is marked as verified.
 - Dismissed feedback is excluded from visible aggregate ratings.
 
+### Tax & Financial Planning Readiness
+
+The finance vertical organizes tax submission readiness and planning signals from reviewed financial documents.
+
+Features:
+
+- Tax organizer across W-2, 1099, mortgage interest, property tax, brokerage, retirement, bank, credit card, charitable donation, and prior-year return documents.
+- Tax submission readiness packet with missing item review.
+- Prior-year comparison signals.
+- Editable extracted values and saved reviewed packet state.
+- Net worth calculation using reviewed asset and liability values.
+- Cash flow summary with editable inflows and outflows.
+- Client planning profile, retirement readiness, advisor questions, planning readiness score, and advisor packet PDF.
+- Human review before filing, planning, or advisor use.
+
 ### Configurable ADK-Style Agent Workflows
 
 Agent workflows are configured with JSON files under:
@@ -466,6 +375,7 @@ flowchart TB
 
   API --> Auth["Auth, RBAC, Workspaces"]
   API --> Ingestion["Document / Audio Ingestion"]
+  API --> Video["Video Intelligence"]
   API --> Chat["Chat, Summarize, Compare"]
   API --> Agents["Vertical Agentic Workflows"]
   API --> Traces["Tracing, Eval, Audit, Usage"]
@@ -473,6 +383,8 @@ flowchart TB
   Ingestion --> GCS["Google Cloud Storage: source files, chunks, transcripts, PDFs"]
   Ingestion --> Extract["Extractor, OCR, Chunker, Classifier"]
   Extract --> DB["PostgreSQL + pgvector"]
+  Video --> GCS
+  Video --> DB
 
   Chat --> DB
   Chat --> Gemini["Gemini / OpenAI APIs"]
@@ -492,12 +404,15 @@ flowchart TB
 | `backend/auth/` | Registration, login, JWT, password hashing, current user dependencies |
 | `backend/database/` | asyncpg pool, schema creation, pgvector setup |
 | `backend/routes/documents.py` | Upload, classify, chunk, view, embed, delete, reclassify |
+| `backend/routes/guest.py` | Guest session, guest upload, guest summary/Q&A, guest claim |
+| `backend/routes/video.py` | Video upload, processing, status, timeline, frame, and Q&A APIs |
 | `backend/routes/chat.py` | Streaming RAG chat, restaurant DB context, agentic context, tracing |
 | `backend/routes/summarize.py` | Streaming summarization |
 | `backend/routes/compare.py` | Document comparison |
 | `backend/routes/lease.py` | Lease vertical APIs |
 | `backend/routes/healthcare.py` | Healthcare vertical APIs |
 | `backend/routes/restaurant.py` | Restaurant vertical APIs, menu, order, owner queue |
+| `backend/routes/finance_tax.py` | Tax and financial planning readiness workflow APIs |
 | `backend/routes/traces.py` | Trace inspection APIs |
 | `backend/routes/agent_evals.py` | Agent workflow evaluation APIs |
 | `backend/routes/usage.py` | Usage and tier limits |
@@ -506,6 +421,7 @@ flowchart TB
 | `backend/services/vectordb.py` | pgvector storage and hybrid retrieval |
 | `backend/services/adk_workflow.py` | Generic configurable multi-agent workflow runner |
 | `backend/services/*_intelligence.py` | Domain-specific intelligence and normalization logic |
+| `backend/services/video_intelligence.py` | Video metadata, transcript, frame, segment, progress, and embedding pipeline |
 | `backend/services/tracing.py` | Trace, span, and LLM event persistence |
 | `backend/services/email.py` and `notifications.py` | Email notification support |
 
@@ -514,6 +430,8 @@ flowchart TB
 | Component | Responsibility |
 | --- | --- |
 | `frontend/src/App.jsx` | Auth state, navigation, workspace/vertical routing |
+| `GuestTryPanel.jsx` | Guest preview upload, summary, Q&A, and mobile collapsed layout |
+| `HelpGuidePanel.jsx` | In-app user manual and workflow guide |
 | `DocumentsTab.jsx` | Upload, document cards, classification, chunks, embedding |
 | `ChatTab.jsx` | Streaming chat, source previews, voice input, restaurant add-to-cart actions |
 | `SummaryPanel.jsx` | Summary workflows |
@@ -521,6 +439,8 @@ flowchart TB
 | `LeasePanel.jsx` | Lease abstraction, agent workflow, approval, display |
 | `HealthcarePanel.jsx` | Healthcare clinical, scribe, prior auth, AVS workflows |
 | `RestaurantPanel.jsx` | Restaurant scribe, menu editing, compare menus, carryout orders |
+| `FinanceTaxPanel.jsx` | Tax and financial planning readiness workflow |
+| `VideoPanel.jsx` | Video Intelligence upload, processing, timeline, frames, and Q&A workflow |
 | `WorkspacesTab.jsx` | Workspace membership and switching |
 | `UsagePanel.jsx` | Tier and usage visibility |
 | `AdminDashboard.jsx` | Admin users, documents, traces, evaluations |
@@ -604,10 +524,12 @@ Authorization: Bearer <jwt_token>
 | Agent evals | `/api/agent-evals` | Vertical workflow evaluation |
 | Traces | `/api/traces` | Trace flow/span/LLM event inspection |
 | Voice | `/api/voice` | Voice/audio helper APIs |
+| Guest | `/api/guest` | Guest preview sessions, upload, summary, Q&A, and claim |
+| Video | `/api/video` | Video upload, processing, status, timeline, frame, and Q&A |
 | Lease | `/api/lease` | Lease vertical workflows |
 | Healthcare | `/api/healthcare` | Healthcare workflows |
-| Finance & Tax | `/api/finance-tax` | Tax submission readiness workflow |
 | Restaurant | `/api/restaurant` | Restaurant scribe, menu, compare, recommendations, carryout orders, customer feedback |
+| Finance Tax | `/api/finance-tax` | Tax and financial planning readiness workflows |
 | Admin | `/api/admin` | Admin-only users/documents/platform views |
 
 ## Local Development
@@ -725,16 +647,6 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 6. Approve field-level changes where applicable.
 7. Generate AVS PDF when clinical scribe output is ready.
 8. Use chat to ask patient/provider/care coordination questions over approved clinical context and documents.
-
-### Finance & Tax Workflow
-
-1. Upload tax documents such as W-2, 1099, mortgage interest, charitable receipt, and prior-year return summaries.
-2. Wait for documents to chunk or embed.
-3. Open Finance & Tax from the Verticals menu.
-4. Select the documents for one client and tax year.
-5. Run Tax Submission Readiness.
-6. Review organizer output, missing documents, client questions, and prior-year comparison notes.
-7. Download the CPA packet or approve reviewed output.
 
 ### Restaurant Workflow
 
