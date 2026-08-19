@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -55,7 +56,7 @@ def _merge_packet(fallback: dict[str, Any], prior: dict[str, Any]) -> dict[str, 
     for key in ("candidate_profile", "role_profile", "role_match", "recruiter_review"):
         if isinstance(prior.get(key), dict):
             packet[key] = {**packet.get(key, {}), **prior[key]}
-    for key, identities in (("skills", ("name",)), ("requirement_assessments", ("requirement",)), ("gap_analysis", ("requirement",)), ("evidence_notes", ("finding",))):
+    for key, identities in (("skills", ("name",)), ("requirement_assessments", ("requirement",)), ("gap_analysis", ("requirement",)), ("interview_plan", ("requirement",)), ("evidence_notes", ("finding",))):
         if isinstance(prior.get(key), list):
             packet[key] = _merge_records(packet.get(key, []), prior[key], identities)
     profile = packet.setdefault("candidate_profile", {})
@@ -77,7 +78,7 @@ async def create_talent_packet(documents: list[dict[str, Any]], candidate_name: 
     )
     system = """You are an HR document intelligence assistant preparing evidence for human recruiter review.
 Return only valid JSON and use only supplied evidence. Never infer protected characteristics, personality, age, ethnicity, disability, family status, religion, gender, or health. Keep every narrative concise and complete. Never end text with an ellipsis or unfinished sentence."""
-    resume_context = build_talent_context([d for d in documents if d["doc_type"] in ("resume", "cv")], 28000)
+    resume_context = build_talent_context([d for d in documents if d["doc_type"] in ("resume", "cv")], 60000)
     job_context = build_talent_context([d for d in documents if d["doc_type"] == "job_description"], 22000)
     fallback = deterministic_talent_packet(documents, candidate_name)
     packet = _merge_packet(fallback, prior_packet or {})
@@ -191,6 +192,9 @@ Return exactly: {{"requirement_assessments":[{{"requirement":"","requirement_typ
 Create one assessment for every required and preferred capability, preserve its exact role-profile label, and identify its requirement type. Review every role, project, accomplishment, skill, education item, and certification in the resume before assigning a status. Do not require exact keyword overlap. Treat tools, platforms, methods, and accomplishments that demonstrate the same underlying capability as semantic evidence. Use met for concrete direct or equivalent evidence, partial for adjacent or transferable evidence that does not fully establish the requirement, missing only when the resume provides no relevant evidence, and unclear when evidence is ambiguous. Explain the equivalence considered. Do not report met requirements as gaps. Limit evidence notes to 10.
 SOURCE CONTENT:\n{resume_context[:12000]}\n{job_context[:12000]}"""
     gap_data = await _extract_stage("gap_analysis", system, gap_prompt, failures)
+    if not gap_data or not isinstance(gap_data.get("requirement_assessments"), list):
+        failures.append("gap_analysis: broad requirement assessment was incomplete; full-resume evidence matrix batches were used")
+        gap_data = {"requirement_assessments": []}
     if gap_data and isinstance(gap_data.get("requirement_assessments"), list):
         assessments = [{**item, "analysis_method": "semantic_ai"} for item in gap_data["requirement_assessments"] if isinstance(item, dict)]
         if prior_packet and isinstance(prior_packet.get("requirement_assessments"), list):
@@ -213,6 +217,38 @@ RESUME CONTENT:\n{resume_context[:18000]}\nJOB DESCRIPTION:\n{job_context[:10000
             if completion_data and isinstance(completion_data.get("requirement_assessments"), list):
                 completed_assessments = [{**item, "analysis_method": "semantic_ai_completion"} for item in completion_data["requirement_assessments"] if isinstance(item, dict)]
                 assessments = _merge_records(assessments, completed_assessments, ("requirement",))
+
+        matrix_requirements = [
+            {"requirement_type": kind, "requirement": _requirement_text(item)}
+            for kind, item in [*required_items, *preferred_items]
+            if _requirement_text(item)
+        ]
+        batches = [matrix_requirements[index:index + 4] for index in range(0, len(matrix_requirements), 4)]
+
+        async def assess_matrix_batch(batch: list[dict[str, str]], batch_number: int) -> dict[str, Any] | None:
+            matrix_prompt = f"""Build evidence-matrix assessments for every supplied job requirement by semantically reviewing the candidate's complete resume.
+Requirements: {json.dumps(batch)}
+Return exactly: {{"requirement_assessments":[{{"requirement":"preserve the supplied label exactly","requirement_type":"required|preferred","status":"met|partial|missing|unclear","semantic_equivalence":"","evidence":"maximum 50 words naming the relevant role, project, responsibility, or accomplishment","document_id":"","reasoning":"maximum 40 words","recruiter_question":""}}]}}
+Return exactly one record for every supplied requirement. Examine every position and project in the complete resume, including older experience. Do not require exact keyword overlap. Recognize equivalent technologies, frameworks, architecture patterns, delivery scope, leadership responsibilities, and domain experience. Use met only for concrete direct or semantically equivalent evidence; partial for adjacent or transferable evidence; missing only after checking the entire resume; unclear only when evidence remains genuinely ambiguous. Generate a focused recruiter question for partial, missing, or unclear results.
+COMPLETE RESUME:\n{resume_context}
+JOB DESCRIPTION:\n{job_context}"""
+            return await _extract_stage(f"evidence_matrix_batch_{batch_number}", system, matrix_prompt, failures)
+
+        if batches:
+            matrix_results = await asyncio.gather(*(assess_matrix_batch(batch, index + 1) for index, batch in enumerate(batches)))
+            matrix_assessments = []
+            for result in matrix_results:
+                if result and isinstance(result.get("requirement_assessments"), list):
+                    matrix_assessments.extend({**item, "analysis_method": "semantic_ai_full_resume"} for item in result["requirement_assessments"] if isinstance(item, dict))
+            if matrix_assessments:
+                recruiter_edit_keys = {_requirement_key(item.get("requirement")) for item in assessments if item.get("analysis_method") == "recruiter_edit"}
+                authoritative = {_requirement_key(item.get("requirement")): item for item in matrix_assessments}
+                assessments = [
+                    item if _requirement_key(item.get("requirement")) in recruiter_edit_keys else authoritative.pop(_requirement_key(item.get("requirement")), item)
+                    for item in assessments
+                ]
+                assessments.extend(authoritative.values())
+
         packet["requirement_assessments"] = assessments
         packet["gap_analysis"] = [item for item in assessments if str(item.get("requirement_type") or "required").lower() == "required" and str(item.get("status") or "").strip().lower() != "met"]
         if isinstance(gap_data.get("evidence_notes"), list):
@@ -230,7 +266,7 @@ RESUME CONTENT:\n{resume_context[:18000]}\nJOB DESCRIPTION:\n{job_context[:10000
         normalized["source_documents"] = [{"id": d["id"], "name": d["name"], "doc_type": d["doc_type"]} for d in documents]
         normalized["governance"] = {"assistive_only": True, "human_review_required": True, "protected_attributes_excluded": True}
         normalized["gap_analysis"] = _ensure_gap_coverage(normalized)
-    normalized["role_match"] = _apply_documented_match_score(normalized)
+    normalized = prepare_reviewed_talent_packet(normalized)
     expected_stages = {"profile_core", "experience", "education", "certifications", "skills", "role_profile", "role_match", "match_evidence", "gap_analysis"}
     method = "semantic_ai" if expected_stages.issubset(completed) else "semantic_partial" if completed else "keyword_fallback"
     normalized["role_match"]["method"] = method
@@ -334,7 +370,15 @@ def _score_number(value: Any) -> int:
 
 
 def _status_credit(status: Any) -> float:
-    return {"met": 1.0, "partial": 0.6, "unclear": 0.2, "missing": 0.0}.get(str(status or "").strip().lower(), 0.0)
+    return {"met": 1.0, "partial": 0.6, "missing": 0.0}.get(str(status or "").strip().lower(), 0.0)
+
+
+def _resolved_ratio(items: list[dict[str, Any]]) -> tuple[float, int, int]:
+    resolved = [item for item in items if str(item.get("status") or "").strip().lower() in ("met", "partial", "missing")]
+    unclear = sum(1 for item in items if str(item.get("status") or "").strip().lower() == "unclear")
+    # Unclear requirements are awaiting interview validation and remain score-neutral.
+    ratio = sum(_status_credit(item.get("status")) for item in resolved) / len(resolved) if resolved else 1.0
+    return ratio, len(resolved), unclear
 
 
 def _minimum_years(value: Any) -> float:
@@ -351,8 +395,8 @@ def _apply_documented_match_score(packet: dict[str, Any]) -> dict[str, Any]:
 
     required = [item for item in assessments if str(item.get("requirement_type") or "required").lower() == "required"]
     preferred = [item for item in assessments if str(item.get("requirement_type") or "").lower() == "preferred"]
-    required_ratio = sum(_status_credit(item.get("status")) for item in required) / max(1, len(required))
-    preferred_ratio = sum(_status_credit(item.get("status")) for item in preferred) / len(preferred) if preferred else 1.0
+    required_ratio, required_resolved, required_unclear = _resolved_ratio(required)
+    preferred_ratio, preferred_resolved, preferred_unclear = _resolved_ratio(preferred)
 
     profile = packet.get("candidate_profile") if isinstance(packet.get("candidate_profile"), dict) else {}
     role = packet.get("role_profile") if isinstance(packet.get("role_profile"), dict) else {}
@@ -371,9 +415,88 @@ def _apply_documented_match_score(packet: dict[str, Any]) -> dict[str, Any]:
     }
     role_match["ai_reported_score"] = _score_number(role_match.get("score"))
     role_match["score_components"] = components
+    role_match["score_coverage"] = {
+        "required_total": len(required),
+        "required_resolved": required_resolved,
+        "required_unclear": required_unclear,
+        "preferred_total": len(preferred),
+        "preferred_resolved": preferred_resolved,
+        "preferred_unclear": preferred_unclear,
+    }
+    role_match["score_note"] = "Unclear requirements are score-neutral until interview or recruiter review resolves them. Partial and missing requirements reduce the documented match score."
     role_match["score"] = round(sum(components.values()))
     role_match["score_method"] = "evidence_weighted"
     return role_match
+
+
+def prepare_reviewed_talent_packet(packet: dict[str, Any]) -> dict[str, Any]:
+    """Synchronize reviewer-edited assessments, gaps, interview prompts, and score."""
+    packet = dict(packet or {})
+    assessments = [dict(item) for item in packet.get("requirement_assessments", []) if isinstance(item, dict)]
+    assessed_keys = {_requirement_key(item.get("requirement")) for item in assessments}
+    for gap in packet.get("gap_analysis", []):
+        if not isinstance(gap, dict):
+            continue
+        key = _requirement_key(gap.get("requirement"))
+        if key and key not in assessed_keys:
+            assessments.append({
+                **gap,
+                "requirement_type": gap.get("requirement_type") or "required",
+                "status": gap.get("status") or "unclear",
+                "analysis_method": gap.get("analysis_method") or "semantic_review_unavailable",
+            })
+            assessed_keys.add(key)
+
+    role = packet.get("role_profile") if isinstance(packet.get("role_profile"), dict) else {}
+    for requirement_type, items in (("required", role.get("required_skills", [])), ("preferred", role.get("preferred_skills", []))):
+        for value in items or []:
+            requirement = _requirement_text(value)
+            key = _requirement_key(requirement)
+            if key and key not in assessed_keys:
+                assessments.append({
+                    "requirement": requirement,
+                    "requirement_type": requirement_type,
+                    "status": "unclear",
+                    "semantic_equivalence": "",
+                    "evidence": "Semantic comparison did not return an assessment for this job requirement.",
+                    "reasoning": "Recruiter validation is required before treating this capability as met or missing.",
+                    "recruiter_question": f"Please describe a specific example demonstrating {requirement}.",
+                    "analysis_method": "semantic_review_unavailable",
+                })
+                assessed_keys.add(key)
+    packet["requirement_assessments"] = assessments
+    packet["gap_analysis"] = [
+        dict(item) for item in assessments
+        if str(item.get("requirement_type") or "required").lower() == "required"
+        and str(item.get("status") or "unclear").lower() != "met"
+    ]
+
+    existing = {
+        _requirement_key(item.get("requirement")): dict(item)
+        for item in packet.get("interview_plan", []) if isinstance(item, dict)
+    }
+    interview_plan = []
+    for assessment in assessments:
+        status = str(assessment.get("status") or "unclear").lower()
+        if status == "met":
+            continue
+        requirement = assessment.get("requirement") or "Unspecified requirement"
+        item = existing.get(_requirement_key(requirement), {})
+        default_question = assessment.get("recruiter_question") or f"Please describe a specific example demonstrating {requirement}."
+        interview_plan.append({
+            "requirement": requirement,
+            "requirement_type": assessment.get("requirement_type") or "required",
+            "gap_status": status,
+            "question": item.get("question") or default_question,
+            "interviewer_rating": item.get("interviewer_rating") or "not_assessed",
+            "feedback": item.get("feedback") or "",
+            "evidence_observed": item.get("evidence_observed") or "",
+            "interviewer": item.get("interviewer") or "",
+            "decision_signal": item.get("decision_signal") or "pending",
+        })
+    packet["interview_plan"] = interview_plan
+    packet["role_match"] = _apply_documented_match_score(packet)
+    return packet
 
 
 def deterministic_talent_packet(documents: list[dict[str, Any]], candidate_name: str, error: str = "") -> dict[str, Any]:

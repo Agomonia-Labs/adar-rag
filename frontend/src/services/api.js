@@ -840,6 +840,12 @@ export async function downloadTalentPacket(runId) {
   return res.blob();
 }
 
+export async function ingestTalentPacket(runId) {
+  return handleRes(await fetch(`${LONG_BASE}/talent/runs/${runId}/packet/ingest`, {
+    method:'POST', headers:authHdr(),
+  }));
+}
+
 // ── Agent workflow evaluations ───────────────────────────────────────────────
 export async function evaluateAgentWorkflow(vertical, runId, { persist = true } = {}) {
   return handleRes(await fetch(`${BASE}/agent-evals/${vertical}/runs/${runId}`, {
