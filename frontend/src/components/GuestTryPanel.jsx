@@ -60,6 +60,13 @@ const ARCHITECTURE_FLOW = [
   { step:'05', title:'Review & act', text:'People verify results and continue into domain workflows and decisions.', state:'Human review' },
 ];
 
+const DETAIL_LABELS = {
+  journey: 'How it works',
+  capabilities: 'Capabilities',
+  industries: 'Industries',
+  architecture: 'Architecture',
+};
+
 export default function GuestTryPanel({ onSignIn, onOpenGuide, onOpenHelpCenter }) {
   const [docs, setDocs] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -213,30 +220,51 @@ export default function GuestTryPanel({ onSignIn, onOpenGuide, onOpenHelpCenter 
         <div style={{...s.heroTitleRow, ...(isMobile ? s.heroTitleRowMobile : {})}}>
           <h1 style={{...s.h1, ...(isMobile ? s.h1Mobile : {})}}>Connect Content Through Intelligent Knowledge</h1>
           {!isMobile && (
-            <details style={s.actionMenu}>
-              <summary style={s.actionMenuTrigger}>Next action ▾</summary>
-              <div style={s.actionMenuList}>
-                <button style={{...s.actionMenuItem, ...s.actionMenuPrimary}} onClick={() => fileRef.current?.click()} disabled={busy}>⬆ {busy ? 'Uploading...' : 'Upload and try'}</button>
-                <button style={s.actionMenuItem} onClick={trySample} disabled={busy}>▶ Explore with a sample</button>
-                <button style={s.actionMenuItem} onClick={onSignIn}>Sign in / create account</button>
-                <button style={s.actionMenuItem} onClick={onOpenGuide}>📘 User guide</button>
-                <button style={s.actionMenuItem} onClick={onOpenHelpCenter}>📘 Help Center</button>
-                <a href="/demo.docintel.html" style={{...s.actionMenuItem, ...s.guideLink}}>▶ See the platform end to end</a>
-              </div>
-            </details>
+            <div style={s.heroMenus}>
+              <details style={s.actionMenu}>
+                <summary style={s.exploreMenuTrigger}>Explore DocIntel ▾</summary>
+                <div style={{...s.actionMenuList, ...s.exploreMenuList}}>
+                  {[
+                    ['journey', 'How it works'],
+                    ['capabilities', 'Capabilities'],
+                    ['industries', 'Industries'],
+                    ['architecture', 'Architecture'],
+                  ].map(([key, label]) => (
+                    <button key={key} style={{...s.actionMenuItem, ...(detailTab === key ? s.detailTabOn : {})}} onClick={() => setDetailTab(current => current === key ? '' : key)}>{label}</button>
+                  ))}
+                </div>
+              </details>
+              <details style={s.actionMenu}>
+                <summary style={s.actionMenuTrigger}>Next action ▾</summary>
+                <div style={s.actionMenuList}>
+                  <button style={{...s.actionMenuItem, ...s.actionMenuPrimary}} onClick={() => fileRef.current?.click()} disabled={busy}>⬆ {busy ? 'Uploading...' : 'Upload and try'}</button>
+                  <button style={s.actionMenuItem} onClick={trySample} disabled={busy}>▶ Explore with a sample</button>
+                  <button style={s.actionMenuItem} onClick={onSignIn}>Sign in / create account</button>
+                  <button style={s.actionMenuItem} onClick={onOpenGuide}>📘 User guide</button>
+                  <button style={s.actionMenuItem} onClick={onOpenHelpCenter}>📘 Help Center</button>
+                  <a href="/demo.docintel.html" style={{...s.actionMenuItem, ...s.guideLink}}>▶ See the platform end to end</a>
+                </div>
+              </details>
+            </div>
           )}
         </div>
         {isMobile && (
-          <button type="button" style={s.heroToggle} onClick={() => toggleSection('intro')}>
-            <span>Start the guest preview</span>
-            <span style={s.chevron}>{openSections.intro ? '⌃' : '⌄'}</span>
-          </button>
+          <div style={s.mobileHeroControls}>
+            <button type="button" style={s.heroToggle} onClick={() => toggleSection('intro')}>
+              <span>Start the guest preview</span>
+              <span style={s.chevron}>{openSections.intro ? '⌃' : '⌄'}</span>
+            </button>
+            <select style={s.mobileExploreSelect} value={detailTab} onChange={event => setDetailTab(event.target.value)}>
+              <option value="">Explore DocIntel</option>
+              <option value="journey">How it works</option>
+              <option value="capabilities">Capabilities</option>
+              <option value="industries">Industries</option>
+              <option value="architecture">Architecture</option>
+            </select>
+          </div>
         )}
         {isOpen('intro') && (
           <div style={isMobile ? s.heroBodyMobile : undefined}>
-            <p style={{...s.copy, ...s.heroIntroCopy, ...(isMobile ? s.copyMobile : {})}}>
-              Upload your own file or use the sample brief to generate summaries, ask grounded questions, and turn scattered information into searchable, actionable knowledge.
-            </p>
             {isMobile && <div style={{...s.actions, ...s.actionsMobile}}>
               <button style={s.primary} onClick={() => fileRef.current?.click()} disabled={busy}>
                 ⬆ {busy ? 'Uploading...' : 'Upload and try'}
@@ -433,28 +461,11 @@ export default function GuestTryPanel({ onSignIn, onOpenGuide, onOpenHelpCenter 
         )}
       </section>
 
-      <section style={s.detailsSection}>
-        <div style={{...s.detailsHead, ...(isMobile ? s.detailsHeadMobile : {})}}>
-          <div>
-            <strong style={s.detailsTitle}>Explore ADAR DocIntel</strong>
-            <span style={s.detailsHint}>Open only the product information you want to see.</span>
-          </div>
-          <div style={{...s.detailTabs, ...(isMobile ? s.detailTabsMobile : {})}}>
-            {[
-              ['journey', 'How it works'],
-              ['capabilities', 'Capabilities'],
-              ['industries', 'Industries'],
-              ['architecture', 'Architecture'],
-            ].map(([key, label]) => (
-              <button
-                key={key}
-                style={{...s.detailTab, ...(detailTab === key ? s.detailTabOn : {})}}
-                onClick={() => setDetailTab(current => current === key ? '' : key)}
-              >{label}</button>
-            ))}
-          </div>
-        </div>
-
+      {detailTab && <section style={s.detailsSection}>
+        <button type="button" style={s.exploreCollapseHead} onClick={() => setDetailTab('')}>
+          <strong>Explore DocIntel · {DETAIL_LABELS[detailTab]}</strong>
+          <span style={s.chevron}>⌃</span>
+        </button>
         {detailTab === 'journey' && (
           <div style={{...s.stepGrid, ...(isMobile ? s.stepGridMobile : {})}}>
             {EXPERIENCE_STEPS.map(step => (
@@ -493,7 +504,7 @@ export default function GuestTryPanel({ onSignIn, onOpenGuide, onOpenHelpCenter 
             </div>
           </div>
         )}
-      </section>
+      </section>}
 
       <footer style={s.footer}>Agomonia Labs · ADAR DocIntel · Document, Speech, and Video Intelligence</footer>
     </div>
@@ -506,6 +517,7 @@ const s = {
   hero:{ width:'min(1180px, 100%)', flexShrink:0, border:'1px solid rgba(74,222,128,.18)', background:'var(--s1)', borderRadius:8, padding:'clamp(11px, 1.4vw, 16px)', boxShadow:'0 12px 34px rgba(0,0,0,.22)', position:'relative', overflow:'visible' },
   heroTitleRow:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:16 },
   heroTitleRowMobile:{ display:'block' },
+  heroMenus:{ display:'flex', alignItems:'center', gap:7, flex:'0 0 auto' },
   heroMobile:{ alignSelf:'stretch', maxWidth:'none' },
   topbar:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, marginBottom:6 },
   brand:{ display:'flex', alignItems:'center', gap:8, color:'#4ade80', fontWeight:800, fontSize:13 },
@@ -516,6 +528,8 @@ const s = {
   h1Mobile:{ fontSize:20, lineHeight:1.18, margin:'0 0 7px' },
   heroLead:{ maxWidth:980, color:'var(--tx2)', fontSize:12.5, lineHeight:1.45, margin:'0 0 7px' },
   heroToggle:{ width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, border:'1px solid var(--teal-mid)', background:'var(--teal-soft)', color:'var(--teal)', borderRadius:8, padding:'8px 10px', cursor:'pointer', fontSize:12, fontWeight:900 },
+  mobileHeroControls:{ display:'grid', gridTemplateColumns:'minmax(0,1fr) minmax(125px,42%)', gap:7, alignItems:'center' },
+  mobileExploreSelect:{ width:'100%', minWidth:0, minHeight:34, border:'1px solid rgba(56,189,248,.35)', borderRadius:8, background:'rgba(56,189,248,.1)', color:'#bae6fd', padding:'7px 8px', fontSize:10.5, fontWeight:900 },
   heroBodyMobile:{ marginTop:8, border:'1px solid var(--b1)', background:'var(--s1)', borderRadius:8, padding:10 },
   guestWorkspaceInfo:{ display:'flex', flexDirection:'column', gap:2, marginTop:8, padding:'8px 9px', border:'1px solid var(--b1)', background:'var(--s2)', borderRadius:8, color:'var(--tx2)', fontSize:11, lineHeight:1.35 },
   guestNoticeText:{ marginTop:4, padding:'6px 8px', borderLeft:'3px solid #38bdf8', borderRadius:6, background:'rgba(56,189,248,.08)', color:'#bae6fd', fontWeight:700 },
@@ -526,7 +540,9 @@ const s = {
   actions:{ display:'flex', gap:10, flexWrap:'wrap' },
   actionMenu:{ position:'relative', flex:'0 0 auto', zIndex:6 },
   actionMenuTrigger:{ listStyle:'none', minWidth:130, padding:'9px 12px', border:'1px solid rgba(74,222,128,.35)', borderRadius:7, background:'rgba(74,222,128,.1)', color:'#86efac', fontSize:11, fontWeight:900, textAlign:'center', cursor:'pointer', userSelect:'none' },
+  exploreMenuTrigger:{ listStyle:'none', minWidth:142, padding:'9px 12px', border:'1px solid rgba(56,189,248,.35)', borderRadius:7, background:'rgba(56,189,248,.1)', color:'#bae6fd', fontSize:11, fontWeight:900, textAlign:'center', cursor:'pointer', userSelect:'none' },
   actionMenuList:{ position:'absolute', top:'calc(100% + 6px)', right:0, width:230, display:'grid', gap:5, padding:7, border:'1px solid var(--b2)', borderRadius:8, background:'var(--s2)', boxShadow:'0 18px 40px rgba(0,0,0,.42)' },
+  exploreMenuList:{ width:180 },
   actionMenuItem:{ boxSizing:'border-box', width:'100%', minHeight:35, display:'flex', alignItems:'center', padding:'8px 10px', border:'1px solid var(--b1)', borderRadius:6, background:'var(--s3)', color:'var(--tx)', fontSize:11, fontWeight:800, textAlign:'left', textDecoration:'none', cursor:'pointer' },
   actionMenuPrimary:{ borderColor:'rgba(74,222,128,.35)', background:'#166534', color:'#fff' },
   actionsMobile:{ flexDirection:'column' },
@@ -536,7 +552,7 @@ const s = {
   guideBtn:{ border:'1px solid rgba(96,165,250,.32)', borderRadius:8, padding:'9px 12px', background:'rgba(96,165,250,.08)', color:'#93c5fd', fontSize:12, fontWeight:800, cursor:'pointer' },
   trustRow:{ display:'flex', flexWrap:'wrap', gap:'5px 16px', marginTop:9, color:'#a7f3d0', fontSize:10.5, fontWeight:700 },
   error:{ marginTop:8, padding:9, border:'1px solid rgba(248,113,113,.35)', background:'rgba(248,113,113,.1)', color:'#fecaca', borderRadius:8, fontSize:13 },
-  panel:{ width:'min(1180px, 100%)', flex:'0 0 auto', minHeight:310, maxHeight:'64vh', overflowY:'auto', background:'var(--s1)', border:'1px solid var(--b1)', borderRadius:8, padding:10, boxShadow:'0 14px 40px rgba(0,0,0,.26)' },
+  panel:{ order:2, width:'min(1180px, 100%)', flex:'0 0 auto', minHeight:310, maxHeight:'64vh', overflowY:'auto', background:'var(--s1)', border:'1px solid var(--b1)', borderRadius:8, padding:10, boxShadow:'0 14px 40px rgba(0,0,0,.26)' },
   panelMobile:{ alignSelf:'stretch', minHeight:0, maxHeight:'none', overflowY:'visible', padding:10, borderRadius:9, boxShadow:'0 14px 42px rgba(0,0,0,.32)' },
   panelHead:{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, marginBottom:8 },
   panelHeadMobile:{ gap:8, marginBottom:8 },
@@ -590,7 +606,8 @@ const s = {
   askBtnMobile:{ minHeight:42, padding:'10px 14px' },
   answer:{ maxHeight:220, overflowY:'auto', padding:12, background:'var(--bg)', color:'var(--tx)', lineHeight:1.75, fontSize:14 },
   answerMobile:{ maxHeight:'42dvh', overflowY:'auto', WebkitOverflowScrolling:'touch' },
-  detailsSection:{ width:'min(1180px,100%)', padding:10, border:'1px solid var(--b1)', borderRadius:8, background:'var(--s1)' },
+  detailsSection:{ order:1, width:'min(1180px,100%)', padding:10, border:'1px solid var(--b1)', borderRadius:8, background:'var(--s1)' },
+  exploreCollapseHead:{ width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, margin:0, padding:'7px 9px', border:'1px solid rgba(56,189,248,.24)', borderRadius:7, background:'rgba(56,189,248,.08)', color:'#bae6fd', fontSize:11.5, textAlign:'left', cursor:'pointer' },
   detailsHead:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:16 },
   detailsHeadMobile:{ alignItems:'stretch', flexDirection:'column', gap:8 },
   detailsTitle:{ display:'block', color:'var(--tx)', fontSize:14 },
@@ -631,7 +648,7 @@ const s = {
   industryItem:{ minWidth:0, padding:13, border:'1px solid var(--b1)', borderRadius:8, background:'var(--s1)' },
   industryIcon:{ display:'block', fontSize:20, marginBottom:8 },
   guideLink:{ boxSizing:'border-box', textDecoration:'none' },
-  footer:{ width:'min(1180px,100%)', padding:'16px 4px 28px', color:'#7f927f', fontSize:11, textAlign:'center' },
+  footer:{ order:3, width:'min(1180px,100%)', padding:'16px 4px 28px', color:'#7f927f', fontSize:11, textAlign:'center' },
 };
 
 function useIsMobile() {
