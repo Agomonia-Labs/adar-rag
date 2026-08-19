@@ -16,7 +16,7 @@ from services.audit import audit, ip_from, ua_from
 from services.chunker import chunk_text
 from services.llm import embed
 from services.text_safety import sanitize_text_for_storage
-from services.talent_intelligence import create_talent_packet, prepare_reviewed_talent_packet
+from services.talent_intelligence import create_talent_packet, prepare_reviewed_talent_packet, reconcile_interview_evidence
 from services.usage import check_and_log_daily_event, log_event
 from services.vectordb import delete_document_vectors, store_chunk
 import services.storage as gcs
@@ -167,6 +167,20 @@ async def approve_run(run_id: str, body: TalentReviewRequest, request: Request, 
     review.update({"status": "approved", "reviewed_by": current_user.get("full_name") or current_user.get("email") or user_id})
     row = await db.fetchrow("UPDATE talent_runs SET packet=$2::jsonb, reviewer_notes=$3, status='approved', reviewed_by=$4, reviewed_at=COALESCE(reviewed_at,NOW()), approved_by=$4, approved_at=NOW(), updated_at=NOW() WHERE id=$1 RETURNING *", run_id, json.dumps(body.packet), body.notes, user_id)
     await audit(db, user_id=user_id, action="talent_run_approve", resource_type="talent_run", resource_id=run_id, metadata={}, ip_address=ip_from(request), user_agent=ua_from(request))
+    return _run_response(row)
+
+
+@router.post("/runs/{run_id}/interview/reconcile")
+async def reconcile_interview(run_id: str, body: TalentReviewRequest, request: Request, current_user: CurrentUser, db=Depends(get_db)):
+    user_id = str(current_user["id"])
+    await _accessible_run(db, run_id, user_id)
+    reviewer = current_user.get("full_name") or current_user.get("email") or user_id
+    packet = reconcile_interview_evidence(body.packet, reviewer)
+    row = await db.fetchrow(
+        "UPDATE talent_runs SET packet=$2::jsonb, reviewer_notes=$3, status='reviewed', reviewed_by=$4, reviewed_at=NOW(), updated_at=NOW() WHERE id=$1 RETURNING *",
+        run_id, json.dumps(packet), body.notes, user_id,
+    )
+    await audit(db, user_id=user_id, action="talent_interview_reconcile", resource_type="talent_run", resource_id=run_id, metadata={"score": (packet.get("role_match") or {}).get("score"), "changes": len(packet.get("field_change_history") or [])}, ip_address=ip_from(request), user_agent=ua_from(request))
     return _run_response(row)
 
 
@@ -321,6 +335,8 @@ def _candidate_packet_text(packet: dict, run_id: str) -> str:
         ("REQUIREMENT EVIDENCE MATRIX", packet.get("requirement_assessments", [])),
         ("GAP ANALYSIS", packet.get("gap_analysis", [])),
         ("INTERVIEW VALIDATION", packet.get("interview_plan", [])),
+        ("INTERVIEW RECONCILIATION HISTORY", packet.get("interview_history", [])),
+        ("FIELD CHANGE HISTORY", packet.get("field_change_history", [])),
     ):
         lines.extend(["", heading])
         for item in items or []:
@@ -375,6 +391,8 @@ def _candidate_pdf(packet: dict, run) -> bytes:
         ("Requirement evidence matrix", packet.get("requirement_assessments", []), lambda x: f"<b>{x.get('requirement','')}</b> [{x.get('requirement_type','required')}; {x.get('status','unclear')}]: {x.get('evidence') or x.get('semantic_equivalence') or 'No evidence recorded'}"),
         ("Requirement gap analysis", packet.get("gap_analysis", []), lambda x: f"<b>{x.get('requirement','')}</b> ({x.get('status','unclear')}): {x.get('evidence','No evidence recorded')}"),
         ("Interview validation", packet.get("interview_plan", []), lambda x: f"<b>{x.get('requirement','')}</b>: {x.get('question','No question recorded')} Rating: {x.get('interviewer_rating','not assessed')}. Evidence: {x.get('evidence_observed') or 'Not recorded'}. Feedback: {x.get('feedback') or 'Not recorded'}."),
+        ("Interview reconciliation history", packet.get("interview_history", []), lambda x: f"<b>{x.get('requirement','')}</b>: {x.get('previous_status','unclear')} to {x.get('reconciled_status','unclear')}. Evidence: {x.get('evidence_observed') or 'Not recorded'}. Feedback: {x.get('feedback') or 'Not recorded'}. Reviewed by: {x.get('reconciled_by') or x.get('interviewer') or 'Not recorded'}."),
+        ("Field-level change history", packet.get("field_change_history", []), lambda x: f"<b>{x.get('requirement','')}</b>: {x.get('field','status')} changed from {x.get('old_value','')} to {x.get('new_value','')}. {x.get('reason','')}"),
     ]:
         story.append(Paragraph(title, styles["TalentHead"]))
         for item in items or []:

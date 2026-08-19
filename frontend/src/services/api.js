@@ -831,6 +831,12 @@ export async function approveTalentRun(runId, packet, notes = '') {
   }));
 }
 
+export async function reconcileTalentInterview(runId, packet, notes = '') {
+  return handleRes(await fetch(`${BASE}/talent/runs/${runId}/interview/reconcile`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify({packet, notes}),
+  }));
+}
+
 export async function downloadTalentPacket(runId) {
   const res = await fetch(`${BASE}/talent/runs/${runId}/packet.pdf`, { headers:authHdr() });
   if (!res.ok) {

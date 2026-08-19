@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from services.llm import LLM_PROVIDER, chat_stream
@@ -56,7 +57,7 @@ def _merge_packet(fallback: dict[str, Any], prior: dict[str, Any]) -> dict[str, 
     for key in ("candidate_profile", "role_profile", "role_match", "recruiter_review"):
         if isinstance(prior.get(key), dict):
             packet[key] = {**packet.get(key, {}), **prior[key]}
-    for key, identities in (("skills", ("name",)), ("requirement_assessments", ("requirement",)), ("gap_analysis", ("requirement",)), ("interview_plan", ("requirement",)), ("evidence_notes", ("finding",))):
+    for key, identities in (("skills", ("name",)), ("requirement_assessments", ("requirement",)), ("gap_analysis", ("requirement",)), ("interview_plan", ("requirement",)), ("interview_history", ("requirement", "reconciled_at")), ("field_change_history", ("requirement", "changed_at")), ("evidence_notes", ("finding",))):
         if isinstance(prior.get(key), list):
             packet[key] = _merge_records(packet.get(key, []), prior[key], identities)
     profile = packet.setdefault("candidate_profile", {})
@@ -497,6 +498,60 @@ def prepare_reviewed_talent_packet(packet: dict[str, Any]) -> dict[str, Any]:
     packet["interview_plan"] = interview_plan
     packet["role_match"] = _apply_documented_match_score(packet)
     return packet
+
+
+def reconcile_interview_evidence(packet: dict[str, Any], reviewer: str = "") -> dict[str, Any]:
+    packet = dict(packet or {})
+    assessments = [dict(item) for item in packet.get("requirement_assessments", []) if isinstance(item, dict)]
+    by_requirement = {_requirement_key(item.get("requirement")): item for item in assessments}
+    history = [dict(item) for item in packet.get("interview_history", []) if isinstance(item, dict)]
+    changes = [dict(item) for item in packet.get("field_change_history", []) if isinstance(item, dict)]
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    for interview in packet.get("interview_plan", []):
+        if not isinstance(interview, dict):
+            continue
+        rating = str(interview.get("interviewer_rating") or "not_assessed").lower()
+        signal = str(interview.get("decision_signal") or "pending").lower()
+        if rating == "not_assessed" and signal == "pending":
+            continue
+        positive = rating == "strong_evidence" or signal == "supports"
+        negative = rating == "insufficient_evidence" or signal == "does_not_support"
+        if positive and negative:
+            new_status = "unclear"
+        elif positive:
+            new_status = "met"
+        elif negative:
+            new_status = "missing"
+        elif rating == "some_evidence" or signal == "mixed":
+            new_status = "partial"
+        else:
+            new_status = "unclear"
+
+        key = _requirement_key(interview.get("requirement"))
+        assessment = by_requirement.get(key)
+        if not assessment:
+            continue
+        old_status = str(assessment.get("status") or "unclear").lower()
+        observed = interview.get("evidence_observed") or ""
+        feedback = interview.get("feedback") or ""
+        if old_status == new_status and assessment.get("interview_evidence", "") == observed and assessment.get("interview_feedback", "") == feedback:
+            continue
+        assessment.update({
+            "status": new_status,
+            "analysis_method": "interview_reconciled",
+            "interview_evidence": observed,
+            "interview_feedback": feedback,
+            "interviewed_by": interview.get("interviewer") or reviewer,
+            "reconciled_at": timestamp,
+        })
+        history.append({**interview, "previous_status": old_status, "reconciled_status": new_status, "reconciled_by": reviewer, "reconciled_at": timestamp})
+        changes.append({"requirement": assessment.get("requirement"), "field": "status", "old_value": old_status, "new_value": new_status, "reason": "Interview evidence reconciliation", "changed_by": reviewer, "changed_at": timestamp})
+
+    packet["requirement_assessments"] = assessments
+    packet["interview_history"] = history
+    packet["field_change_history"] = changes
+    return prepare_reviewed_talent_packet(packet)
 
 
 def deterministic_talent_packet(documents: list[dict[str, Any]], candidate_name: str, error: str = "") -> dict[str, Any]:
