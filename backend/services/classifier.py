@@ -15,13 +15,11 @@ DOCUMENT_TYPES = [
     "property_management_agreement", "cam_reconciliation",
     "employment_contract", "terms_of_service",
     # Finance
-    "invoice", "receipt", "purchase_order", "financial_statement", "audit_report", "tax_return", "w2",
-    "retirement_statement", "brokerage_statement", "bank_statement", "credit_card_statement",
-    "mortgage_interest", "property_tax", "charitable_receipt",
+    "invoice", "receipt", "purchase_order", "financial_statement", "audit_report", "tax_return",
     # Business
     "report", "proposal", "presentation", "memo", "business_plan",
     # HR
-    "resume", "cv", "job_description", "offer_letter", "performance_review",
+    "resume", "cv", "job_description", "offer_letter", "performance_review", "skills_profile", "certification_record",
     # Medical
     "medical_record", "prescription", "lab_report", "clinical_notes",
     "after_visit_summary", "medication_list", "discharge_summary", "referral",
@@ -33,7 +31,7 @@ DOCUMENT_TYPES = [
     # Correspondence
     "email", "letter", "notice",
     # General
-    "video", "general",
+    "general",
 ]
 
 DOMAINS = ["legal", "finance", "hr", "medical", "research", "operations", "general"]
@@ -43,16 +41,7 @@ HEURISTIC_RULES = [
     ("receipt", "finance", ("receipt", "paid", "transaction id", "payment received")),
     ("purchase_order", "finance", ("purchase order", "po number", "p.o. number", "vendor")),
     ("financial_statement", "finance", ("balance sheet", "income statement", "cash flow", "statement of operations")),
-    ("w2", "finance", ("form w-2", "form w 2", "wage and tax statement", "wages tips and other compensation", "federal income tax withheld", "social security wages")),
-    ("retirement_statement", "finance", ("401(k)", "401k", "retirement statement", "retirement plan", "ira statement", "employee contribution", "employer match", "vested balance")),
-    ("brokerage_statement", "finance", ("brokerage statement", "consolidated 1099", "1099 consolidated", "1099-div", "1099-int", "qualified dividends", "capital gain distributions", "gross proceeds", "cost basis")),
-    ("bank_statement", "finance", ("bank statement", "deposit accounts", "account summary", "beginning balance", "ending balance", "deposits and other additions", "withdrawals and other subtractions")),
-    ("credit_card_statement", "finance", ("credit card statement", "new balance total", "minimum payment due", "payment due date", "credit line", "purchases and adjustments", "payments and other credits")),
-    ("mortgage_interest", "finance", ("form 1098", "1098 mortgage", "mortgage interest statement", "mortgage interest paid", "year-to-date interest paid", "ytd interest", "interest received from payer", "outstanding mortgage principal", "principal balance", "refund of overpaid interest", "points paid on purchase", "private mortgage insurance", "loan origination date", "mortgage lender")),
-    ("property_tax", "finance", ("property tax statement", "property tax bill", "real estate tax", "parcel number", "assessed value", "taxable value")),
-    ("charitable_receipt", "finance", ("donation receipt", "charitable contribution receipt", "thank you for your donation", "donation contribution", "monetary donation", "cash donation", "no goods or services", "ein")),
-    ("tax_return", "finance", ("prior year tax return", "previous year tax return", "federal tax return", "state tax return", "u.s. individual income tax return", "form 1040", "1040-sr", "schedule a", "adjusted gross income", "taxable income")),
-    ("video", "general", ("video file uploaded", "video intelligence workflow", ".mp4", ".mov", ".mkv", ".webm")),
+    ("tax_return", "finance", ("tax return", "form 1040", "w-2", "1099")),
     ("nda", "legal", ("non-disclosure", "confidentiality agreement", "nda")),
     ("lease_extension", "legal", ("lease extension", "extension agreement", "extend the term")),
     ("lease_amendment", "legal", ("lease amendment", "amendment to lease", "first amendment", "second amendment")),
@@ -67,6 +56,8 @@ HEURISTIC_RULES = [
     ("contract", "legal", ("contract", "agreement", "terms and conditions", "party agrees")),
     ("resume", "hr", ("resume", "curriculum vitae", "work experience", "education", "skills")),
     ("job_description", "hr", ("job description", "responsibilities", "qualifications", "requirements")),
+    ("skills_profile", "hr", ("skills profile", "competency profile", "skills inventory", "career profile")),
+    ("certification_record", "hr", ("certification record", "professional certification", "credential issued", "credential id")),
     ("offer_letter", "hr", ("offer letter", "we are pleased to offer", "start date", "salary")),
     ("medical_record", "medical", ("medical record", "patient", "diagnosis", "treatment plan")),
     ("prescription", "medical", ("prescription", "rx", "dosage", "take one")),
@@ -106,25 +97,8 @@ async def classify_document(
     sample  = text_sample[:CLASSIFICATION_SAMPLE_CHARS].strip() if text_sample else ""
 
     if not google_ai_key:
-        heuristic = _heuristic_classification(filename, sample)
-        if heuristic:
-            log.info(
-                "Heuristic fallback because GOOGLE_AI_KEY is not set: %s/%s — %s",
-                heuristic["doc_type"],
-                heuristic["doc_domain"],
-                filename,
-            )
-            return {
-                "doc_type": heuristic["doc_type"],
-                "doc_domain": heuristic["doc_domain"],
-                "doc_language": "en",
-                "confidence": heuristic["confidence"],
-                "reasoning": f"{heuristic['reasoning']}; GOOGLE_AI_KEY is not set",
-                "source": "heuristic",
-                "sample_chars": len(sample),
-            }
         log.warning("GOOGLE_AI_KEY is not set; document classification defaulting to general — %s", filename)
-        return _default("missing_google_ai_key", sample_chars=len(sample))
+        return _default("missing_google_ai_key")
 
     fn_hint = f"Filename: {filename}\nFile type: {file_type}\n\n" if filename else ""
 
@@ -136,15 +110,6 @@ async def classify_document(
 Use the closest matching doc_type and doc_domain from the allowed lists.
 Treat "general" as a last resort only when there are no recognizable signals in the filename or excerpt.
 If the document is an agreement, invoice, resume, report, medical record, policy, procedure, research paper, letter, or similar common business document, do not classify it as general.
-If the document is a W-2 wage and tax statement, classify doc_type as "w2" and doc_domain as "finance"; do not classify it as a generic tax_return.
-If the document is a 401(k), IRA, pension, or retirement plan statement, classify doc_type as "retirement_statement" and doc_domain as "finance".
-If the document is a brokerage, investment account, consolidated 1099, 1099-INT, 1099-DIV, or 1099-B statement, classify doc_type as "brokerage_statement" and doc_domain as "finance".
-If the document is a checking, savings, deposit account, or bank account statement, classify doc_type as "bank_statement" and doc_domain as "finance".
-If the document is a credit card statement, Visa/Mastercard account statement, card payment statement, or statement with purchases, payments, and new balance total, classify doc_type as "credit_card_statement" and doc_domain as "finance".
-If the document is a Form 1098 mortgage interest statement, classify doc_type as "mortgage_interest" and doc_domain as "finance".
-If the document is a property tax or real estate tax statement, classify doc_type as "property_tax" and doc_domain as "finance".
-If the document is a charitable donation receipt or charitable contribution acknowledgement, classify doc_type as "charitable_receipt" and doc_domain as "finance".
-If the document is a prior-year, previous-year, federal, state, or Form 1040 tax return, classify doc_type as "tax_return" and doc_domain as "finance".
 If filename and excerpt disagree, prefer the excerpt.
 
 {fn_hint}DOCUMENT EXCERPT:
@@ -191,7 +156,7 @@ Classify this document and respond ONLY with valid JSON:
                 match = re.search(r'\{.*\}', text, re.DOTALL)
                 result = json.loads(match.group()) if match else {}
 
-            doc_type   = _normalize_doc_type(result.get("doc_type", "general"))
+            doc_type   = result.get("doc_type", "general")
             doc_domain = result.get("doc_domain", "general")
             language   = normalize_language(result.get("doc_language", "en"))
             confidence = float(result.get("confidence", 0.5))
@@ -206,11 +171,7 @@ Classify this document and respond ONLY with valid JSON:
                 doc_domain = "general"
 
             heuristic = _heuristic_classification(filename, sample)
-            if heuristic and (
-                doc_type == "general"
-                or confidence <= 0.55
-                or _should_prefer_heuristic_doc_type(doc_type, heuristic["doc_type"])
-            ):
+            if heuristic and (doc_type == "general" or confidence <= 0.55):
                 log.info(
                     "Heuristic override: %s/%s -> %s/%s — %s",
                     doc_type,
@@ -272,131 +233,9 @@ def _default(reason: str = "fallback", sample_chars: int = 0) -> dict:
             "sample_chars": sample_chars}
 
 
-def _normalize_doc_type(doc_type: str) -> str:
-    normalized = re.sub(r"[\s\-]+", "_", str(doc_type or "").strip().lower())
-    aliases = {
-        "tax": "tax_return",
-        "taxes": "tax_return",
-        "income_tax": "tax_return",
-        "income_tax_return": "tax_return",
-        "federal_tax_return": "tax_return",
-        "state_tax_return": "tax_return",
-        "prior_year_return": "tax_return",
-        "prior_year_tax_return": "tax_return",
-        "previous_year_tax_return": "tax_return",
-        "form_1040": "tax_return",
-        "1040": "tax_return",
-        "1040_sr": "tax_return",
-        "bank": "bank_statement",
-        "checking_statement": "bank_statement",
-        "savings_statement": "bank_statement",
-        "deposit_statement": "bank_statement",
-        "credit_card": "credit_card_statement",
-        "card_statement": "credit_card_statement",
-        "visa_statement": "credit_card_statement",
-    }
-    return aliases.get(normalized, normalized or "general")
-
-
-def _should_prefer_heuristic_doc_type(doc_type: str, heuristic_doc_type: str) -> bool:
-    if doc_type == heuristic_doc_type:
-        return False
-    specific_finance_tax_types = {
-        "tax_return",
-        "w2",
-        "retirement_statement",
-        "brokerage_statement",
-        "bank_statement",
-        "credit_card_statement",
-        "mortgage_interest",
-        "property_tax",
-        "charitable_receipt",
-    }
-    broad_finance_types = {"financial_statement", "receipt", "invoice", "general"}
-    return heuristic_doc_type in specific_finance_tax_types and doc_type in broad_finance_types
-
-
 def _heuristic_classification(filename: str, sample: str) -> dict | None:
-    raw_haystack = f"{filename}\n{sample}".lower()
-    if _looks_like_video(raw_haystack):
-        return {
-            "doc_type": "video",
-            "doc_domain": "general",
-            "confidence": 0.9,
-            "reasoning": "Matched supported video file or video workflow signals",
-        }
-    if _has_explicit_tax_return_marker(raw_haystack):
-        return {
-            "doc_type": "tax_return",
-            "doc_domain": "finance",
-            "confidence": 0.84,
-            "reasoning": "Matched explicit Form 1040 or prior-year tax return signals",
-        }
-    if _looks_like_w2(raw_haystack):
-        return {
-            "doc_type": "w2",
-            "doc_domain": "finance",
-            "confidence": 0.84,
-            "reasoning": "Matched W-2 wage and tax statement signals",
-        }
-    if _looks_like_retirement_statement(raw_haystack):
-        return {
-            "doc_type": "retirement_statement",
-            "doc_domain": "finance",
-            "confidence": 0.82,
-            "reasoning": "Matched retirement plan statement signals",
-        }
-    if _looks_like_brokerage_statement(raw_haystack):
-        return {
-            "doc_type": "brokerage_statement",
-            "doc_domain": "finance",
-            "confidence": 0.82,
-            "reasoning": "Matched brokerage statement signals",
-        }
-    if _looks_like_credit_card_statement(raw_haystack):
-        return {
-            "doc_type": "credit_card_statement",
-            "doc_domain": "finance",
-            "confidence": 0.82,
-            "reasoning": "Matched credit card statement signals",
-        }
-    if _looks_like_bank_statement(raw_haystack):
-        return {
-            "doc_type": "bank_statement",
-            "doc_domain": "finance",
-            "confidence": 0.82,
-            "reasoning": "Matched deposit bank statement signals",
-        }
-    if _looks_like_mortgage_interest(raw_haystack):
-        return {
-            "doc_type": "mortgage_interest",
-            "doc_domain": "finance",
-            "confidence": 0.82,
-            "reasoning": "Matched mortgage interest statement signals",
-        }
-    if _looks_like_property_tax(raw_haystack):
-        return {
-            "doc_type": "property_tax",
-            "doc_domain": "finance",
-            "confidence": 0.82,
-            "reasoning": "Matched property tax statement signals",
-        }
-    if _looks_like_charitable_receipt(raw_haystack):
-        return {
-            "doc_type": "charitable_receipt",
-            "doc_domain": "finance",
-            "confidence": 0.84,
-            "reasoning": "Matched charitable donation receipt signals",
-        }
-    if _looks_like_tax_return(raw_haystack):
-        return {
-            "doc_type": "tax_return",
-            "doc_domain": "finance",
-            "confidence": 0.82,
-            "reasoning": "Matched prior-year or Form 1040 tax return signals",
-        }
-
-    haystack = re.sub(r"[_\-./]+", " ", raw_haystack)
+    haystack = f"{filename}\n{sample}".lower()
+    haystack = re.sub(r"[_\-./]+", " ", haystack)
 
     best: tuple[str, str, str] | None = None
     for doc_type, doc_domain, keywords in HEURISTIC_RULES:
@@ -419,289 +258,6 @@ def _heuristic_classification(filename: str, sample: str) -> dict | None:
     }
 
 
-def _looks_like_video(haystack: str) -> bool:
-    return bool(re.search(r"\.(mp4|mov|m4v|avi|mkv|webm)\b", haystack or "", re.I)) or "video file uploaded" in (haystack or "")
-
-
-def _looks_like_w2(haystack: str) -> bool:
-    normalized = re.sub(r"[\u2010-\u2015]", "-", haystack or "")
-    explicit_markers = [
-        r"\bform\s+w\s*[- ]?\s*2\b",
-        r"\bw\s*[- ]?\s*2\b",
-        r"\bw2\b",
-        r"\bwage\s+(?:and\s+)?tax\s+statement\b",
-        r"\bwages?\s+and\s+tax\s+statement\b",
-    ]
-    if any(re.search(pattern, normalized, re.I) for pattern in explicit_markers):
-        return True
-
-    w2_box_signals = [
-        r"\bwages?,?\s+tips?,?\s+(?:and\s+)?other\s+compensation\b",
-        r"\bfederal\s+income\s+tax\s+withheld\b",
-        r"\bsocial\s+security\s+wages\b",
-        r"\bsocial\s+security\s+tax\s+withheld\b",
-        r"\bmedicare\s+wages?\s+(?:and\s+)?tips\b",
-        r"\bmedicare\s+tax\s+withheld\b",
-        r"\bemployer\s+identification\s+number\b",
-        r"\bemployer\s+ein\b",
-    ]
-    hits = sum(1 for pattern in w2_box_signals if re.search(pattern, normalized, re.I))
-    return hits >= 3
-
-
-def _has_explicit_tax_return_marker(haystack: str) -> bool:
-    normalized = re.sub(r"[\u2010-\u2015]", "-", haystack or "")
-    explicit_markers = [
-        r"\b(?:tax_return|prior_year_return|prior_tax_return|prior_year_tax_return|previous_year_tax_return|federal_tax_return|state_tax_return)\b",
-        r"\bform\s+1040(?:-sr|-nr)?\b",
-        r"\bu\.?s\.?\s+individual\s+income\s+tax\s+return\b",
-        r"\bprior[- ]?year\s+(?:federal\s+|state\s+)?tax\s+return\b",
-        r"\bprevious[- ]?year\s+(?:federal\s+|state\s+)?tax\s+return\b",
-        r"\blast\s+year'?s?\s+(?:federal\s+|state\s+)?tax\s+return\b",
-        r"\bfederal\s+tax\s+return\b",
-        r"\bstate\s+tax\s+return\b",
-    ]
-    return any(re.search(pattern, normalized, re.I) for pattern in explicit_markers)
-
-
-def _looks_like_retirement_statement(haystack: str) -> bool:
-    normalized = re.sub(r"[\u2010-\u2015]", "-", haystack or "")
-    explicit_markers = [
-        r"\b401\s*\(?\s*k\s*\)?\b",
-        r"\b403\s*\(?\s*b\s*\)?\b",
-        r"\b457\s*\(?\s*b\s*\)?\b",
-        r"\bira\b",
-        r"\broth\s+ira\b",
-        r"\bpension\b",
-        r"\bretirement\s+(?:plan\s+)?statement\b",
-        r"\bretirement\s+account\b",
-    ]
-    if any(re.search(pattern, normalized, re.I) for pattern in explicit_markers):
-        return True
-
-    retirement_signals = [
-        r"\bemployee\s+(?:pre-tax\s+|roth\s+)?contributions?\b",
-        r"\bemployer\s+(?:matching\s+)?contributions?\b",
-        r"\bemployer\s+match\b",
-        r"\bvested\s+balance\b",
-        r"\baccount\s+balance\b",
-        r"\bparticipant\b",
-        r"\brollover\b",
-        r"\bplan\s+year\b",
-        r"\bplan\s+administrator\b",
-    ]
-    hits = sum(1 for pattern in retirement_signals if re.search(pattern, normalized, re.I))
-    return hits >= 3
-
-
-def _looks_like_brokerage_statement(haystack: str) -> bool:
-    normalized = re.sub(r"[\u2010-\u2015]", "-", haystack or "")
-    explicit_markers = [
-        r"\bbrokerage\s+statement\b",
-        r"\binvestment\s+account\s+statement\b",
-        r"\bconsolidated\s+1099\b",
-        r"\b1099\s+consolidated\b",
-        r"\b1099[- ]?int\b",
-        r"\b1099[- ]?div\b",
-        r"\b1099[- ]?b\b",
-        r"\bcapital\s+gain\s+distributions?\b",
-        r"\bqualified\s+dividends?\b",
-        r"\bgross\s+proceeds\b",
-        r"\bcost\s+basis\b",
-    ]
-    if any(re.search(pattern, normalized, re.I) for pattern in explicit_markers):
-        return True
-
-    brokerage_signals = [
-        r"\binterest\s+income\b",
-        r"\bordinary\s+dividends?\b",
-        r"\bqualified\s+dividends?\b",
-        r"\bcapital\s+gain\s+distributions?\b",
-        r"\bgross\s+proceeds\b",
-        r"\bcost\s+basis\b",
-        r"\bshort[- ]?term\b",
-        r"\blong[- ]?term\b",
-        r"\bfederal\s+income\s+tax\s+withheld\b",
-        r"\baccount\s+value\b",
-    ]
-    hits = sum(1 for pattern in brokerage_signals if re.search(pattern, normalized, re.I))
-    return hits >= 3
-
-
-def _looks_like_mortgage_interest(haystack: str) -> bool:
-    normalized = re.sub(r"[\u2010-\u2015]", "-", haystack or "")
-    explicit_markers = [
-        r"\bform\s+1098\b",
-        r"\b1098\s+mortgage\b",
-        r"\bmortgage\s+interest\s+statement\b",
-        r"\bmortgage\s+interest\s+(?:statement|paid)\b",
-        r"\b(?:year[- ]?to[- ]?date|ytd|total)\s+(?:mortgage\s+)?interest\s+paid\b",
-        r"\binterest\s+paid\s+(?:this\s+year|year[- ]?to[- ]?date|ytd)\b",
-        r"\binterest\s+received\s+from\s+(?:payer|borrower)\b",
-        r"\boutstanding\s+mortgage\s+principal\b",
-        r"\bprincipal\s+balance\b",
-        r"\brefund\s+of\s+overpaid\s+interest\b",
-        r"\bpoints\s+paid\s+on\s+purchase\b",
-        r"\bprivate\s+mortgage\s+insurance\b",
-        r"\bmortgage\s+lender\b",
-    ]
-    if any(re.search(pattern, normalized, re.I) for pattern in explicit_markers):
-        return True
-
-    mortgage_signals = [
-        r"\bmortgage\s+interest\b",
-        r"\bbox\s*1\b",
-        r"\bbox\s*2\b",
-        r"\bbox\s*4\b",
-        r"\bbox\s*5\b",
-        r"\bbox\s*6\b",
-        r"\bpoints\s+paid\b",
-        r"\binterest\s+paid\b",
-        r"\bytd\s+interest\b",
-        r"\byear[- ]?to[- ]?date\s+interest\b",
-        r"\boutstanding\s+(?:mortgage\s+)?principal\b",
-        r"\bprincipal\s+balance\b",
-        r"\bending\s+principal\b",
-        r"\brefund\s+of\s+overpaid\s+interest\b",
-        r"\bmortgage\s+insurance\s+premiums?\b",
-        r"\bprivate\s+mortgage\s+insurance\b",
-        r"\bpmi\b",
-        r"\bloan\s+origination\s+date\b",
-        r"\blender\b",
-        r"\bproperty\s+address\b",
-    ]
-    hits = sum(1 for pattern in mortgage_signals if re.search(pattern, normalized, re.I))
-    return hits >= 3
-
-
-def _looks_like_bank_statement(haystack: str) -> bool:
-    normalized = re.sub(r"[\u2010-\u2015]", "-", haystack or "")
-    explicit_markers = [
-        r"\byour\s+combined\s+statement\b",
-        r"\byour\s+deposit\s+accounts\b",
-        r"\bbank\s+statement\b",
-        r"\bchecking\s+account\s+statement\b",
-        r"\bsavings\s+account\s+statement\b",
-    ]
-    if any(re.search(pattern, normalized, re.I) for pattern in explicit_markers):
-        return True
-    bank_signals = [
-        r"\baccount\s+summary\b",
-        r"\bbeginning\s+balance\b",
-        r"\bending\s+balance\b",
-        r"\bdeposits\s+and\s+other\s+additions\b",
-        r"\bwithdrawals\s+and\s+other\s+subtractions\b",
-        r"\bservice\s+fees\b",
-        r"\btotal\s+balance\b",
-    ]
-    hits = sum(1 for pattern in bank_signals if re.search(pattern, normalized, re.I))
-    return hits >= 4
-
-
-def _looks_like_credit_card_statement(haystack: str) -> bool:
-    normalized = re.sub(r"[\u2010-\u2015]", "-", haystack or "")
-    explicit_markers = [
-        r"\bvisa\s+signature\b",
-        r"\bcredit\s+card\s+statement\b",
-        r"\bnew\s+balance\s+total\b",
-    ]
-    if any(re.search(pattern, normalized, re.I) for pattern in explicit_markers):
-        return True
-    card_signals = [
-        r"\bcurrent\s+payment\s+due\b",
-        r"\btotal\s+minimum\s+payment\s+due\b",
-        r"\bpayment\s+due\s+date\b",
-        r"\bpurchases\s+and\s+adjustments\b",
-        r"\bpayments\s+and\s+other\s+credits\b",
-        r"\bfees\s+charged\b",
-        r"\binterest\s+charged\b",
-        r"\btotal\s+credit\s+line\b",
-    ]
-    hits = sum(1 for pattern in card_signals if re.search(pattern, normalized, re.I))
-    return hits >= 4
-
-
-def _looks_like_property_tax(haystack: str) -> bool:
-    normalized = re.sub(r"[\u2010-\u2015]", "-", haystack or "")
-    explicit_markers = [
-        r"\bproperty\s+tax\s+(?:statement|bill|notice|record)\b",
-        r"\breal\s+estate\s+tax(?:es)?\b",
-        r"\bcounty\s+tax\s+(?:statement|bill)\b",
-        r"\bparcel\s+(?:number|id)\b",
-    ]
-    if any(re.search(pattern, normalized, re.I) for pattern in explicit_markers):
-        return True
-
-    property_tax_signals = [
-        r"\bproperty\s+tax(?:es)?\b",
-        r"\breal\s+estate\s+tax(?:es)?\b",
-        r"\bassessed\s+value\b",
-        r"\btaxable\s+value\b",
-        r"\bparcel\b",
-        r"\btax\s+year\b",
-        r"\btax\s+due\b",
-    ]
-    hits = sum(1 for pattern in property_tax_signals if re.search(pattern, normalized, re.I))
-    return hits >= 3
-
-
-def _looks_like_charitable_receipt(haystack: str) -> bool:
-    normalized = re.sub(r"[\u2010-\u2015]", "-", haystack or "")
-    explicit_markers = [
-        r"\bdonation\s+receipt\b",
-        r"\bcharitable\s+(?:contribution|donation)\s+receipt\b",
-        r"\bthank\s+you\s+for\s+your\s+donation\b",
-        r"\bdonation\s+contribution\b",
-        r"\bmonetary\s+donation\b",
-        r"\bcash\s+donation\b",
-        r"\bno\s+goods\s+or\s+services\b",
-        r"\bdonor\b",
-    ]
-    if any(re.search(pattern, normalized, re.I) for pattern in explicit_markers):
-        return True
-
-    charity_signals = [
-        r"\bdonation\b",
-        r"\bcontribution\b",
-        r"\bcharitable\b",
-        r"\bnon[- ]?profit\b",
-        r"\b501\s*\(?c\)?\(?3\)?\b",
-        r"\bein\b",
-        r"\breceipt\b",
-    ]
-    hits = sum(1 for pattern in charity_signals if re.search(pattern, normalized, re.I))
-    return hits >= 3
-
-
-def _looks_like_tax_return(haystack: str) -> bool:
-    normalized = re.sub(r"[\u2010-\u2015]", "-", haystack or "")
-    explicit_markers = [
-        r"\bform\s+1040(?:-sr|-nr)?\b",
-        r"\bu\.?s\.?\s+individual\s+income\s+tax\s+return\b",
-        r"\bprior[- ]?year\s+(?:federal\s+|state\s+)?tax\s+return\b",
-        r"\bprevious[- ]?year\s+(?:federal\s+|state\s+)?tax\s+return\b",
-        r"\blast\s+year'?s?\s+(?:federal\s+|state\s+)?tax\s+return\b",
-        r"\bfederal\s+tax\s+return\b",
-        r"\bstate\s+tax\s+return\b",
-    ]
-    if any(re.search(pattern, normalized, re.I) for pattern in explicit_markers):
-        return True
-
-    tax_return_signals = [
-        r"\badjusted\s+gross\s+income\b",
-        r"\btaxable\s+income\b",
-        r"\bstandard\s+deduction\b",
-        r"\bitemized\s+deductions?\b",
-        r"\bschedule\s+[a-f]\b",
-        r"\bfiling\s+status\b",
-        r"\btotal\s+tax\b",
-        r"\brefund\b",
-        r"\bamount\s+you\s+owe\b",
-    ]
-    hits = sum(1 for pattern in tax_return_signals if re.search(pattern, normalized, re.I))
-    return hits >= 3
-
-
 # ── Human-readable labels and colours ─────────────────────────────────────────
 
 DOC_TYPE_LABELS = {
@@ -718,15 +274,7 @@ DOC_TYPE_LABELS = {
     "employment_contract": "Employment", "terms_of_service": "Terms",
     "invoice": "Invoice",             "receipt": "Receipt",
     "purchase_order": "PO",           "financial_statement": "Financial",
-    "audit_report": "Audit",          "tax_return": "Tax Return",
-    "w2": "W-2",
-    "retirement_statement": "Retirement",
-    "brokerage_statement": "Brokerage",
-    "bank_statement": "Bank Statement",
-    "credit_card_statement": "Credit Card",
-    "mortgage_interest": "Mortgage",
-    "property_tax": "Property Tax",
-    "charitable_receipt": "Donation",
+    "audit_report": "Audit",          "tax_return": "Tax",
     "report": "Report",               "proposal": "Proposal",
     "presentation": "Presentation",   "memo": "Memo",
     "business_plan": "Business Plan",

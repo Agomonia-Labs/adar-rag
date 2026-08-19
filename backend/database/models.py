@@ -714,6 +714,31 @@ CREATE INDEX IF NOT EXISTS idx_restaurant_feedback_created    ON restaurant_feed
 ALTER TABLE restaurant_feedback
     ADD COLUMN IF NOT EXISTS responded_at TIMESTAMPTZ;
 
+CREATE TABLE IF NOT EXISTS talent_runs (
+    id                    UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id               UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id          UUID        REFERENCES workspaces(id) ON DELETE SET NULL,
+    resume_document_ids   JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    job_description_id    UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    candidate_name        TEXT        NOT NULL DEFAULT '',
+    workflow_version      TEXT        NOT NULL DEFAULT 'talent-mvp1-v1',
+    status                TEXT        NOT NULL DEFAULT 'needs_review',
+    packet                JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    reviewer_notes        TEXT        NOT NULL DEFAULT '',
+    reviewed_by           UUID        REFERENCES users(id) ON DELETE SET NULL,
+    reviewed_at           TIMESTAMPTZ,
+    approved_by           UUID        REFERENCES users(id) ON DELETE SET NULL,
+    approved_at           TIMESTAMPTZ,
+    error_message         TEXT,
+    created_at            TIMESTAMPTZ DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ DEFAULT NOW(),
+    completed_at          TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_talent_runs_user ON talent_runs(user_id);
+CREATE INDEX IF NOT EXISTS idx_talent_runs_workspace ON talent_runs(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_talent_runs_job ON talent_runs(job_description_id);
+CREATE INDEX IF NOT EXISTS idx_talent_runs_status ON talent_runs(status);
+
 """
 
 

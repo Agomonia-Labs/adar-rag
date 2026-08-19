@@ -14,6 +14,7 @@ import HealthcarePanel from './components/HealthcarePanel.jsx';
 import RestaurantPanel from './components/RestaurantPanel.jsx';
 import VideoPanel      from './components/VideoPanel.jsx';
 import FinanceTaxPanel from './components/FinanceTaxPanel.jsx';
+import TalentPanel     from './components/TalentPanel.jsx';
 import { ToastContainer } from './components/Toast.jsx';
 import { claimGuestSession, getMe, getWorkspace }       from './services/api.js';
 import { LANGUAGES, getLanguage, getStrings } from './i18n.js';
@@ -34,6 +35,7 @@ export default function App() {
   const [showRestaurantPanel, setShowRestaurantPanel] = useState(false);
   const [showVideoPanel,   setShowVideoPanel]   = useState(false);
   const [showFinanceTaxPanel, setShowFinanceTaxPanel] = useState(false);
+  const [showTalentPanel, setShowTalentPanel] = useState(false);
   const [openLeasePickerKey, setOpenLeasePickerKey] = useState(0);
   const [openHealthcarePickerKey, setOpenHealthcarePickerKey] = useState(0);
   const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0);
@@ -214,6 +216,11 @@ export default function App() {
     setShowFinanceTaxPanel(true);
   };
 
+  const openTalentWorkflow = () => {
+    closeMenus();
+    setShowTalentPanel(true);
+  };
+
   return (
     <>
       <ToastContainer />
@@ -250,6 +257,9 @@ export default function App() {
           activeWorkspace={activeWorkspace}
           onClose={() => setShowFinanceTaxPanel(false)}
         />
+      )}
+      {showTalentPanel && (
+        <TalentPanel activeWorkspace={activeWorkspace} onClose={() => setShowTalentPanel(false)} />
       )}
       <div style={s.shell}>
         <header style={{...s.header, ...(isMobile ? s.headerMobile : {})}}>
@@ -367,6 +377,13 @@ export default function App() {
                       onClick={openFinanceTaxWorkflow}>
                       <span>💼</span>
                       <span>Tax & Financial Planning Readiness</span>
+                    </button>
+                  </div>
+                  <div style={s.verticalGroup}>
+                    <div style={s.verticalGroupTitle}>Talent</div>
+                    <button style={s.verticalItem} onClick={openTalentWorkflow}>
+                      <span>👥</span>
+                      <span>Talent Management Readiness</span>
                     </button>
                   </div>
                 </div>

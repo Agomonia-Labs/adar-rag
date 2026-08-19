@@ -136,6 +136,7 @@ _ROUTERS = [
     ("routes.lease",          "lease_router",          "/api/lease",         ["lease"]),
     ("routes.healthcare",     "healthcare_router",     "/api/healthcare",    ["healthcare"]),
     ("routes.restaurant",     "restaurant_router",     "/api/restaurant",    ["restaurant"]),
+    ("routes.talent",         "talent_router",         "/api/talent",        ["talent"]),
     ("routes.agent_evals",    "agent_evals_router",    "/api/agent-evals",   ["agent-evals"]),
 ]
 

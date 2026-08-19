@@ -784,6 +784,62 @@ export async function withdrawFinanceTaxAgentRun(runId) {
   }));
 }
 
+// ── Talent management intelligence ──────────────────────────────────────────
+export async function listTalentDocuments(workspaceId = null) {
+  const qs = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : '';
+  return handleRes(await fetch(`${BASE}/talent/documents${qs}`, { headers:authHdr() }));
+}
+
+export async function createTalentRun(payload) {
+  return handleRes(await fetch(`${LONG_BASE}/talent/runs`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function listTalentRuns(workspaceId = null) {
+  const qs = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : '';
+  return handleRes(await fetch(`${BASE}/talent/runs${qs}`, { headers:authHdr() }));
+}
+
+export async function saveTalentReview(runId, packet, notes = '') {
+  return handleRes(await fetch(`${BASE}/talent/runs/${runId}/review`, {
+    method:'PATCH', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify({packet, notes}),
+  }));
+}
+
+export async function saveTalentRun(runId, packet, notes = '') {
+  return handleRes(await fetch(`${BASE}/talent/runs/${runId}/save`, {
+    method:'PATCH', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify({packet, notes}),
+  }));
+}
+
+export async function rerunTalentRun(runId) {
+  return handleRes(await fetch(`${LONG_BASE}/talent/runs/${runId}/rerun`, {
+    method:'POST', headers:authHdr(),
+  }));
+}
+
+export async function deleteTalentRun(runId) {
+  return handleRes(await fetch(`${BASE}/talent/runs/${runId}`, {
+    method:'DELETE', headers:authHdr(),
+  }));
+}
+
+export async function approveTalentRun(runId, packet, notes = '') {
+  return handleRes(await fetch(`${BASE}/talent/runs/${runId}/approve`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify({packet, notes}),
+  }));
+}
+
+export async function downloadTalentPacket(runId) {
+  const res = await fetch(`${BASE}/talent/runs/${runId}/packet.pdf`, { headers:authHdr() });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.blob();
+}
+
 // ── Agent workflow evaluations ───────────────────────────────────────────────
 export async function evaluateAgentWorkflow(vertical, runId, { persist = true } = {}) {
   return handleRes(await fetch(`${BASE}/agent-evals/${vertical}/runs/${runId}`, {
