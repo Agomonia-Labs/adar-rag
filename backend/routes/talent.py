@@ -29,6 +29,7 @@ class TalentRunRequest(BaseModel):
     job_description_id: str
     candidate_name: str = ""
     notes: str = ""
+    workflow_type: str = "candidate_readiness"
 
 
 class TalentReviewRequest(BaseModel):
@@ -43,7 +44,7 @@ async def list_talent_documents(workspace_id: str | None = None, current_user: C
         SELECT d.id, d.original_name, d.doc_type, d.doc_domain, d.status, d.chunk_count, d.workspace_id, d.created_at
         FROM documents d
         WHERE d.status != 'deleted'
-          AND d.doc_type IN ('resume','cv','job_description')
+          AND d.doc_type IN ('resume','cv','job_description','performance_review','skills_profile','certification_record','training_record','project_record')
           AND (($2::uuid IS NULL AND d.workspace_id IS NULL AND d.user_id=$1)
             OR ($2::uuid IS NOT NULL AND d.workspace_id=$2 AND EXISTS (
               SELECT 1 FROM workspace_members wm WHERE wm.workspace_id=$2 AND wm.user_id=$1
@@ -65,9 +66,11 @@ async def create_run(body: TalentRunRequest, request: Request, current_user: Cur
     by_id = {str(d["id"]): d for d in docs}
     if by_id[body.job_description_id]["doc_type"] != "job_description":
         raise HTTPException(400, "The selected role document must be classified as Job Description")
-    invalid_resumes = [doc_id for doc_id in body.resume_document_ids if by_id[doc_id]["doc_type"] not in ("resume", "cv")]
+    workflow_type = body.workflow_type if body.workflow_type in ("candidate_readiness", "internal_mobility") else "candidate_readiness"
+    evidence_types = ("resume", "cv") if workflow_type == "candidate_readiness" else ("resume", "cv", "performance_review", "skills_profile", "certification_record", "training_record", "project_record")
+    invalid_resumes = [doc_id for doc_id in body.resume_document_ids if by_id[doc_id]["doc_type"] not in evidence_types]
     if invalid_resumes:
-        raise HTTPException(400, "Candidate documents must be classified as Resume or CV")
+        raise HTTPException(400, "One or more selected documents are not supported evidence for this talent workflow")
     if any(d["status"] not in ("chunked", "embedding", "embedded") for d in docs):
         raise HTTPException(400, "All selected documents must finish processing before role matching")
 
@@ -80,7 +83,7 @@ async def create_run(body: TalentRunRequest, request: Request, current_user: Cur
                 f"No readable content is available for {doc['original_name']}. Reprocess the document before running Talent Readiness.",
             )
         source_docs.append({"id": str(doc["id"]), "name": doc["original_name"], "doc_type": doc["doc_type"], "chunks": chunks})
-    packet = await create_talent_packet(source_docs, body.candidate_name, body.notes)
+    packet = await create_talent_packet(source_docs, body.candidate_name, body.notes, workflow_type=workflow_type)
     workspace_id = next((str(d["workspace_id"]) for d in docs if d["workspace_id"]), None)
     row = await db.fetchrow(
         """
@@ -131,7 +134,7 @@ async def rerun(run_id: str, request: Request, current_user: CurrentUser, db=Dep
         raise HTTPException(404, "One or more source documents for this workflow are no longer available")
     source_docs = await _build_source_documents(db, docs, user_id)
     prior_packet = _decode_json(existing["packet"], {})
-    packet = await create_talent_packet(source_docs, existing["candidate_name"] or "", existing["reviewer_notes"] or "", prior_packet=prior_packet)
+    packet = await create_talent_packet(source_docs, existing["candidate_name"] or "", existing["reviewer_notes"] or "", prior_packet=prior_packet, workflow_type=prior_packet.get("workflow_type", "candidate_readiness"))
     row = await db.fetchrow("UPDATE talent_runs SET packet=$2::jsonb, status='needs_review', completed_at=NOW(), updated_at=NOW() WHERE id=$1 RETURNING *", run_id, json.dumps(packet))
     await audit(db, user_id=user_id, action="talent_run_incremental", resource_type="talent_run", resource_id=run_id, metadata={"document_ids": ids}, ip_address=ip_from(request), user_agent=ua_from(request))
     return _run_response(row)
@@ -188,9 +191,11 @@ async def reconcile_interview(run_id: str, body: TalentReviewRequest, request: R
 async def download_packet(run_id: str, current_user: CurrentUser, db=Depends(get_db)):
     run = await _accessible_run(db, run_id, str(current_user["id"]))
     if run["status"] != "approved":
-        raise HTTPException(400, "Recruiter approval is required before downloading the candidate packet")
-    content = _candidate_pdf(_jsonable(_decode_json(run["packet"], {})), run)
-    filename = re_safe(run["candidate_name"] or "candidate") + "-talent-packet.pdf"
+        raise HTTPException(400, "Human approval is required before downloading the talent packet")
+    packet = _jsonable(_decode_json(run["packet"], {}))
+    content = _candidate_pdf(packet, run)
+    suffix = "mobility-readiness-packet" if packet.get("workflow_type") == "internal_mobility" else "talent-packet"
+    filename = re_safe(run["candidate_name"] or "person") + f"-{suffix}.pdf"
     return StreamingResponse(io.BytesIO(content), media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
@@ -199,7 +204,7 @@ async def ingest_packet(run_id: str, request: Request, current_user: CurrentUser
     user_id = str(current_user["id"])
     run = await _accessible_run(db, run_id, user_id)
     if run["status"] != "approved":
-        raise HTTPException(400, "Recruiter approval is required before ingesting the candidate packet")
+        raise HTTPException(400, "Human approval is required before ingesting the talent packet")
 
     existing = await db.fetchrow(
         """SELECT id, original_name, status, chunk_count FROM documents
@@ -214,7 +219,8 @@ async def ingest_packet(run_id: str, request: Request, current_user: CurrentUser
 
     packet = prepare_reviewed_talent_packet(_decode_json(run["packet"], {}))
     pdf_bytes = _candidate_pdf(packet, run)
-    title = f"Candidate Review Packet - {run['candidate_name'] or (packet.get('candidate_profile') or {}).get('name') or 'Candidate'}"
+    subject = run['candidate_name'] or (packet.get('candidate_profile') or {}).get('name') or 'Person'
+    title = f"Employee Growth and Mobility Packet - {subject}" if packet.get("workflow_type") == "internal_mobility" else f"Candidate Review Packet - {subject}"
     filename = re_safe(title) + ".pdf"
     doc_id = str(uuid4())
     workspace_id = str(run["workspace_id"]) if run.get("workspace_id") else None
@@ -318,10 +324,11 @@ def re_safe(value: str) -> str:
 
 def _candidate_packet_text(packet: dict, run_id: str) -> str:
     profile, role, match = packet.get("candidate_profile", {}), packet.get("role_profile", {}), packet.get("role_match", {})
+    mobility = packet.get("workflow_type") == "internal_mobility"
     lines = [
-        "ADAR DOCINTEL CANDIDATE REVIEW PACKET",
+        "ADAR DOCINTEL EMPLOYEE GROWTH AND MOBILITY PACKET" if mobility else "ADAR DOCINTEL CANDIDATE REVIEW PACKET",
         f"Talent workflow run: {run_id}",
-        f"Candidate: {profile.get('name') or 'Not provided'}",
+        f"{'Employee' if mobility else 'Candidate'}: {profile.get('name') or 'Not provided'}",
         f"Role: {role.get('title') or 'Not provided'}",
         f"Documented match: {match.get('score', 0)} percent",
         "",
@@ -337,11 +344,12 @@ def _candidate_packet_text(packet: dict, run_id: str) -> str:
         ("INTERVIEW VALIDATION", packet.get("interview_plan", [])),
         ("INTERVIEW RECONCILIATION HISTORY", packet.get("interview_history", [])),
         ("FIELD CHANGE HISTORY", packet.get("field_change_history", [])),
+        ("DEVELOPMENT PLAN", packet.get("development_plan", [])),
     ):
         lines.extend(["", heading])
         for item in items or []:
             lines.append(json.dumps(item, ensure_ascii=True, default=str))
-    lines.extend(["", "RECRUITER REVIEW", json.dumps(packet.get("recruiter_review", {}), ensure_ascii=True, default=str)])
+    lines.extend(["", "HUMAN REVIEW", json.dumps(packet.get("recruiter_review", {}), ensure_ascii=True, default=str)])
     return "\n".join(lines)
 
 
@@ -381,9 +389,10 @@ def _candidate_pdf(packet: dict, run) -> bytes:
     styles.add(ParagraphStyle(name="TalentHead", parent=styles["Heading2"], textColor=colors.HexColor("#166534"), fontSize=12, spaceBefore=12, spaceAfter=5))
     styles.add(ParagraphStyle(name="TalentBody", parent=styles["BodyText"], fontSize=9.5, leading=14))
     profile, role, match = packet.get("candidate_profile", {}), packet.get("role_profile", {}), packet.get("role_match", {})
-    story = [Paragraph("ADAR DocIntel Candidate Review Packet", styles["TalentTitle"]), Paragraph("Human-reviewed talent intelligence for recruiter decision support", styles["TalentBody"]), Spacer(1, 12)]
-    story.append(Table([["Candidate", profile.get("name") or run["candidate_name"] or "Not provided"], ["Role", role.get("title") or "Not provided"], ["Documented match", f"{match.get('score', 0)}%"], ["Review status", str(run["status"]).replace("_", " ").title()]], colWidths=[1.35*inch, 5.7*inch], style=TableStyle([("BACKGROUND",(0,0),(0,-1),colors.HexColor("#ecfdf5")),("TEXTCOLOR",(0,0),(0,-1),colors.HexColor("#166534")),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#d1d5db")),("FONTNAME",(0,0),(0,-1),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9),("VALIGN",(0,0),(-1,-1),"TOP"),("PADDING",(0,0),(-1,-1),6)])))
-    sections = [("Candidate profile", profile.get("summary") or profile.get("headline") or "No summary available."), ("Role match", match.get("summary") or "No match narrative available."), ("Recruiter notes", run["reviewer_notes"] or "No reviewer notes provided.")]
+    mobility = packet.get("workflow_type") == "internal_mobility"
+    story = [Paragraph("ADAR DocIntel Employee Growth and Mobility Packet" if mobility else "ADAR DocIntel Candidate Review Packet", styles["TalentTitle"]), Paragraph("Human-reviewed evidence for internal mobility and employee development" if mobility else "Human-reviewed talent intelligence for recruiter decision support", styles["TalentBody"]), Spacer(1, 12)]
+    story.append(Table([["Employee" if mobility else "Candidate", profile.get("name") or run["candidate_name"] or "Not provided"], ["Target role" if mobility else "Role", role.get("title") or "Not provided"], ["Readiness" if mobility else "Documented match", f"{match.get('score', 0)}%"], ["Review status", str(run["status"]).replace("_", " ").title()]], colWidths=[1.35*inch, 5.7*inch], style=TableStyle([("BACKGROUND",(0,0),(0,-1),colors.HexColor("#ecfdf5")),("TEXTCOLOR",(0,0),(0,-1),colors.HexColor("#166534")),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#d1d5db")),("FONTNAME",(0,0),(0,-1),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9),("VALIGN",(0,0),(-1,-1),"TOP"),("PADDING",(0,0),(-1,-1),6)])))
+    sections = [("Employee profile" if mobility else "Candidate profile", profile.get("summary") or profile.get("headline") or "No summary available."), ("Mobility readiness" if mobility else "Role match", match.get("summary") or "No match narrative available."), ("Reviewer notes", run["reviewer_notes"] or "No reviewer notes provided.")]
     for title, text in sections:
         story += [Paragraph(title, styles["TalentHead"]), Paragraph(str(text), styles["TalentBody"])]
     for title, items, formatter in [
@@ -393,6 +402,7 @@ def _candidate_pdf(packet: dict, run) -> bytes:
         ("Interview validation", packet.get("interview_plan", []), lambda x: f"<b>{x.get('requirement','')}</b>: {x.get('question','No question recorded')} Rating: {x.get('interviewer_rating','not assessed')}. Evidence: {x.get('evidence_observed') or 'Not recorded'}. Feedback: {x.get('feedback') or 'Not recorded'}."),
         ("Interview reconciliation history", packet.get("interview_history", []), lambda x: f"<b>{x.get('requirement','')}</b>: {x.get('previous_status','unclear')} to {x.get('reconciled_status','unclear')}. Evidence: {x.get('evidence_observed') or 'Not recorded'}. Feedback: {x.get('feedback') or 'Not recorded'}. Reviewed by: {x.get('reconciled_by') or x.get('interviewer') or 'Not recorded'}."),
         ("Field-level change history", packet.get("field_change_history", []), lambda x: f"<b>{x.get('requirement','')}</b>: {x.get('field','status')} changed from {x.get('old_value','')} to {x.get('new_value','')}. {x.get('reason','')}"),
+        ("Employee development plan", packet.get("development_plan", []), lambda x: f"<b>{x.get('capability','')}</b> ({x.get('status','unclear')}): {x.get('development_action') or 'No action recorded'}. Owner: {x.get('owner') or 'Unassigned'}. Target: {x.get('target_date') or 'Not set'}. Success evidence: {x.get('success_evidence') or 'Not recorded'}. Progress: {x.get('progress') or 'not started'}."),
     ]:
         story.append(Paragraph(title, styles["TalentHead"]))
         for item in items or []:

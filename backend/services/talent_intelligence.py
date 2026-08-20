@@ -54,10 +54,10 @@ def _merge_packet(fallback: dict[str, Any], prior: dict[str, Any]) -> dict[str, 
     packet = {key: value for key, value in fallback.items() if key not in ("source_documents", "governance")}
     if not isinstance(prior, dict):
         return packet
-    for key in ("candidate_profile", "role_profile", "role_match", "recruiter_review"):
+    for key in ("candidate_profile", "role_profile", "role_match", "recruiter_review", "mobility_profile"):
         if isinstance(prior.get(key), dict):
             packet[key] = {**packet.get(key, {}), **prior[key]}
-    for key, identities in (("skills", ("name",)), ("requirement_assessments", ("requirement",)), ("gap_analysis", ("requirement",)), ("interview_plan", ("requirement",)), ("interview_history", ("requirement", "reconciled_at")), ("field_change_history", ("requirement", "changed_at")), ("evidence_notes", ("finding",))):
+    for key, identities in (("skills", ("name",)), ("requirement_assessments", ("requirement",)), ("gap_analysis", ("requirement",)), ("interview_plan", ("requirement",)), ("interview_history", ("requirement", "reconciled_at")), ("field_change_history", ("requirement", "changed_at")), ("evidence_notes", ("finding",)), ("development_plan", ("capability",))):
         if isinstance(prior.get(key), list):
             packet[key] = _merge_records(packet.get(key, []), prior[key], identities)
     profile = packet.setdefault("candidate_profile", {})
@@ -67,7 +67,7 @@ def _merge_packet(fallback: dict[str, Any], prior: dict[str, Any]) -> dict[str, 
     return packet
 
 
-async def create_talent_packet(documents: list[dict[str, Any]], candidate_name: str = "", notes: str = "", prior_packet: dict[str, Any] | None = None) -> dict[str, Any]:
+async def create_talent_packet(documents: list[dict[str, Any]], candidate_name: str = "", notes: str = "", prior_packet: dict[str, Any] | None = None, workflow_type: str = "candidate_readiness") -> dict[str, Any]:
     context = build_talent_context(documents)
     if not context.strip():
         raise TalentIntelligenceError("Selected talent documents contain no readable text")
@@ -77,20 +77,25 @@ async def create_talent_packet(documents: list[dict[str, Any]], candidate_name: 
         len(documents),
         len(context),
     )
-    system = """You are an HR document intelligence assistant preparing evidence for human recruiter review.
+    workflow_type = workflow_type if workflow_type in ("candidate_readiness", "internal_mobility") else "candidate_readiness"
+    internal_mobility = workflow_type == "internal_mobility"
+    system = """You are an HR document intelligence assistant preparing evidence for authorized human review.
 Return only valid JSON and use only supplied evidence. Never infer protected characteristics, personality, age, ethnicity, disability, family status, religion, gender, or health. Keep every narrative concise and complete. Never end text with an ellipsis or unfinished sentence."""
-    resume_context = build_talent_context([d for d in documents if d["doc_type"] in ("resume", "cv")], 60000)
+    evidence_types = ("resume", "cv", "performance_review", "skills_profile", "certification_record", "training_record", "project_record")
+    resume_context = build_talent_context([d for d in documents if d["doc_type"] in evidence_types], 60000)
     job_context = build_talent_context([d for d in documents if d["doc_type"] == "job_description"], 22000)
     fallback = deterministic_talent_packet(documents, candidate_name)
     packet = _merge_packet(fallback, prior_packet or {})
     failures: list[str] = []
     completed: list[str] = []
 
-    profile_prompt = f"""Extract only the candidate's core professional profile from the resume/CV.
-Candidate label: {candidate_name or 'Not provided'}
+    subject_label = "employee" if internal_mobility else "candidate"
+    evidence_label = "employee evidence documents" if internal_mobility else "resume/CV"
+    profile_prompt = f"""Extract only the {subject_label}'s core professional profile from the {evidence_label}.
+{subject_label.title()} label: {candidate_name or 'Not provided'}
 Return exactly: {{"candidate_profile":{{"name":"","headline":"","summary":"80-120 words in complete sentences","years_experience":0,"location":""}}}}
 For years_experience, use the explicitly stated total or calculate a conservative whole number from documented employment dates. Never return 0 when the resume explicitly states years of experience. The summary must synthesize leadership, technical breadth, industries, and measurable impact when documented. Do not return education, certifications, experience arrays, skills, or ellipses.
-RESUME CONTENT:\n{resume_context}"""
+EVIDENCE CONTENT:\n{resume_context}"""
     profile_data = await _extract_stage("profile_core", system, profile_prompt, failures)
     if profile_data:
         profile = profile_data.get("candidate_profile")
@@ -112,10 +117,10 @@ RESUME CONTENT:\n{resume_context}"""
         ("certifications", '{"certifications":[{"name":"","issuer":"","date":"","status":""}]}', ("name", "issuer", "date"), 15),
     ]
     for section, shape, identities, limit in section_specs:
-        section_prompt = f"""Extract only {section} records from the resume/CV.
+        section_prompt = f"""Extract only {section} records from the {evidence_label}.
 Return exactly this JSON shape: {shape}
 Return an empty list only when the resume does not document this section. Include at most {limit} complete records. Preserve names, institutions, employers, dates, and credential details exactly when available. Never use ellipses.
-RESUME CONTENT:\n{resume_context}"""
+EVIDENCE CONTENT:\n{resume_context}"""
         section_data = await _extract_stage(section, system, section_prompt, failures)
         if section_data and isinstance(section_data.get(section), list):
             packet["candidate_profile"][section] = _merge_records(packet["candidate_profile"].get(section, []), section_data[section], identities)
@@ -123,10 +128,10 @@ RESUME CONTENT:\n{resume_context}"""
         else:
             failures.append(f"{section}: structured extraction was incomplete")
 
-    skills_prompt = f"""Extract demonstrated professional skills from the resume/CV.
+    skills_prompt = f"""Extract demonstrated professional skills from the {evidence_label}.
 Return exactly: {{"skills":[{{"name":"","level":"demonstrated|mentioned|unknown","years":0,"evidence":"maximum 30 words","document_id":""}}]}}
 Include up to 30 distinct technical, leadership, architecture, delivery, and domain skills. Consolidate synonyms and use evidence from all career positions.
-RESUME CONTENT:\n{resume_context}"""
+EVIDENCE CONTENT:\n{resume_context}"""
     skills_data = await _extract_stage("skills", system, skills_prompt, failures)
     if skills_data and isinstance(skills_data.get("skills"), list) and skills_data["skills"]:
         merged_skills = _merge_records(skills_data["skills"], packet.get("skills", []), ("name",))
@@ -260,6 +265,7 @@ JOB DESCRIPTION:\n{job_context}"""
     else:
         failures.append("gap_analysis: requirement gaps were incomplete")
 
+    packet["workflow_type"] = workflow_type
     normalized = normalize_talent_packet(packet, documents, candidate_name)
     normalized["gap_analysis"] = _ensure_gap_coverage(normalized)
     if prior_packet:
@@ -346,6 +352,7 @@ def normalize_talent_packet(packet: dict[str, Any], documents: list[dict[str, An
         score = min(95, round(coverage * 90 + transferable))
     role_match["score"] = score
     return {
+        "workflow_type": packet.get("workflow_type") if packet.get("workflow_type") in ("candidate_readiness", "internal_mobility") else "candidate_readiness",
         "candidate_profile": profile,
         "skills": packet.get("skills") if isinstance(packet.get("skills"), list) else [],
         "role_profile": packet.get("role_profile") if isinstance(packet.get("role_profile"), dict) else {},
@@ -353,6 +360,8 @@ def normalize_talent_packet(packet: dict[str, Any], documents: list[dict[str, An
         "requirement_assessments": packet.get("requirement_assessments") if isinstance(packet.get("requirement_assessments"), list) else [],
         "gap_analysis": packet.get("gap_analysis") if isinstance(packet.get("gap_analysis"), list) else [],
         "evidence_notes": packet.get("evidence_notes") if isinstance(packet.get("evidence_notes"), list) else [],
+        "development_plan": packet.get("development_plan") if isinstance(packet.get("development_plan"), list) else [],
+        "mobility_profile": packet.get("mobility_profile") if isinstance(packet.get("mobility_profile"), dict) else {},
         "recruiter_review": packet.get("recruiter_review") if isinstance(packet.get("recruiter_review"), dict) else {"status": "needs_review"},
         "source_documents": [{"id": d["id"], "name": d["name"], "doc_type": d["doc_type"]} for d in documents],
         "governance": {"assistive_only": True, "human_review_required": True, "protected_attributes_excluded": True},
@@ -496,6 +505,33 @@ def prepare_reviewed_talent_packet(packet: dict[str, Any]) -> dict[str, Any]:
             "decision_signal": item.get("decision_signal") or "pending",
         })
     packet["interview_plan"] = interview_plan
+    if packet.get("workflow_type") == "internal_mobility":
+        existing_development = {
+            _requirement_key(item.get("capability")): dict(item)
+            for item in packet.get("development_plan", []) if isinstance(item, dict)
+        }
+        development_plan = []
+        for assessment in assessments:
+            status = str(assessment.get("status") or "unclear").lower()
+            if status == "met":
+                continue
+            capability = assessment.get("requirement") or "Unspecified capability"
+            prior = existing_development.get(_requirement_key(capability), {})
+            default_action = {
+                "partial": "Add a stretch assignment or targeted learning activity to strengthen demonstrated proficiency.",
+                "missing": "Define a development activity, supervised project, or formal learning path before readiness review.",
+                "unclear": "Request manager or employee evidence before assigning a development action.",
+            }.get(status, "Review this capability with the employee and manager.")
+            development_plan.append({
+                "capability": capability,
+                "status": status,
+                "development_action": prior.get("development_action") or default_action,
+                "owner": prior.get("owner") or "",
+                "target_date": prior.get("target_date") or "",
+                "success_evidence": prior.get("success_evidence") or "",
+                "progress": prior.get("progress") or "not_started",
+            })
+        packet["development_plan"] = development_plan
     packet["role_match"] = _apply_documented_match_score(packet)
     return packet
 
@@ -555,13 +591,14 @@ def reconcile_interview_evidence(packet: dict[str, Any], reviewer: str = "") -> 
 
 
 def deterministic_talent_packet(documents: list[dict[str, Any]], candidate_name: str, error: str = "") -> dict[str, Any]:
-    resume_text = " ".join(c.get("content", "") for d in documents if d["doc_type"] in ("resume", "cv") for c in d.get("chunks", []))
+    evidence_types = ("resume", "cv", "performance_review", "skills_profile", "certification_record", "training_record", "project_record")
+    resume_text = " ".join(c.get("content", "") for d in documents if d["doc_type"] in evidence_types for c in d.get("chunks", []))
     job_text = " ".join(c.get("content", "") for d in documents if d["doc_type"] == "job_description" for c in d.get("chunks", []))
     common = sorted(set(_skill_tokens(resume_text)) & set(_skill_tokens(job_text)))
     required = _skill_tokens(job_text)[:30]
     gaps = [skill for skill in required if skill not in common]
     score = round(100 * len(common) / max(1, len(set(required))))
-    resume_doc = next((d for d in documents if d["doc_type"] in ("resume", "cv")), {})
+    resume_doc = next((d for d in documents if d["doc_type"] in evidence_types), {})
     skill_summary = ", ".join(_skill_tokens(resume_text)[:12]) or "skills requiring recruiter review"
     requirement_summary = ", ".join(required[:12]) or "requirements requiring recruiter review"
     explicit_years = _explicit_years_experience(resume_text)
