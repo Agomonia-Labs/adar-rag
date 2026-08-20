@@ -944,7 +944,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
         <div class="narration">
           <div class="slide-num">Vertical Product Layers</div>
           <div class="slide-title">Domain Agentic Workflows</div>
-          <div class="slide-sub">DocIntel uses one horizontal RAG, governance, and traceability platform, then adds specialized vertical workflows for healthcare, lease management, and restaurant/menu intelligence.</div>
+          <div class="slide-sub">DocIntel uses one horizontal RAG, governance, and traceability platform, then adds specialized vertical workflows for healthcare, lease management, restaurants, finance, and talent readiness.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">🎙</span><span>Clinical scribe — consent-based visit audio, 5-language transcription, SOAP note draft, patient summary, follow-up checklist, and After Visit Summary</span></div>
             <div class="feature-item"><span class="feature-icon">🏥</span><span>Clinical document intelligence — after-visit summaries, clinical notes, lab reports, medication lists, prior history, and care gaps</span></div>
@@ -952,6 +952,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div class="feature-item"><span class="feature-icon">📄</span><span>Patient-ready AVS artifact — generate PDF, save to GCS, chunk, embed, and make it searchable for future chat</span></div>
             <div class="feature-item"><span class="feature-icon">👥</span><span>Healthcare review workbench — RBAC personas, editable packet sections, approval workflow, audit trail, and field-level change history</span></div>
             <div class="feature-item"><span class="feature-icon">🏢</span><span>Lease intelligence — abstract, critical dates, obligations, amendment comparison, clause flags, risk flags, and approval workflow</span></div>
+            <div class="feature-item"><span class="feature-icon">🎯</span><span>Talent readiness — resume and job-description ingestion, semantic evidence matching, gap analysis, interview reconciliation, scoring, and candidate packets</span></div>
             <div class="feature-item"><span class="feature-icon">🍽</span><span>Restaurant scribe — segmented long recordings, full transcript, profile/menu extraction, deterministic item-price parsing, edit/approve/save</span></div>
             <div class="feature-item"><span class="feature-icon">🛒</span><span>Restaurant ordering — text or voice menu comparison, mobile comparison cards, collapsible cart, DB-backed restaurant/menu IDs, Stripe checkout, owner queue, and email notification</span></div>
             <div class="feature-item"><span class="feature-icon">⭐</span><span>Restaurant feedback — typed or voice feedback, semantic rating suggestion, verified-order ratings, owner response queue, and recommendation signals</span></div>
@@ -1906,8 +1907,52 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
       </div>
     </div>
 
-    <!-- 27. Guest Preview -->
+    <!-- 27. Talent Management Readiness -->
     <div class="slide" data-idx="26">
+      <div class="slide-inner">
+        <div class="narration">
+          <div class="slide-num">Talent Intelligence</div>
+          <div class="slide-title">Talent Management Readiness</div>
+          <div class="slide-sub">DocIntel connects resumes and job descriptions into an evidence-backed workflow for structured profiles, semantic role matching, interview validation, score reconciliation, and human-reviewed candidate packets.</div>
+          <div class="feature-list">
+            <div class="feature-item"><span class="feature-icon">📄</span><span>Ingest one or more resumes or CVs with the target job description from the same workspace</span></div>
+            <div class="feature-item"><span class="feature-icon">🧠</span><span>Build candidate profile, skills, experience, education, certifications, and full-resume semantic requirement evidence</span></div>
+            <div class="feature-item"><span class="feature-icon">📊</span><span>Score Met and Partial evidence while treating Unclear evidence as neutral interview validation</span></div>
+            <div class="feature-item"><span class="feature-icon">🔄</span><span>Reconcile interview findings back into the Evidence Matrix and recalculate documented match</span></div>
+            <div class="feature-item"><span class="feature-icon">🤝</span><span>Save, review, approve, download, and ingest a traceable candidate packet; humans retain decision accountability</span></div>
+          </div>
+          <button class="btn-speak" onclick="speakSlide(26)">🔊 Play narration</button>
+        </div>
+        <div class="mockup">
+          <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">Talent Readiness — Candidate Review</div></div>
+          <div class="mockup-body" style="display:flex;flex-direction:column;gap:8px">
+            <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;background:rgba(74,222,128,.07);border:1px solid rgba(74,222,128,.2);border-radius:8px;padding:9px">
+              <div><div style="font-size:12px;font-weight:800;color:#f0fdf4">Director, AI Engineering</div><div style="font-size:9px;color:#9ca3af;margin-top:2px">Resume + Job Description · Human review required</div></div>
+              <div style="font-size:20px;font-weight:900;color:#4ade80">86%</div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+              <div style="background:rgba(74,222,128,.08);border-radius:7px;padding:8px;text-align:center"><b style="color:#4ade80;font-size:14px">70</b><br><span style="font-size:8px;color:#9ca3af">Required</span></div>
+              <div style="background:rgba(96,165,250,.08);border-radius:7px;padding:8px;text-align:center"><b style="color:#60a5fa;font-size:14px">11</b><br><span style="font-size:8px;color:#9ca3af">Preferred</span></div>
+              <div style="background:rgba(251,191,36,.08);border-radius:7px;padding:8px;text-align:center"><b style="color:#fbbf24;font-size:14px">10</b><br><span style="font-size:8px;color:#9ca3af">Experience</span></div>
+              <div style="background:rgba(167,139,250,.08);border-radius:7px;padding:8px;text-align:center"><b style="color:#c4b5fd;font-size:14px">5</b><br><span style="font-size:8px;color:#9ca3af">Education</span></div>
+            </div>
+            <div style="border:1px solid rgba(255,255,255,.08);border-radius:8px;overflow:hidden">
+              <div style="display:grid;grid-template-columns:1.2fr 70px 1.4fr;padding:6px 8px;background:rgba(255,255,255,.04);font-size:8px;color:#6b7280;text-transform:uppercase"><b>Requirement</b><b>Status</b><b>Evidence</b></div>
+              <div style="display:grid;grid-template-columns:1.2fr 70px 1.4fr;padding:7px 8px;border-top:1px solid rgba(255,255,255,.05);font-size:9px"><span>Agentic AI platforms</span><span style="color:#4ade80">Met</span><span style="color:#9ca3af">Production agent and RAG leadership</span></div>
+              <div style="display:grid;grid-template-columns:1.2fr 70px 1.4fr;padding:7px 8px;border-top:1px solid rgba(255,255,255,.05);font-size:9px"><span>TensorFlow / PyTorch</span><span style="color:#fbbf24">Unclear</span><span style="color:#9ca3af">Validate framework depth in interview</span></div>
+              <div style="display:grid;grid-template-columns:1.2fr 70px 1.4fr;padding:7px 8px;border-top:1px solid rgba(255,255,255,.05);font-size:9px"><span>Technical leadership</span><span style="color:#4ade80">Met</span><span style="color:#9ca3af">25+ years across IC and leadership roles</span></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;background:rgba(96,165,250,.07);border:1px solid rgba(96,165,250,.2);border-radius:8px;padding:9px">
+              <div><b style="font-size:10px;color:#93c5fd">Interview-to-Matrix Reconciliation</b><div style="font-size:8.5px;color:#9ca3af;margin-top:2px">Evidence updates matrix, gaps, history, and score.</div></div>
+              <div style="background:#166534;color:white;border-radius:6px;padding:6px 9px;font-size:9px;font-weight:800">Reconcile evidence</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 28. Guest Preview -->
+    <div class="slide" data-idx="27">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">New Experience</div>
@@ -1919,7 +1964,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div class="feature-item"><span class="feature-icon">📱</span><span>Mobile-first collapsible layout keeps upload, documents, summary, and Q&amp;A easy to navigate</span></div>
             <div class="feature-item"><span class="feature-icon">🔐</span><span>Sign in to claim the guest workspace and continue with saved documents</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(26)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(27)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">Guest Preview</div></div>
@@ -1945,8 +1990,8 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
       </div>
     </div>
 
-    <!-- 28. User Guide -->
-    <div class="slide" data-idx="27">
+    <!-- 29. User Guide -->
+    <div class="slide" data-idx="28">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Guided Adoption</div>
@@ -1954,11 +1999,11 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
           <div class="slide-sub">DocIntel now includes a built-in user manual so people can quickly understand where to upload, when to embed, how to chat, how to summarize, and when to use vertical workflows.</div>
           <div class="feature-list">
             <div class="feature-item"><span class="feature-icon">📘</span><span>Guide button available in the signed-in header, mobile menu, and guest preview</span></div>
-            <div class="feature-item"><span class="feature-icon">🧭</span><span>Sections for Quick Start, Documents, Q&amp;A, Summaries, Video, Healthcare, Lease, Finance, Workspaces, and Troubleshooting</span></div>
+            <div class="feature-item"><span class="feature-icon">🧭</span><span>Sections for Quick Start, Documents, Q&amp;A, Video, Healthcare, Lease, Finance, Talent Readiness, Workspaces, and Troubleshooting</span></div>
             <div class="feature-item"><span class="feature-icon">📱</span><span>Mobile-friendly side panel with horizontal section navigation</span></div>
             <div class="feature-item"><span class="feature-icon">✅</span><span>Designed to reduce onboarding friction and help users navigate DocIntel efficiently</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(27)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(28)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">📘 DocIntel User Guide</div></div>
@@ -1969,6 +2014,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
               <div style="background:#162616;border:1px solid rgba(255,255,255,.08);color:#d1fae5;border-radius:7px;padding:7px;font-size:10px">💬 Q&amp;A</div>
               <div style="background:#162616;border:1px solid rgba(255,255,255,.08);color:#d1fae5;border-radius:7px;padding:7px;font-size:10px">🎥 Video</div>
               <div style="background:#162616;border:1px solid rgba(255,255,255,.08);color:#d1fae5;border-radius:7px;padding:7px;font-size:10px">💼 Finance</div>
+              <div style="background:#162616;border:1px solid rgba(255,255,255,.08);color:#d1fae5;border-radius:7px;padding:7px;font-size:10px">🎯 Talent</div>
             </div>
             <div>
               <div style="border:1px solid rgba(74,222,128,.22);background:linear-gradient(135deg,#162616,rgba(74,222,128,.08));border-radius:10px;padding:12px;margin-bottom:9px">
@@ -1991,8 +2037,8 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
       </div>
     </div>
 
-    <!-- 29. Unified Knowledgebase -->
-    <div class="slide" data-idx="28">
+    <!-- 30. Unified Knowledgebase -->
+    <div class="slide" data-idx="29">
       <div class="slide-inner">
         <div class="narration">
           <div class="slide-num">Knowledgebase Expansion</div>
@@ -2004,7 +2050,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
             <div class="feature-item"><span class="feature-icon">🎥</span><span>Video becomes metadata, frames, transcript, timestamped segments, embeddings, and Q&amp;A</span></div>
             <div class="feature-item"><span class="feature-icon">🔍</span><span>RAG connects every supported asset into a broader enterprise knowledgebase</span></div>
           </div>
-          <button class="btn-speak" onclick="speakSlide(28)">🔊 Play narration</button>
+          <button class="btn-speak" onclick="speakSlide(29)">🔊 Play narration</button>
         </div>
         <div class="mockup">
           <div class="mockup-bar"><div class="mockup-dot" style="background:#ff5f57"></div><div class="mockup-dot" style="background:#ffbd2e"></div><div class="mockup-dot" style="background:#28c840"></div><div class="mockup-url">Video Intelligence Knowledgebase</div></div>
@@ -2028,7 +2074,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
       </div>
     </div>
 
-<div class="slide" data-idx="29">
+<div class="slide" data-idx="30">
       <div class="slide-inner full final-summary">
         <div style="font-size:28px;margin-bottom:4px">🌿</div>
         <div class="slide-num">আদর DocIntel</div>
@@ -2046,7 +2092,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">🗂</div><div class="sum-card-title" style="color:#4ade80">Chat Sessions</div><ul class="sum-card-list"><li>PostgreSQL-persisted history</li><li>Auto-titled from question</li><li>Access from any device</li><li>Up to 50 sessions per user</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(192,132,252,.12);color:#c084fc">🔀</div><div class="sum-card-title" style="color:#c084fc">Hybrid Search</div><ul class="sum-card-list"><li>pgvector cosine similarity</li><li>PostgreSQL BM25 full-text</li><li>Reciprocal Rank Fusion</li><li>⚡ hybrid / 🔤 keyword / 🔍 vector badges</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">✦</div><div class="sum-card-title" style="color:#fbbf24">Gemini Re-ranking</div><ul class="sum-card-list"><li>20 candidates → Gemini scores</li><li>Cross-encoder (query + chunk)</li><li>Top 6 sent to LLM</li><li>Fallback to retrieval order</li></ul></div>
-          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">⚙</div><div class="sum-card-title" style="color:#60a5fa">Vertical Agents</div><ul class="sum-card-list"><li>Lease + healthcare + restaurant</li><li>Clinical scribe + AVS PDF</li><li>RBAC review + field audit</li><li>Human approval + save</li></ul></div>
+          <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">⚙</div><div class="sum-card-title" style="color:#60a5fa">Vertical Agents</div><ul class="sum-card-list"><li>Healthcare + lease + restaurant</li><li>Finance + talent readiness</li><li>Evidence matrix + field audit</li><li>Human approval + packets</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(74,222,128,.12);color:#4ade80">👍</div><div class="sum-card-title" style="color:#4ade80">Feedback Loop</div><ul class="sum-card-list"><li>Thumbs up/down on AI responses</li><li>Persists across sessions</li><li>Saved to PostgreSQL with context</li><li>Admin feedback analytics API</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(251,191,36,.12);color:#fbbf24">↓</div><div class="sum-card-title" style="color:#fbbf24">Export</div><ul class="sum-card-list"><li>Chat → Markdown with sources</li><li>Summary → Markdown .md</li><li>Client-side, instant download</li><li>Notion / Obsidian / VS Code ready</li></ul></div>
           <div class="sum-card"><div class="sum-card-icon" style="background:rgba(96,165,250,.12);color:#60a5fa">📊</div><div class="sum-card-title" style="color:#60a5fa">Usage Metering</div><ul class="sum-card-list"><li>Tracks uploads, queries, embeds</li><li>Today vs all-time breakdown</li><li>Storage bytes per user</li><li>Live usage panel in header</li></ul></div>
@@ -2077,7 +2123,7 @@ body{font-family:'Inter','Noto Sans Bengali','Noto Sans Devanagari','Noto Naskh 
           <span>🐘 pgvector</span><span>☁ Google Cloud</span><span>🤖 Gemini AI</span><span>⚡ FastAPI</span><span>⚛ React</span><span>🔥 Firebase</span>
         </div>
 
-        <button class="btn-speak" style="margin:20px auto 0" onclick="speakSlide(29)">🔊 Play narration</button>
+        <button class="btn-speak" style="margin:20px auto 0" onclick="speakSlide(30)">🔊 Play narration</button>
       </div>
     </div>
 
@@ -2112,10 +2158,11 @@ const SLIDES = [
   { text: "Document recovery and organization keep the library healthy. Retry reprocesses failed files from the original GCS source. Tags create color-coded collections like Q3 Finance or Legal, and filters combine name, tag, status, type, and sort order." },
   { text: "The production stack is Google Cloud end to end: FastAPI on Cloud Run, React on Firebase Hosting, Cloud SQL Postgres with pgvector, Google Cloud Storage, Secret Manager, Gmail SMTP, Stripe, and Gemini through REST APIs for embeddings, chat, reranking, classification, and audio transcription. Production migration is explicit: back up Cloud SQL, deploy the backend first, confirm trace tables in the health check, then deploy the frontend." },
   { text: "Evaluation helps teams trust the system. Chat answers are graded for relevance, specificity, and confidence, while summaries and comparisons can be evaluated on demand. Agent workflows now have a backend evaluation API that persists overall score, metric scores, pass or needs-review gate status, recommendations, policy threshold, and audit history for each run." },
+  { text: "Talent Management Readiness connects one or more resumes with a target job description in the same workspace. DocIntel builds a structured candidate profile, performs full-resume semantic evidence matching for required and preferred capabilities, and creates an Evidence Matrix with met, partial, missing, and unclear statuses. Unclear evidence remains neutral and becomes an interview validation question instead of unfairly lowering the score. After interviewers record job-related evidence and feedback, Interview-to-Matrix Reconciliation updates requirement statuses, gap analysis, change history, and the documented-match score. Recruiters retain accountability, approve the reviewed result, download a candidate PDF packet, or ingest that packet as searchable knowledge." },
   { text: "DocIntel Guest Preview lets visitors experience the product before signing up. A guest can upload a supported document, wait for processing and embedding, generate executive, key point, section-based, or detailed summaries, and ask grounded questions. The mobile guest layout is collapsible and scrollable, so upload, documents, summary, and Q and A stay usable on small screens. After sign in, the guest workspace can be claimed and continued as a saved workspace." },
-  { text: "The in-app DocIntel User Guide helps users navigate the platform efficiently. It is available from the signed-in header, mobile menu, and guest preview. The guide covers quick start, documents, Q and A, summaries, video intelligence, healthcare, lease, tax and financial planning, workspaces, roles, and troubleshooting. This gives users a practical manual inside the application instead of forcing them to guess the workflow." },
+  { text: "The in-app DocIntel User Guide helps users navigate the platform efficiently. It is available from the signed-in header, mobile menu, and guest preview. The guide covers quick start, documents, Q and A, summaries, video intelligence, healthcare, lease, tax and financial planning, Talent Management Readiness, workspaces, roles, and troubleshooting. The Help Center adds detailed guidance for semantic role matching, Evidence Matrix scoring, interview reconciliation, candidate packet review, and responsible human decision-making." },
   { text: "DocIntel is becoming a unified intelligence layer for documents, speech, and video. Documents become chunks, embeddings, citations, summaries, and workflow packets. Speech becomes searchable transcripts for clinical scribe, restaurant scribe, feedback, and chat workflows. Video becomes metadata, frames, transcript, timestamped segments, embeddings, and timestamp-aware Q and A. RAG connects all of these assets into a broader enterprise knowledgebase." },
-  { text: "That's আদর DocIntel: a responsive React app and horizontal RAG governance platform with vertical agentic AI layers for lease management, healthcare, restaurants, tax and financial planning, brokerage, legal, biotech, and beyond. Teams can use it from desktop or mobile browser to upload documents, transcripts, audio, and video, redact PII, classify, detect language, chunk, embed, speak or type in five languages, process timestamp-aware video, generate searchable transcripts, retrieve, re-rank, trace the full AI flow, summarize, compare, run domain agents, evaluate workflow quality, review with RBAC personas, track field-level changes, organize, collaborate, bill, audit, and deploy. Guest users can preview DocIntel before signup, and the in-app user guide helps every user navigate the product efficiently. Try the power of DocIntel from Agomonia Labs on the ADAR platform for multilingual document, speech, and video intelligence." }
+  { text: "That's আদর DocIntel: a responsive React app and horizontal RAG governance platform with vertical agentic AI layers for lease management, healthcare, restaurants, tax and financial planning, talent readiness, brokerage, legal, biotech, and beyond. Teams can use it from desktop or mobile browser to upload documents, transcripts, audio, and video, redact PII, classify, detect language, chunk, embed, speak or type in five languages, process timestamp-aware video, generate searchable transcripts, retrieve, re-rank, trace the full AI flow, summarize, compare, run domain agents, evaluate workflow quality, review evidence matrices, reconcile interview evidence, track field-level changes, approve packets, organize, collaborate, bill, audit, and deploy. Guest users can preview DocIntel before signup, and the in-app user guide helps every user navigate the product efficiently. Try the power of DocIntel from Agomonia Labs on the ADAR platform for multilingual document, speech, video, and workflow intelligence." }
 ];
 
 let current = 0;

@@ -115,6 +115,24 @@ const GUIDE_SECTIONS = [
     tips: ['Financial outputs need professional review before filing, planning, or advisory decisions.'],
   },
   {
+    key: 'talent',
+    icon: '🎯',
+    title: 'Talent Management Readiness',
+    summary: 'Build evidence-backed candidate profiles, role matches, and review packets.',
+    steps: [
+      'Upload and finish processing at least one Resume or CV and one Job Description in the same workspace.',
+      'Open Talent Readiness, select the candidate documents and role, then run the workflow.',
+      'Review the candidate profile, skills, experience, education, certifications, role summary, and requirement evidence matrix.',
+      'Inspect partial, unclear, and missing requirements in Gap Analysis, then record job-related evidence in Interview Validation.',
+      'Choose Reconcile evidence to update matrix statuses and recalculate the documented-match score from interview findings.',
+      'Save or approve the human-reviewed run, then download or ingest the candidate packet when it is ready.',
+    ],
+    tips: [
+      'Unclear evidence is neutral and becomes an interview question; it does not reduce the documented-match score.',
+      'Talent outputs support recruiter review and must not make autonomous employment decisions.',
+    ],
+  },
+  {
     key: 'workspaces',
     icon: '👥',
     title: 'Workspaces and Roles',

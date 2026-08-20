@@ -212,6 +212,54 @@ export const HELP_CENTER_ARTICLES = [
     ],
   },
   {
+    id: 'talent-management-readiness',
+    category: 'workflow',
+    icon: '🎯',
+    title: 'Talent Management Readiness',
+    audience: ['Recruiters', 'Hiring managers', 'Talent operations', 'Interviewers'],
+    summary: 'Create an evidence-backed candidate profile, role match, interview plan, and reviewed candidate packet.',
+    sections: [
+      {
+        heading: 'Required inputs',
+        steps: [
+          'Upload one or more candidate Resume or CV documents and the target Job Description in the same workspace.',
+          'Wait for each source document to finish processing so readable chunks are available to the workflow.',
+          'Select the candidate documents and role before running Talent Readiness.',
+        ],
+      },
+      {
+        heading: 'Candidate profile and semantic role matching',
+        body: 'DocIntel builds a structured profile covering professional summary, experience, skills, education, and certifications. It evaluates each job requirement against evidence from the full resume, including semantically equivalent experience that may use different terminology. AI reasoning supports synthesis and semantic comparison, while source evidence remains available for recruiter validation.',
+      },
+      {
+        heading: 'Evidence Matrix and scoring',
+        body: 'Each required or preferred capability is marked Met, Partial, Missing, or Unclear. Met receives full credit, Partial receives partial credit, and Missing receives no credit. Unclear is neutral and excluded from the resolved-evidence denominator so uncertainty does not unfairly reduce the candidate score. Experience and education or certification dimensions are shown separately in the score breakdown.',
+      },
+      {
+        heading: 'Gap Analysis and Interview Validation',
+        body: 'Partial, missing, and unclear requirements become focused review items. Interviewers can record a rating, decision signal, observed evidence, feedback, and interviewer name. Unclear items remain visible as validation questions instead of being treated as failures.',
+      },
+      {
+        heading: 'Interview-to-Matrix Reconciliation',
+        steps: [
+          'Record interview evidence only after the relevant question has been assessed.',
+          'Choose Reconcile evidence to map strong or supporting evidence to Met, some or mixed evidence to Partial, and insufficient or unsupported evidence to Missing.',
+          'Conflicting interview inputs remain Unclear and require another human decision.',
+          'The workflow rebuilds the Evidence Matrix, Gap Analysis, Interview Validation list, and documented-match score.',
+          'Reconciliation history and field-level changes are retained for review and packet traceability.',
+        ],
+      },
+      {
+        heading: 'Save, approve, download, and ingest',
+        body: 'Recruiters can save an incomplete run, continue reviewing it, approve the final result, download the candidate packet as PDF, or ingest the approved packet into DocIntel. An ingested packet is chunked and embedded so its reviewed candidate intelligence can participate in governed Q&A and retrieval.',
+      },
+      {
+        heading: 'Responsible use',
+        body: 'Talent Management Readiness is decision support, not an autonomous hiring system. Recruiters and hiring teams must validate source evidence, consider relevant accommodations and lawful hiring requirements, avoid protected-attribute inference, and remain accountable for interview and employment decisions.',
+      },
+    ],
+  },
+  {
     id: 'workspaces-roles',
     category: 'core',
     icon: '👥',
