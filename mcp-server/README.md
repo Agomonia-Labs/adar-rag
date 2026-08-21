@@ -58,6 +58,9 @@ Armor, quotas, or an OAuth-aware proxy in front when exposing the service.
 Production OAuth discovery, service-account clients, per-principal scopes,
 quotas, and API Gateway policy are the next hardening milestone.
 
+The staged production release gate is documented in
+[`PUBLIC_DEPLOYMENT.md`](PUBLIC_DEPLOYMENT.md).
+
 ## End-to-end smoke test
 
 For commands that test each capability separately, see

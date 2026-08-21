@@ -15,7 +15,7 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
     async def list_workspaces(ctx: Context) -> dict:
         """List DocIntel workspaces accessible to the authenticated user."""
         try:
-            async with api_client(ctx, settings, "documents:read") as client:
+            async with api_client(ctx, settings, "workspaces:read") as client:
                 workspaces = await client.list_workspaces()
             return WorkspaceList(count=len(workspaces), workspaces=workspaces).model_dump()
         except DocIntelMcpError as exc:
