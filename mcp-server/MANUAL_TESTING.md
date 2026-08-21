@@ -4,6 +4,24 @@ This runbook tests each DocIntel MCP capability separately. Run the tests in
 order because later steps reuse document and session IDs returned by earlier
 steps.
 
+## OAuth Login Helper
+
+For the production OAuth flow, source the helper in your current shell. It
+performs discovery, dynamic registration, PKCE, browser login, email MFA, state
+validation, callback handling, and token exchange:
+
+```bash
+source mcp-server/scripts/oauth_login.sh
+```
+
+On success it exports `MCP_ACCESS_TOKEN`, `MCP_REFRESH_TOKEN`, `CLIENT_ID`, and
+the endpoint variables, and defines `mcp_request`. Refresh and rotate tokens
+without another browser login using:
+
+```bash
+docintel_mcp_refresh_token
+```
+
 ## 1. Prerequisites
 
 Install the two command-line dependencies:
