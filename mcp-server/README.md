@@ -36,27 +36,26 @@ cp .env.example .env
 .venv/bin/docintel-mcp
 ```
 
-Connect an MCP client to `http://localhost:8081/mcp` and send the existing
-DocIntel access token as `Authorization: Bearer <token>`.
+Connect an MCP client to `http://localhost:8081/mcp`. Local manual testing can
+use an existing token; production clients use the OAuth flow described below.
 
 ## Security boundary
 
 - Caller identity is never accepted from tool arguments or custom headers.
-- MCP validates the token through `/api/auth/me`; the backend then checks every
-  document/workspace operation again.
+- MCP exchanges an audience-bound token through `/internal/oauth/introspect`;
+  the public token is never forwarded to application APIs.
 - `workspace_id` narrows a request; it does not grant access.
-- Server capabilities are an operator-controlled allowlist, not caller scopes.
+- Every tool requires both an operator-enabled capability and a caller-granted
+  OAuth scope.
 - Tokens and document contents are excluded from gateway logs.
 - Correlation IDs are forwarded through `X-Trace-Id`.
 
 The Cloud Run service permits network-level unauthenticated access so the MCP
-protocol can use the `Authorization` header for the DocIntel token. This does
-not make DocIntel data public: every data tool/resource rejects a missing token,
-and the backend remains the authorization authority. Put API Gateway, Cloud
-Armor, quotas, or an OAuth-aware proxy in front when exposing the service.
-
-Production OAuth discovery, service-account clients, per-principal scopes,
-quotas, and API Gateway policy are the next hardening milestone.
+protocol can perform OAuth discovery and carry its access token. Production
+authorization uses DocIntel login, email MFA, authorization code with S256
+PKCE, short-lived audience-bound tokens, rotating refresh tokens, and scoped
+tools. This does not make DocIntel data public. Put API Gateway, Cloud Armor,
+and quotas in front when exposing the service.
 
 The staged production release gate is documented in
 [`PUBLIC_DEPLOYMENT.md`](PUBLIC_DEPLOYMENT.md).

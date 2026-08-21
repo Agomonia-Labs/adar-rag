@@ -115,6 +115,7 @@ async def health_email():
 
 # Register each router individually — a failure in one doesn't block others
 _ROUTERS = [
+    ("routes.oauth",          "oauth_router",          "",                   ["oauth"]),
     ("auth.router",           "auth_router",           "/api/auth",          ["auth"]),
     ("routes.documents",      "docs_router",           "/api/documents",     ["documents"]),
     ("routes.chat",           "chat_router",           "/api/chat",          ["chat"]),

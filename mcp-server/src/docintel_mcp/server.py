@@ -29,7 +29,7 @@ mcp = FastMCP(
         issuer_url=settings.issuer_url,
         resource_server_url=f"{settings.public_url}/mcp",
         service_documentation_url=f"{settings.public_url}/health",
-        required_scopes=[],
+        required_scopes=sorted(settings.enabled_capabilities),
     ),
     host=settings.host,
     port=settings.port,

@@ -20,6 +20,7 @@ class Settings:
     allowed_origins: frozenset[str]
     allowed_hosts: frozenset[str]
     log_level: str
+    introspection_secret: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -37,4 +38,5 @@ class Settings:
             allowed_origins=_csv("DOCINTEL_MCP_ALLOWED_ORIGINS", "http://localhost:5173"),
             allowed_hosts=_csv("DOCINTEL_MCP_ALLOWED_HOSTS", "localhost,127.0.0.1"),
             log_level=os.getenv("DOCINTEL_MCP_LOG_LEVEL", "INFO").upper(),
+            introspection_secret=os.getenv("DOCINTEL_MCP_INTROSPECTION_SECRET", ""),
         )

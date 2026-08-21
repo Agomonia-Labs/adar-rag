@@ -17,21 +17,34 @@ def settings() -> Settings:
         allowed_origins=frozenset(),
         allowed_hosts=frozenset({"localhost:*"}),
         log_level="INFO",
+        introspection_secret="shared-secret",
     )
 
 
 @pytest.mark.asyncio
-async def test_verifier_uses_authoritative_docintel_identity():
+async def test_verifier_exchanges_mcp_token_for_backend_identity():
     async def handler(request: httpx.Request):
-        assert request.headers["authorization"] == "Bearer valid-token"
-        return httpx.Response(200, json={"id": "user-1", "email": "user@example.com", "role": "user"})
+        assert request.url.path == "/internal/oauth/introspect"
+        assert request.headers["x-mcp-introspection-secret"] == "shared-secret"
+        assert request.content == b'{"token":"valid-token"}'
+        return httpx.Response(200, json={
+            "active": True,
+            "sub": "user-1",
+            "client_id": "client-1",
+            "scope": "documents:read knowledge:query",
+            "exp": 2000000000,
+            "email": "user@example.com",
+            "role": "user",
+            "backend_token": "internal-token",
+        })
 
     verifier = DocIntelTokenVerifier(settings(), httpx.MockTransport(handler))
     result = await verifier.verify_token("valid-token")
 
     assert result is not None
     assert result.subject == "user-1"
-    assert result.token == "valid-token"
+    assert result.token == "internal-token"
+    assert result.client_id == "client-1"
     assert result.scopes == ["documents:read", "knowledge:query"]
 
 

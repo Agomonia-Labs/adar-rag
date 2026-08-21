@@ -15,12 +15,12 @@ def request_trace_id(ctx: Context) -> str:
 
 
 def api_client(ctx: Context, settings: Settings, capability: str) -> DocIntelApiClient:
-    require_capability(settings.enabled_capabilities, capability)
     access_token = get_access_token()
     if access_token is None:
         from .errors import DocIntelMcpError
 
         raise DocIntelMcpError("unauthorized", "A verified DocIntel bearer token is required", status_code=401)
+    require_capability(settings.enabled_capabilities, capability, set(access_token.scopes))
     return DocIntelApiClient(
         settings.api_base_url,
         access_token.token,

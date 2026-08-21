@@ -9,7 +9,7 @@ from .config import Settings
 
 
 class DocIntelTokenVerifier:
-    """Validate a DocIntel token through the backend's authoritative auth route."""
+    """Validate an audience-bound MCP token and obtain a backend credential."""
 
     def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.settings = settings
@@ -22,21 +22,27 @@ class DocIntelTokenVerifier:
                 timeout=httpx.Timeout(15),
                 transport=self.transport,
             ) as client:
-                response = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+                response = await client.post(
+                    "/internal/oauth/introspect",
+                    headers={"X-MCP-Introspection-Secret": self.settings.introspection_secret},
+                    json={"token": token},
+                )
         except httpx.HTTPError:
             return None
         if response.status_code != 200:
             return None
         try:
-            user = response.json()
-            subject = str(user["id"])
+            result = response.json()
+            if not result.get("active"):
+                return None
+            subject = str(result["sub"])
         except (ValueError, KeyError, TypeError):
             return None
         return AccessToken(
-            token=token,
-            client_id=f"docintel-user:{subject}",
+            token=str(result["backend_token"]),
+            client_id=str(result["client_id"]),
             subject=subject,
-            scopes=sorted(self.settings.enabled_capabilities),
-            expires_at=int(time.time()) + 300,
-            claims={"email": user.get("email"), "role": user.get("role")},
+            scopes=str(result.get("scope", "")).split(),
+            expires_at=int(result.get("exp", time.time() + 60)),
+            claims={"email": result.get("email"), "role": result.get("role")},
         )

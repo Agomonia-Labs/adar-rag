@@ -63,6 +63,7 @@ SECRETS=(
   "DATABASE_URL=docintel-database-url:latest"
   "GCS_BUCKET_NAME=docintel-gcs-bucket:latest"
   "GOOGLE_AI_KEY=docintel-gemini-key:latest"
+  "MCP_INTROSPECTION_SECRET=docintel-mcp-introspection-secret:latest"
 )
 
 if [[ "$LLM_PROVIDER" == "openai" ]]; then
@@ -165,6 +166,10 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="FFMPEG_COMMAND_TIMEOUT_SECONDS=180" \
   --set-env-vars="JWT_ALGORITHM=HS256" \
   --set-env-vars="JWT_ACCESS_TOKEN_EXPIRE_MINUTES=480" \
+  --set-env-vars="OAUTH_ISSUER_URL=https://auth.docintel.adar.agomoniai.com" \
+  --set-env-vars="OAUTH_MCP_RESOURCE=https://mcp.docintel.adar.agomoniai.com/mcp" \
+  --set-env-vars="OAUTH_ACCESS_TOKEN_MINUTES=15" \
+  --set-env-vars="OAUTH_REFRESH_TOKEN_DAYS=30" \
   --set-env-vars="GCS_SIGNED_URL_EXPIRY_SECONDS=3600" \
   --set-env-vars="APP_URL=https://docintel.adar.agomoniai.com" \
   --set-env-vars="EMAIL_FROM_NAME=আদর DocIntel" \

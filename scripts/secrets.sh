@@ -44,6 +44,12 @@ echo "▶ Generating JWT secret..."
 JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 upsert_secret "docintel-jwt-secret" "$JWT_SECRET"
 
+# Shared only by the MCP gateway and backend token-exchange endpoint.
+echo ""
+echo "▶ Generating MCP introspection secret..."
+MCP_INTROSPECTION_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(48))")
+upsert_secret "docintel-mcp-introspection-secret" "$MCP_INTROSPECTION_SECRET"
+
 # ── Database password ──────────────────────────────────────────────────────────
 echo ""
 echo "▶ Database password"

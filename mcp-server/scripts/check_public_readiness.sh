@@ -22,7 +22,8 @@ echo "[2/4] OAuth protected-resource metadata"
 resource_metadata="$(check_json "$RESOURCE_METADATA_URL")"
 jq . <<<"$resource_metadata"
 jq -e --arg resource "$MCP_URL" --arg issuer "${ISSUER_URL%/}" '
-  .resource == $resource and (.authorization_servers | index($issuer) != null)
+  .resource == $resource and
+  any(.authorization_servers[]?; rtrimstr("/") == ($issuer | rtrimstr("/")))
 ' <<<"$resource_metadata" >/dev/null
 
 echo "[3/4] OAuth authorization-server metadata"
