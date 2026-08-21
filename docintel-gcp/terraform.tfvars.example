@@ -1,0 +1,24 @@
+project_id       = "customer-docintel-prod"
+region           = "us-central1"
+environment      = "prod"
+firebase_site_id = "customer-docintel"
+app_url           = "https://customer-docintel.web.app"
+
+# Keep false for a low-cost pilot; set true before business-critical production use.
+db_high_availability = false
+deletion_protection  = true
+min_instances        = 1
+max_instances        = 10
+
+# Optional SMTP notifications. Prefer supplying the password through TF_VAR_gmail_app_password.
+gmail_user = ""
+
+# Optional providers and billing. Prefer TF_VAR_* environment variables for
+# sensitive values so they are not written into this file.
+# openai_api_key                         = ""
+# cohere_api_key                         = ""
+# stripe_secret_key                      = ""
+# stripe_webhook_secret                  = ""
+# stripe_restaurant_webhook_secret       = ""
+# stripe_pro_price_id                    = ""
+# stripe_enterprise_price_id             = ""
