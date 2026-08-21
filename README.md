@@ -930,3 +930,10 @@ DocIntel is designed to support many verticals on one reusable architecture:
 - Multilingual document and voice-first workflows
 
 The product thesis is simple: organizations and individuals should be able to turn unstructured documents and conversations into governed, searchable, domain-specific intelligence without building a custom AI platform for every use case.
+
+## MCP Integration
+
+DocIntel supports document, speech, and video intelligence through its web UI
+and an optional governed MCP integration. The MCP gateway is maintained in
+[`mcp-server/`](mcp-server/README.md); its architecture and tool catalog are in
+[`docs/mcp/`](docs/mcp/architecture.md).
