@@ -233,3 +233,84 @@ async def test_summary_and_comparison_collect_streaming_results():
     assert summary["progress"][0]["stage"] == "map"
     assert summary["trace_id"] == "trace-gen"
     assert comparison["comparison"]["similarity_score"] == 0.75
+
+
+@pytest.mark.asyncio
+async def test_vertical_workflow_start_routes_to_existing_backend_contracts():
+    requests: list[tuple[str, dict]] = []
+
+    async def handler(request: httpx.Request):
+        payload = json.loads(request.content) if request.content else {}
+        requests.append((request.url.path, payload))
+        return httpx.Response(200, json={"run_id": f"run-{len(requests)}", "status": "running"})
+
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        await client.start_vertical_workflow(
+            "healthcare_prior_auth", ["encounter-1", "policy-1"], "workspace-1", {},
+        )
+        await client.start_vertical_workflow(
+            "finance_tax_readiness", ["w2-1", "return-1"], "workspace-1",
+            {"client_name": "Avery", "tax_year": "2026"},
+        )
+        await client.start_vertical_workflow(
+            "talent_readiness", ["resume-1", "jd-1"], "workspace-1",
+            {"job_description_id": "jd-1", "candidate_name": "Avery"},
+        )
+        await client.start_vertical_workflow(
+            "lease_intelligence", ["lease-1"], "workspace-1", {"amendment_document_id": "amendment-1"},
+        )
+
+    assert requests == [
+        ("/api/healthcare/encounter-1/prior-auth-workflow", {"policy_document_ids": ["policy-1"]}),
+        ("/api/finance-tax/tax-submission-runs", {
+            "document_ids": ["w2-1", "return-1"], "client_name": "Avery", "tax_year": "2026",
+            "filing_status": "", "notes": "",
+        }),
+        ("/api/talent/runs", {
+            "resume_document_ids": ["resume-1"], "job_description_id": "jd-1",
+            "candidate_name": "Avery", "notes": "", "workflow_type": "candidate_readiness",
+        }),
+        ("/api/lease/lease-1/agent-workflow", {"amendment_document_id": "amendment-1"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_human_review_and_approval_use_separate_backend_actions():
+    requests: list[tuple[str, str, dict]] = []
+
+    async def handler(request: httpx.Request):
+        payload = json.loads(request.content) if request.content else {}
+        requests.append((request.method, request.url.path, payload))
+        return httpx.Response(200, json={"run_id": "run-1", "status": "reviewed"})
+
+    packet = {"candidate_profile": {"name": "Avery"}}
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        await client.save_vertical_review("talent", "run-1", packet, "Reviewed", None)
+        await client.approve_vertical_run("talent", "run-1", packet, "Approved", None)
+
+    assert requests == [
+        ("PATCH", "/api/talent/runs/run-1/review", {"packet": packet, "notes": "Reviewed"}),
+        ("POST", "/api/talent/runs/run-1/approve", {"packet": packet, "notes": "Approved"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_packet_generation_creates_queryable_document_artifacts():
+    async def handler(request: httpx.Request):
+        if request.url.path == "/api/healthcare/agent-runs/health-1/prior-auth-packet/pdf":
+            return httpx.Response(200, json={"ok": True, "document": {"doc_id": "packet-health"}})
+        if request.url.path == "/api/finance-tax/agent-runs/finance-1/advisor-packet/pdf":
+            assert json.loads(request.content)["packet"]["tax_organizer"] == {}
+            return httpx.Response(200, json={"ok": True, "document": {"doc_id": "packet-finance"}})
+        if request.url.path == "/api/talent/runs/talent-1/packet/ingest":
+            return httpx.Response(200, json={"ok": True, "document": {"id": "packet-talent"}})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        healthcare = await client.generate_vertical_packet("healthcare", "health-1", "prior_auth", None)
+        finance = await client.generate_vertical_packet("finance_tax", "finance-1", "advisor", {"tax_organizer": {}})
+        talent = await client.generate_vertical_packet("talent", "talent-1", "candidate", None)
+
+    assert healthcare["document"]["doc_id"] == "packet-health"
+    assert finance["document"]["doc_id"] == "packet-finance"
+    assert talent["document"]["id"] == "packet-talent"

@@ -8,9 +8,115 @@ from .config import Settings
 from .errors import DocIntelMcpError
 from .runtime import api_client
 from .schemas import DocumentList, GroundedAnswer, SessionResult, WorkspaceList
+from .verticals import WORKFLOW_CATALOG, vertical_name, workflow_definition
 
 
 def register_tools(mcp: FastMCP, settings: Settings) -> None:
+    @mcp.tool()
+    async def list_vertical_workflows(ctx: Context) -> dict:
+        """Discover supported DocIntel vertical workflows, required inputs, review gates, and packet types."""
+        try:
+            async with api_client(ctx, settings, "workflows:read"):
+                pass
+            return {"count": len(WORKFLOW_CATALOG), "workflows": WORKFLOW_CATALOG}
+        except DocIntelMcpError as exc:
+            return exc.as_dict()
+
+    @mcp.tool()
+    async def start_vertical_workflow(
+        ctx: Context,
+        workflow: str,
+        document_ids: list[str],
+        workspace_id: str | None = None,
+        inputs: dict[str, Any] | None = None,
+    ) -> dict:
+        """Start a supported vertical workflow against accessible, processed documents."""
+        try:
+            workflow_definition(workflow)
+            async with api_client(ctx, settings, "workflows:write") as client:
+                return await client.start_vertical_workflow(workflow, document_ids, workspace_id, inputs or {})
+        except DocIntelMcpError as exc:
+            return exc.as_dict()
+
+    @mcp.tool()
+    async def get_vertical_run(ctx: Context, vertical: str, run_id: str) -> dict:
+        """Return current status, outputs, review packet, approval state, and errors for a vertical run."""
+        try:
+            normalized = vertical_name(vertical)
+            async with api_client(ctx, settings, "workflows:read") as client:
+                return await client.get_vertical_run(normalized, run_id)
+        except DocIntelMcpError as exc:
+            return exc.as_dict()
+
+    @mcp.tool()
+    async def list_vertical_runs(
+        ctx: Context,
+        vertical: str,
+        workspace_id: str | None = None,
+        status: str = "all",
+        limit: int = 25,
+    ) -> dict:
+        """List accessible finance/tax or talent workflow runs."""
+        try:
+            normalized = vertical_name(vertical)
+            async with api_client(ctx, settings, "workflows:read") as client:
+                return await client.list_vertical_runs(normalized, workspace_id, status, max(1, min(limit, 100)))
+        except DocIntelMcpError as exc:
+            return exc.as_dict()
+
+    @mcp.tool()
+    async def save_vertical_review(
+        ctx: Context,
+        vertical: str,
+        run_id: str,
+        packet: dict[str, Any],
+        notes: str = "",
+        persona: str | None = None,
+    ) -> dict:
+        """Save a human-reviewed healthcare or talent packet without approving it."""
+        try:
+            normalized = vertical_name(vertical)
+            async with api_client(ctx, settings, "reviews:write") as client:
+                return await client.save_vertical_review(normalized, run_id, packet, notes, persona)
+        except DocIntelMcpError as exc:
+            return exc.as_dict()
+
+    @mcp.tool()
+    async def approve_vertical_run(
+        ctx: Context,
+        vertical: str,
+        run_id: str,
+        confirm: bool,
+        packet: dict[str, Any] | None = None,
+        notes: str = "",
+        persona: str | None = None,
+    ) -> dict:
+        """Apply the explicit human approval gate to a reviewed vertical packet. Requires confirm=true."""
+        if not confirm:
+            return {"ok": False, "error": {"code": "confirmation_required", "message": "Set confirm=true to approve this packet"}}
+        try:
+            normalized = vertical_name(vertical)
+            async with api_client(ctx, settings, "reviews:approve") as client:
+                return await client.approve_vertical_run(normalized, run_id, packet, notes, persona)
+        except DocIntelMcpError as exc:
+            return exc.as_dict()
+
+    @mcp.tool()
+    async def generate_vertical_packet(
+        ctx: Context,
+        vertical: str,
+        run_id: str,
+        packet_type: str,
+        packet: dict[str, Any] | None = None,
+    ) -> dict:
+        """Generate or ingest an approved/review-ready PDF packet and return its document metadata or signed URL."""
+        try:
+            normalized = vertical_name(vertical)
+            async with api_client(ctx, settings, "packets:write") as client:
+                return await client.generate_vertical_packet(normalized, run_id, packet_type, packet)
+        except DocIntelMcpError as exc:
+            return exc.as_dict()
+
     @mcp.tool()
     async def list_workspaces(ctx: Context) -> dict:
         """List DocIntel workspaces accessible to the authenticated user."""

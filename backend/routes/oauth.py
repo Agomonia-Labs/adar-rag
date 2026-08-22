@@ -36,6 +36,11 @@ ALLOWED_SCOPES = {
     "sessions:write",
     "video:read",
     "video:process",
+    "workflows:read",
+    "workflows:write",
+    "reviews:write",
+    "reviews:approve",
+    "packets:write",
 }
 
 

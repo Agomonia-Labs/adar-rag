@@ -7,9 +7,31 @@ from mcp.server.fastmcp import Context, FastMCP
 from .config import Settings
 from .errors import DocIntelMcpError
 from .runtime import api_client
+from .verticals import WORKFLOW_CATALOG, vertical_name
 
 
 def register_resources(mcp: FastMCP, settings: Settings) -> None:
+    @mcp.resource("docintel://workflows/catalog")
+    async def workflow_catalog(ctx: Context) -> str:
+        """Supported vertical workflows and their human-review and packet capabilities."""
+        try:
+            async with api_client(ctx, settings, "workflows:read"):
+                pass
+            return json.dumps(WORKFLOW_CATALOG, ensure_ascii=True)
+        except DocIntelMcpError as exc:
+            return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://workflows/{vertical}/runs/{run_id}")
+    async def workflow_run(vertical: str, run_id: str, ctx: Context) -> str:
+        """Current structured state for an accessible vertical workflow run."""
+        try:
+            normalized = vertical_name(vertical)
+            async with api_client(ctx, settings, "workflows:read") as client:
+                result = await client.get_vertical_run(normalized, run_id)
+            return json.dumps(result, ensure_ascii=True, default=str)
+        except DocIntelMcpError as exc:
+            return json.dumps(exc.as_dict())
+
     @mcp.resource("docintel://workspaces/{workspace_id}/documents")
     async def workspace_documents(workspace_id: str, ctx: Context) -> str:
         """Accessible documents in a DocIntel workspace."""

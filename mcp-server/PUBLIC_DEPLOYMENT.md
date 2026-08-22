@@ -94,6 +94,11 @@ knowledge:generate
 sessions:write
 video:read
 video:process
+workflows:read
+workflows:write
+reviews:write
+reviews:approve
+packets:write
 ```
 
 ## Stage 4: Gateway and Operations
@@ -124,9 +129,51 @@ Do not label the endpoint production-public until all five stages pass.
 After adding a new OAuth scope, existing access tokens do not gain it. Redeploy
 the backend and MCP service, then run `source scripts/oauth_login.sh` again to
 authorize a new token containing `documents:write`, `knowledge:generate`,
-`video:read`, and `video:process`.
+`video:read`, `video:process`, `workflows:read`, `workflows:write`,
+`reviews:write`, `reviews:approve`, and `packets:write`.
 
 ## Deployment Sequence
+
+The master deployment deploys the backend, frontend, and MCP server in
+sequence, deriving the backend Cloud Run URL and MCP service account from
+`.deploy-config`:
+
+```bash
+bash deploy.sh
+```
+
+Targeted options are available when a full release is not needed:
+
+```bash
+bash deploy.sh --mcp       # MCP only
+bash deploy.sh --no-mcp    # backend and frontend only
+bash deploy.sh --backend   # backend only
+bash deploy.sh --frontend  # frontend only
+```
+
+Override `MCP_SERVICE_ACCOUNT`, `DOCINTEL_MCP_PUBLIC_URL`,
+`DOCINTEL_MCP_ISSUER_URL`, `MCP_ALLOWED_HOSTS`, or `MCP_ALLOWED_ORIGINS` before
+running the master script when deploying to another environment.
+
+The same entry point can perform public MCP OAuth login. Source it so the
+access token and helper functions remain in the current terminal:
+
+```bash
+source deploy.sh --oauth-login
+```
+
+Optional login parameters can override the defaults:
+
+```bash
+source deploy.sh --oauth-login \
+  --oauth-callback-port 8766 \
+  --oauth-timeout 600 \
+  --oauth-scopes "workspaces:read documents:read knowledge:query"
+```
+
+Additional options are `--oauth-client-id`, `--oauth-issuer`, and `--mcp-url`.
+Do not run OAuth mode with `bash deploy.sh`; a child process cannot export its
+token or `mcp_tool` helper back into the parent terminal.
 
 Create the shared token-exchange secret without rotating the existing DocIntel
 JWT key:

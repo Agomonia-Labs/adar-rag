@@ -38,6 +38,13 @@ Tools:
 - `update_chat_session`
 - `delete_chat_session`
 - `ask`
+- `list_vertical_workflows`
+- `start_vertical_workflow`
+- `get_vertical_run`
+- `list_vertical_runs`
+- `save_vertical_review`
+- `approve_vertical_run`
+- `generate_vertical_packet`
 
 Resources:
 
@@ -49,6 +56,8 @@ Resources:
 - `docintel://videos/{document_id}/timeline`
 - `docintel://videos/{document_id}/transcript`
 - `docintel://videos/{document_id}/frames`
+- `docintel://workflows/catalog`
+- `docintel://workflows/{vertical}/runs/{run_id}`
 
 Direct uploads use a two-step flow: obtain a short-lived signed PUT URL, upload
 the bytes directly to cloud storage, then call `complete_document_upload` to
@@ -63,6 +72,13 @@ Video tools reuse DocIntel's existing cloud upload, transcript, frame sampling,
 timeline segmentation, embedding, and timestamp-grounded Q&A pipeline.
 Summary and comparison tools collect the existing backend SSE streams into
 structured MCP results while preserving progress and trace IDs.
+
+Vertical tools expose healthcare, prior authorization, finance/tax readiness,
+talent readiness, employee mobility, and lease intelligence through one
+discoverable contract. Review edits and approval are intentionally separate;
+`approve_vertical_run` also requires `confirm=true`. Generated healthcare,
+finance, and talent PDF packets are stored as governed DocIntel documents so
+they can be downloaded, embedded, retrieved, and audited like other content.
 
 ## Run locally
 

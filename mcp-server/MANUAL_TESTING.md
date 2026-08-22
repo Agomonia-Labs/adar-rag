@@ -448,3 +448,64 @@ The manual test passes when:
 
 The MCP server currently has no upload or delete tool, so this runbook does not
 alter documents. The session test creates one saved chat session.
+## Vertical Workflows, Human Review, and PDF Packets
+
+Discover the supported workflows before starting one:
+
+```bash
+mcp_tool list_vertical_workflows '{}' | tool_data
+```
+
+Start a prior authorization workflow:
+
+```bash
+mcp_tool start_vertical_workflow "$(jq -cn \
+  --arg encounter "$DOCUMENT_ID" \
+  --arg policy "$POLICY_DOCUMENT_ID" \
+  '{
+    workflow:"healthcare_prior_auth",
+    document_ids:[$encounter,$policy],
+    inputs:{policy_document_ids:[$policy]}
+  }')" | tool_data
+```
+
+Poll a known run:
+
+```bash
+mcp_tool get_vertical_run "$(jq -cn \
+  --arg run_id "$RUN_ID" \
+  '{vertical:"healthcare",run_id:$run_id}')" | tool_data
+```
+
+Save a human review without approving it. Start from the current packet returned
+by `get_vertical_run`, edit it, and store it in `/tmp/review-packet.json`:
+
+```bash
+mcp_tool save_vertical_review "$(jq -cn \
+  --arg run_id "$RUN_ID" \
+  --slurpfile packet /tmp/review-packet.json \
+  '{vertical:"healthcare",run_id:$run_id,packet:$packet[0],notes:"Reviewed through MCP"}')" \
+  | tool_data
+```
+
+Approval is a separate, explicit human action:
+
+```bash
+mcp_tool approve_vertical_run "$(jq -cn \
+  --arg run_id "$RUN_ID" \
+  --slurpfile packet /tmp/review-packet.json \
+  '{vertical:"healthcare",run_id:$run_id,packet:$packet[0],notes:"Human approval completed",confirm:true}')" \
+  | tool_data
+```
+
+Generate a governed PDF artifact:
+
+```bash
+mcp_tool generate_vertical_packet "$(jq -cn \
+  --arg run_id "$RUN_ID" \
+  '{vertical:"healthcare",run_id:$run_id,packet_type:"prior_auth"}')" | tool_data
+```
+
+The response contains generated document metadata and, where supported, a
+short-lived download URL. The document can then use the normal `get_document`,
+`embed_document`, summary, session, and knowledgebase tools.
