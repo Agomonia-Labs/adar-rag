@@ -113,7 +113,14 @@ heading "Tool Discovery"
 tools="$(mcp_request "tools/list" '{}')"
 assert_rpc "$tools" "tools/list"
 jq -r '.result.tools[]?.name' <<<"$tools"
-for expected in list_workspaces list_documents get_document search_knowledgebase create_chat_session ask; do
+for expected in \
+  list_workspaces list_documents get_document get_ingestion_status get_document_chunks \
+  create_document_upload complete_document_upload embed_document delete_document \
+  create_video_upload complete_video_upload list_videos process_video get_video_status \
+  get_video_timeline get_video_transcript get_video_frames get_video_frame_url search_video \
+  summarize_document summarize_documents compare_documents \
+  search_knowledgebase create_chat_session list_chat_sessions get_chat_session \
+  update_chat_session delete_chat_session ask; do
   jq -e --arg expected "$expected" '.result.tools | any(.name == $expected)' <<<"$tools" >/dev/null || fail "Tool '$expected' is missing"
 done
 pass "All expected tools are advertised"
@@ -125,7 +132,12 @@ jq -r '.result.resourceTemplates[]?.uriTemplate' <<<"$templates"
 for expected in \
   'docintel://workspaces/{workspace_id}/documents' \
   'docintel://documents/{document_id}' \
-  'docintel://sessions/{session_id}'; do
+  'docintel://documents/{document_id}/chunks' \
+  'docintel://sessions/{session_id}' \
+  'docintel://videos/{document_id}' \
+  'docintel://videos/{document_id}/timeline' \
+  'docintel://videos/{document_id}/transcript' \
+  'docintel://videos/{document_id}/frames'; do
   jq -e --arg expected "$expected" '.result.resourceTemplates | any(.uriTemplate == $expected)' <<<"$templates" >/dev/null || fail "Resource '$expected' is missing"
 done
 pass "All expected resource templates are advertised"

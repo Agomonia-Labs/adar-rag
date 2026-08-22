@@ -33,7 +33,7 @@ class Settings:
             timeout_seconds=float(os.getenv("DOCINTEL_MCP_TIMEOUT_SECONDS", "300")),
             enabled_capabilities=_csv(
                 "DOCINTEL_MCP_ENABLED_CAPABILITIES",
-                "workspaces:read,documents:read,knowledge:query,sessions:write",
+                "workspaces:read,documents:read,documents:write,knowledge:query,knowledge:generate,sessions:write,video:read,video:process",
             ),
             allowed_origins=_csv("DOCINTEL_MCP_ALLOWED_ORIGINS", "http://localhost:5173"),
             allowed_hosts=_csv("DOCINTEL_MCP_ALLOWED_HOSTS", "localhost,127.0.0.1"),

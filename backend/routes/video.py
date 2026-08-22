@@ -131,7 +131,7 @@ async def complete_video_upload(
         raise HTTPException(400, f"Uploaded size mismatch. Expected {file_size} bytes but found {uploaded_size} bytes")
 
     chk_dir = gcs.chunks_dir(user_id, doc_id)
-    await db.execute(
+    result = await db.execute(
         """
         INSERT INTO documents
           (id, user_id, workspace_id, filename, original_name, file_type, file_size,
@@ -147,6 +147,7 @@ async def complete_video_upload(
            doc_domain = 'general',
            doc_metadata = COALESCE(documents.doc_metadata, '{}'::jsonb) || EXCLUDED.doc_metadata,
            updated_at = NOW()
+        WHERE documents.user_id = EXCLUDED.user_id
         """,
         doc_id,
         user_id,
@@ -162,6 +163,8 @@ async def complete_video_upload(
             "upload_generation": meta.get("generation"),
         }),
     )
+    if result == "INSERT 0 0":
+        raise HTTPException(409, "Video upload identifier is already in use")
     await log_event(db, user_id, "upload", metadata={
         "doc_id": doc_id,
         "filename": filename,
@@ -247,6 +250,9 @@ async def process_video(
     db=Depends(get_db),
 ):
     row = await _get_accessible_document(db, doc_id, str(current_user["id"]))
+    if row.get("workspace_id"):
+        from routes.workspaces import _require_role
+        await _require_role(db, str(row["workspace_id"]), str(current_user["id"]), "editor")
     if not is_video_file(row.get("original_name"), row.get("file_type")):
         raise HTTPException(400, "Selected document is not a supported video file")
     if body.max_frames < 1 or body.max_frames > 60:

@@ -5,26 +5,64 @@ duplicating document, RAG, authorization, or workflow logic. It forwards the
 caller's DocIntel bearer token to the backend, where tenant and workspace
 authorization remains authoritative.
 
-## MVP surface
+## MCP surface
 
 Tools:
 
 - `list_workspaces`
 - `list_documents`
 - `get_document`
+- `create_document_upload`
+- `complete_document_upload`
+- `get_ingestion_status`
+- `get_document_chunks`
+- `embed_document`
+- `delete_document`
+- `create_video_upload`
+- `complete_video_upload`
+- `list_videos`
+- `process_video`
+- `get_video_status`
+- `get_video_timeline`
+- `get_video_transcript`
+- `get_video_frames`
+- `get_video_frame_url`
+- `search_video`
+- `summarize_document`
+- `summarize_documents`
+- `compare_documents`
 - `search_knowledgebase`
 - `create_chat_session`
+- `list_chat_sessions`
+- `get_chat_session`
+- `update_chat_session`
+- `delete_chat_session`
 - `ask`
 
 Resources:
 
 - `docintel://workspaces/{workspace_id}/documents`
 - `docintel://documents/{document_id}`
+- `docintel://documents/{document_id}/chunks`
 - `docintel://sessions/{session_id}`
+- `docintel://videos/{document_id}`
+- `docintel://videos/{document_id}/timeline`
+- `docintel://videos/{document_id}/transcript`
+- `docintel://videos/{document_id}/frames`
+
+Direct uploads use a two-step flow: obtain a short-lived signed PUT URL, upload
+the bytes directly to cloud storage, then call `complete_document_upload` to
+verify the object and start chunking. This keeps large payloads out of MCP and
+the backend HTTP proxy.
 
 `search_knowledgebase` currently uses the grounded DocIntel chat pipeline. It
 returns the generated answer and supporting sources from hybrid retrieval and
 re-ranking; it is not a second vector-search implementation.
+
+Video tools reuse DocIntel's existing cloud upload, transcript, frame sampling,
+timeline segmentation, embedding, and timestamp-grounded Q&A pipeline.
+Summary and comparison tools collect the existing backend SSE streams into
+structured MCP results while preserving progress and trace IDs.
 
 ## Run locally
 

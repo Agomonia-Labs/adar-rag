@@ -110,8 +110,31 @@ Expected tools:
 - `list_workspaces`
 - `list_documents`
 - `get_document`
+- `create_document_upload`
+- `complete_document_upload`
+- `get_ingestion_status`
+- `get_document_chunks`
+- `embed_document`
+- `delete_document`
+- `create_video_upload`
+- `complete_video_upload`
+- `list_videos`
+- `process_video`
+- `get_video_status`
+- `get_video_timeline`
+- `get_video_transcript`
+- `get_video_frames`
+- `get_video_frame_url`
+- `search_video`
+- `summarize_document`
+- `summarize_documents`
+- `compare_documents`
 - `search_knowledgebase`
 - `create_chat_session`
+- `list_chat_sessions`
+- `get_chat_session`
+- `update_chat_session`
+- `delete_chat_session`
 - `ask`
 
 ## 5A. List Accessible Workspaces
@@ -150,7 +173,12 @@ Expected templates:
 
 - `docintel://workspaces/{workspace_id}/documents`
 - `docintel://documents/{document_id}`
+- `docintel://documents/{document_id}/chunks`
 - `docintel://sessions/{session_id}`
+- `docintel://videos/{document_id}`
+- `docintel://videos/{document_id}/timeline`
+- `docintel://videos/{document_id}/transcript`
+- `docintel://videos/{document_id}/frames`
 
 ## 6. List Personal Documents
 
@@ -224,6 +252,47 @@ mcp_request "$(jq -cn \
 ```
 
 Expected: `.result.contents` contains the document resource as JSON text.
+
+## Direct Upload and Ingestion Lifecycle
+
+Create an upload session using the exact local byte count and MIME type. The
+returned URL is short-lived and must receive the same `Content-Type` header:
+
+```bash
+export FILE_PATH="/absolute/path/to/document.pdf"
+export FILE_NAME="$(basename "$FILE_PATH")"
+export FILE_SIZE="$(stat -f%z "$FILE_PATH")"
+export CONTENT_TYPE="application/pdf"
+
+mcp_request "$(jq -cn \
+  --arg filename "$FILE_NAME" --arg content_type "$CONTENT_TYPE" \
+  --argjson file_size "$FILE_SIZE" --arg workspace_id "$WORKSPACE_ID" \
+  '{jsonrpc:"2.0",id:20,method:"tools/call",params:{name:"create_document_upload",arguments:{filename:$filename,content_type:$content_type,file_size:$file_size,workspace_id:$workspace_id}}}')" \
+  | tee /tmp/docintel-upload-session.json | jq
+```
+
+Parse the JSON text returned by MCP, PUT the file directly to storage, then
+call `complete_document_upload` with the unchanged values:
+
+```bash
+export UPLOAD_RESULT="$(jq -r '.result.content[0].text' /tmp/docintel-upload-session.json)"
+export DOCUMENT_ID="$(jq -r '.doc_id' <<<"$UPLOAD_RESULT")"
+export UPLOAD_URL="$(jq -r '.upload_url' <<<"$UPLOAD_RESULT")"
+export GCS_SOURCE_PATH="$(jq -r '.gcs_source_path' <<<"$UPLOAD_RESULT")"
+
+curl --fail-with-body -X PUT "$UPLOAD_URL" \
+  -H "Content-Type: $CONTENT_TYPE" --upload-file "$FILE_PATH"
+
+mcp_request "$(jq -cn \
+  --arg doc_id "$DOCUMENT_ID" --arg filename "$FILE_NAME" \
+  --arg content_type "$CONTENT_TYPE" --argjson file_size "$FILE_SIZE" \
+  --arg gcs_source_path "$GCS_SOURCE_PATH" --arg workspace_id "$WORKSPACE_ID" \
+  '{jsonrpc:"2.0",id:21,method:"tools/call",params:{name:"complete_document_upload",arguments:{doc_id:$doc_id,filename:$filename,content_type:$content_type,file_size:$file_size,gcs_source_path:$gcs_source_path,workspace_id:$workspace_id}}}')" | jq
+```
+
+Poll `get_ingestion_status` until the document is `chunked`, call
+`embed_document`, and poll again until it is `embedded`. Deletion requires an
+explicit `confirm:true` argument.
 
 ## 10. Read the Workspace Resource
 

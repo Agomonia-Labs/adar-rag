@@ -110,3 +110,126 @@ async def test_session_rejects_document_from_another_workspace():
             await client.create_session("Test", ["doc-1"], "workspace-1")
 
     assert error.value.code == "workspace_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_direct_upload_lifecycle_uses_document_endpoints():
+    requests: list[tuple[str, str, dict | None]] = []
+
+    async def handler(request: httpx.Request):
+        payload = json.loads(request.content) if request.content else None
+        requests.append((request.method, request.url.path, payload))
+        if request.url.path.endswith("upload-session"):
+            return httpx.Response(200, json={"doc_id": "doc-1", "upload_url": "https://storage.test/put"})
+        if request.url.path.endswith("upload-complete"):
+            return httpx.Response(200, json={"doc_id": "doc-1", "status": "chunking"})
+        if request.url.path.endswith("/embed"):
+            return httpx.Response(200, json={"doc_id": "doc-1", "message": "Embedding started"})
+        if request.method == "DELETE":
+            return httpx.Response(200, json={"deleted": "doc-1", "warnings": []})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        session = await client.create_upload_session("report.pdf", "application/pdf", 1234, "workspace-1", True)
+        completed = await client.complete_upload({
+            "doc_id": "doc-1", "filename": "report.pdf", "content_type": "application/pdf",
+            "file_size": 1234, "gcs_source_path": "users/u/documents/doc-1/source/report.pdf",
+            "workspace_id": "workspace-1", "redact_pii": True,
+        })
+        embedded = await client.trigger_embedding("doc-1")
+        deleted = await client.delete_document("doc-1")
+
+    assert session["doc_id"] == completed["doc_id"] == embedded["doc_id"] == "doc-1"
+    assert deleted["deleted"] == "doc-1"
+    assert requests[0][2]["redact_pii"] is True
+    assert [item[:2] for item in requests] == [
+        ("POST", "/api/documents/upload-session"),
+        ("POST", "/api/documents/upload-complete"),
+        ("POST", "/api/documents/doc-1/embed"),
+        ("DELETE", "/api/documents/doc-1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_session_lifecycle_uses_persistent_session_endpoints():
+    async def handler(request: httpx.Request):
+        if request.method == "GET" and request.url.path == "/api/chat/sessions/":
+            assert request.url.params["workspace_id"] == "workspace-1"
+            return httpx.Response(200, json=[{"id": "session-1", "title": "Original"}])
+        if request.method == "PATCH":
+            assert json.loads(request.content) == {"title": "Renamed"}
+            return httpx.Response(200, json={"ok": True})
+        if request.method == "DELETE":
+            return httpx.Response(200, json={"ok": True})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        sessions = await client.list_sessions("workspace-1")
+        updated = await client.update_session("session-1", {"title": "Renamed"})
+        deleted = await client.delete_session("session-1")
+
+    assert sessions[0]["id"] == "session-1"
+    assert updated == {"ok": True}
+    assert deleted == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_video_lifecycle_and_timestamp_question_use_video_endpoints():
+    async def handler(request: httpx.Request):
+        if request.url.path == "/api/video/upload-session":
+            return httpx.Response(200, json={"doc_id": "video-1", "upload_url": "https://storage.test/video"})
+        if request.url.path == "/api/video/upload-complete":
+            return httpx.Response(200, json={"doc_id": "video-1", "status": "uploaded"})
+        if request.url.path == "/api/video/video-1/process":
+            assert json.loads(request.content)["transcript_language"] == "hi-IN"
+            return httpx.Response(200, json={"doc_id": "video-1", "message": "Video processing started"})
+        if request.url.path == "/api/video/video-1/status":
+            return httpx.Response(200, json={"doc_id": "video-1", "processing_status": "completed", "progress_pct": 100})
+        if request.url.path == "/api/video/video-1/timeline":
+            return httpx.Response(200, json={"segments": [{"start_seconds": 60, "transcript": "Opening"}], "frames": []})
+        if request.url.path == "/api/video/video-1/ask":
+            return httpx.Response(200, json={"answer": "The topic starts at 01:00.", "sources": [{"start_seconds": 60}]})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        upload = await client.create_video_upload_session("clip.mp4", "video/mp4", 5000, "workspace-1")
+        complete = await client.complete_video_upload({"doc_id": "video-1"})
+        process = await client.process_video("video-1", {"rights_confirmed": True, "transcript_language": "hi-IN"})
+        status = await client.get_video_status("video-1")
+        timeline = await client.get_video_timeline("video-1")
+        answer = await client.ask_video("video-1", "When does it start?", 8)
+
+    assert upload["doc_id"] == complete["doc_id"] == process["doc_id"] == "video-1"
+    assert status["progress_pct"] == 100
+    assert timeline["segments"][0]["start_seconds"] == 60
+    assert answer["sources"][0]["start_seconds"] == 60
+
+
+@pytest.mark.asyncio
+async def test_summary_and_comparison_collect_streaming_results():
+    async def handler(request: httpx.Request):
+        if request.url.path.startswith("/api/summarize/"):
+            events = [
+                {"type": "meta", "stage": "map", "batch": 1, "of": 2},
+                {"type": "token", "text": "Executive "},
+                {"type": "token", "text": "summary"},
+                {"type": "done"},
+            ]
+        elif request.url.path == "/api/compare/stream":
+            events = [
+                {"type": "status", "message": "Loading documents"},
+                {"type": "result", "data": {"similarity_score": 0.75, "sections": []}},
+            ]
+        else:
+            raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+        body = "".join(f"data: {json.dumps(event)}\n\n" for event in events)
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream", "x-trace-id": "trace-gen"})
+
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        summary = await client.summarize_document("doc-1", "executive", "", [], False)
+        comparison = await client.compare_documents("doc-1", "doc-2", False)
+
+    assert summary["summary"] == "Executive summary"
+    assert summary["progress"][0]["stage"] == "map"
+    assert summary["trace_id"] == "trace-gen"
+    assert comparison["comparison"]["similarity_score"] == 0.75

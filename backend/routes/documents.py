@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from typing import Optional
 from fastapi import Request, APIRouter, BackgroundTasks, UploadFile, File, Form, HTTPException, Depends
+from pydantic import BaseModel
 
 log = logging.getLogger('docintel.documents')
 
@@ -29,6 +30,138 @@ router = APIRouter()
 
 MAX_FILES    = int(os.getenv("MAX_UPLOAD_FILES", "10"))
 MAX_FILE_MB  = int(os.getenv("MAX_FILE_SIZE_MB", "50"))
+
+
+class DirectUploadSessionRequest(BaseModel):
+    filename: str
+    content_type: str = "application/octet-stream"
+    file_size: int
+    workspace_id: Optional[str] = None
+    redact_pii: bool = False
+
+
+class DirectUploadCompleteRequest(DirectUploadSessionRequest):
+    doc_id: str
+    gcs_source_path: str
+
+
+async def _chunk_direct_upload(
+    doc_id: str,
+    user_id: str,
+    source_path: str,
+    filename: str,
+    content_type: str,
+    ftype: str,
+    workspace_id: Optional[str],
+    redact_pii: bool,
+):
+    suffix = os.path.splitext(filename)[1]
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp.close()
+    try:
+        await gcs.download_to_file(source_path, tmp.name)
+        await _chunk_document(
+            doc_id, user_id, tmp.name, filename, content_type, ftype,
+            workspace_id, redact_pii,
+        )
+    except Exception as exc:
+        log.exception("Direct-upload chunking failed for %s", doc_id)
+        from database.connection import get_pool
+        async with get_pool().acquire() as connection:
+            await connection.execute(
+                "UPDATE documents SET status='error', error_message=$2, updated_at=NOW() WHERE id=$1",
+                doc_id, str(exc)[:2000],
+            )
+    finally:
+        if os.path.exists(tmp.name):
+            os.unlink(tmp.name)
+
+
+@router.post("/upload-session")
+async def create_direct_upload_session(
+    body: DirectUploadSessionRequest,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Create a signed GCS PUT URL without proxying file bytes through the API."""
+    user_id = str(current_user["id"])
+    filename = os.path.basename((body.filename or "document").strip()) or "document"
+    content_type = (body.content_type or "application/octet-stream").strip()
+    file_size = int(body.file_size or 0)
+    if file_size <= 0:
+        raise HTTPException(400, "file_size is required")
+    if detect_type(filename, content_type) == "video":
+        raise HTTPException(400, "Use the video direct-upload workflow for video files")
+
+    await check_document_limit(db, user_id, quantity=1)
+    from services.usage import get_user_limits
+    limits = await get_user_limits(db, user_id)
+    max_mb = limits.get("max_file_mb", 10)
+    if max_mb != -1 and file_size > max_mb * 1024 * 1024:
+        raise HTTPException(413, f"File '{filename}' exceeds your {max_mb} MB file size limit")
+    if body.workspace_id:
+        from routes.workspaces import _require_role
+        await _require_role(db, body.workspace_id, user_id, "editor")
+
+    doc_id = str(uuid4())
+    source_path = gcs.source_path(user_id, doc_id, filename)
+    upload_url = await gcs.get_signed_upload_url(source_path, content_type=content_type)
+    return {
+        "doc_id": doc_id,
+        "upload_url": upload_url,
+        "gcs_source_path": source_path,
+        "expires_in_seconds": int(os.getenv("GCS_SIGNED_URL_EXPIRY_SECONDS", "3600")),
+        "method": "PUT",
+        "headers": {"Content-Type": content_type},
+    }
+
+
+@router.post("/upload-complete")
+async def complete_direct_upload(
+    body: DirectUploadCompleteRequest,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Verify a direct upload, create its document record, and start chunking."""
+    user_id = str(current_user["id"])
+    filename = os.path.basename((body.filename or "document").strip()) or "document"
+    content_type = (body.content_type or "application/octet-stream").strip()
+    expected_path = gcs.source_path(user_id, body.doc_id, filename)
+    if body.gcs_source_path != expected_path:
+        raise HTTPException(400, "Upload path does not match the authenticated user and document")
+    if body.workspace_id:
+        from routes.workspaces import _require_role
+        await _require_role(db, body.workspace_id, user_id, "editor")
+
+    meta = await gcs.blob_metadata(body.gcs_source_path)
+    if not meta:
+        raise HTTPException(400, "Uploaded document was not found in storage")
+    uploaded_size = int(meta.get("size") or 0)
+    if body.file_size and uploaded_size and abs(uploaded_size - body.file_size) > 1024:
+        raise HTTPException(400, f"Uploaded size mismatch. Expected {body.file_size} bytes but found {uploaded_size} bytes")
+
+    ftype = detect_type(filename, content_type)
+    chk_dir = gcs.chunks_dir(user_id, body.doc_id)
+    result = await db.execute(
+        """
+        INSERT INTO documents
+          (id, user_id, workspace_id, filename, original_name, file_type, file_size,
+           gcs_source_path, gcs_chunks_dir, status, doc_metadata)
+        VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,'chunking',$9::jsonb)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        body.doc_id, user_id, body.workspace_id, filename, ftype,
+        uploaded_size or body.file_size, body.gcs_source_path, chk_dir,
+        json.dumps({"direct_upload": True, "upload_content_type": meta.get("content_type") or content_type}),
+    )
+    if result == "INSERT 0 0":
+        raise HTTPException(409, "Document upload was already completed")
+    background_tasks.add_task(
+        _chunk_direct_upload, body.doc_id, user_id, body.gcs_source_path,
+        filename, content_type, ftype, body.workspace_id, body.redact_pii,
+    )
+    return {"doc_id": body.doc_id, "filename": filename, "status": "chunking", "file_size": uploaded_size or body.file_size}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -221,6 +354,9 @@ async def trigger_embedding(
     db=Depends(get_db),
 ):
     row = await _get_owned(doc_id, current_user["id"], db)
+    if row.get("workspace_id"):
+        from routes.workspaces import _require_role
+        await _require_role(db, str(row["workspace_id"]), str(current_user["id"]), "editor")
     if row["status"] != "chunked":
         raise HTTPException(400, f"Document must be in 'chunked' state (current: {row['status']})")
 
@@ -246,6 +382,9 @@ async def trigger_embedding(
 @router.delete("/{doc_id}")
 async def delete_document(doc_id: str, current_user: CurrentUser, db=Depends(get_db)):
     row     = await _get_owned(doc_id, str(current_user["id"]), db)
+    if row.get("workspace_id"):
+        from routes.workspaces import _require_role
+        await _require_role(db, str(row["workspace_id"]), str(current_user["id"]), "editor")
     user_id = str(row["user_id"])
     warnings = []
 

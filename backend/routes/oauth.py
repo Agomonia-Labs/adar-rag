@@ -30,8 +30,12 @@ REFRESH_DAYS = int(os.getenv("OAUTH_REFRESH_TOKEN_DAYS", "30"))
 ALLOWED_SCOPES = {
     "workspaces:read",
     "documents:read",
+    "documents:write",
     "knowledge:query",
+    "knowledge:generate",
     "sessions:write",
+    "video:read",
+    "video:process",
 }
 
 

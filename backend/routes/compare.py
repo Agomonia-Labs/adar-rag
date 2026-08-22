@@ -36,8 +36,17 @@ async def compare_documents(
     user_id = str(current_user["id"])
 
     rows = await db.fetch(
-        """SELECT id, original_name, status, doc_language FROM documents
-           WHERE id = ANY($1::uuid[]) AND user_id = $2 AND status != 'deleted'""",
+        """SELECT d.id, d.user_id, d.original_name, d.status, d.doc_language
+           FROM documents d
+           WHERE d.id = ANY($1::uuid[])
+             AND d.status != 'deleted'
+             AND (
+               d.user_id = $2
+               OR EXISTS (
+                 SELECT 1 FROM workspace_members wm
+                 WHERE wm.workspace_id = d.workspace_id AND wm.user_id = $2
+               )
+             )""",
         [body.document_id_1, body.document_id_2], user_id,
     )
     if len(rows) < 2:
@@ -68,14 +77,14 @@ async def compare_documents(
         try:
             yield _sse({"type": "status", "message": f"Loading {doc1['original_name']}..."})
             async with pool.acquire() as conn:
-                text1 = await _load_from_db(conn, doc_id_1, user_id)
+                text1 = await _load_from_db(conn, doc_id_1, str(doc1["user_id"]))
             text1 = redact_text(text1, body.redact_pii).text
             if not text1:
                 yield _sse({"type": "error", "error": f"No text found for {doc1['original_name']}. Ensure it is chunked."}); return
 
             yield _sse({"type": "status", "message": f"Loading {doc2['original_name']}..."})
             async with pool.acquire() as conn:
-                text2 = await _load_from_db(conn, doc_id_2, user_id)
+                text2 = await _load_from_db(conn, doc_id_2, str(doc2["user_id"]))
             text2 = redact_text(text2, body.redact_pii).text
             if not text2:
                 yield _sse({"type": "error", "error": f"No text found for {doc2['original_name']}. Ensure it is chunked."}); return

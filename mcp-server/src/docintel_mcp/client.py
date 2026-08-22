@@ -60,8 +60,126 @@ class DocIntelApiClient:
     async def get_document(self, document_id: str) -> dict:
         return await self.request("GET", f"/api/documents/{document_id}")
 
+    async def get_document_chunks(self, document_id: str) -> dict:
+        return await self.request("GET", f"/api/documents/{document_id}/chunks")
+
+    async def create_upload_session(
+        self, filename: str, content_type: str, file_size: int,
+        workspace_id: str | None, redact_pii: bool,
+    ) -> dict:
+        return await self.request("POST", "/api/documents/upload-session", json={
+            "filename": filename,
+            "content_type": content_type,
+            "file_size": file_size,
+            "workspace_id": workspace_id,
+            "redact_pii": redact_pii,
+        })
+
+    async def complete_upload(self, payload: dict[str, Any]) -> dict:
+        return await self.request("POST", "/api/documents/upload-complete", json=payload)
+
+    async def trigger_embedding(self, document_id: str) -> dict:
+        return await self.request("POST", f"/api/documents/{document_id}/embed")
+
+    async def delete_document(self, document_id: str) -> dict:
+        return await self.request("DELETE", f"/api/documents/{document_id}")
+
+    async def create_video_upload_session(
+        self, filename: str, content_type: str, file_size: int, workspace_id: str | None,
+    ) -> dict:
+        return await self.request("POST", "/api/video/upload-session", json={
+            "filename": filename, "content_type": content_type,
+            "file_size": file_size, "workspace_id": workspace_id,
+        })
+
+    async def complete_video_upload(self, payload: dict[str, Any]) -> dict:
+        return await self.request("POST", "/api/video/upload-complete", json=payload)
+
+    async def list_videos(self, workspace_id: str | None) -> list[dict]:
+        params = {"workspace_id": workspace_id} if workspace_id else None
+        return await self.request("GET", "/api/video/documents", params=params)
+
+    async def process_video(self, document_id: str, payload: dict[str, Any]) -> dict:
+        return await self.request("POST", f"/api/video/{document_id}/process", json=payload)
+
+    async def get_video_status(self, document_id: str) -> dict:
+        return await self.request("GET", f"/api/video/{document_id}/status")
+
+    async def get_video_timeline(self, document_id: str) -> dict:
+        return await self.request("GET", f"/api/video/{document_id}/timeline")
+
+    async def get_video_frame_url(self, document_id: str, frame_index: int) -> dict:
+        return await self.request("GET", f"/api/video/{document_id}/frames/{frame_index}/view-url")
+
+    async def ask_video(self, document_id: str, question: str, limit: int) -> dict:
+        return await self.request("POST", f"/api/video/{document_id}/ask", json={"question": question, "limit": limit})
+
+    async def summarize_document(
+        self, document_id: str, summary_type: str, custom_prompt: str,
+        chunk_indices: list[int], redact_pii: bool,
+    ) -> dict:
+        payload = {
+            "summary_type": summary_type, "custom_prompt": custom_prompt,
+            "chunk_indices": chunk_indices, "redact_pii": redact_pii,
+        }
+        return await self._collect_summary(f"/api/summarize/document/{document_id}/stream", payload)
+
+    async def summarize_documents(
+        self, document_ids: list[str], summary_type: str,
+        custom_prompt: str, redact_pii: bool,
+    ) -> dict:
+        payload = {
+            "document_ids": document_ids, "summary_type": summary_type,
+            "custom_prompt": custom_prompt, "redact_pii": redact_pii,
+        }
+        return await self._collect_summary("/api/summarize/documents/stream", payload)
+
+    async def compare_documents(self, document_id_1: str, document_id_2: str, redact_pii: bool) -> dict:
+        payload = {"document_id_1": document_id_1, "document_id_2": document_id_2, "redact_pii": redact_pii}
+        statuses: list[str] = []
+        result: dict | None = None
+        trace_id: str | None = None
+        async for event, response_trace_id in self._stream_sse("/api/compare/stream", payload):
+            trace_id = response_trace_id or trace_id
+            if event.get("type") == "status":
+                statuses.append(event.get("message", ""))
+            elif event.get("type") == "result":
+                result = event.get("data") or {}
+            elif event.get("type") == "error":
+                raise DocIntelMcpError("comparison_failed", event.get("error", "Comparison failed"), trace_id=trace_id)
+        if result is None:
+            raise DocIntelMcpError("comparison_failed", "Comparison returned no result", trace_id=trace_id)
+        return {"comparison": result, "status_messages": statuses, "trace_id": trace_id}
+
+    async def _collect_summary(self, path: str, payload: dict[str, Any]) -> dict:
+        tokens: list[str] = []
+        progress: list[dict] = []
+        trace_id: str | None = None
+        async for event, response_trace_id in self._stream_sse(path, payload):
+            trace_id = response_trace_id or trace_id
+            if event.get("type") == "token":
+                tokens.append(event.get("text", ""))
+            elif event.get("type") == "meta":
+                progress.append({key: value for key, value in event.items() if key != "type"})
+            elif event.get("type") == "error":
+                raise DocIntelMcpError("summary_failed", event.get("error", "Summary failed"), trace_id=trace_id)
+        summary = "".join(tokens).strip()
+        if not summary:
+            raise DocIntelMcpError("summary_failed", "Summary returned no content", trace_id=trace_id)
+        return {"summary": summary, "progress": progress, "trace_id": trace_id}
+
     async def get_session(self, session_id: str) -> dict:
         return await self.request("GET", f"/api/chat/sessions/{session_id}")
+
+    async def list_sessions(self, workspace_id: str | None) -> list[dict]:
+        params = {"workspace_id": workspace_id} if workspace_id else None
+        return await self.request("GET", "/api/chat/sessions/", params=params)
+
+    async def update_session(self, session_id: str, payload: dict[str, Any]) -> dict:
+        return await self.request("PATCH", f"/api/chat/sessions/{session_id}", json=payload)
+
+    async def delete_session(self, session_id: str) -> dict:
+        return await self.request("DELETE", f"/api/chat/sessions/{session_id}")
 
     async def create_session(self, title: str, document_ids: list[str], workspace_id: str | None) -> dict:
         documents = [await self.get_document(document_id) for document_id in document_ids]

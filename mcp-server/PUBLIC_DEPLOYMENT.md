@@ -88,8 +88,12 @@ Scopes:
 ```text
 workspaces:read
 documents:read
+documents:write
 knowledge:query
+knowledge:generate
 sessions:write
+video:read
+video:process
 ```
 
 ## Stage 4: Gateway and Operations
@@ -116,6 +120,11 @@ workspaces. Verify that invalid audience, expired tokens, missing scopes,
 cross-workspace IDs, revoked clients, and rotated refresh tokens fail cleanly.
 
 Do not label the endpoint production-public until all five stages pass.
+
+After adding a new OAuth scope, existing access tokens do not gain it. Redeploy
+the backend and MCP service, then run `source scripts/oauth_login.sh` again to
+authorize a new token containing `documents:write`, `knowledge:generate`,
+`video:read`, and `video:process`.
 
 ## Deployment Sequence
 

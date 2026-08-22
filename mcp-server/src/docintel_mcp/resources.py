@@ -30,6 +30,16 @@ def register_resources(mcp: FastMCP, settings: Settings) -> None:
         except DocIntelMcpError as exc:
             return json.dumps(exc.as_dict())
 
+    @mcp.resource("docintel://documents/{document_id}/chunks")
+    async def document_chunks(document_id: str, ctx: Context) -> str:
+        """Chunk manifest for an accessible DocIntel document."""
+        try:
+            async with api_client(ctx, settings, "documents:read") as client:
+                result = await client.get_document_chunks(document_id)
+            return json.dumps(result, ensure_ascii=True, default=str)
+        except DocIntelMcpError as exc:
+            return json.dumps(exc.as_dict())
+
     @mcp.resource("docintel://sessions/{session_id}")
     async def session(session_id: str, ctx: Context) -> str:
         """A DocIntel chat session owned by the authenticated user."""
@@ -40,3 +50,51 @@ def register_resources(mcp: FastMCP, settings: Settings) -> None:
         except DocIntelMcpError as exc:
             return json.dumps(exc.as_dict())
 
+    @mcp.resource("docintel://videos/{document_id}")
+    async def video(document_id: str, ctx: Context) -> str:
+        """Processing status and metadata for an accessible video."""
+        try:
+            async with api_client(ctx, settings, "video:read") as client:
+                result = await client.get_video_status(document_id)
+            return json.dumps(result, ensure_ascii=True, default=str)
+        except DocIntelMcpError as exc:
+            return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://videos/{document_id}/timeline")
+    async def video_timeline(document_id: str, ctx: Context) -> str:
+        """Timestamped segments and sampled frames for an accessible video."""
+        try:
+            async with api_client(ctx, settings, "video:read") as client:
+                result = await client.get_video_timeline(document_id)
+            return json.dumps(result, ensure_ascii=True, default=str)
+        except DocIntelMcpError as exc:
+            return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://videos/{document_id}/transcript")
+    async def video_transcript(document_id: str, ctx: Context) -> str:
+        """Timestamped transcript entries for an accessible video."""
+        try:
+            async with api_client(ctx, settings, "video:read") as client:
+                timeline = await client.get_video_timeline(document_id)
+            entries = [
+                {
+                    "segment_index": segment.get("segment_index"),
+                    "start_seconds": segment.get("start_seconds"),
+                    "end_seconds": segment.get("end_seconds"),
+                    "transcript": segment.get("transcript") or "",
+                }
+                for segment in timeline.get("segments", []) if segment.get("transcript")
+            ]
+            return json.dumps({"document_id": document_id, "entries": entries}, ensure_ascii=True, default=str)
+        except DocIntelMcpError as exc:
+            return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://videos/{document_id}/frames")
+    async def video_frames(document_id: str, ctx: Context) -> str:
+        """Sampled frame metadata for an accessible video."""
+        try:
+            async with api_client(ctx, settings, "video:read") as client:
+                timeline = await client.get_video_timeline(document_id)
+            return json.dumps({"document_id": document_id, "frames": timeline.get("frames", [])}, ensure_ascii=True, default=str)
+        except DocIntelMcpError as exc:
+            return json.dumps(exc.as_dict())

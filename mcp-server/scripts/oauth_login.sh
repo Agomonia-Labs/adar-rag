@@ -7,7 +7,7 @@ docintel_mcp_oauth_login() {
   local mcp_url="${DOCINTEL_MCP_URL:-https://mcp.docintel.adar.agomoniai.com/mcp}"
   local callback_port="${DOCINTEL_OAUTH_CALLBACK_PORT:-8765}"
   local callback_url="http://127.0.0.1:${callback_port}/callback"
-  local scopes="${DOCINTEL_MCP_SCOPES:-workspaces:read documents:read knowledge:query sessions:write}"
+  local scopes="${DOCINTEL_MCP_SCOPES:-workspaces:read documents:read documents:write knowledge:query knowledge:generate sessions:write video:read video:process}"
   local timeout_seconds="${DOCINTEL_OAUTH_TIMEOUT_SECONDS:-300}"
   local work_dir listener_pid authorization_url register_response token_response
   local callback_file ready_file returned_state authorization_code elapsed
@@ -267,6 +267,43 @@ mcp_request() {
     -H "Accept: application/json, text/event-stream" \
     -H "MCP-Protocol-Version: 2025-06-18" \
     --data "$1"
+}
+
+mcp_tool() {
+  if [[ $# -lt 1 ]]; then
+    echo "Usage: mcp_tool <tool-name> [arguments-json]" >&2
+    return 1
+  fi
+  local name="$1"
+  local arguments="{}"
+  if [[ $# -ge 2 ]]; then
+    arguments="$2"
+  fi
+  if ! jq -e . >/dev/null 2>&1 <<<"$arguments"; then
+    echo "Tool arguments must be valid JSON" >&2
+    return 1
+  fi
+  mcp_request "$(jq -cn \
+    --arg name "$name" \
+    --argjson arguments "$arguments" \
+    '{jsonrpc:"2.0",id:1,method:"tools/call",params:{name:$name,arguments:$arguments}}'
+  )"
+}
+
+tool_data() {
+  jq '
+    if .error then
+      {ok:false,error:.error}
+    elif .result.structuredContent.result? then
+      .result.structuredContent.result
+    elif .result.structuredContent? then
+      .result.structuredContent
+    elif (.result.content[0].text? | type) == "string" then
+      (.result.content[0].text | try fromjson catch {text:.})
+    else
+      .result
+    end
+  '
 }
 
 if [[ "${DOCINTEL_OAUTH_DEFINE_ONLY:-0}" != "1" ]]; then
