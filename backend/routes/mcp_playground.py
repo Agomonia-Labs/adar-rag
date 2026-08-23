@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from auth.dependencies import CurrentUser
 from database.connection import get_db
-from services.mcp_playground.command_parser import apply_pipelines, parse_command
+from services.mcp_playground.command_parser import apply_pipelines, format_resource_data, parse_command
 from services.mcp_playground.command_policy import validate_request
 from services.mcp_playground.example_catalog import example_catalog
 from services.mcp_playground.mcp_gateway import execute_mcp
@@ -86,8 +86,11 @@ async def execute(body: ExecuteRequest, request: Request, current_user: CurrentU
     row = await session_for_request(db, request, str(current_user["id"]))
     token, _ = await access_token(db, row)
     raw, duration_ms = await execute_mcp(token, parsed.request or {})
+    formatted = apply_pipelines(raw, parsed.pipelines)
+    if not parsed.pipelines and parsed.request.get("method") == "resources/read":
+        formatted = format_resource_data(raw)
     return {
-        "result": apply_pipelines(raw, parsed.pipelines),
+        "result": formatted,
         "raw": raw,
         "duration_ms": duration_ms,
         "request_id": (parsed.request or {}).get("id"),

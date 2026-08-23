@@ -26,6 +26,10 @@ The browser never receives the MCP access or refresh token. The backend stores
 encrypted tokens in an HttpOnly session, refreshes short-lived access tokens,
 and revokes the refresh token on disconnect.
 
+For `resources/read`, **Formatted** view automatically parses JSON stored in
+MCP `contents[].text`. Use **Raw MCP** when you need the original protocol
+envelope, URI, MIME type, and serialized resource text.
+
 ## Supported Syntax
 
 - `mcp_request '<json-rpc object>'`

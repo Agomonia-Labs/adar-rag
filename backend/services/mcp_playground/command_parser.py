@@ -75,6 +75,34 @@ def apply_pipelines(value: Any, pipelines: list[tuple[str, str | None]]) -> Any:
     return result
 
 
+def format_resource_data(value: Any) -> Any:
+    """Unwrap MCP resources/read text blocks while preserving Raw MCP separately."""
+    if not isinstance(value, dict) or value.get("error"):
+        return value
+    result = value.get("result") or {}
+    contents = result.get("contents") or []
+    if not isinstance(contents, list) or not contents:
+        return result
+
+    formatted = []
+    for item in contents:
+        if not isinstance(item, dict):
+            formatted.append(item)
+            continue
+        text = item.get("text")
+        data: Any = text
+        if isinstance(text, str):
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                pass
+        metadata = {key: item[key] for key in ("uri", "mimeType") if item.get(key) is not None}
+        if len(contents) == 1 and isinstance(data, (dict, list)):
+            return data
+        formatted.append({**metadata, "data": data})
+    return formatted
+
+
 def _json_object(raw: str, label: str) -> dict:
     try:
         value = json.loads(raw)
@@ -122,4 +150,3 @@ def _jq_path(value: Any, expression: str) -> Any:
                 return []
             return current
     return current
-

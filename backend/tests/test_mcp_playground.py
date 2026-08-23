@@ -1,7 +1,7 @@
 import pytest
 from fastapi import HTTPException
 
-from services.mcp_playground.command_parser import apply_pipelines, parse_command
+from services.mcp_playground.command_parser import apply_pipelines, format_resource_data, parse_command
 from services.mcp_playground.command_policy import validate_request
 from services.mcp_playground.example_catalog import example_catalog
 
@@ -72,3 +72,41 @@ def test_catalog_covers_registered_tools_and_resources():
     }
     assert tools == expected
     assert sum(item["category"] == "Resources" for item in catalog) == 10
+
+
+def test_formats_json_resource_text_as_structured_data():
+    response = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+            "contents": [{
+                "uri": "docintel://documents/doc-1",
+                "mimeType": "application/json",
+                "text": '{"id":"doc-1","filename":"lease.pdf","status":"embedded"}',
+            }]
+        },
+    }
+
+    assert format_resource_data(response) == {
+        "id": "doc-1",
+        "filename": "lease.pdf",
+        "status": "embedded",
+    }
+
+
+def test_preserves_plain_text_resource_with_metadata():
+    response = {
+        "result": {
+            "contents": [{
+                "uri": "docintel://documents/doc-1",
+                "mimeType": "text/plain",
+                "text": "Plain resource content",
+            }]
+        }
+    }
+
+    assert format_resource_data(response) == [{
+        "uri": "docintel://documents/doc-1",
+        "mimeType": "text/plain",
+        "data": "Plain resource content",
+    }]
