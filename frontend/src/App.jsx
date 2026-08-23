@@ -159,8 +159,8 @@ export default function App() {
             onOpenGuide={() => setShowHelpGuide(true)}
             onOpenHelpCenter={() => setShowHelpCenter(true)}
           />
-          {showHelpGuide && <HelpGuidePanel onClose={() => setShowHelpGuide(false)} initialSection="quick-start" />}
-          {showHelpCenter && <HelpCenterPanel onClose={() => setShowHelpCenter(false)} />}
+          {showHelpGuide && <HelpGuidePanel language={uiLang} onClose={() => setShowHelpGuide(false)} initialSection="quick-start" />}
+          {showHelpCenter && <HelpCenterPanel language={uiLang} onClose={() => setShowHelpCenter(false)} />}
         </>
       );
   }
@@ -233,8 +233,8 @@ export default function App() {
       <ToastContainer />
       {showUsage && <UsagePanel onClose={() => setShowUsage(false)} onUpgrade={() => { setShowUsage(false); setShowBilling(true); }} />}
       {showBilling && <BillingPanel onClose={() => setShowBilling(false)} />}
-      {showHelpGuide && <HelpGuidePanel onClose={() => setShowHelpGuide(false)} initialSection="quick-start" />}
-      {showHelpCenter && <HelpCenterPanel onClose={() => setShowHelpCenter(false)} />}
+      {showHelpGuide && <HelpGuidePanel language={uiLang} onClose={() => setShowHelpGuide(false)} initialSection="quick-start" />}
+      {showHelpCenter && <HelpCenterPanel language={uiLang} onClose={() => setShowHelpCenter(false)} />}
       {showNewVisit && (
         <HealthcarePanel
           newVisit
@@ -265,7 +265,7 @@ export default function App() {
           onClose={() => setShowFinanceTaxPanel(false)}
         />
       )}
-      {showMcpPlayground && <McpPlayground onClose={() => setShowMcpPlayground(false)} />}
+      {showMcpPlayground && <McpPlayground language={uiLang} onClose={() => setShowMcpPlayground(false)} />}
       {showTalentPanel && (
         <TalentPanel activeWorkspace={activeWorkspace} onClose={() => setShowTalentPanel(false)} />
       )}
@@ -422,19 +422,19 @@ export default function App() {
               style={s.helpBtn}
               onClick={() => setShowHelpGuide(true)}
               title="Open DocIntel user guide">
-              📘 Guide
+              📘 {t.guide}
             </button>
             <button
               style={s.helpBtn}
               onClick={() => setShowHelpCenter(true)}
               title="Open DocIntel Help Center">
-              📘 Help Center
+              📘 {t.helpCenter}
             </button>
             <button
               style={s.helpBtn}
               onClick={openMcpPlayground}
               title="Open the OAuth-enabled MCP Playground">
-              ⌘ MCP
+              ⌘ {t.mcpPlayground}
             </button>
             <button
               style={{ fontSize:12, padding:isMobile?'5px 9px':'5px 12px', background:'rgba(192,132,252,.1)',
@@ -527,15 +527,15 @@ export default function App() {
                 </button>
                 <button type="button" style={s.menuItem} onClick={() => { closeMenus(); setShowHelpGuide(true); }}>
                   <span>📘</span>
-                  <span>DocIntel User Guide</span>
+                  <span>{t.userGuide}</span>
                 </button>
                 <button type="button" style={s.menuItem} onClick={() => { closeMenus(); setShowHelpCenter(true); }}>
                   <span>📘</span>
-                  <span>DocIntel Help Center</span>
+                  <span>DocIntel {t.helpCenter}</span>
                 </button>
                 <button type="button" style={s.menuItem} onClick={openMcpPlayground}>
                   <span>⌘</span>
-                  <span>MCP Playground</span>
+                  <span>{t.mcpPlayground}</span>
                 </button>
                 <label style={s.menuLangWrap} title={t.language}>
                   <span>🌐</span>

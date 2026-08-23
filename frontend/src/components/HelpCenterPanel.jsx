@@ -1,9 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { HELP_CENTER_ARTICLES, HELP_CENTER_CATEGORIES } from '../data/helpCenterContent.js';
 import HelpVoiceControls from './HelpVoiceControls.jsx';
+import { getPanelText } from './panelTranslations.js';
 
-export default function HelpCenterPanel({ onClose, initialArticle = 'getting-started' }) {
+export default function HelpCenterPanel({ onClose, initialArticle = 'getting-started', language = 'en' }) {
   const isMobile = useIsMobile();
+  const tx = getPanelText(language);
+  const categoryLabels = { all:tx.all, start:tx.gettingStarted, core:tx.coreConcepts, workflow:tx.workflows, admin:tx.admin, troubleshoot:tx.troubleshooting };
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
   const [activeId, setActiveId] = useState(initialArticle);
@@ -53,17 +56,17 @@ export default function HelpCenterPanel({ onClose, initialArticle = 'getting-sta
   };
 
   return (
-    <div style={s.overlay} role="dialog" aria-modal="true" aria-label="DocIntel Help Center">
+    <div style={s.overlay} role="dialog" aria-modal="true" aria-label={tx.helpTitle}>
       <div style={{...s.panel, ...(isMobile ? s.panelMobile : {})}}>
         <header style={{...s.header, ...(isMobile ? s.headerMobile : {})}}>
           <div style={s.titleWrap}>
             <span style={s.logo}>📘</span>
             <div style={s.titleText}>
-              <h2 style={s.title}>DocIntel Help Center</h2>
-              <p style={s.subtitle}>Extensive product documentation for users, reviewers, admins, and platform teams.</p>
+              <h2 style={s.title}>{tx.helpTitle}</h2>
+              <p style={s.subtitle}>{tx.helpSubtitle}</p>
             </div>
           </div>
-          <button type="button" style={s.closeBtn} onClick={onClose} aria-label="Close Help Center">x</button>
+          <button type="button" style={s.closeBtn} onClick={onClose} aria-label={tx.closeHelp}>x</button>
         </header>
 
         <div style={{...s.toolbar, ...(isMobile ? s.toolbarMobile : {})}}>
@@ -72,12 +75,12 @@ export default function HelpCenterPanel({ onClose, initialArticle = 'getting-sta
             <input
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder="Search upload, video, RAG, prior auth, tax, troubleshooting..."
+              placeholder={tx.helpSearch}
               style={s.search}
             />
           </label>
-          <select value={category} onChange={e => setCategory(e.target.value)} style={s.categorySelect} aria-label="Filter help articles">
-            {HELP_CENTER_CATEGORIES.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
+          <select value={category} onChange={e => setCategory(e.target.value)} style={s.categorySelect} aria-label={tx.filterArticles}>
+            {HELP_CENTER_CATEGORIES.map(item => <option key={item.key} value={item.key}>{categoryLabels[item.key] || item.label}</option>)}
           </select>
         </div>
 
@@ -96,7 +99,7 @@ export default function HelpCenterPanel({ onClose, initialArticle = 'getting-sta
                 </span>
               </button>
             ))}
-            {!filtered.length && <div style={s.empty}>No matching articles found.</div>}
+            {!filtered.length && <div style={s.empty}>{tx.noArticles}</div>}
           </aside>
 
           <main style={s.content}>
@@ -116,8 +119,8 @@ export default function HelpCenterPanel({ onClose, initialArticle = 'getting-sta
 
               <div style={s.actionRow}>
                 <div style={s.actionGroup}>
-                  <button type="button" style={s.copyBtn} onClick={copyArticle}>{copied ? 'Copied' : 'Copy article'}</button>
-                  <HelpVoiceControls text={activeArticleText} label="Listen to article" />
+                  <button type="button" style={s.copyBtn} onClick={copyArticle}>{copied ? tx.copied : tx.copyArticle}</button>
+                  <HelpVoiceControls text={activeArticleText} label={tx.listenArticle} />
                 </div>
                 <span style={s.shareHint}>Use this content for onboarding, support, demos, or internal enablement.</span>
               </div>

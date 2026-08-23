@@ -19,6 +19,10 @@ export const STRINGS = {
     plans: 'Plans',
     signOut: 'Sign out',
     language: 'Language',
+    guide: 'Guide',
+    userGuide: 'DocIntel User Guide',
+    helpCenter: 'Help Center',
+    mcpPlayground: 'MCP Playground',
   },
   es: {
     loading: 'Cargando আদর DocIntel…',
@@ -32,6 +36,10 @@ export const STRINGS = {
     plans: 'Planes',
     signOut: 'Cerrar sesión',
     language: 'Idioma',
+    guide: 'Guía',
+    userGuide: 'Guía de usuario de DocIntel',
+    helpCenter: 'Centro de ayuda',
+    mcpPlayground: 'Entorno MCP',
   },
   bn: {
     loading: 'আদর DocIntel লোড হচ্ছে…',
@@ -45,6 +53,10 @@ export const STRINGS = {
     plans: 'প্ল্যান',
     signOut: 'সাইন আউট',
     language: 'ভাষা',
+    guide: 'গাইড',
+    userGuide: 'DocIntel ব্যবহারকারী গাইড',
+    helpCenter: 'সহায়তা কেন্দ্র',
+    mcpPlayground: 'MCP প্লেগ্রাউন্ড',
   },
   hi: {
     loading: 'আদর DocIntel लोड हो रहा है…',
@@ -58,6 +70,10 @@ export const STRINGS = {
     plans: 'प्लान',
     signOut: 'साइन आउट',
     language: 'भाषा',
+    guide: 'मार्गदर्शिका',
+    userGuide: 'DocIntel उपयोगकर्ता मार्गदर्शिका',
+    helpCenter: 'सहायता केंद्र',
+    mcpPlayground: 'MCP प्लेग्राउंड',
   },
   ar: {
     loading: 'جار تحميل আদর DocIntel…',
@@ -71,6 +87,10 @@ export const STRINGS = {
     plans: 'الخطط',
     signOut: 'تسجيل الخروج',
     language: 'اللغة',
+    guide: 'الدليل',
+    userGuide: 'دليل مستخدم DocIntel',
+    helpCenter: 'مركز المساعدة',
+    mcpPlayground: 'ساحة MCP',
   },
 };
 

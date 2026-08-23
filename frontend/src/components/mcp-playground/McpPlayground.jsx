@@ -9,11 +9,13 @@ import {
 } from '../../services/mcpPlaygroundApi.js';
 import './mcpPlayground.css';
 import './mcpCatalog.css';
+import { getPanelText } from '../panelTranslations.js';
 
 const SENSITIVE = ['delete_document', 'delete_chat_session', 'approve_vertical_run', 'generate_vertical_packet'];
 const API_ORIGIN = new URL(import.meta.env.VITE_API_URL || window.location.origin, window.location.origin).origin;
 
-export default function McpPlayground({ onClose }) {
+export default function McpPlayground({ onClose, language = 'en' }) {
+  const tx = getPanelText(language);
   const [status, setStatus] = useState({ connected:false, scopes:[] });
   const [command, setCommand] = useState("mcp_tool list_workspaces '{}' | tool_data | jq '.'");
   const [entries, setEntries] = useState([]);
@@ -113,47 +115,47 @@ export default function McpPlayground({ onClose }) {
   });
 
   return (
-    <div className="mcp-overlay" role="dialog" aria-modal="true" aria-label="ADAR DocIntel MCP Playground">
+    <div className="mcp-overlay" role="dialog" aria-modal="true" aria-label={tx.mcpTitle}>
       <section className="mcp-shell">
         <header className="mcp-header">
           <div className="mcp-title-wrap">
             <span className="mcp-logo"><Terminal size={20}/></span>
-            <div><p>MCP Integration</p><h2>DocIntel MCP Playground</h2></div>
+            <div><p>{tx.mcpIntegration}</p><h2>{tx.mcpTitle}</h2></div>
           </div>
           <div className="mcp-header-actions">
             <span className={`mcp-status ${status.connected ? 'connected' : ''}`}>
-              {status.connected ? <Check size={14}/> : <CircleStop size={14}/>} {status.connected ? 'Connected' : 'Not connected'}
+              {status.connected ? <Check size={14}/> : <CircleStop size={14}/>} {status.connected ? tx.connected : tx.notConnected}
             </span>
             {status.connected
-              ? <button className="mcp-btn secondary" onClick={disconnect} disabled={busy}><Link size={15}/>Disconnect</button>
-              : <button className="mcp-btn primary" onClick={connect} disabled={busy}><Plug size={15}/>Connect OAuth</button>}
-            <button className="mcp-icon-btn" onClick={onClose} aria-label="Close MCP Playground"><X size={19}/></button>
+              ? <button className="mcp-btn secondary" onClick={disconnect} disabled={busy}><Link size={15}/>{tx.disconnect}</button>
+              : <button className="mcp-btn primary" onClick={connect} disabled={busy}><Plug size={15}/>{tx.connect}</button>}
+            <button className="mcp-icon-btn" onClick={onClose} aria-label={tx.closeMcp}><X size={19}/></button>
           </div>
         </header>
 
         <div className="mcp-scope-bar">
-          <span>Endpoint</span><code>https://mcp.docintel.adar.agomoniai.com/mcp</code>
-          {status.connected && <span className="mcp-scope-count">{status.scopes.length} scopes</span>}
+          <span>{tx.endpoint}</span><code>https://mcp.docintel.adar.agomoniai.com/mcp</code>
+          {status.connected && <span className="mcp-scope-count">{status.scopes.length} {tx.scopes}</span>}
         </div>
 
         <div className="mcp-toolbar">
           <div className="mcp-examples-wrap">
             <button className="mcp-btn secondary" onClick={() => setShowExamples(value => !value)}>
-              <BookOpen size={15}/>Examples<ChevronDown size={14}/>
+              <BookOpen size={15}/>{tx.examples}<ChevronDown size={14}/>
             </button>
             {showExamples && <div className="mcp-examples-menu">
               <div className="mcp-example-controls">
                 <select value={exampleCategory} onChange={event => setExampleCategory(event.target.value)} aria-label="Filter command category">
                   {categories.map(category => <option key={category}>{category}</option>)}
                 </select>
-                <span>{filteredExamples.length} of {examples.length} commands</span>
+                <span>{filteredExamples.length} / {examples.length} {tx.commands}</span>
               </div>
               <div className="mcp-example-list">
                 {filteredExamples.map((example, index) => <button key={`${example.category}-${example.name}-${index}`} onClick={() => { setCommand(example.command); setShowExamples(false); }}>
                   <span><strong>{example.name}</strong><small>{example.category}</small></span>
                   <p>{example.description}</p><code>{example.command}</code>
                 </button>)}
-                {!filteredExamples.length && <p className="mcp-example-empty">No commands match this filter.</p>}
+                {!filteredExamples.length && <p className="mcp-example-empty">{tx.noCommands}</p>}
               </div>
             </div>}
           </div>
@@ -166,28 +168,28 @@ export default function McpPlayground({ onClose }) {
                 setShowExamples(true);
               }}
               onFocus={() => setShowExamples(true)}
-              placeholder={`Search ${examples.length} commands`}
+              placeholder={`${tx.searchCommands} (${examples.length})`}
               aria-label="Search MCP example commands"
             />
             {exampleSearch && <button type="button" onClick={() => setExampleSearch('')} aria-label="Clear command search"><X size={13}/></button>}
           </label>
           <div className="mcp-view-tabs">
-            <button className={view === 'result' ? 'active' : ''} onClick={() => setView('result')}>Formatted</button>
-            <button className={view === 'raw' ? 'active' : ''} onClick={() => setView('raw')}>Raw MCP</button>
+            <button className={view === 'result' ? 'active' : ''} onClick={() => setView('result')}>{tx.formatted}</button>
+            <button className={view === 'raw' ? 'active' : ''} onClick={() => setView('raw')}>{tx.rawMcp}</button>
           </div>
-          <button className="mcp-icon-btn" title="Clear terminal" onClick={() => setEntries([])}><Trash2 size={16}/></button>
+          <button className="mcp-icon-btn" title={tx.clearTerminal} onClick={() => setEntries([])}><Trash2 size={16}/></button>
         </div>
 
         <div className="mcp-output" ref={outputRef}>
           {!entries.length && <div className="mcp-welcome">
-            <Terminal size={28}/><strong>Restricted MCP terminal</strong>
-            <p>Connect with OAuth, select an example, or enter an allowlisted MCP helper command. This terminal cannot execute operating-system commands.</p>
+            <Terminal size={28}/><strong>{tx.restrictedTerminal}</strong>
+            <p>{tx.terminalHelp}</p>
           </div>}
           {entries.map(entry => entry.system
             ? <div key={entry.id} className={`mcp-system ${entry.type}`}>{entry.message}</div>
             : <div key={entry.id} className="mcp-entry">
                 <div className="mcp-command-line"><span>$</span><code>{entry.command}</code><button onClick={() => navigator.clipboard?.writeText(entry.command)} title="Copy command"><Copy size={13}/></button></div>
-                {entry.loading ? <div className="mcp-running">Running MCP request...</div>
+                {entry.loading ? <div className="mcp-running">{tx.running}</div>
                   : entry.error ? <pre className="mcp-error">{entry.error}</pre>
                   : <>
                       <pre>{JSON.stringify(view === 'raw' ? entry.response?.raw : entry.response?.result, null, 2)}</pre>
@@ -200,7 +202,7 @@ export default function McpPlayground({ onClose }) {
           <span className="mcp-prompt">$</span>
           <textarea value={command} onChange={event => setCommand(event.target.value)} onKeyDown={keyDown}
             placeholder="mcp_tool list_workspaces '{}' | tool_data | jq '.'" rows={2} spellCheck={false}/>
-          <button className="mcp-run" onClick={() => run()} disabled={!status.connected || busy || !command.trim()} title="Run command"><Play size={18}/></button>
+          <button className="mcp-run" onClick={() => run()} disabled={!status.connected || busy || !command.trim()} title={tx.runCommand}><Play size={18}/></button>
         </footer>
       </section>
     </div>

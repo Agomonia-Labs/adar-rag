@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import HelpVoiceControls from './HelpVoiceControls.jsx';
+import { getPanelText } from './panelTranslations.js';
 
 const GUIDE_SECTIONS = [
   {
@@ -162,8 +163,9 @@ const GUIDE_SECTIONS = [
   },
 ];
 
-export default function HelpGuidePanel({ onClose, initialSection = 'quick-start' }) {
+export default function HelpGuidePanel({ onClose, initialSection = 'quick-start', language = 'en' }) {
   const isMobile = useIsMobile();
+  const tx = getPanelText(language);
   const [active, setActive] = useState(initialSection);
   const section = useMemo(
     () => GUIDE_SECTIONS.find(item => item.key === active) || GUIDE_SECTIONS[0],
@@ -172,17 +174,17 @@ export default function HelpGuidePanel({ onClose, initialSection = 'quick-start'
   const sectionVoiceText = useMemo(() => guideSectionToText(section), [section]);
 
   return (
-    <div style={s.overlay} role="dialog" aria-modal="true" aria-label="DocIntel user guide">
+    <div style={s.overlay} role="dialog" aria-modal="true" aria-label={tx.guideTitle}>
       <div style={{...s.panel, ...(isMobile ? s.panelMobile : {})}}>
         <header style={{...s.header, ...(isMobile ? s.headerMobile : {})}}>
           <div style={s.titleWrap}>
             <span style={s.logo}>🌿</span>
             <div>
-              <h2 style={s.title}>DocIntel User Guide</h2>
-              <p style={s.subtitle}>Find the fastest path for upload, Q&A, summaries, video, and vertical workflows.</p>
+              <h2 style={s.title}>{tx.guideTitle}</h2>
+              <p style={s.subtitle}>{tx.guideSubtitle}</p>
             </div>
           </div>
-          <button type="button" style={s.closeBtn} onClick={onClose} aria-label="Close user guide">✕</button>
+          <button type="button" style={s.closeBtn} onClick={onClose} aria-label={tx.closeGuide}>✕</button>
         </header>
 
         <div style={{...s.body, ...(isMobile ? s.bodyMobile : {})}}>
@@ -206,18 +208,18 @@ export default function HelpGuidePanel({ onClose, initialSection = 'quick-start'
                 <h3 style={s.sectionTitle}>{section.title}</h3>
                 <p style={s.sectionSummary}>{section.summary}</p>
               </div>
-              <HelpVoiceControls text={sectionVoiceText} label="Listen" />
+              <HelpVoiceControls text={sectionVoiceText} label={tx.listen} />
             </div>
 
             <section style={s.card}>
-              <h4 style={s.cardTitle}>How to use it</h4>
+              <h4 style={s.cardTitle}>{tx.howTo}</h4>
               <ol style={s.steps}>
                 {section.steps.map(step => <li key={step} style={s.step}>{step}</li>)}
               </ol>
             </section>
 
             <section style={s.card}>
-              <h4 style={s.cardTitle}>Good to know</h4>
+              <h4 style={s.cardTitle}>{tx.goodToKnow}</h4>
               <div style={s.tipList}>
                 {section.tips.map(tip => <div key={tip} style={s.tip}>{tip}</div>)}
               </div>
