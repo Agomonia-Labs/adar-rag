@@ -739,6 +739,24 @@ CREATE INDEX IF NOT EXISTS idx_talent_runs_workspace ON talent_runs(workspace_id
 CREATE INDEX IF NOT EXISTS idx_talent_runs_job ON talent_runs(job_description_id);
 CREATE INDEX IF NOT EXISTS idx_talent_runs_status ON talent_runs(status);
 
+CREATE TABLE IF NOT EXISTS mcp_playground_sessions (
+    session_hash             TEXT        PRIMARY KEY,
+    user_id                  UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    oauth_state              TEXT        UNIQUE NOT NULL,
+    client_id                TEXT        NOT NULL,
+    code_verifier_encrypted  TEXT        NOT NULL,
+    access_token_encrypted   TEXT,
+    refresh_token_encrypted  TEXT,
+    scopes                    TEXT        NOT NULL DEFAULT '',
+    expires_at                TIMESTAMPTZ,
+    connected_at             TIMESTAMPTZ,
+    revoked_at               TIMESTAMPTZ,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_playground_user ON mcp_playground_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_playground_state ON mcp_playground_sessions(oauth_state);
+
 """
 
 

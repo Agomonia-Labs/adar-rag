@@ -1,0 +1,1 @@
+"""Restricted MCP Playground support."""

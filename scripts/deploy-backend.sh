@@ -99,6 +99,15 @@ else
   echo "  Cohere Rerank: not configured (Gemini fallback active)"
 fi
 
+# Use a dedicated encryption key for browser MCP OAuth tokens when available.
+# The backend derives an isolated key from JWT_SECRET_KEY as a secure fallback.
+if gcloud secrets describe docintel-mcp-playground-encryption-key --project="$PROJECT_ID" &>/dev/null; then
+  SECRETS+=("MCP_PLAYGROUND_ENCRYPTION_KEY=docintel-mcp-playground-encryption-key:latest")
+  echo "  MCP Playground: dedicated token encryption key enabled"
+else
+  echo "  MCP Playground: using JWT-derived token encryption key"
+fi
+
 # Stripe Billing — add if secrets exist
 if gcloud secrets describe docintel-stripe-secret-key --project="$PROJECT_ID" &>/dev/null; then
   SECRETS+=("STRIPE_SECRET_KEY=docintel-stripe-secret-key:latest")
@@ -170,6 +179,10 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="OAUTH_MCP_RESOURCE=https://mcp.docintel.adar.agomoniai.com/mcp" \
   --set-env-vars="OAUTH_ACCESS_TOKEN_MINUTES=15" \
   --set-env-vars="OAUTH_REFRESH_TOKEN_DAYS=30" \
+  --set-env-vars="DOCINTEL_MCP_URL=https://mcp.docintel.adar.agomoniai.com/mcp" \
+  --set-env-vars="DOCINTEL_MCP_ISSUER_URL=https://auth.docintel.adar.agomoniai.com" \
+  --set-env-vars="MCP_PLAYGROUND_CALLBACK_URL=https://docintel.adar.agomoniai.com/api/mcp-playground/oauth/callback" \
+  --set-env-vars="MCP_PLAYGROUND_MAX_RESPONSE_BYTES=2097152" \
   --set-env-vars="GCS_SIGNED_URL_EXPIRY_SECONDS=3600" \
   --set-env-vars="APP_URL=https://docintel.adar.agomoniai.com" \
   --set-env-vars="EMAIL_FROM_NAME=আদর DocIntel" \

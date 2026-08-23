@@ -15,6 +15,7 @@ import RestaurantPanel from './components/RestaurantPanel.jsx';
 import VideoPanel      from './components/VideoPanel.jsx';
 import FinanceTaxPanel from './components/FinanceTaxPanel.jsx';
 import TalentPanel     from './components/TalentPanel.jsx';
+import McpPlayground   from './components/mcp-playground/McpPlayground.jsx';
 import { ToastContainer } from './components/Toast.jsx';
 import { claimGuestSession, getMe, getWorkspace }       from './services/api.js';
 import { LANGUAGES, getLanguage, getStrings } from './i18n.js';
@@ -36,6 +37,7 @@ export default function App() {
   const [showVideoPanel,   setShowVideoPanel]   = useState(false);
   const [showFinanceTaxPanel, setShowFinanceTaxPanel] = useState(false);
   const [showTalentPanel, setShowTalentPanel] = useState(false);
+  const [showMcpPlayground, setShowMcpPlayground] = useState(false);
   const [openLeasePickerKey, setOpenLeasePickerKey] = useState(0);
   const [openHealthcarePickerKey, setOpenHealthcarePickerKey] = useState(0);
   const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0);
@@ -221,6 +223,11 @@ export default function App() {
     setShowTalentPanel(true);
   };
 
+  const openMcpPlayground = () => {
+    closeMenus();
+    setShowMcpPlayground(true);
+  };
+
   return (
     <>
       <ToastContainer />
@@ -258,6 +265,7 @@ export default function App() {
           onClose={() => setShowFinanceTaxPanel(false)}
         />
       )}
+      {showMcpPlayground && <McpPlayground onClose={() => setShowMcpPlayground(false)} />}
       {showTalentPanel && (
         <TalentPanel activeWorkspace={activeWorkspace} onClose={() => setShowTalentPanel(false)} />
       )}
@@ -423,6 +431,12 @@ export default function App() {
               📘 Help Center
             </button>
             <button
+              style={s.helpBtn}
+              onClick={openMcpPlayground}
+              title="Open the OAuth-enabled MCP Playground">
+              ⌘ MCP
+            </button>
+            <button
               style={{ fontSize:12, padding:isMobile?'5px 9px':'5px 12px', background:'rgba(192,132,252,.1)',
                        color:'#c084fc', border:'1px solid rgba(192,132,252,.3)',
                        borderRadius:'var(--r)', cursor:'pointer', fontWeight:600 }}
@@ -518,6 +532,10 @@ export default function App() {
                 <button type="button" style={s.menuItem} onClick={() => { closeMenus(); setShowHelpCenter(true); }}>
                   <span>📘</span>
                   <span>DocIntel Help Center</span>
+                </button>
+                <button type="button" style={s.menuItem} onClick={openMcpPlayground}>
+                  <span>⌘</span>
+                  <span>MCP Playground</span>
                 </button>
                 <label style={s.menuLangWrap} title={t.language}>
                   <span>🌐</span>

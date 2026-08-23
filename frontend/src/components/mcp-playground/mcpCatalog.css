@@ -1,0 +1,148 @@
+.mcp-examples-menu {
+  width: min(620px, 92vw);
+}
+
+.mcp-example-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  padding: 3px 3px 8px;
+}
+
+.mcp-toolbar-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: min(330px, 36vw);
+  height: 32px;
+  padding: 0 9px;
+  background: #091409;
+  border: 1px solid #294329;
+  border-radius: 6px;
+  color: #718274;
+}
+
+.mcp-toolbar-search:focus-within {
+  border-color: #22c55e;
+}
+
+.mcp-toolbar-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 7px;
+  border: 0;
+  background: transparent;
+  color: #d1fae5;
+  outline: none;
+}
+
+.mcp-toolbar-search button {
+  display: grid;
+  place-items: center;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  color: #91a394;
+  cursor: pointer;
+}
+
+.mcp-example-controls select {
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid #294329;
+  border-radius: 5px;
+  background: #091409;
+  color: #d1fae5;
+  outline: none;
+}
+
+.mcp-example-controls span {
+  color: #91a394;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.mcp-example-list {
+  max-height: min(500px, 60vh);
+  overflow: auto;
+}
+
+.mcp-examples-menu .mcp-example-list button {
+  padding: 9px;
+  font-weight: 400;
+}
+
+.mcp-examples-menu .mcp-example-list button:hover {
+  background: #173017;
+}
+
+.mcp-example-list button > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mcp-example-list strong {
+  font-size: 12px;
+}
+
+.mcp-example-list small {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #1d361d;
+  color: #86efac;
+  font-size: 9px;
+}
+
+.mcp-example-list p {
+  margin: 4px 0;
+  color: #91a394;
+  font-size: 10.5px;
+}
+
+.mcp-example-empty {
+  padding: 24px;
+  text-align: center;
+  color: #91a394;
+}
+
+@media (max-width: 700px) {
+  .mcp-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .mcp-examples-wrap {
+    order: 1;
+  }
+
+  .mcp-examples-menu {
+    position: fixed;
+    inset: 58px 8px auto;
+    width: auto;
+  }
+
+  .mcp-example-controls {
+    align-items: stretch;
+  }
+
+  .mcp-toolbar-search {
+    order: 1;
+    flex: 1;
+    width: auto;
+  }
+
+  .mcp-view-tabs {
+    order: 2;
+    margin-left: 0;
+  }
+
+  .mcp-toolbar > .mcp-icon-btn {
+    order: 2;
+  }
+
+  .mcp-example-list {
+    max-height: calc(100dvh - 190px);
+  }
+}

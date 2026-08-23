@@ -9,6 +9,7 @@ OAuth-enabled MCP server.
 4. [Talent Readiness](talent_vertical.md)
 5. [Employee Growth and Mobility](employee_mobility_vertical.md)
 6. [Lease Intelligence](lease_vertical.md)
+7. [Browser MCP Playground](playground.md)
 
 Start every workflow from the repository root:
 
