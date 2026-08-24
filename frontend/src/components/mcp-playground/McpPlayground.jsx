@@ -84,6 +84,7 @@ export default function McpPlayground({ onClose, language = 'en' }) {
     try {
       const response = await executeMcpPlayground(value, needsConfirmation || confirm);
       setEntries(previous => previous.map(item => item.id === entry.id ? { ...item, loading:false, response } : item));
+      if (!status.connected && !response?.local_command) refreshStatus();
     } catch (error) {
       setEntries(previous => previous.map(item => item.id === entry.id ? { ...item, loading:false, error:error.message } : item));
     } finally { setBusy(false); }
@@ -202,7 +203,7 @@ export default function McpPlayground({ onClose, language = 'en' }) {
           <span className="mcp-prompt">$</span>
           <textarea value={command} onChange={event => setCommand(event.target.value)} onKeyDown={keyDown}
             placeholder="mcp_tool list_workspaces '{}' | tool_data | jq '.'" rows={2} spellCheck={false}/>
-          <button className="mcp-run" onClick={() => run()} disabled={!status.connected || busy || !command.trim()} title={tx.runCommand}><Play size={18}/></button>
+          <button className="mcp-run" onClick={() => run()} disabled={busy || !command.trim()} title={tx.runCommand}><Play size={18}/></button>
         </footer>
       </section>
     </div>
