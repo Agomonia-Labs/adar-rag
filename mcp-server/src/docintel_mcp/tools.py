@@ -13,6 +13,83 @@ from .verticals import WORKFLOW_CATALOG, vertical_name, workflow_definition
 
 def register_tools(mcp: FastMCP, settings: Settings) -> None:
     @mcp.tool()
+    async def create_batch_upload(ctx: Context, files: list[dict[str, Any]], workspace_id: str | None = None, redact_pii: bool = False) -> dict:
+        """Create one durable batch job and signed upload URL for every document manifest."""
+        try:
+            async with api_client(ctx, settings, "batches:write") as client:
+                return await client.create_batch_upload({"files": files, "workspace_id": workspace_id, "redact_pii": redact_pii})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def complete_batch_upload(ctx: Context, batch_job_id: str, document_ids: list[str] | None = None, concurrency: int = 3) -> dict:
+        """Verify completed signed uploads and start bounded parallel chunking."""
+        try:
+            async with api_client(ctx, settings, "batches:write") as client:
+                return await client.complete_batch_upload(batch_job_id, document_ids or [], concurrency)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def start_batch_embedding(ctx: Context, document_ids: list[str], workspace_id: str | None = None, concurrency: int = 3, force: bool = False) -> dict:
+        """Start resumable bulk embedding for accessible chunked documents."""
+        try:
+            async with api_client(ctx, settings, "batches:write") as client:
+                return await client.start_document_batch("embedding", {"document_ids": document_ids, "workspace_id": workspace_id, "concurrency": concurrency, "force": force})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def start_batch_classification(ctx: Context, document_ids: list[str], workspace_id: str | None = None, concurrency: int = 3, force: bool = False) -> dict:
+        """Classify accessible documents with item-level outcomes and retries."""
+        try:
+            async with api_client(ctx, settings, "batches:write") as client:
+                return await client.start_document_batch("classification", {"document_ids": document_ids, "workspace_id": workspace_id, "concurrency": concurrency, "force": force})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def start_workspace_summary(ctx: Context, workspace_id: str, document_ids: list[str] | None = None, summary_type: str = "executive", custom_prompt: str = "", redact_pii: bool = False, language: str = "en", concurrency: int = 2) -> dict:
+        """Start hierarchical map-reduce summarization across a large workspace."""
+        try:
+            async with api_client(ctx, settings, "batches:write") as client:
+                return await client.start_workspace_summary({"workspace_id": workspace_id, "document_ids": document_ids or [], "summary_type": summary_type, "custom_prompt": custom_prompt, "redact_pii": redact_pii, "language": language, "concurrency": concurrency})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def list_batch_jobs(ctx: Context, workspace_id: str | None = None, operation: str | None = None, status: str | None = None, limit: int = 25) -> dict:
+        """List accessible batch jobs with aggregate progress."""
+        try:
+            async with api_client(ctx, settings, "batches:read") as client:
+                return await client.list_batch_jobs({"workspace_id": workspace_id, "operation": operation, "status": status, "limit": limit})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def get_batch_status(ctx: Context, batch_job_id: str) -> dict:
+        """Return job progress, current stage, counters, item attempts, and errors."""
+        try:
+            async with api_client(ctx, settings, "batches:read") as client: return await client.get_batch_job(batch_job_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def get_batch_results(ctx: Context, batch_job_id: str) -> dict:
+        """Return aggregate and item-level outputs for a completed or partial batch."""
+        try:
+            async with api_client(ctx, settings, "batches:read") as client: return await client.get_batch_results(batch_job_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def retry_batch_failures(ctx: Context, batch_job_id: str) -> dict:
+        """Retry only failed items from a durable batch job."""
+        try:
+            async with api_client(ctx, settings, "batches:write") as client: return await client.retry_batch(batch_job_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def cancel_batch_job(ctx: Context, batch_job_id: str, confirm: bool = False) -> dict:
+        """Stop queued batch work while retaining completed results. Requires confirm=true."""
+        if not confirm: return {"ok": False, "error": {"code": "confirmation_required", "message": "Set confirm=true to cancel this batch"}}
+        try:
+            async with api_client(ctx, settings, "batches:write") as client: return await client.cancel_batch(batch_job_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
     async def list_vertical_workflows(ctx: Context) -> dict:
         """Discover supported DocIntel vertical workflows, required inputs, review gates, and packet types."""
         try:

@@ -11,6 +11,24 @@ from .verticals import WORKFLOW_CATALOG, vertical_name
 
 
 def register_resources(mcp: FastMCP, settings: Settings) -> None:
+    @mcp.resource("docintel://batches/{batch_job_id}")
+    async def batch_job(batch_job_id: str, ctx: Context) -> str:
+        """Status and item-level progress for an accessible batch job."""
+        try:
+            async with api_client(ctx, settings, "batches:read") as client:
+                result = await client.get_batch_job(batch_job_id)
+            return json.dumps(result, ensure_ascii=True, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://batches/{batch_job_id}/results")
+    async def batch_results(batch_job_id: str, ctx: Context) -> str:
+        """Aggregate and item-level results for an accessible batch job."""
+        try:
+            async with api_client(ctx, settings, "batches:read") as client:
+                result = await client.get_batch_results(batch_job_id)
+            return json.dumps(result, ensure_ascii=True, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
     @mcp.resource("docintel://workflows/catalog")
     async def workflow_catalog(ctx: Context) -> str:
         """Supported vertical workflows and their human-review and packet capabilities."""

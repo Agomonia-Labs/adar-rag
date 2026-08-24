@@ -15,6 +15,9 @@ The **Examples** menu is a searchable command catalog covering discovery,
 workspaces, documents, knowledge operations, chat sessions, video intelligence,
 vertical workflows, human review, PDF packets, and every published resource
 template. Replace values such as `YOUR_DOCUMENT_ID` before running a command.
+The Batch Operations category includes multi-document upload, bulk embedding,
+classification, workspace summarization, monitoring, retry, cancellation, and
+result retrieval.
 
 ```bash
 mcp_tool list_workspaces '{}' | tool_data | jq '.'

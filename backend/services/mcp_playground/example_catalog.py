@@ -62,6 +62,16 @@ def example_catalog() -> list[dict]:
         _tool("Human Review", "save_vertical_review", {"vertical": "healthcare", "run_id": run, "packet": {}, "notes": "Reviewed in MCP Playground", "persona": "reviewer"}, "Save reviewer edits without approval."),
         _tool("Human Review", "approve_vertical_run", {"vertical": "healthcare", "run_id": run, "confirm": True, "packet": {}, "notes": "Approved after review", "persona": "reviewer"}, "Apply the human approval gate."),
         _tool("Packets", "generate_vertical_packet", {"vertical": "healthcare", "run_id": run, "packet_type": "clinical_summary", "packet": {}}, "Generate or ingest a PDF packet."),
+        _tool("Batch Operations", "create_batch_upload", {"files": [{"filename": "first.pdf", "content_type": "application/pdf", "file_size": 12345}, {"filename": "second.docx", "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "file_size": 23456}], "workspace_id": ws, "redact_pii": False}, "Create signed URLs for multiple document uploads."),
+        _tool("Batch Operations", "complete_batch_upload", {"batch_job_id": "YOUR_BATCH_JOB_ID", "document_ids": [], "concurrency": 3}, "Verify uploaded files and start bounded chunking."),
+        _tool("Batch Operations", "start_batch_embedding", {"document_ids": [doc, doc2], "workspace_id": ws, "concurrency": 3, "force": False}, "Embed many chunked documents with partial-failure tracking."),
+        _tool("Batch Operations", "start_batch_classification", {"document_ids": [doc, doc2], "workspace_id": ws, "concurrency": 3, "force": False}, "Classify many documents while preserving reviewed values."),
+        _tool("Batch Operations", "start_workspace_summary", {"workspace_id": ws, "document_ids": [], "summary_type": "executive", "custom_prompt": "", "redact_pii": False, "language": "en", "concurrency": 2}, "Create a hierarchical workspace summary."),
+        _tool("Batch Operations", "list_batch_jobs", {"workspace_id": ws, "operation": None, "status": None, "limit": 25}, "List batch jobs and aggregate progress."),
+        _tool("Batch Operations", "get_batch_status", {"batch_job_id": "YOUR_BATCH_JOB_ID"}, "Read current stage, percentage, counts, and item errors."),
+        _tool("Batch Operations", "get_batch_results", {"batch_job_id": "YOUR_BATCH_JOB_ID"}, "Read aggregate and item-level batch outputs."),
+        _tool("Batch Operations", "retry_batch_failures", {"batch_job_id": "YOUR_BATCH_JOB_ID"}, "Retry only failed items."),
+        _tool("Batch Operations", "cancel_batch_job", {"batch_job_id": "YOUR_BATCH_JOB_ID", "confirm": True}, "Cancel queued work and retain completed results."),
     ]
     resources = [
         ("Workflow catalog", "docintel://workflows/catalog", "Read the workflow catalog."),
@@ -74,6 +84,8 @@ def example_catalog() -> list[dict]:
         ("Video timeline", "docintel://videos/YOUR_DOCUMENT_ID/timeline", "Read the video timeline."),
         ("Video transcript", "docintel://videos/YOUR_DOCUMENT_ID/transcript", "Read the video transcript."),
         ("Video frames", "docintel://videos/YOUR_DOCUMENT_ID/frames", "Read video frame metadata."),
+        ("Batch job", "docintel://batches/YOUR_BATCH_JOB_ID", "Read batch progress and item states."),
+        ("Batch results", "docintel://batches/YOUR_BATCH_JOB_ID/results", "Read batch outputs and errors."),
     ]
     examples.extend(_request("Resources", f"{name} resource", "resources/read", {"uri": uri}, description)
                     for name, uri, description in resources)

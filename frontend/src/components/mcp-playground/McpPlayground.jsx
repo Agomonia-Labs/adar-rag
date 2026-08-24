@@ -11,7 +11,7 @@ import './mcpPlayground.css';
 import './mcpCatalog.css';
 import { getPanelText } from '../panelTranslations.js';
 
-const SENSITIVE = ['delete_document', 'delete_chat_session', 'approve_vertical_run', 'generate_vertical_packet'];
+const SENSITIVE = ['delete_document', 'delete_chat_session', 'approve_vertical_run', 'generate_vertical_packet', 'cancel_batch_job'];
 const API_ORIGIN = new URL(import.meta.env.VITE_API_URL || window.location.origin, window.location.origin).origin;
 
 export default function McpPlayground({ onClose, language = 'en' }) {

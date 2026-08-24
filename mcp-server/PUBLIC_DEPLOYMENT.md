@@ -99,6 +99,8 @@ workflows:write
 reviews:write
 reviews:approve
 packets:write
+batches:read
+batches:write
 ```
 
 ## Stage 4: Gateway and Operations
@@ -130,7 +132,7 @@ After adding a new OAuth scope, existing access tokens do not gain it. Redeploy
 the backend and MCP service, then run `source scripts/oauth_login.sh` again to
 authorize a new token containing `documents:write`, `knowledge:generate`,
 `video:read`, `video:process`, `workflows:read`, `workflows:write`,
-`reviews:write`, `reviews:approve`, and `packets:write`.
+`reviews:write`, `reviews:approve`, `packets:write`, `batches:read`, and `batches:write`.
 
 ## Deployment Sequence
 

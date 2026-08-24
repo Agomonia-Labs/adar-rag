@@ -41,6 +41,8 @@ ALLOWED_SCOPES = {
     "reviews:write",
     "reviews:approve",
     "packets:write",
+    "batches:read",
+    "batches:write",
 }
 
 

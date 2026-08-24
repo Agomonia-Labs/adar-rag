@@ -757,6 +757,53 @@ CREATE TABLE IF NOT EXISTS mcp_playground_sessions (
 CREATE INDEX IF NOT EXISTS idx_mcp_playground_user ON mcp_playground_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_mcp_playground_state ON mcp_playground_sessions(oauth_state);
 
+CREATE TABLE IF NOT EXISTS batch_jobs (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id    UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+    operation       TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'queued',
+    configuration   JSONB NOT NULL DEFAULT '{}'::jsonb,
+    result          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    total_items     INTEGER NOT NULL DEFAULT 0,
+    queued_items    INTEGER NOT NULL DEFAULT 0,
+    running_items   INTEGER NOT NULL DEFAULT 0,
+    succeeded_items INTEGER NOT NULL DEFAULT 0,
+    failed_items    INTEGER NOT NULL DEFAULT 0,
+    skipped_items   INTEGER NOT NULL DEFAULT 0,
+    progress_pct    INTEGER NOT NULL DEFAULT 0,
+    current_stage   TEXT NOT NULL DEFAULT 'queued',
+    error_message   TEXT,
+    cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+    started_at      TIMESTAMPTZ,
+    completed_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_batch_jobs_user ON batch_jobs(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_batch_jobs_workspace ON batch_jobs(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_batch_jobs_status ON batch_jobs(status, updated_at);
+
+CREATE TABLE IF NOT EXISTS batch_job_items (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    job_id          UUID NOT NULL REFERENCES batch_jobs(id) ON DELETE CASCADE,
+    document_id     UUID REFERENCES documents(id) ON DELETE SET NULL,
+    item_key        TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'queued',
+    stage           TEXT NOT NULL DEFAULT 'queued',
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    input_data      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    output_data     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error_message   TEXT,
+    started_at      TIMESTAMPTZ,
+    completed_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(job_id, item_key)
+);
+CREATE INDEX IF NOT EXISTS idx_batch_items_job ON batch_job_items(job_id, status);
+CREATE INDEX IF NOT EXISTS idx_batch_items_document ON batch_job_items(document_id);
+
 """
 
 

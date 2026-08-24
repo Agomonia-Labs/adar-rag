@@ -84,6 +84,33 @@ class DocIntelApiClient:
     async def delete_document(self, document_id: str) -> dict:
         return await self.request("DELETE", f"/api/documents/{document_id}")
 
+    async def create_batch_upload(self, payload: dict[str, Any]) -> dict:
+        return await self.request("POST", "/api/batches/uploads", json=payload)
+
+    async def complete_batch_upload(self, job_id: str, document_ids: list[str], concurrency: int) -> dict:
+        return await self.request("POST", f"/api/batches/{job_id}/uploads/complete", json={"document_ids": document_ids, "concurrency": concurrency})
+
+    async def start_document_batch(self, operation: str, payload: dict[str, Any]) -> dict:
+        return await self.request("POST", f"/api/batches/{operation}", json=payload)
+
+    async def start_workspace_summary(self, payload: dict[str, Any]) -> dict:
+        return await self.request("POST", "/api/batches/workspace-summary", json=payload)
+
+    async def list_batch_jobs(self, params: dict[str, Any]) -> dict:
+        return await self.request("GET", "/api/batches", params={k: v for k, v in params.items() if v is not None})
+
+    async def get_batch_job(self, job_id: str) -> dict:
+        return await self.request("GET", f"/api/batches/{job_id}")
+
+    async def get_batch_results(self, job_id: str) -> dict:
+        return await self.request("GET", f"/api/batches/{job_id}/results")
+
+    async def retry_batch(self, job_id: str) -> dict:
+        return await self.request("POST", f"/api/batches/{job_id}/retry")
+
+    async def cancel_batch(self, job_id: str) -> dict:
+        return await self.request("POST", f"/api/batches/{job_id}/cancel")
+
     async def start_vertical_workflow(
         self, workflow: str, document_ids: list[str], workspace_id: str | None, inputs: dict[str, Any],
     ) -> dict:

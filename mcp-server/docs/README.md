@@ -10,6 +10,8 @@ OAuth-enabled MCP server.
 5. [Employee Growth and Mobility](employee_mobility_vertical.md)
 6. [Lease Intelligence](lease_vertical.md)
 7. [Browser MCP Playground](playground.md)
+8. [Batch Operations](batch_operations.md)
+9. [Batch Upload Walkthrough](batch_upload.md)
 
 Start every workflow from the repository root:
 

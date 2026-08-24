@@ -937,3 +937,9 @@ DocIntel supports document, speech, and video intelligence through its web UI
 and an optional governed MCP integration. The MCP gateway is maintained in
 [`mcp-server/`](mcp-server/README.md); its architecture and tool catalog are in
 [`docs/mcp/`](docs/mcp/architecture.md).
+
+The MCP surface also supports durable batch operations for signed
+multi-document upload, bulk embedding, batch classification, hierarchical
+workspace summarization, progress monitoring, failed-item retry, cancellation,
+and item-level result retrieval. See
+[`mcp-server/docs/batch_operations.md`](mcp-server/docs/batch_operations.md).

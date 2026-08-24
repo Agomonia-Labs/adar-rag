@@ -183,6 +183,8 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="DOCINTEL_MCP_ISSUER_URL=https://auth.docintel.adar.agomoniai.com" \
   --set-env-vars="MCP_PLAYGROUND_CALLBACK_URL=https://docintel.adar.agomoniai.com/api/mcp-playground/oauth/callback" \
   --set-env-vars="MCP_PLAYGROUND_MAX_RESPONSE_BYTES=2097152" \
+  --set-env-vars="BATCH_MAX_ITEMS=500" \
+  --set-env-vars="BATCH_MAX_CONCURRENCY=4" \
   --set-env-vars="GCS_SIGNED_URL_EXPIRY_SECONDS=3600" \
   --set-env-vars="APP_URL=https://docintel.adar.agomoniai.com" \
   --set-env-vars="EMAIL_FROM_NAME=আদর DocIntel" \

@@ -4,7 +4,7 @@ from fastapi import HTTPException
 
 
 ALLOWED_METHODS = {"initialize", "tools/list", "tools/call", "resources/list", "resources/templates/list", "resources/read"}
-DESTRUCTIVE_TOOLS = {"delete_document", "delete_chat_session", "approve_vertical_run", "generate_vertical_packet"}
+DESTRUCTIVE_TOOLS = {"delete_document", "delete_chat_session", "approve_vertical_run", "generate_vertical_packet", "cancel_batch_job"}
 MAX_ARGUMENT_BYTES = 16_000
 
 

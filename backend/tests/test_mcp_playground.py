@@ -69,9 +69,12 @@ def test_catalog_covers_registered_tools_and_resources():
         "search_video", "search_knowledgebase", "summarize_document", "summarize_documents",
         "compare_documents", "create_chat_session", "list_chat_sessions", "get_chat_session",
         "update_chat_session", "delete_chat_session", "ask",
+        "create_batch_upload", "complete_batch_upload", "start_batch_embedding", "start_batch_classification",
+        "start_workspace_summary", "list_batch_jobs", "get_batch_status", "get_batch_results",
+        "retry_batch_failures", "cancel_batch_job",
     }
     assert tools == expected
-    assert sum(item["category"] == "Resources" for item in catalog) == 10
+    assert sum(item["category"] == "Resources" for item in catalog) == 12
 
 
 def test_formats_json_resource_text_as_structured_data():
