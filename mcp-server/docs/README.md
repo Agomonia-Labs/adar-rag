@@ -12,6 +12,7 @@ OAuth-enabled MCP server.
 7. [Browser MCP Playground](playground.md)
 8. [Batch Operations](batch_operations.md)
 9. [Batch Upload Walkthrough](batch_upload.md)
+10. [OAuth Scope Access](oauth_scope_access.md)
 
 Start every workflow from the repository root:
 

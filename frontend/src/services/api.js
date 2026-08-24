@@ -419,6 +419,42 @@ export async function adminDeleteDocument(docId) {
   return handleRes(await fetch(`${BASE}/admin/documents/${docId}`, { method:'DELETE', headers: authHdr() }));
 }
 
+export async function fetchMcpScopeRequests(status = 'pending') {
+  return handleRes(await fetch(`${BASE}/admin/oauth/scope-requests?status=${encodeURIComponent(status)}`, { headers: authHdr() }));
+}
+
+export async function fetchMcpScopeGrants() {
+  return handleRes(await fetch(`${BASE}/admin/oauth/scope-grants`, { headers: authHdr() }));
+}
+
+export async function fetchMcpScopeCatalog() {
+  return handleRes(await fetch(`${BASE}/oauth/scopes/catalog`, { headers: authHdr() }));
+}
+
+export async function fetchMcpOAuthClients() {
+  return handleRes(await fetch(`${BASE}/admin/oauth/clients`, { headers: authHdr() }));
+}
+
+export async function assignMcpScopeGrant(userId, clientId, scopes, reviewerNote = '') {
+  return handleRes(await fetch(`${BASE}/admin/oauth/scope-grants`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({ user_id:userId, client_id:clientId || null, scopes, reviewer_note:reviewerNote }),
+  }));
+}
+
+export async function decideMcpScopeRequest(requestId, decision, reviewerNote = '') {
+  return handleRes(await fetch(`${BASE}/admin/oauth/scope-requests/${requestId}/decision`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({ decision, reviewer_note:reviewerNote }),
+  }));
+}
+
+export async function revokeMcpScopeGrant(grantId) {
+  return handleRes(await fetch(`${BASE}/admin/oauth/scope-grants/${grantId}`, {
+    method:'DELETE', headers:authHdr(),
+  }));
+}
+
 export async function fetchTraces({ limit = 50, requestType = '', status = '' } = {}) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (requestType) params.set('request_type', requestType);

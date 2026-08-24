@@ -1,6 +1,6 @@
 // src/components/AdminDashboard.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { setUserTier, getAuditLog, fetchAdminStats, fetchAdminUsers, fetchAdminDocuments, updateUserRole, adminDeleteUser, adminDeleteDocument, fetchTraces, fetchTraceSummary, fetchTrace } from '../services/api.js';
+import { setUserTier, getAuditLog, fetchAdminStats, fetchAdminUsers, fetchAdminDocuments, updateUserRole, adminDeleteUser, adminDeleteDocument, fetchTraces, fetchTraceSummary, fetchTrace, fetchMcpScopeRequests, fetchMcpScopeGrants, fetchMcpScopeCatalog, assignMcpScopeGrant, decideMcpScopeRequest, revokeMcpScopeGrant } from '../services/api.js';
 
 const fmtBytes = b => { if(!b)return'0 B';if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';if(b<1073741824)return(b/1048576).toFixed(1)+' MB';return(b/1073741824).toFixed(2)+' GB'; };
 const fmtDate  = s => { if(!s)return'—';return new Date(s).toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}); };
@@ -15,6 +15,9 @@ export default function AdminDashboard() {
   const [users,  setUsers]  = useState([]);
   const [docs,   setDocs]   = useState([]);
   const [audit,  setAudit]  = useState([]);
+  const [scopeRequests, setScopeRequests] = useState([]);
+  const [scopeGrants, setScopeGrants] = useState([]);
+  const [scopeCatalog, setScopeCatalog] = useState([]);
   const [traces, setTraces] = useState([]);
   const [traceDetail, setTraceDetail] = useState(null);
   const [traceSummary, setTraceSummary] = useState(null);
@@ -58,6 +61,31 @@ export default function AdminDashboard() {
     finally { setTraceLoading(false); }
   };
   const openTrace   = async(id)      => { try{setTraceDetail(await fetchTrace(id));}catch(e){setError(e.message);} };
+  const loadMcpAccess = async() => {
+    setError('');
+    try {
+      const [requests, grants, catalog] = await Promise.all([
+        fetchMcpScopeRequests('pending'), fetchMcpScopeGrants(), fetchMcpScopeCatalog(),
+      ]);
+      setScopeRequests(requests.requests || []);
+      setScopeGrants(grants.grants || []);
+      setScopeCatalog(catalog.scopes || []);
+    } catch(e) { setError(e.message); }
+  };
+  const decideScope = async(id, decision) => {
+    const note = window.prompt(`${decision === 'approved' ? 'Approval' : 'Denial'} note (optional)`) || '';
+    try { await decideMcpScopeRequest(id, decision, note); await loadMcpAccess(); }
+    catch(e) { setError(e.message); }
+  };
+  const revokeScope = async(grant) => {
+    if (!window.confirm(`Revoke ${grant.scope} from ${grant.email}? Existing OAuth tokens will stop working.`)) return;
+    try { await revokeMcpScopeGrant(grant.id); await loadMcpAccess(); }
+    catch(e) { setError(e.message); }
+  };
+  const assignScope = async(userId, clientId, scope, note) => {
+    try { await assignMcpScopeGrant(userId, clientId, [scope], note); await loadMcpAccess(); }
+    catch(e) { setError(e.message); throw e; }
+  };
 
   return (
     <div style={{...s.wrap, ...(isMobile ? s.wrapMobile : {})}}>
@@ -69,11 +97,12 @@ export default function AdminDashboard() {
       {error && <div style={s.errBanner}>{error}</div>}
 
       <div style={{...s.tabRow, ...(isMobile ? s.tabRowMobile : {})}}>
-        {[['overview','📊 Overview'],['users','👥 Users'],['documents','📂 Documents'],['audit','🔍 Audit Log'],['traces','🧭 Traces']].map(([k,lbl])=>(
+        {[['overview','📊 Overview'],['users','👥 Users'],['documents','📂 Documents'],['mcp-access','🔐 MCP Access'],['audit','🔍 Audit Log'],['traces','🧭 Traces']].map(([k,lbl])=>(
           <button key={k} style={{...s.subTab,...(tab===k?s.subTabOn:{})}} onClick={()=>{
               setTab(k);
               if (k==='audit') getAuditLog(200,'').then(setAudit).catch(()=>{});
               if (k==='documents' && !docs.length) fetchAdminDocuments().then(setDocs).catch(()=>{});
+              if (k==='mcp-access') loadMcpAccess();
               if (k==='traces') loadTraces();
             }}>
             <span>{lbl}</span>
@@ -122,6 +151,19 @@ export default function AdminDashboard() {
           <h3 style={s.secTitle}>All documents ({docs.length})</h3>
           <DocsTable docs={docs} showUser onDelete={deleteDoc} mobile={isMobile}/>
         </div>
+      )}
+      {!loading && tab==='mcp-access' && (
+        <McpAccessPanel
+          requests={scopeRequests}
+          grants={scopeGrants}
+          users={users}
+          catalog={scopeCatalog}
+          mobile={isMobile}
+          onAssign={assignScope}
+          onDecision={decideScope}
+          onRevoke={revokeScope}
+          onRefresh={loadMcpAccess}
+        />
       )}
       {tab === 'audit' && (
         <div style={{...s.section, ...(isMobile ? s.sectionMobile : {})}}>
@@ -241,6 +283,75 @@ export default function AdminDashboard() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function McpAccessPanel({ requests, grants, users, catalog, mobile, onAssign, onDecision, onRevoke, onRefresh }) {
+  const [userId, setUserId] = useState('');
+  const [scope, setScope] = useState('knowledge:generate');
+  const [note, setNote] = useState('');
+  const [assigning, setAssigning] = useState(false);
+  const assign = async () => {
+    if (!userId || !scope) return;
+    setAssigning(true);
+    try { await onAssign(userId, '', scope, note); setNote(''); }
+    finally { setAssigning(false); }
+  };
+  return (
+    <div style={{display:'grid',gap:14}}>
+      <section style={{...s.section, ...(mobile ? s.sectionMobile : {})}}>
+        <h3 style={s.secTitle}>Assign MCP scope</h3>
+        <p style={s.pageSub}>Grant a scope to the user across CLI, Playground, and other registered MCP clients. The user must reconnect OAuth afterward.</p>
+        <div style={{display:'grid',gridTemplateColumns:mobile?'1fr':'minmax(220px,1fr) minmax(220px,1fr)',gap:8,marginTop:12}}>
+          <select value={userId} onChange={event=>setUserId(event.target.value)} style={s.mobileSelect}>
+            <option value="">Select user</option>
+            {users.filter(user=>user.role!=='admin').map(user=><option key={user.id} value={user.id}>{user.email}</option>)}
+          </select>
+          <select value={scope} onChange={event=>setScope(event.target.value)} style={s.mobileSelect}>
+            {catalog.map(item=><option key={item.scope} value={item.scope}>{item.scope} · {item.risk}</option>)}
+          </select>
+        </div>
+        <input value={note} onChange={event=>setNote(event.target.value)} placeholder="Assignment reason or ticket reference" style={{...s.traceSearch,width:'100%',marginTop:8,boxSizing:'border-box'}} />
+        <div style={{...s.mobileActions,marginTop:10}}><ABtn onClick={assign} disabled={assigning || !userId || !scope}>{assigning?'Assigning…':'Assign scope'}</ABtn></div>
+      </section>
+      <section style={{...s.section, ...(mobile ? s.sectionMobile : {})}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+          <div><h3 style={s.secTitle}>Pending MCP scope requests ({requests.length})</h3><p style={s.pageSub}>Approve only the least privilege required for this user and OAuth client.</p></div>
+          <button style={s.refreshBtn} onClick={onRefresh}>↻ Refresh</button>
+        </div>
+        <div style={s.cardList}>
+          {requests.map(item => (
+            <article key={item.id} style={s.mobileCard}>
+              <div style={s.mobileCardHead}>
+                <div style={s.mobileTitleBlock}><strong style={s.mobileTitle}>{item.scope}</strong><span style={s.mobileSub}>{item.email} · {item.client_name}</span><code style={{fontSize:10,color:'var(--muted2)',wordBreak:'break-all'}}>{item.client_id}</code></div>
+                <span style={{color:'#fbbf24',fontSize:11,fontWeight:700}}>PENDING</span>
+              </div>
+              {item.reason && <p style={{fontSize:12,color:'var(--muted2)',margin:'8px 0'}}>{item.reason}</p>}
+              <div style={s.mobileActions}>
+                <ABtn onClick={()=>onDecision(item.id,'approved')}>Approve</ABtn>
+                <ABtn danger onClick={()=>onDecision(item.id,'denied')}>Deny</ABtn>
+              </div>
+            </article>
+          ))}
+          {!requests.length && <div style={s.infoBanner}>No pending MCP scope requests.</div>}
+        </div>
+      </section>
+      <section style={{...s.section, ...(mobile ? s.sectionMobile : {})}}>
+        <h3 style={s.secTitle}>Active MCP grants ({grants.length})</h3>
+        <div style={s.cardList}>
+          {grants.map(grant => (
+            <article key={grant.id} style={s.mobileCard}>
+              <div style={s.mobileCardHead}>
+                <div style={s.mobileTitleBlock}><strong style={s.mobileTitle}>{grant.scope}</strong><span style={s.mobileSub}>{grant.email} · {grant.client_name}</span></div>
+                <ABtn danger onClick={()=>onRevoke(grant)}>Revoke</ABtn>
+              </div>
+              <span style={{fontSize:11,color:'var(--muted2)'}}>Expires: {grant.expires_at ? fmtDT(grant.expires_at) : 'No expiry'}</span>
+            </article>
+          ))}
+          {!grants.length && <div style={s.infoBanner}>No active user-specific MCP grants. Administrators retain supported scopes.</div>}
+        </div>
+      </section>
     </div>
   );
 }
@@ -507,9 +618,9 @@ function StatCard({ icon, label, value, sub, color, compact = false }) {
   );
 }
 
-function ABtn({ children, onClick, danger }) {
+function ABtn({ children, onClick, danger, disabled = false }) {
   return (
-    <button onClick={onClick} style={{padding:'4px 8px',fontSize:11,fontWeight:500,cursor:'pointer',borderRadius:'var(--r)',border:danger?'1px solid rgba(248,113,113,.25)':'1px solid var(--b2)',background:danger?'rgba(248,113,113,.08)':'transparent',color:danger?'var(--red)':'var(--muted2)',marginRight:4,transition:'all .15s'}}>
+    <button onClick={onClick} disabled={disabled} style={{padding:'4px 8px',fontSize:11,fontWeight:500,cursor:disabled?'not-allowed':'pointer',opacity:disabled ? 0.5 : 1,borderRadius:'var(--r)',border:danger?'1px solid rgba(248,113,113,.25)':'1px solid var(--b2)',background:danger?'rgba(248,113,113,.08)':'transparent',color:danger?'var(--red)':'var(--muted2)',marginRight:4,transition:'all .15s'}}>
       {children}
     </button>
   );

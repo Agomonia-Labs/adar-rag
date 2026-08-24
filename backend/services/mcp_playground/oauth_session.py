@@ -14,7 +14,7 @@ from fastapi import HTTPException, Request
 from jose import JWTError, jwt
 
 from auth.service import ALGORITHM, SECRET_KEY
-from routes.oauth import ISSUER, MCP_AUDIENCE
+from routes.oauth import ALLOWED_SCOPES, ISSUER, MCP_AUDIENCE
 
 
 COOKIE_NAME = "docintel_mcp_playground"
@@ -26,9 +26,7 @@ CALLBACK_URL = os.getenv(
 )
 DEFAULT_SCOPES = os.getenv(
     "MCP_PLAYGROUND_SCOPES",
-    "workspaces:read documents:read documents:write knowledge:query knowledge:generate sessions:write "
-    "video:read video:process workflows:read workflows:write reviews:write reviews:approve packets:write "
-    "batches:read batches:write",
+    "workspaces:read documents:read knowledge:query knowledge:generate video:read workflows:read batches:read",
 ).split()
 
 
@@ -57,13 +55,22 @@ async def ensure_table(db) -> None:
 async def create_authorization(db, user_id: str, scopes: list[str]) -> tuple[str, str]:
     await ensure_table(db)
     metadata = await _get_json(f"{OAUTH_ISSUER}/.well-known/oauth-authorization-server")
-    requested = [scope for scope in scopes if scope in DEFAULT_SCOPES] or DEFAULT_SCOPES
-    registration = await _post_json(metadata["registration_endpoint"], {
-        "client_name": "ADAR DocIntel MCP Playground",
-        "redirect_uris": [CALLBACK_URL],
-        "token_endpoint_auth_method": "none",
-    })
-    client_id = registration.get("client_id")
+    requested = [scope for scope in scopes if scope in ALLOWED_SCOPES] or DEFAULT_SCOPES
+    existing = await db.fetchrow(
+        """SELECT s.client_id FROM mcp_playground_sessions s
+           JOIN oauth_clients c ON c.client_id=s.client_id
+           WHERE s.user_id=$1::uuid AND c.revoked_at IS NULL
+           ORDER BY s.created_at DESC LIMIT 1""",
+        user_id,
+    )
+    client_id = str(existing["client_id"]) if existing else ""
+    if not client_id:
+        registration = await _post_json(metadata["registration_endpoint"], {
+            "client_name": "ADAR DocIntel MCP Playground",
+            "redirect_uris": [CALLBACK_URL],
+            "token_endpoint_auth_method": "none",
+        })
+        client_id = registration.get("client_id")
     if not client_id:
         raise HTTPException(502, "OAuth registration did not return a client ID")
     verifier = secrets.token_urlsafe(64)

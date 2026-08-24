@@ -13,6 +13,11 @@ import { getPanelText } from '../panelTranslations.js';
 
 const SENSITIVE = ['delete_document', 'delete_chat_session', 'approve_vertical_run', 'generate_vertical_packet', 'cancel_batch_job'];
 const API_ORIGIN = new URL(import.meta.env.VITE_API_URL || window.location.origin, window.location.origin).origin;
+const SCOPE_PROFILES = {
+  read: ['workspaces:read','documents:read','knowledge:query','knowledge:generate','video:read','workflows:read','batches:read'],
+  content: ['workspaces:read','documents:read','documents:write','knowledge:query','knowledge:generate','sessions:write','video:read','video:process','workflows:read','batches:read','batches:write'],
+  governed: ['workspaces:read','documents:read','documents:write','knowledge:query','knowledge:generate','sessions:write','video:read','video:process','workflows:read','workflows:write','reviews:write','reviews:approve','packets:write','batches:read','batches:write'],
+};
 
 export default function McpPlayground({ onClose, language = 'en' }) {
   const tx = getPanelText(language);
@@ -26,6 +31,7 @@ export default function McpPlayground({ onClose, language = 'en' }) {
   const [exampleCategory, setExampleCategory] = useState('All');
   const [view, setView] = useState('result');
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const [scopeProfile, setScopeProfile] = useState('read');
   const outputRef = useRef(null);
 
   useEffect(() => {
@@ -53,7 +59,7 @@ export default function McpPlayground({ onClose, language = 'en' }) {
     const popup = window.open('', 'docintel-mcp-oauth', 'width=620,height=760');
     try {
       setBusy(true);
-      const data = await startMcpPlaygroundOAuth();
+      const data = await startMcpPlaygroundOAuth(SCOPE_PROFILES[scopeProfile]);
       if (popup) popup.location = data.authorization_url;
       else window.location.assign(data.authorization_url);
     } catch (error) {
@@ -127,6 +133,7 @@ export default function McpPlayground({ onClose, language = 'en' }) {
             <span className={`mcp-status ${status.connected ? 'connected' : ''}`}>
               {status.connected ? <Check size={14}/> : <CircleStop size={14}/>} {status.connected ? tx.connected : tx.notConnected}
             </span>
+            {status.connected && <button className="mcp-btn primary" onClick={connect} disabled={busy}><Plug size={15}/>Update access</button>}
             {status.connected
               ? <button className="mcp-btn secondary" onClick={disconnect} disabled={busy}><Link size={15}/>{tx.disconnect}</button>
               : <button className="mcp-btn primary" onClick={connect} disabled={busy}><Plug size={15}/>{tx.connect}</button>}
@@ -136,7 +143,12 @@ export default function McpPlayground({ onClose, language = 'en' }) {
 
         <div className="mcp-scope-bar">
           <span>{tx.endpoint}</span><code>https://mcp.docintel.adar.agomoniai.com/mcp</code>
-          {status.connected && <span className="mcp-scope-count">{status.scopes.length} {tx.scopes}</span>}
+          <select value={scopeProfile} onChange={event => setScopeProfile(event.target.value)} aria-label="Requested MCP access profile">
+            <option value="read">Read and query</option>
+            <option value="content">Content operations</option>
+            <option value="governed">Governed workflows</option>
+          </select>
+          {status.connected && <span className="mcp-scope-count" title={status.scopes.join(', ')}>{status.scopes.length} {tx.scopes}</span>}
         </div>
 
         <div className="mcp-toolbar">

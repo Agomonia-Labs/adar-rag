@@ -7,6 +7,7 @@ docintel_mcp_oauth_login() {
   local mcp_url="${DOCINTEL_MCP_URL:-https://mcp.docintel.adar.agomoniai.com/mcp}"
   local callback_port="${DOCINTEL_OAUTH_CALLBACK_PORT:-8765}"
   local callback_url="http://127.0.0.1:${callback_port}/callback"
+  local client_file="${DOCINTEL_OAUTH_CLIENT_FILE:-${HOME}/.config/docintel/mcp-oauth-client.json}"
   local scopes="${DOCINTEL_MCP_SCOPES:-workspaces:read documents:read documents:write knowledge:query knowledge:generate sessions:write video:read video:process workflows:read workflows:write reviews:write reviews:approve packets:write batches:read batches:write}"
   local timeout_seconds="${DOCINTEL_OAUTH_TIMEOUT_SECONDS:-300}"
   local work_dir listener_pid authorization_url register_response token_response
@@ -38,6 +39,11 @@ docintel_mcp_oauth_login() {
 
   if [[ -n "${DOCINTEL_OAUTH_CLIENT_ID:-}" ]]; then
     export CLIENT_ID="$DOCINTEL_OAUTH_CLIENT_ID"
+  elif [[ -f "$client_file" ]] && CLIENT_ID="$(jq -r \
+      --arg issuer "${issuer%/}" --arg callback "$callback_url" \
+      'select(.issuer==$issuer and .callback_url==$callback) | .client_id // empty' \
+      "$client_file" 2>/dev/null)" && [[ -n "$CLIENT_ID" ]]; then
+    export CLIENT_ID
   else
     register_response="$(
       curl -fsS -X POST "${issuer%/}/register" \
@@ -57,7 +63,17 @@ docintel_mcp_oauth_login() {
       jq . <<<"$register_response" >&2
       return 1
     fi
+    mkdir -p "$(dirname "$client_file")"
+    jq -cn \
+      --arg client_id "$CLIENT_ID" \
+      --arg issuer "${issuer%/}" \
+      --arg callback_url "$callback_url" \
+      '{client_id:$client_id,issuer:$issuer,callback_url:$callback_url}' > "$client_file"
+    chmod 600 "$client_file"
   fi
+
+  export DOCINTEL_OAUTH_CLIENT_ID="$CLIENT_ID"
+  echo "OAuth client: $CLIENT_ID"
 
   read -r CODE_VERIFIER CODE_CHALLENGE OAUTH_STATE < <(
     python3 - <<'PY'
@@ -219,8 +235,6 @@ PY
   export MCP_REFRESH_TOKEN="$(jq -r '.refresh_token // empty' <<<"$token_response")"
   export MCP_TOKEN_SCOPE="$(jq -r '.scope // empty' <<<"$token_response")"
   export MCP_TOKEN_EXPIRES_IN="$(jq -r '.expires_in // empty' <<<"$token_response")"
-  export DOCINTEL_OAUTH_CLIENT_ID="$CLIENT_ID"
-
   if [[ -z "$MCP_ACCESS_TOKEN" || -z "$MCP_REFRESH_TOKEN" ]]; then
     echo "Token response did not contain the required tokens:" >&2
     jq 'del(.access_token,.refresh_token)' <<<"$token_response" >&2

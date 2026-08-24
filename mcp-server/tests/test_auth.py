@@ -26,3 +26,9 @@ def test_trace_id_uses_mcp_request_id_without_transport_headers():
         request_id = "request-123"
 
     assert request_trace_id(ContextWithoutHeaders()) == "request-123"
+
+
+def test_transport_does_not_require_every_enabled_capability():
+    from docintel_mcp.server import mcp
+
+    assert mcp.settings.auth.required_scopes == []

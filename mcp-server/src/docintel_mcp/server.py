@@ -29,7 +29,10 @@ mcp = FastMCP(
         issuer_url=settings.issuer_url,
         resource_server_url=f"{settings.public_url}/mcp",
         service_documentation_url=f"{settings.public_url}/health",
-        required_scopes=sorted(settings.enabled_capabilities),
+        # The transport authenticates the bearer token. Requiring every enabled
+        # capability here would defeat least-privilege tokens; each registered
+        # tool/resource enforces its own scope through api_client().
+        required_scopes=[],
     ),
     host=settings.host,
     port=settings.port,
