@@ -86,6 +86,16 @@ export default function AdminDashboard() {
     try { await assignMcpScopeGrant(userId, clientId, [scope], note); await loadMcpAccess(); }
     catch(e) { setError(e.message); throw e; }
   };
+  const selectTab = k => {
+    setTab(k);
+    if (k==='audit') getAuditLog(200,'').then(setAudit).catch(()=>{});
+    if (k==='documents' && !docs.length) fetchAdminDocuments().then(setDocs).catch(()=>{});
+    if (k==='mcp-access') loadMcpAccess();
+    if (k==='traces') loadTraces();
+  };
+  const visibleTabs = isMobile
+    ? [['overview','📊 Overview'],['users','👥 Users'],['documents','📂 Documents'],['mcp-access','🔐 MCP Access'],['audit','🔍 Audit Log'],['traces','🧭 Traces']]
+    : [['overview','📊 Overview'],['users','👥 Users'],['documents','📂 Documents'],['mcp-access','🔐 MCP Access']];
 
   return (
     <div style={{...s.wrap, ...(isMobile ? s.wrapMobile : {})}}>
@@ -97,20 +107,26 @@ export default function AdminDashboard() {
       {error && <div style={s.errBanner}>{error}</div>}
 
       <div style={{...s.tabRow, ...(isMobile ? s.tabRowMobile : {})}}>
-        {[['overview','📊 Overview'],['users','👥 Users'],['documents','📂 Documents'],['mcp-access','🔐 MCP Access'],['audit','🔍 Audit Log'],['traces','🧭 Traces']].map(([k,lbl])=>(
-          <button key={k} style={{...s.subTab,...(tab===k?s.subTabOn:{})}} onClick={()=>{
-              setTab(k);
-              if (k==='audit') getAuditLog(200,'').then(setAudit).catch(()=>{});
-              if (k==='documents' && !docs.length) fetchAdminDocuments().then(setDocs).catch(()=>{});
-              if (k==='mcp-access') loadMcpAccess();
-              if (k==='traces') loadTraces();
-            }}>
+        {visibleTabs.map(([k,lbl])=>(
+          <button key={k} style={{...s.subTab,...(tab===k?s.subTabOn:{})}} onClick={()=>selectTab(k)}>
             <span>{lbl}</span>
             {k==='users'     && <span style={s.tabCount}>{users.length}</span>}
             {k==='documents' && <span style={s.tabCount}>{docs.length}</span>}
             {k==='traces'    && traces.length>0 && <span style={s.tabCount}>{traces.length}</span>}
           </button>
         ))}
+        {!isMobile && (
+          <select
+            aria-label="More admin sections"
+            value={['audit','traces'].includes(tab) ? tab : ''}
+            onChange={event => event.target.value && selectTab(event.target.value)}
+            style={{...s.tabMenu,...(['audit','traces'].includes(tab) ? s.tabMenuOn : {})}}
+          >
+            <option value="">More</option>
+            <option value="audit">Audit Log</option>
+            <option value="traces">Traces{traces.length ? ` (${traces.length})` : ''}</option>
+          </select>
+        )}
       </div>
 
       {loading && <div style={s.ctr}>Loading…</div>}
@@ -419,8 +435,21 @@ function UsersList({ users, mobile, setUsers, onRole, onDelete }) {
               <td style={{...s.td,textAlign:'center'}}>{fmtN(u.embedded_count)}</td>
               <td style={s.td}>{fmtDate(u.created_at)}</td>
               <td style={s.td}>
-                <ABtn onClick={()=>onRole(u.id,u.role)}>{u.role==='admin'?'↓ Demote':'↑ Promote'}</ABtn>
-                <ABtn danger onClick={()=>onDelete(u.id,u.email)}>🗑 Delete</ABtn>
+                <select
+                  aria-label={`Actions for ${u.email}`}
+                  defaultValue=""
+                  onChange={event => {
+                    const action = event.target.value;
+                    event.target.value = '';
+                    if (action === 'role') onRole(u.id,u.role);
+                    if (action === 'delete') onDelete(u.id,u.email);
+                  }}
+                  style={s.actionMenu}
+                >
+                  <option value="">Actions</option>
+                  <option value="role">{u.role==='admin'?'Demote from admin':'Promote to admin'}</option>
+                  <option value="delete">Delete user</option>
+                </select>
               </td>
             </tr>
           ))}
@@ -643,6 +672,8 @@ const s = {
   tabRowMobile:{ overflowX:'auto', overflowY:'hidden', WebkitOverflowScrolling:'touch', scrollbarWidth:'none', marginBottom:10, paddingBottom:1 },
   subTab:     { padding:'8px 16px', fontSize:13, background:'none', border:'none', color:'var(--muted2)', cursor:'pointer', borderBottom:'2px solid transparent', marginBottom:-1, display:'flex', alignItems:'center', gap:6, fontWeight:500, whiteSpace:'nowrap', flexShrink:0 },
   subTabOn:   { color:'#4ade80', borderBottomColor:'#4ade80', fontWeight:700 },
+  tabMenu:    { alignSelf:'center', marginLeft:'auto', marginBottom:5, padding:'6px 28px 6px 10px', fontSize:12, fontWeight:650, background:'var(--s3)', color:'var(--muted2)', border:'1px solid var(--b2)', borderRadius:'var(--r)', cursor:'pointer' },
+  tabMenuOn:  { color:'#4ade80', borderColor:'rgba(74,222,128,.45)' },
   tabCount:   { fontSize:10, padding:'1px 6px', borderRadius:20, background:'var(--s3)', color:'var(--muted2)' },
   statsGrid:  { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'1rem', marginBottom:'2rem' },
   statsGridMobile:{ gridTemplateColumns:'repeat(2, minmax(0,1fr))', gap:6, marginBottom:8 },
@@ -686,6 +717,7 @@ const s = {
   mobileSelect:{ minHeight:36, fontSize:16, background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:8, padding:'6px 8px' },
   mobileActions:{ display:'flex', gap:7, flexWrap:'wrap', justifyContent:'flex-end' },
   tierSelect:{ fontSize:11, background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:4, padding:'2px 6px', cursor:'pointer' },
+  actionMenu:{ minWidth:108, fontSize:11, background:'var(--s3)', color:'var(--tx2)', border:'1px solid var(--b2)', borderRadius:5, padding:'4px 24px 4px 7px', cursor:'pointer' },
   auditPill:{ fontSize:10, padding:'3px 7px', borderRadius:20, background:'rgba(96,165,250,.1)', color:'#60a5fa', border:'1px solid rgba(96,165,250,.2)', whiteSpace:'nowrap' },
   traceCardBtn:{ width:'100%', textAlign:'left', border:'1px solid var(--b1)', background:'rgba(255,255,255,.035)', color:'var(--tx)', borderRadius:9, padding:10, display:'flex', flexDirection:'column', gap:8, cursor:'pointer' },
   traceCardBtnOn:{ background:'rgba(74,222,128,.08)', borderColor:'rgba(74,222,128,.28)', boxShadow:'inset 3px 0 0 #4ade80' },

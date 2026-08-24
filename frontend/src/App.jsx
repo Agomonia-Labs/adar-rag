@@ -31,6 +31,7 @@ export default function App() {
   const [showHelpGuide,    setShowHelpGuide]    = useState(false);
   const [showHelpCenter,   setShowHelpCenter]   = useState(false);
   const [showVerticals,    setShowVerticals]    = useState(false);
+  const [showDesktopTools, setShowDesktopTools] = useState(false);
   const [showMainMenu,     setShowMainMenu]     = useState(false);
   const [showNewVisit,     setShowNewVisit]     = useState(false);
   const [showRestaurantPanel, setShowRestaurantPanel] = useState(false);
@@ -178,6 +179,7 @@ export default function App() {
   const closeMenus = () => {
     setShowMainMenu(false);
     setShowVerticals(false);
+    setShowDesktopTools(false);
   };
 
   const openTab = key => {
@@ -329,7 +331,7 @@ export default function App() {
             <div style={s.verticalWrap}>
               <button
                 style={s.verticalBtn}
-                onClick={() => setShowVerticals(v => !v)}
+                onClick={() => { setShowDesktopTools(false); setShowVerticals(v => !v); }}
                 title="Domain-specific workflows">
                 ◫ Verticals
               </button>
@@ -397,64 +399,45 @@ export default function App() {
                 </div>
               )}
             </div>
-            <div style={{ textAlign:'right' }}>
-              <p style={{ fontSize:13, fontWeight:600, color:'var(--tx)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{user.full_name||user.email}</p>
-              <p style={{ fontSize:11, color:'var(--muted2)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{user.email}</p>
-            </div>
             {activeWorkspace && (
-              <span style={{ fontSize:11.5, padding:'3px 10px', borderRadius:20,
-                             background:'rgba(74,222,128,.1)', color:'#4ade80',
-                             border:'1px solid rgba(74,222,128,.25)', fontWeight:600 }}>
-                🏢 {activeWorkspace.name}
+              <span style={s.desktopWorkspacePill} title={activeWorkspace.name}>
+                <span style={s.desktopWorkspaceName}>🏢 {activeWorkspace.name}</span>
                 <button onClick={() => setActiveWorkspace(null)}
-                  style={{ background:'none', border:'none', color:'#4ade80', cursor:'pointer', marginLeft:4, fontSize:12 }}>✕</button>
+                  style={s.desktopWorkspaceClose} aria-label="Clear active workspace">✕</button>
               </span>
             )}
-            <button
-              style={{ fontSize:12, padding:isMobile?'5px 9px':'5px 12px', background:'var(--s2)',
-                       color:'var(--muted2)', border:'1px solid var(--b2)',
-                       borderRadius:'var(--r)', cursor:'pointer' }}
-              onClick={() => setShowUsage(true)}
-              title="Your usage and plan limits">
-              📊 {t.usage}
-            </button>
-            <button
-              style={s.helpBtn}
-              onClick={() => setShowHelpGuide(true)}
-              title="Open DocIntel user guide">
-              📘 {t.guide}
-            </button>
-            <button
-              style={s.helpBtn}
-              onClick={() => setShowHelpCenter(true)}
-              title="Open DocIntel Help Center">
-              📘 {t.helpCenter}
-            </button>
-            <button
-              style={s.helpBtn}
-              onClick={openMcpPlayground}
-              title="Open the OAuth-enabled MCP Playground">
-              ⌘ {t.mcpPlayground}
-            </button>
-            <button
-              style={{ fontSize:12, padding:isMobile?'5px 9px':'5px 12px', background:'rgba(192,132,252,.1)',
-                       color:'#c084fc', border:'1px solid rgba(192,132,252,.3)',
-                       borderRadius:'var(--r)', cursor:'pointer', fontWeight:600 }}
-              onClick={() => setShowBilling(true)}
-              title="Plans & Billing">
-              💳 {t.plans}
-            </button>
-            <label style={s.langWrap} title={t.language}>
-              <span style={{fontSize:12}}>🌐</span>
-              <select
-                value={lang.code}
-                onChange={e => setUiLang(e.target.value)}
-                aria-label={t.language}
-                style={s.langSelect}>
-                {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.native}</option>)}
-              </select>
-            </label>
-            <button style={s.signOutBtn} onClick={handleLogout}>{t.signOut}</button>
+            <div style={s.desktopToolsWrap}>
+              <button
+                type="button"
+                style={{...s.desktopToolsBtn, ...(showDesktopTools ? s.desktopToolsBtnOn : {})}}
+                onClick={() => { setShowVerticals(false); setShowDesktopTools(v => !v); }}
+                aria-expanded={showDesktopTools}
+                aria-label="Open tools and account menu">
+                ☰ Tools
+              </button>
+              {showDesktopTools && (
+                <div style={s.desktopToolsMenu}>
+                  <div style={s.desktopAccountHead}>
+                    <strong style={s.desktopAccountName}>{user.full_name||user.email}</strong>
+                    <span style={s.desktopAccountEmail}>{user.email}</span>
+                  </div>
+                  <div style={s.desktopToolsGrid}>
+                    <button style={s.desktopToolItem} onClick={() => { closeMenus(); setShowUsage(true); }}>📊 {t.usage}</button>
+                    <button style={s.desktopToolItem} onClick={() => { closeMenus(); setShowBilling(true); }}>💳 {t.plans}</button>
+                    <button style={s.desktopToolItem} onClick={() => { closeMenus(); setShowHelpGuide(true); }}>📘 {t.guide}</button>
+                    <button style={s.desktopToolItem} onClick={() => { closeMenus(); setShowHelpCenter(true); }}>❓ {t.helpCenter}</button>
+                    <button style={s.desktopToolItem} onClick={openMcpPlayground}>⌘ {t.mcpPlayground}</button>
+                  </div>
+                  <label style={s.desktopLanguageRow} title={t.language}>
+                    <span>🌐 {t.language}</span>
+                    <select value={lang.code} onChange={e => setUiLang(e.target.value)} aria-label={t.language} style={s.langSelect}>
+                      {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.native}</option>)}
+                    </select>
+                  </label>
+                  <button style={s.desktopSignOut} onClick={handleLogout}>↪ {t.signOut}</button>
+                </div>
+              )}
+            </div>
           </div>
           )}
 
@@ -598,7 +581,7 @@ const s = {
   tabBtnMobile:{ padding:'7px 10px', flexShrink:0, fontSize:12 },
   tabActive: { background:'rgba(74,222,128,.12)', color:'#4ade80', fontWeight:700 },
   badge:     { fontSize:10, padding:'2px 7px', borderRadius:20, background:'#15803d', color:'#fff', fontWeight:700 },
-  userArea:  { display:'flex', alignItems:'center', gap:12, flexShrink:0 },
+  userArea:  { display:'flex', alignItems:'center', gap:8, flexShrink:0, minWidth:0 },
   userAreaMobile:{ order:2, flex:'1 0 100%', gap:6, flexWrap:'nowrap', justifyContent:'flex-start', minWidth:0, overflowX:'auto', WebkitOverflowScrolling:'touch', paddingBottom:2 },
   userAreaMenuOpen:{ overflow:'visible' },
   userMini:{ textAlign:'left', flex:'0 0 auto', maxWidth:150, minWidth:118, overflow:'hidden' },
@@ -610,6 +593,20 @@ const s = {
   verticalGroupTitle:{ fontSize:10, color:'var(--muted2)', textTransform:'uppercase', letterSpacing:'.8px', fontWeight:800, padding:'2px 4px' },
   verticalItem:{ display:'flex', alignItems:'center', gap:8, width:'100%', padding:'8px 9px', background:'var(--s2)', border:'1px solid var(--b2)', color:'var(--tx)', borderRadius:7, cursor:'pointer', fontSize:12, fontWeight:700, textAlign:'left' },
   verticalItemDisabled:{ opacity:.45, cursor:'not-allowed' },
+  desktopWorkspacePill:{ display:'inline-flex', alignItems:'center', gap:4, maxWidth:180, minWidth:0, padding:'4px 7px', borderRadius:7, background:'rgba(74,222,128,.1)', color:'#4ade80', border:'1px solid rgba(74,222,128,.25)', fontSize:11, fontWeight:700 },
+  desktopWorkspaceName:{ minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' },
+  desktopWorkspaceClose:{ flexShrink:0, padding:0, background:'none', border:'none', color:'#4ade80', cursor:'pointer', fontSize:11 },
+  desktopToolsWrap:{ position:'relative', flexShrink:0 },
+  desktopToolsBtn:{ padding:'6px 10px', borderRadius:'var(--r)', border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx2)', cursor:'pointer', fontSize:12, fontWeight:750, whiteSpace:'nowrap' },
+  desktopToolsBtnOn:{ color:'#4ade80', borderColor:'rgba(74,222,128,.4)', background:'rgba(74,222,128,.1)' },
+  desktopToolsMenu:{ position:'absolute', top:'calc(100% + 8px)', right:0, width:270, padding:9, zIndex:90, display:'flex', flexDirection:'column', gap:8, background:'#0f1f0f', border:'1px solid rgba(74,222,128,.2)', borderRadius:8, boxShadow:'0 18px 48px rgba(0,0,0,.5)' },
+  desktopAccountHead:{ display:'flex', flexDirection:'column', gap:2, minWidth:0, padding:'5px 7px 9px', borderBottom:'1px solid var(--b1)' },
+  desktopAccountName:{ color:'var(--tx)', fontSize:12.5, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' },
+  desktopAccountEmail:{ color:'var(--muted2)', fontSize:10.5, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' },
+  desktopToolsGrid:{ display:'grid', gridTemplateColumns:'repeat(2,minmax(0,1fr))', gap:6 },
+  desktopToolItem:{ minWidth:0, minHeight:34, padding:'7px 8px', border:'1px solid var(--b2)', borderRadius:6, background:'var(--s2)', color:'var(--tx2)', cursor:'pointer', textAlign:'left', fontSize:11.5, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' },
+  desktopLanguageRow:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, padding:'6px 8px', border:'1px solid var(--b2)', borderRadius:6, background:'var(--s2)', color:'var(--tx2)', fontSize:11.5, fontWeight:700 },
+  desktopSignOut:{ width:'100%', padding:'7px 9px', border:'1px solid rgba(248,113,113,.25)', borderRadius:6, background:'rgba(248,113,113,.07)', color:'#fca5a5', cursor:'pointer', textAlign:'left', fontSize:11.5, fontWeight:700 },
   helpBtn:{ fontSize:12, padding:'5px 12px', background:'rgba(74,222,128,.08)', color:'#4ade80', border:'1px solid rgba(74,222,128,.28)', borderRadius:'var(--r)', cursor:'pointer', fontWeight:700 },
   langWrap:  { display:'flex', alignItems:'center', gap:5, padding:'4px 8px', border:'1px solid var(--b2)', borderRadius:'var(--r)', background:'var(--s2)' },
   langSelect:{ width:'auto', minWidth:78, padding:'2px 4px', border:'none', boxShadow:'none', background:'transparent', color:'var(--tx2)', fontSize:12, cursor:'pointer' },
