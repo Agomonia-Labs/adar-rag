@@ -19,6 +19,12 @@
 # Deploy only MCP server:
 #   bash deploy.sh --mcp
 #
+# Deploy only the OpenTelemetry Collector:
+#   bash deploy.sh --otel
+#
+# Deploy application services without redeploying the Collector:
+#   bash deploy.sh --no-otel
+#
 # Deploy backend and frontend without MCP:
 #   bash deploy.sh --no-mcp
 #
@@ -77,16 +83,20 @@ set -euo pipefail
 DEPLOY_BACKEND=true
 DEPLOY_FRONTEND=true
 DEPLOY_MCP=true
+DEPLOY_OTEL=true
 
 # Parse flags
 for arg in "$@"; do
   case $arg in
-    --backend)  DEPLOY_FRONTEND=false; DEPLOY_MCP=false ;;
-    --frontend) DEPLOY_BACKEND=false; DEPLOY_MCP=false  ;;
-    --mcp)      DEPLOY_BACKEND=false; DEPLOY_FRONTEND=false; DEPLOY_MCP=true ;;
+    --all)      ;;
+    --backend)  DEPLOY_FRONTEND=false; DEPLOY_MCP=false; DEPLOY_OTEL=false ;;
+    --frontend) DEPLOY_BACKEND=false; DEPLOY_MCP=false; DEPLOY_OTEL=false ;;
+    --mcp)      DEPLOY_BACKEND=false; DEPLOY_FRONTEND=false; DEPLOY_MCP=true; DEPLOY_OTEL=false ;;
+    --otel)     DEPLOY_BACKEND=false; DEPLOY_FRONTEND=false; DEPLOY_MCP=false; DEPLOY_OTEL=true ;;
     --no-mcp)   DEPLOY_MCP=false ;;
+    --no-otel)  DEPLOY_OTEL=false ;;
     --help|-h)
-      echo "Usage: bash deploy.sh [--backend|--frontend|--mcp|--no-mcp]"
+      echo "Usage: bash deploy.sh [--all|--backend|--frontend|--mcp|--otel|--no-mcp|--no-otel]"
       echo "       source deploy.sh --oauth-login [OAuth options]"
       echo "OAuth options: --oauth-scopes, --oauth-callback-port, --oauth-timeout,"
       echo "               --oauth-client-id, --oauth-issuer, --mcp-url"
@@ -94,7 +104,7 @@ for arg in "$@"; do
       ;;
     *)
       echo "Unknown deployment option: $arg" >&2
-      echo "Usage: bash deploy.sh [--backend|--frontend|--mcp|--no-mcp]" >&2
+      echo "Usage: bash deploy.sh [--all|--backend|--frontend|--mcp|--otel|--no-mcp|--no-otel]" >&2
       exit 2
       ;;
   esac
@@ -109,10 +119,22 @@ echo ""
 
 START=$(date +%s)
 TOTAL_STEPS=0
+$DEPLOY_OTEL && TOTAL_STEPS=$((TOTAL_STEPS + 1))
 $DEPLOY_BACKEND && TOTAL_STEPS=$((TOTAL_STEPS + 1))
 $DEPLOY_FRONTEND && TOTAL_STEPS=$((TOTAL_STEPS + 1))
 $DEPLOY_MCP && TOTAL_STEPS=$((TOTAL_STEPS + 1))
 CURRENT_STEP=0
+
+if $DEPLOY_OTEL; then
+  CURRENT_STEP=$((CURRENT_STEP + 1))
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  Step $CURRENT_STEP/$TOTAL_STEPS — OTEL Collector (Cloud Build → Cloud Run)"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  # shellcheck disable=SC1091
+  source .deploy-config 2>/dev/null || { echo "Run scripts/setup.sh first"; exit 1; }
+  export PROJECT_ID REGION
+  bash deploy/otel/deploy-otel.sh
+fi
 
 if $DEPLOY_BACKEND; then
   CURRENT_STEP=$((CURRENT_STEP + 1))
@@ -172,5 +194,9 @@ echo "║  App   : https://docintel.adar.agomoniai.com         ║"
 echo "║  Health: https://docintel.adar.agomoniai.com/api/health ║"
 if $DEPLOY_MCP; then
 echo "║  MCP   : https://mcp.docintel.adar.agomoniai.com/mcp ║"
+fi
+if $DEPLOY_OTEL; then
+OTEL_SUMMARY_URL="$(gcloud run services describe docintel-otel-collector --project="$PROJECT_ID" --region="$REGION" --format='value(status.url)' 2>/dev/null || true)"
+echo "║  OTEL  : ${OTEL_SUMMARY_URL:-not available}"
 fi
 echo "╚══════════════════════════════════════════════════════╝"

@@ -16,6 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from services.tracing import current_trace_id, new_trace_id
+from services.telemetry import configure_telemetry, current_otel_ids, shutdown_telemetry
 
 
 @asynccontextmanager
@@ -49,10 +50,12 @@ async def lifespan(app: FastAPI):
 
     log.info("✓ Server ready — listening on port " + os.getenv("PORT", "8080"))
     yield
+    shutdown_telemetry()
     log.info("Shutting down DocIntel")
 
 
 app = FastAPI(title="DocIntel API", version="4.0.0", lifespan=lifespan)
+configure_telemetry(app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -76,6 +79,9 @@ async def trace_id_middleware(request: Request, call_next):
     try:
         response = await call_next(request)
         response.headers["X-Trace-Id"] = trace_id
+        otel_trace_id, _ = current_otel_ids()
+        if otel_trace_id:
+            response.headers["X-OTel-Trace-Id"] = otel_trace_id
         return response
     finally:
         current_trace_id.reset(token)

@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docintel-observability"
+version = "0.1.0"
+description = "Shared OpenTelemetry utilities for ADAR DocIntel services"
+requires-python = ">=3.12"
+
+[tool.setuptools]
+packages = ["docintel_observability"]

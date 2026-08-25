@@ -23,9 +23,10 @@ REGISTRY="$(terraform output -raw artifact_registry)"
 IMAGE="$REGISTRY/docintel-backend:$(date +%Y%m%d%H%M%S)"
 
 echo "[2/4] Building DocIntel backend with Cloud Build..."
-gcloud builds submit "$DOCINTEL_SOURCE/backend" \
+gcloud builds submit "$DOCINTEL_SOURCE" \
   --project "$PROJECT_ID" \
-  --tag "$IMAGE" \
+  --config "$DOCINTEL_SOURCE/deploy/backend/cloudbuild.yaml" \
+  --substitutions "_IMAGE=$IMAGE" \
   --quiet
 
 echo "[3/4] Deploying DocIntel backend..."

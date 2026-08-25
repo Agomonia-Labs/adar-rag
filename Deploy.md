@@ -248,7 +248,7 @@ gcloud run services logs read docintel-backend --region=us-central1
 firebase deploy --debug --only hosting
 
 # Docker build failing on Mac (M1/M2)
-docker build --platform linux/amd64 -t test ./backend
+docker build --platform linux/amd64 -t test -f backend/Dockerfile .
 
 # Secret not found in Cloud Run
 gcloud secrets list --project=bdas-493785

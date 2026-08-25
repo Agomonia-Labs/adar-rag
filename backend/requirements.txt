@@ -34,3 +34,10 @@ pydantic[email]>=2.0.0
 stripe>=8.0.0
 pdfplumber>=0.11.0
 reportlab>=4.2.0
+
+# ── OpenTelemetry development tracing ───────────────────────────────────────
+opentelemetry-api>=1.31,<2
+opentelemetry-sdk>=1.31,<2
+opentelemetry-exporter-otlp-proto-http>=1.31,<2
+opentelemetry-instrumentation-fastapi>=0.52b0,<1
+opentelemetry-instrumentation-httpx>=0.52b0,<1

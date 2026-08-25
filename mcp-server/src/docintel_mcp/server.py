@@ -10,9 +10,11 @@ from .config import Settings
 from .resources import register_resources
 from .tools import register_tools
 from .token_verifier import DocIntelTokenVerifier
+from .telemetry import configure as configure_telemetry
 
 
 settings = Settings.from_env()
+configure_telemetry()
 logging.basicConfig(
     level=getattr(logging, settings.log_level, logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s %(message)s",

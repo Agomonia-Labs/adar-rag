@@ -1,0 +1,52 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+      http:
+        endpoint: 0.0.0.0:${env:PORT}
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 384
+    spike_limit_mib: 96
+  resource:
+    attributes:
+      - key: deployment.environment.name
+        value: development
+        action: upsert
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+
+exporters:
+  googlecloud:
+    project: ${env:GCP_PROJECT_ID}
+  google_cloud_storage:
+    bucket:
+      project_id: ${env:GCP_PROJECT_ID}
+      name: ${env:OTEL_GCS_BUCKET}
+      region: ${env:GCP_REGION}
+      reuse_if_exists: true
+      file_prefix: traces
+      partition:
+        prefix: docintel
+        format: "year=%Y/month=%m/day=%d/hour=%H"
+    timeout: 10s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 2s
+      max_interval: 30s
+      max_elapsed_time: 300s
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 1000
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [googlecloud, google_cloud_storage]

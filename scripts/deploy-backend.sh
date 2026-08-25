@@ -28,7 +28,8 @@ docker build \
   --platform linux/amd64 \
   -t "$IMAGE" \
   -t "$IMAGE_LATEST" \
-  ./backend
+  -f backend/Dockerfile \
+  .
 echo "  ✓ Image built"
 
 # ── 3. Push to Artifact Registry ─────────────────────────────────────────────
@@ -131,6 +132,28 @@ done
 # ── 7. Deploy to Cloud Run ────────────────────────────────────────────────────
 echo "▶ Deploying to Cloud Run..."
 
+OTEL_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-$(
+  gcloud run services describe "${OTEL_SERVICE_NAME:-docintel-otel-collector}" \
+    --project="$PROJECT_ID" \
+    --region="$REGION" \
+    --format='value(status.url)' 2>/dev/null || true
+)}"
+OTEL_FLAGS=()
+if [[ -n "$OTEL_ENDPOINT" ]]; then
+  OTEL_FLAGS+=(
+    "--set-env-vars=OTEL_ENABLED=true"
+    "--set-env-vars=OTEL_SERVICE_NAME=docintel-backend"
+    "--set-env-vars=OTEL_SERVICE_VERSION=4.0.0"
+    "--set-env-vars=OTEL_DEPLOYMENT_ENVIRONMENT=development"
+    "--set-env-vars=OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf"
+    "--set-env-vars=OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT}"
+    "--set-env-vars=OTEL_CAPTURE_CONTENT=false"
+  )
+  echo "  OTEL endpoint: $OTEL_ENDPOINT"
+else
+  echo "  OTEL endpoint: not found; telemetry export remains disabled"
+fi
+
 gcloud run deploy "$SERVICE_NAME" \
   --image="$IMAGE" \
   --region="$REGION" \
@@ -192,6 +215,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="RERANK_ENABLED=true" \
   --set-env-vars="RERANK_FETCH_K=20" \
   --set-env-vars="RRF_K=60" \
+  "${OTEL_FLAGS[@]}" \
   $SECRETS_FLAGS \
   --quiet
 
