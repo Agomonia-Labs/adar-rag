@@ -470,6 +470,27 @@ export async function fetchTrace(traceId) {
   return handleRes(await fetch(`${BASE}/traces/${traceId}`, { headers: authHdr() }));
 }
 
+export async function fetchMyTraces({ limit = 50, workspaceId = '', personalOnly = false, requestType = '', status = '', operation = '', search = '', minDurationMs = '' } = {}) {
+  const params = new URLSearchParams({ limit: String(limit), personal_only: String(personalOnly) });
+  if (workspaceId) params.set('workspace_id', workspaceId);
+  if (requestType) params.set('request_type', requestType);
+  if (status) params.set('status', status);
+  if (operation) params.set('operation', operation);
+  if (search) params.set('search', search);
+  if (minDurationMs) params.set('min_duration_ms', String(minDurationMs));
+  return handleRes(await fetch(`${BASE}/traces/mine?${params.toString()}`, { headers: authHdr() }));
+}
+
+export async function fetchMyTraceSummary({ workspaceId = '', personalOnly = false } = {}) {
+  const params = new URLSearchParams({ personal_only: String(personalOnly) });
+  if (workspaceId) params.set('workspace_id', workspaceId);
+  return handleRes(await fetch(`${BASE}/traces/mine/summary?${params.toString()}`, { headers: authHdr() }));
+}
+
+export async function fetchMyTrace(traceId) {
+  return handleRes(await fetch(`${BASE}/traces/mine/${encodeURIComponent(traceId)}`, { headers: authHdr() }));
+}
+
 // ── Summarize ─────────────────────────────────────────────────────────────────
 export async function streamSummary(
   { doc_id, document_ids, summary_type, custom_prompt, chunk_indices, redact_pii = false, redactPii = false },

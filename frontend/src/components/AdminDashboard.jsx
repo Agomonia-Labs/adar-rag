@@ -25,6 +25,8 @@ export default function AdminDashboard() {
   const [traceQuestionFilter, setTraceQuestionFilter] = useState('');
   const [traceTypeFilter, setTraceTypeFilter] = useState('');
   const [traceStatusFilter, setTraceStatusFilter] = useState('');
+  const [traceOperationFilter, setTraceOperationFilter] = useState('');
+  const [traceMinDuration, setTraceMinDuration] = useState('');
   const [auditFilter, setAuditFilter] = useState('');
   const [tab,    setTab]    = useState('overview');
   const [loading,setLoading]= useState(true);
@@ -46,7 +48,9 @@ export default function AdminDashboard() {
     const q = (t.input_text_preview || '').toLowerCase();
     return (!traceQuestionFilter.trim() || q.includes(traceQuestionFilter.trim().toLowerCase()))
       && (!traceTypeFilter || t.request_type === traceTypeFilter)
-      && (!traceStatusFilter || t.status === traceStatusFilter);
+      && (!traceStatusFilter || t.status === traceStatusFilter)
+      && (!traceOperationFilter || (t.operations || []).includes(traceOperationFilter))
+      && (!traceMinDuration || Number(t.duration_ms || 0) >= Number(traceMinDuration));
   });
 
   const loadTraces  = async()        => {
@@ -55,7 +59,10 @@ export default function AdminDashboard() {
       const [summary, rows] = await Promise.all([fetchTraceSummary(), fetchTraces({limit:100})]);
       setTraceSummary(summary);
       setTraces(rows);
-      if (rows.length && !traceDetail) setTraceDetail(await fetchTrace(rows[0].trace_id));
+      if (rows.length && !traceDetail) {
+        try { setTraceDetail(await fetchTrace(rows[0].trace_id)); }
+        catch (detailError) { setError(`Trace list loaded, but the newest trace could not be opened: ${detailError.message}`); }
+      }
       if (!rows.length) setTraceDetail(null);
     } catch(e) { setError(e.message); }
     finally { setTraceLoading(false); }
@@ -98,15 +105,15 @@ export default function AdminDashboard() {
     : [['overview','📊 Overview'],['users','👥 Users'],['documents','📂 Documents'],['mcp-access','🔐 MCP Access']];
 
   return (
-    <div style={{...s.wrap, ...(isMobile ? s.wrapMobile : {})}}>
-      <div style={{...s.pageHdr, ...(isMobile ? s.pageHdrMobile : {})}}>
-        <div><h2 style={s.pageTitle}>⚙ Admin Dashboard</h2><p style={s.pageSub}>System-wide visibility and controls</p></div>
+    <div style={{...s.wrap, ...(tab==='traces' ? s.wrapTraces : {}), ...(isMobile ? s.wrapMobile : {})}}>
+      <div style={{...s.pageHdr, ...(tab==='traces' ? s.pageHdrCompact : {}), ...(isMobile ? s.pageHdrMobile : {})}}>
+        <div><h2 style={s.pageTitle}>{tab==='traces' ? '🧭 Admin Trace Explorer' : '⚙ Admin Dashboard'}</h2>{tab!=='traces' && <p style={s.pageSub}>System-wide visibility and controls</p>}</div>
         <button style={{...s.refreshBtn, ...(isMobile ? s.refreshBtnMobile : {})}} onClick={load} disabled={loading}>{loading?'…':'↻ Refresh'}</button>
       </div>
 
       {error && <div style={s.errBanner}>{error}</div>}
 
-      <div style={{...s.tabRow, ...(isMobile ? s.tabRowMobile : {})}}>
+      <div style={{...s.tabRow, ...(tab==='traces' ? s.tabRowCompact : {}), ...(isMobile ? s.tabRowMobile : {})}}>
         {visibleTabs.map(([k,lbl])=>(
           <button key={k} style={{...s.subTab,...(tab===k?s.subTabOn:{})}} onClick={()=>selectTab(k)}>
             <span>{lbl}</span>
@@ -232,9 +239,12 @@ export default function AdminDashboard() {
         </div>
       )}
       {tab === 'traces' && (
-        <div style={{...s.section, ...(isMobile ? s.sectionMobile : {})}}>
-          <h3 style={s.secTitle}>Request Traces</h3>
-          <div style={{...s.filterBar, ...(isMobile ? s.filterBarMobile : {})}}>
+        <div style={{...s.section, ...s.traceSection, ...(isMobile ? s.sectionMobile : {})}}>
+          <div style={s.traceSectionHead}>
+            <div><span style={s.traceEyebrow}>System observability</span><h3 style={s.traceSectionTitle}>All request workflows</h3></div>
+            <span style={s.traceScope}>Administrator view · full operational detail</span>
+          </div>
+          <div style={{...s.filterBar, ...s.traceFilterBar, ...(isMobile ? s.filterBarMobile : {})}}>
             <button onClick={loadTraces} disabled={traceLoading}
               style={{fontSize:12,padding:'5px 10px',background:'var(--s3)',color:'var(--muted2)',border:'1px solid var(--b2)',borderRadius:'var(--r)',cursor:'pointer'}}>{traceLoading?'… Loading':'↻ Refresh'}</button>
             <input
@@ -253,6 +263,17 @@ export default function AdminDashboard() {
               <option value="success">success</option>
               <option value="error">error</option>
               <option value="running">running</option>
+            </select>
+            <select value={traceOperationFilter} onChange={e=>setTraceOperationFilter(e.target.value)} style={{...s.traceSelect, ...(isMobile ? s.traceSelectMobile : {})}}>
+              <option value="">All stages</option>
+              {[...new Set(traces.flatMap(t=>t.operations || []))].sort().map(operation=><option key={operation} value={operation}>{humanize(operation)}</option>)}
+            </select>
+            <select value={traceMinDuration} onChange={e=>setTraceMinDuration(e.target.value)} style={{...s.traceSelect, ...(isMobile ? s.traceSelectMobile : {})}}>
+              <option value="">Any latency</option>
+              <option value="500">500 ms+</option>
+              <option value="1000">1 sec+</option>
+              <option value="3000">3 sec+</option>
+              <option value="10000">10 sec+</option>
             </select>
             {traceSummary && (
               <span style={{fontSize:11,color:traceSummary.ready?'#4ade80':'#f87171'}}>
@@ -273,27 +294,8 @@ export default function AdminDashboard() {
             </div>
           )}
           <div style={{...s.traceLayout, ...(isMobile ? s.traceLayoutMobile : {})}}>
-            <div style={{overflowX:isMobile ? 'visible' : 'auto',borderRight:isMobile ? 'none' : '1px solid var(--b1)', borderBottom:isMobile ? '1px solid var(--b1)' : 'none'}}>
-              {isMobile ? (
-                <TraceCards traces={filteredTraces} activeTraceId={traceDetail?.trace?.trace_id} onOpen={openTrace} />
-              ) : (
-              <table style={s.table}>
-                <thead><tr>{['Question','Time','Type','Status'].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
-                <tbody>
-                  {filteredTraces.map(t=>(
-                    <tr key={t.trace_id} style={{...s.tr,...(traceDetail?.trace?.trace_id===t.trace_id?s.traceRowOn:{})}} onClick={()=>openTrace(t.trace_id)}>
-                      <td style={{...s.td,maxWidth:360,cursor:'pointer'}}>
-                        <span style={{...s.ellipsis,color:'var(--tx)',fontWeight:600}} title={t.input_text_preview||''}>{t.input_text_preview||'(no question preview)'}</span>
-                        <span style={{display:'block',fontSize:10.5,color:'var(--muted2)',fontFamily:'monospace',marginTop:3}}>{t.trace_id}</span>
-                      </td>
-                      <td style={{...s.td,fontSize:11,color:'var(--muted2)',whiteSpace:'nowrap'}}>{fmtDT(t.started_at)}</td>
-                      <td style={s.td}><span style={s.tracePill}>{t.request_type}</span></td>
-                      <td style={{...s.td,color:t.status==='success'?'#4ade80':t.status==='error'?'#f87171':'#fbbf24',fontWeight:700}}>{t.status}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              )}
+            <div style={{...s.traceListPane,...(isMobile?s.traceListPaneMobile:{})}}>
+              <TraceCards traces={filteredTraces} activeTraceId={traceDetail?.trace?.trace_id} onOpen={openTrace} />
             </div>
             <TraceDetail data={traceDetail} traceCount={filteredTraces.length} loading={traceLoading} mobile={isMobile}/>
           </div>
@@ -459,7 +461,27 @@ function UsersList({ users, mobile, setUsers, onRole, onDelete }) {
   );
 }
 
-function TraceDetail({ data, traceCount = 0, loading = false, mobile = false }) {
+export function TraceDetail({ data, traceCount = 0, loading = false, mobile = false }) {
+  const trace = data?.trace || {};
+  const spans = Array.isArray(data?.spans) ? data.spans : [];
+  const llmEvents = Array.isArray(data?.llm_events) ? data.llm_events : [];
+  const workflow = data ? (data.workflow || legacyWorkflow(trace, spans, llmEvents)) : {nodes:[],summary:{}};
+  const nodes = Array.isArray(workflow.nodes) ? workflow.nodes : [];
+  const [view, setView] = useState('flow');
+  const [selectedId, setSelectedId] = useState('');
+  const [rawOpen, setRawOpen] = useState(false);
+  useEffect(() => { setSelectedId(nodes[0]?.id || ''); setView('flow'); }, [trace.trace_id]);
+  useEffect(() => {
+    if (!rawOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = event => event.key === 'Escape' && setRawOpen(false);
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [rawOpen]);
   if (!data) return (
     <div style={{...s.traceDetail, ...(mobile ? s.traceDetailMobile : {})}}>
       <p style={{color:'var(--muted2)',fontSize:13}}>
@@ -471,49 +493,188 @@ function TraceDetail({ data, traceCount = 0, loading = false, mobile = false }) 
       </p>
     </div>
   );
-  const trace = data.trace || {};
-  const spans = Array.isArray(data.spans) ? data.spans : [];
-  const llmEvents = Array.isArray(data.llm_events) ? data.llm_events : [];
+  const selected = nodes.find(node=>node.id===selectedId) || nodes[0] || null;
+  const summary = workflow.summary || {};
+  const rawPayload = {trace,spans,llm_events:llmEvents};
   return (
     <div style={{...s.traceDetail, ...(mobile ? s.traceDetailMobile : {})}}>
-      <div style={{fontSize:11,color:'var(--muted2)',marginBottom:4}}>Trace</div>
-      <div style={{fontFamily:'monospace',fontSize:11,color:'#60a5fa',wordBreak:'break-all',marginBottom:12}}>{trace.trace_id}</div>
+      <div style={s.workflowHeader}>
+        <div style={{minWidth:0}}>
+          <div style={{display:'flex',alignItems:'center',gap:7,flexWrap:'wrap'}}>
+            <strong style={{color:'var(--tx)',fontSize:14}}>Request workflow</strong>
+            <StatusBadge value={trace.status}/>
+          </div>
+          <div style={s.traceId}>{trace.trace_id}</div>
+        </div>
+        <div style={s.workflowStats}>
+          <FlowStat value={formatDuration(summary.duration_ms)} label="total" />
+          <FlowStat value={summary.step_count || nodes.length} label="steps" />
+          <FlowStat value={summary.candidate_chunk_count || 0} label="chunks" />
+          <FlowStat value={summary.llm_call_count || 0} label="LLM" />
+        </div>
+      </div>
+
       <div style={s.traceQuestion}>
-        <span style={{fontSize:10,color:'var(--muted2)',textTransform:'uppercase',letterSpacing:'.4px'}}>Question</span>
+        <span style={s.eyebrow}>User question</span>
         <strong style={{display:'block',marginTop:4,color:'var(--tx)',fontSize:13,lineHeight:1.45}}>{trace.input_text_preview || 'No question preview captured'}</strong>
       </div>
-      <div style={s.traceGrid}>
-        <span>Type</span><strong>{trace.request_type}</strong>
-        <span>Status</span><strong style={{color:trace.status==='success'?'#4ade80':trace.status==='error'?'#f87171':'#fbbf24'}}>{trace.status}</strong>
-        <span>Started</span><strong>{fmtDT(trace.started_at)}</strong>
-        <span>Ended</span><strong>{fmtDT(trace.ended_at)}</strong>
+
+      {workflow.story && <div style={s.requestStory}><span aria-hidden="true">◎</span><p>{workflow.story}</p></div>}
+
+      <div style={s.workflowToolbar}>
+        <div style={s.segmented}>
+          {[['flow','Flow'],['timeline','Timeline'],['raw','Raw']].map(([key,label])=><button key={key} type="button" onClick={()=>setView(key)} style={{...s.segmentBtn,...(view===key?s.segmentBtnOn:{})}}>{label}</button>)}
+        </div>
+        <div style={s.workflowToolbarRight}>
+          <span style={s.workflowMeta}>{fmtDT(trace.started_at)} · {trace.request_type}</span>
+          {view==='raw' && <button type="button" onClick={()=>setRawOpen(true)} style={s.rawExpandBtn} title="Open raw trace full screen" aria-label="Open raw trace full screen">⛶ <span>Expand</span></button>}
+        </div>
       </div>
-      <h4 style={s.traceHdr}>Spans</h4>
-      {spans.map(sp=>(
-        <div key={sp.span_id} style={s.traceBox}>
-          <div style={{display:'flex',justifyContent:'space-between',gap:8}}>
-            <strong style={{color:'var(--tx)',fontSize:12}}>{sp.name}</strong>
-            <span style={{fontSize:11,color:'var(--muted2)'}}>{sp.duration_ms ?? '—'} ms</span>
-          </div>
-          <pre style={s.tracePre}>{JSON.stringify(sp.metadata||{}, null, 2)}</pre>
+
+      {view==='flow' && <WorkflowFlow nodes={nodes} selectedId={selected?.id} onSelect={setSelectedId} mobile={mobile}/>}
+      {view==='timeline' && <WorkflowTimeline nodes={nodes} selectedId={selected?.id} onSelect={setSelectedId}/>}
+      {view==='raw' && <RawJsonViewer value={rawPayload} />}
+
+      {view!=='raw' && <StepInspector node={selected}/>}
+      {rawOpen && <div style={s.rawModal} role="dialog" aria-modal="true" aria-label="Raw trace output">
+        <div style={s.rawModalHeader}>
+          <div style={{minWidth:0}}><span style={s.eyebrow}>Trace JSON</span><strong style={s.rawModalTitle}>Raw output</strong><span style={s.rawModalId}>{trace.trace_id}</span></div>
+          <button type="button" onClick={()=>setRawOpen(false)} style={s.rawCloseBtn} aria-label="Close raw output" title="Close">✕</button>
         </div>
-      ))}
-      <h4 style={s.traceHdr}>LLM / Tool Events</h4>
-      {llmEvents.map(ev=>(
-        <div key={ev.event_id} style={s.traceBox}>
-          <div style={{display:'flex',justifyContent:'space-between',gap:8}}>
-            <strong style={{color:'#c084fc',fontSize:12}}>{ev.operation}</strong>
-            <span style={{fontSize:11,color:'var(--muted2)'}}>{ev.provider} · {ev.model||'—'}</span>
-          </div>
-          {ev.user_prompt && <pre style={s.tracePre}>USER\n{ev.user_prompt}</pre>}
-          {ev.system_prompt && <pre style={s.tracePre}>SYSTEM\n{ev.system_prompt}</pre>}
-          {ev.tool_response_json && <pre style={s.tracePre}>RESPONSE\n{JSON.stringify(ev.tool_response_json, null, 2)}</pre>}
-          {ev.llm_response && <pre style={s.tracePre}>LLM\n{ev.llm_response}</pre>}
-        </div>
-      ))}
+        <div style={s.rawModalBody}><RawJsonViewer value={rawPayload} fullScreen /></div>
+      </div>}
     </div>
   );
 }
+
+function RawJsonViewer({value,fullScreen=false}) {
+  const lines=JSON.stringify(value,null,2).split('\n');
+  return <div style={{...s.rawTrace,...(fullScreen?s.rawTraceFull:{})}}>
+    <div style={s.rawLegend}><span><i style={{...s.legendDot,background:'#7dd3fc'}}/>key</span><span><i style={{...s.legendDot,background:'#a7f3d0'}}/>text</span><span><i style={{...s.legendDot,background:'#fcd34d'}}/>number</span><span><i style={{...s.legendDot,background:'#c4b5fd'}}/>boolean/null</span></div>
+    <pre style={{...s.rawJson,...(fullScreen?s.rawJsonFull:{})}}>{lines.map((line,index)=><JsonLine key={index} line={line}/>)}</pre>
+  </div>;
+}
+
+function JsonLine({line}) {
+  const match=line.match(/^(\s*)("(?:\\.|[^"\\])*")(\s*:\s*)(.*)$/);
+  if(!match)return <span style={s.jsonLine}>{colorJsonValue(line)}</span>;
+  return <span style={s.jsonLine}><span>{match[1]}</span><span style={s.jsonKey}>{match[2]}</span><span style={s.jsonPunctuation}>{match[3]}</span>{colorJsonValue(match[4])}</span>;
+}
+
+function colorJsonValue(value) {
+  const trimmed=value.trimStart();
+  const leading=value.slice(0,value.length-trimmed.length);
+  const style=trimmed.startsWith('"')?s.jsonString:/^-?\d/.test(trimmed)?s.jsonNumber:/^(true|false|null)/.test(trimmed)?s.jsonLiteral:s.jsonPunctuation;
+  return <><span>{leading}</span><span style={style}>{trimmed}</span></>;
+}
+
+const FLOW_TYPES = {
+  user_input:{label:'Input',color:'#22d3ee',icon:'?'}, context:{label:'Context',color:'#fbbf24',icon:'C'},
+  embedding:{label:'Embedding',color:'#38bdf8',icon:'E'}, retrieval:{label:'Retrieval',color:'#4ade80',icon:'R'},
+  rerank:{label:'Rerank',color:'#2dd4bf',icon:'↕'}, prompt:{label:'Prompt',color:'#f59e0b',icon:'P'},
+  agent:{label:'Agent',color:'#c084fc',icon:'A'}, tool:{label:'Tool',color:'#60a5fa',icon:'T'},
+  llm:{label:'LLM',color:'#f472b6',icon:'L'}, response:{label:'Response',color:'#e2e8f0',icon:'✓'},
+  operation:{label:'Operation',color:'#94a3b8',icon:'•'},
+};
+
+function WorkflowFlow({nodes,selectedId,onSelect,mobile}) {
+  if (!nodes.length) return <div style={s.infoBanner}>This trace does not contain workflow steps.</div>;
+  return (
+    <div style={{...s.flowCanvas,...(mobile?s.flowCanvasMobile:{})}}>
+      {nodes.map((node,index)=>{
+        const type=FLOW_TYPES[node.type]||FLOW_TYPES.operation;
+        const active=node.id===selectedId;
+        return <React.Fragment key={node.id}>
+          {index>0 && <div style={{...s.flowConnector,...(mobile?s.flowConnectorMobile:{})}}><span>{mobile?'↓':'→'}</span></div>}
+          <button type="button" onClick={()=>onSelect(node.id)} style={{...s.flowNode,...(mobile?{width:'100%',flexBasis:'auto',minHeight:82,boxSizing:'border-box'}:{}),borderColor:active?type.color:'var(--b1)',boxShadow:active?`0 0 0 2px ${type.color}33`:'none'}}>
+            <span style={{...s.flowIcon,background:`${type.color}18`,color:type.color,borderColor:`${type.color}45`}}>{type.icon}</span>
+            <span style={{minWidth:0,flex:1}}>
+              <span style={{...s.eyebrow,color:type.color}}>{type.label}</span>
+              <strong style={s.flowName}>{node.name}</strong>
+              <span style={s.flowSummary}>{node.summary||'No step summary'}</span>
+            </span>
+            <span style={s.flowDuration}>{formatDuration(node.duration_ms)}</span>
+          </button>
+        </React.Fragment>;
+      })}
+    </div>
+  );
+}
+
+function WorkflowTimeline({nodes,selectedId,onSelect}) {
+  const total=Math.max(1,...nodes.map(node=>(node.offset_ms||0)+(node.duration_ms||0)));
+  return <div style={s.timeline}>
+    <div style={s.timelineScale}><span>0 ms</span><span>{formatDuration(total)}</span></div>
+    {nodes.filter(node=>node.id!=='request'&&node.type!=='response').map(node=>{
+      const type=FLOW_TYPES[node.type]||FLOW_TYPES.operation;
+      const left=Math.min(96,((node.offset_ms||0)/total)*100);
+      const width=Math.max(1.5,Math.min(100-left,((node.duration_ms||1)/total)*100));
+      return <button key={node.id} type="button" onClick={()=>onSelect(node.id)} style={{...s.timelineRow,...(node.id===selectedId?s.timelineRowOn:{})}}>
+        <span style={s.timelineLabel} title={node.name}>{node.name}</span>
+        <span style={s.timelineTrack}><span style={{...s.timelineBar,left:`${left}%`,width:`${width}%`,background:type.color}}/></span>
+        <span style={s.timelineValue}>{formatDuration(node.duration_ms)}</span>
+      </button>;
+    })}
+  </div>;
+}
+
+function StepInspector({node}) {
+  const [expanded,setExpanded]=useState('overview');
+  useEffect(()=>setExpanded('overview'),[node?.id]);
+  if(!node)return null;
+  const type=FLOW_TYPES[node.type]||FLOW_TYPES.operation;
+  const details=node.details||{};
+  const events=Array.isArray(details.events)?details.events:[];
+  const sections=[
+    ['metrics','Metrics',node.metrics||{}],
+    ['metadata','Span metadata',details.metadata||{}],
+    ['events','Prompt, tool and model events',events],
+    ['errors','Errors',details.error||{}],
+  ].filter(([, ,value])=>Array.isArray(value)?value.length:Object.keys(value||{}).length);
+  return <section style={{...s.inspector,borderTopColor:type.color}}>
+    <div style={s.inspectorHead}>
+      <span style={{...s.flowIcon,background:`${type.color}18`,color:type.color,borderColor:`${type.color}45`}}>{type.icon}</span>
+      <div style={{minWidth:0,flex:1}}><span style={{...s.eyebrow,color:type.color}}>{type.label} step</span><h4 style={s.inspectorTitle}>{node.name}</h4><p style={s.inspectorSummary}>{node.summary}</p></div>
+      <StatusBadge value={node.status}/>
+    </div>
+    <div style={s.inspectorFacts}>
+      <FlowStat value={formatDuration(node.duration_ms)} label="duration" />
+      <FlowStat value={formatDuration(node.offset_ms)} label="start offset" />
+      <FlowStat value={node.service||'DocIntel'} label="service" wide />
+    </div>
+    <div style={s.inspectorSections}>
+      {sections.map(([key,label,value])=><div key={key} style={s.inspectorSection}>
+        <button type="button" style={s.inspectorToggle} onClick={()=>setExpanded(expanded===key?'':key)}><span>{label}</span><span>{expanded===key?'−':'+'}</span></button>
+        {expanded===key && <InspectorValue value={value}/>}
+      </div>)}
+    </div>
+  </section>;
+}
+
+function InspectorValue({value}) {
+  if(Array.isArray(value))return <div style={s.eventList}>{value.map((event,index)=><div key={index} style={s.eventBox}>
+    <div style={s.eventHead}><strong>{event.operation||`Event ${index+1}`}</strong><span>{event.provider||'internal'} · {event.model||'—'}</span></div>
+    {event.user_prompt&&<ExpandablePayload label="User prompt" value={event.user_prompt}/>}
+    {event.system_prompt&&<ExpandablePayload label="System prompt" value={event.system_prompt}/>}
+    {Object.keys(event.tool_request||{}).length>0&&<ExpandablePayload label="Tool request" value={event.tool_request}/>}
+    {Object.keys(event.tool_response||{}).length>0&&<ExpandablePayload label="Tool / chunk result" value={event.tool_response}/>}
+    {event.llm_response&&<ExpandablePayload label="LLM response" value={event.llm_response}/>}
+  </div>)}</div>;
+  return <div style={s.metricGrid}>{Object.entries(value||{}).map(([key,item])=><div key={key} style={s.metricItem}><span>{humanize(key)}</span><strong>{displayValue(item)}</strong></div>)}</div>;
+}
+
+function ExpandablePayload({label,value}) {
+  const [open,setOpen]=useState(false);
+  const text=typeof value==='string'?value:JSON.stringify(value,null,2);
+  return <div style={s.payload}><button type="button" style={s.payloadToggle} onClick={()=>setOpen(!open)}><span>{label}</span><span>{open?'−':'+'}</span></button>{open&&<pre style={s.payloadPre}>{text}</pre>}</div>;
+}
+
+function StatusBadge({value}) { const color=value==='success'?'#4ade80':value==='error'?'#f87171':'#fbbf24';return <span style={{...s.statusBadge,color,borderColor:`${color}55`,background:`${color}12`}}>{value||'running'}</span>; }
+function FlowStat({value,label,wide=false}) { return <span style={{...s.flowStat,...(wide?{minWidth:110}:{})}}><strong>{value??'—'}</strong><small>{label}</small></span>; }
+function formatDuration(ms){const n=Number(ms||0);return n>=1000?`${(n/1000).toFixed(n>=10000?1:2)}s`:`${Math.round(n)}ms`;}
+function humanize(v){return String(v).replace(/[._]/g,' ').replace(/\b\w/g,c=>c.toUpperCase());}
+function displayValue(v){if(v===null||v===undefined||v==='')return'—';if(typeof v==='object')return JSON.stringify(v);return String(v);}
+function legacyWorkflow(trace,spans,llmEvents){return {nodes:[{id:'request',type:'user_input',name:'User question',status:trace.status,summary:trace.input_text_preview,duration_ms:0,details:{}},...spans.map(sp=>({id:sp.span_id,type:'operation',name:humanize(sp.name),operation:sp.name,status:sp.status,duration_ms:sp.duration_ms||0,summary:humanize(sp.name),details:{metadata:sp.metadata||{},error:sp.error||{},events:llmEvents.filter(ev=>ev.span_id===sp.span_id)}}))],summary:{step_count:spans.length+1},story:'This older trace is displayed from its recorded spans and model events.'};}
 
 function DocsTable({ docs, showUser, onDelete, mobile = false }) {
   if (mobile) {
@@ -602,12 +763,15 @@ function TraceCards({ traces, activeTraceId, onOpen }) {
     <div style={s.cardList}>
       {traces.map(t => (
         <button key={t.trace_id} type="button" style={{...s.traceCardBtn, ...(activeTraceId===t.trace_id ? s.traceCardBtnOn : {})}} onClick={()=>onOpen(t.trace_id)}>
-          <strong style={s.mobileTitle}>{t.input_text_preview || '(no question preview)'}</strong>
-          <span style={s.mobileSub}>{t.trace_id}</span>
+          <div style={s.traceCardTop}>
+            <span style={{...s.tracePill,color:t.status==='error'?'#f87171':t.status==='running'?'#fbbf24':'#4ade80'}}>{t.status || 'running'}</span>
+            <span>{formatDuration(t.duration_ms)} · {t.span_count || 0} steps</span>
+          </div>
+          <strong style={s.traceCardQuestion}>{t.input_text_preview || '(no question preview)'}</strong>
+          <span style={s.traceCardId} title={t.trace_id}>{t.trace_id}</span>
           <div style={s.mobileKvGrid}>
             <KV label="Time" value={fmtDT(t.started_at)} />
             <KV label="Type" value={t.request_type} />
-            <KV label="Status" value={t.status} color={t.status==='success'?'#4ade80':t.status==='error'?'#f87171':'#fbbf24'} />
           </div>
         </button>
       ))}
@@ -658,8 +822,10 @@ function ABtn({ children, onClick, danger, disabled = false }) {
 
 const s = {
   wrap:       { padding:'1.5rem', maxWidth:1100, margin:'0 auto' },
+  wrapTraces: { padding:'12px 14px 20px', maxWidth:1600, width:'100%', boxSizing:'border-box' },
   wrapMobile: { padding:'10px 8px 14px', maxWidth:'100%', boxSizing:'border-box' },
   pageHdr:    { display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'1.5rem' },
+  pageHdrCompact:{ alignItems:'center', marginBottom:8 },
   pageHdrMobile:{ flexDirection:'column', alignItems:'stretch', gap:8, marginBottom:10 },
   pageTitle:  { fontSize:20, fontWeight:800, marginBottom:4, color:'var(--tx)' },
   pageSub:    { fontSize:13, color:'var(--muted2)' },
@@ -669,6 +835,7 @@ const s = {
   warnBanner: { background:'rgba(248,113,113,.08)', color:'#f87171', borderBottom:'1px solid rgba(248,113,113,.2)', padding:'10px 16px', fontSize:12 },
   infoBanner: { background:'rgba(96,165,250,.08)', color:'#60a5fa', borderBottom:'1px solid rgba(96,165,250,.18)', padding:'10px 16px', fontSize:12 },
   tabRow:     { display:'flex', gap:4, marginBottom:'1.5rem', borderBottom:'1px solid var(--b1)' },
+  tabRowCompact:{ marginBottom:8 },
   tabRowMobile:{ overflowX:'auto', overflowY:'hidden', WebkitOverflowScrolling:'touch', scrollbarWidth:'none', marginBottom:10, paddingBottom:1 },
   subTab:     { padding:'8px 16px', fontSize:13, background:'none', border:'none', color:'var(--muted2)', cursor:'pointer', borderBottom:'2px solid transparent', marginBottom:-1, display:'flex', alignItems:'center', gap:6, fontWeight:500, whiteSpace:'nowrap', flexShrink:0 },
   subTabOn:   { color:'#4ade80', borderBottomColor:'#4ade80', fontWeight:700 },
@@ -680,6 +847,11 @@ const s = {
   statCard:   { background:'var(--s2)', border:'1px solid var(--b1)', borderRadius:'var(--rl)', padding:'1.25rem', textAlign:'center' },
   statCardCompact:{ padding:'8px 6px', borderRadius:9, minHeight:0 },
   section:    { background:'var(--s2)', border:'1px solid var(--b1)', borderRadius:'var(--rl)', overflow:'hidden' },
+  traceSection:{ borderRadius:8 },
+  traceSectionHead:{ minHeight:44,padding:'8px 12px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,borderBottom:'1px solid var(--b1)' },
+  traceEyebrow:{ display:'block',fontSize:9,textTransform:'uppercase',letterSpacing:'.6px',fontWeight:800,color:'#4ade80' },
+  traceSectionTitle:{ margin:'2px 0 0',fontSize:14,lineHeight:1.2,color:'var(--tx)' },
+  traceScope:{ fontSize:10.5,color:'var(--muted2)',textAlign:'right' },
   sectionMobile:{ borderRadius:9 },
   secTitle:   { padding:'1rem 1.25rem', fontSize:14, fontWeight:700, borderBottom:'1px solid var(--b1)', color:'var(--tx)' },
   tableWrap:  { overflowX:'auto' },
@@ -689,17 +861,85 @@ const s = {
   td:         { padding:'10px 12px', color:'var(--tx2)', verticalAlign:'middle' },
   ellipsis:   { overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', display:'block' },
   filterBar:  { padding:'12px 16px', display:'flex', gap:8, alignItems:'center', borderBottom:'1px solid var(--b1)', flexWrap:'wrap' },
+  traceFilterBar:{ padding:'8px 10px' },
   filterBarMobile:{ padding:'9px 10px', alignItems:'stretch' },
   traceSearch:{ minWidth:220, flex:'1 1 260px', maxWidth:360, fontSize:12, padding:'5px 9px', background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:'var(--r)', outline:'none' },
   traceSearchMobile:{ minWidth:0, flex:'1 1 100%', maxWidth:'none', fontSize:16, minHeight:38 },
   traceSelect:{ fontSize:12, padding:'5px 8px', background:'var(--s3)', color:'var(--tx)', border:'1px solid var(--b2)', borderRadius:'var(--r)', cursor:'pointer' },
   traceSelectMobile:{ flex:'1 1 calc(50% - 4px)', minWidth:0, fontSize:16, minHeight:38 },
-  traceLayout:{ display:'grid', gridTemplateColumns:'minmax(420px,1fr) minmax(360px,.9fr)', minHeight:360 },
+  traceLayout:{ display:'grid', gridTemplateColumns:'minmax(270px,.48fr) minmax(0,1.52fr)', minHeight:520 },
   traceLayoutMobile:{ gridTemplateColumns:'1fr', minHeight:0 },
+  traceListPane:{ maxHeight:760,overflowY:'auto',borderRight:'1px solid var(--b1)',background:'rgba(0,0,0,.05)' },
+  traceListPaneMobile:{ maxHeight:260,borderRight:'none',borderBottom:'1px solid var(--b1)' },
   traceRowOn: { background:'rgba(74,222,128,.08)', boxShadow:'inset 3px 0 0 #4ade80' },
   tracePill:  { padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:700, background:'rgba(96,165,250,.1)', color:'#60a5fa' },
-  traceDetail:{ padding:16, overflow:'auto', maxHeight:620 },
+  traceDetail:{ padding:16, overflow:'auto', maxHeight:760 },
   traceDetailMobile:{ padding:10, maxHeight:'none', overflow:'visible' },
+  workflowHeader:{ display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,marginBottom:10 },
+  traceId:{ fontFamily:'monospace',fontSize:10.5,color:'#60a5fa',wordBreak:'break-all',marginTop:4 },
+  workflowStats:{ display:'flex',gap:6,flexWrap:'wrap',justifyContent:'flex-end' },
+  flowStat:{ minWidth:58,border:'1px solid var(--b1)',background:'rgba(0,0,0,.12)',borderRadius:6,padding:'5px 7px',display:'flex',flexDirection:'column',gap:1,color:'var(--tx)',fontSize:11 },
+  requestStory:{ display:'flex',gap:9,alignItems:'flex-start',padding:'9px 10px',borderLeft:'3px solid #60a5fa',background:'rgba(96,165,250,.07)',color:'var(--tx2)',fontSize:11.5,lineHeight:1.5,marginBottom:11 },
+  workflowToolbar:{ display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,marginBottom:9 },
+  workflowToolbarRight:{ display:'flex',alignItems:'center',justifyContent:'flex-end',gap:7,minWidth:0,flexWrap:'wrap' },
+  segmented:{ display:'inline-flex',padding:2,border:'1px solid var(--b1)',borderRadius:6,background:'var(--s3)' },
+  segmentBtn:{ border:0,borderRadius:4,padding:'5px 9px',fontSize:11,color:'var(--muted2)',background:'transparent',cursor:'pointer' },
+  segmentBtnOn:{ color:'var(--tx)',background:'rgba(255,255,255,.09)',fontWeight:700 },
+  workflowMeta:{ color:'var(--muted2)',fontSize:10.5,textAlign:'right' },
+  eyebrow:{ fontSize:9.5,textTransform:'uppercase',letterSpacing:'.4px',fontWeight:750,color:'var(--muted2)' },
+  flowCanvas:{ display:'flex',alignItems:'stretch',overflowX:'auto',padding:'7px 2px 12px',scrollSnapType:'x proximity' },
+  flowCanvasMobile:{ flexDirection:'column',overflowX:'visible',padding:'4px 0 10px' },
+  flowNode:{ flex:'0 0 196px',width:196,minHeight:96,display:'flex',alignItems:'flex-start',gap:8,textAlign:'left',background:'var(--s3)',color:'var(--tx)',border:'1px solid var(--b1)',borderRadius:7,padding:9,cursor:'pointer',scrollSnapAlign:'start',position:'relative' },
+  flowIcon:{ width:25,height:25,borderRadius:6,border:'1px solid',display:'inline-flex',alignItems:'center',justifyContent:'center',fontWeight:800,fontSize:11,flex:'0 0 25px' },
+  flowName:{ display:'block',fontSize:11.5,lineHeight:1.3,marginTop:2 },
+  flowSummary:{ display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',fontSize:10.5,color:'var(--muted2)',lineHeight:1.35,marginTop:4 },
+  flowDuration:{ position:'absolute',right:7,bottom:5,fontSize:9.5,color:'var(--muted2)',fontFamily:'monospace' },
+  flowConnector:{ flex:'0 0 25px',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--muted2)',fontSize:14 },
+  flowConnectorMobile:{ flex:'0 0 22px',minHeight:22 },
+  timeline:{ border:'1px solid var(--b1)',borderRadius:7,background:'var(--s3)',padding:'8px 7px',marginBottom:10,overflowX:'auto' },
+  timelineScale:{ marginLeft:130,display:'flex',justifyContent:'space-between',fontSize:9,color:'var(--muted2)',padding:'0 45px 5px 0' },
+  timelineRow:{ width:'100%',minWidth:420,display:'grid',gridTemplateColumns:'120px minmax(180px,1fr) 42px',alignItems:'center',gap:7,border:0,borderRadius:4,padding:'5px 4px',background:'transparent',color:'var(--tx2)',cursor:'pointer',textAlign:'left' },
+  timelineRowOn:{ background:'rgba(96,165,250,.09)' },
+  timelineLabel:{ overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:10.5 },
+  timelineTrack:{ height:7,position:'relative',background:'rgba(255,255,255,.055)',borderRadius:4,overflow:'hidden' },
+  timelineBar:{ position:'absolute',top:0,height:'100%',borderRadius:4,minWidth:3 },
+  timelineValue:{ fontSize:9.5,color:'var(--muted2)',fontFamily:'monospace',textAlign:'right' },
+  inspector:{ border:'1px solid var(--b1)',borderTop:'3px solid',borderRadius:7,background:'var(--s3)',overflow:'hidden',marginTop:2 },
+  inspectorHead:{ display:'flex',alignItems:'flex-start',gap:9,padding:10,borderBottom:'1px solid var(--b1)' },
+  inspectorTitle:{ margin:'2px 0 0',fontSize:13,color:'var(--tx)' },
+  inspectorSummary:{ margin:'3px 0 0',fontSize:10.5,color:'var(--muted2)',lineHeight:1.4 },
+  inspectorFacts:{ display:'flex',gap:6,flexWrap:'wrap',padding:'8px 10px',borderBottom:'1px solid var(--b1)' },
+  inspectorSections:{ display:'grid' },
+  inspectorSection:{ borderBottom:'1px solid var(--b1)' },
+  inspectorToggle:{ width:'100%',display:'flex',justifyContent:'space-between',border:0,padding:'8px 10px',background:'transparent',color:'var(--tx2)',fontSize:11,fontWeight:700,cursor:'pointer' },
+  metricGrid:{ display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:6,padding:'0 10px 10px' },
+  metricItem:{ border:'1px solid var(--b1)',borderRadius:5,padding:'6px 7px',display:'flex',flexDirection:'column',gap:2,minWidth:0,fontSize:10,color:'var(--muted2)' },
+  eventList:{ display:'grid',gap:7,padding:'0 10px 10px' },
+  eventBox:{ border:'1px solid var(--b1)',borderRadius:6,padding:8,background:'rgba(0,0,0,.1)' },
+  eventHead:{ display:'flex',justifyContent:'space-between',gap:7,color:'var(--tx)',fontSize:10.5,marginBottom:6 },
+  payload:{ borderTop:'1px solid var(--b1)' },
+  payloadToggle:{ width:'100%',display:'flex',justifyContent:'space-between',border:0,padding:'6px 2px',background:'transparent',color:'var(--muted2)',fontSize:10,cursor:'pointer' },
+  payloadPre:{ margin:0,padding:7,maxHeight:260,overflow:'auto',whiteSpace:'pre-wrap',wordBreak:'break-word',background:'rgba(0,0,0,.18)',borderRadius:4,color:'var(--tx2)',fontSize:10,lineHeight:1.45 },
+  statusBadge:{ padding:'2px 6px',border:'1px solid',borderRadius:20,fontSize:9.5,fontWeight:750,textTransform:'uppercase',whiteSpace:'nowrap' },
+  rawTrace:{ border:'1px solid rgba(96,165,250,.22)',borderRadius:7,background:'#08120d',padding:0,overflow:'hidden' },
+  rawTraceFull:{ height:'100%',display:'flex',flexDirection:'column',border:0,borderRadius:0 },
+  rawLegend:{ flexShrink:0,display:'flex',alignItems:'center',gap:12,flexWrap:'wrap',padding:'7px 11px',borderBottom:'1px solid rgba(96,165,250,.16)',background:'rgba(96,165,250,.055)',fontSize:9.5,color:'#94a3b8' },
+  legendDot:{ display:'inline-block',width:6,height:6,borderRadius:'50%',marginRight:4,verticalAlign:'middle' },
+  rawJson:{ margin:0,padding:'11px 13px',maxHeight:'clamp(360px,58vh,680px)',overflow:'auto',whiteSpace:'pre-wrap',overflowWrap:'anywhere',wordBreak:'break-word',color:'#d1fae5',fontSize:11,lineHeight:1.55,fontFamily:"ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",tabSize:2 },
+  rawJsonFull:{ flex:1,maxHeight:'none',minHeight:0,fontSize:12,padding:'14px 18px' },
+  jsonLine:{ display:'block',minHeight:'1.55em' },
+  jsonKey:{ color:'#7dd3fc',fontWeight:700 },
+  jsonString:{ color:'#a7f3d0' },
+  jsonNumber:{ color:'#fcd34d' },
+  jsonLiteral:{ color:'#c4b5fd',fontWeight:700 },
+  jsonPunctuation:{ color:'#94a3b8' },
+  rawExpandBtn:{ display:'inline-flex',alignItems:'center',gap:5,padding:'5px 8px',border:'1px solid rgba(96,165,250,.35)',borderRadius:5,background:'rgba(96,165,250,.09)',color:'#7dd3fc',fontSize:10.5,fontWeight:750,cursor:'pointer',whiteSpace:'nowrap' },
+  rawModal:{ position:'fixed',inset:0,zIndex:5000,display:'flex',flexDirection:'column',background:'rgba(4,10,7,.985)',color:'var(--tx)' },
+  rawModalHeader:{ minHeight:56,boxSizing:'border-box',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between',gap:14,padding:'9px 14px 9px 18px',borderBottom:'1px solid rgba(96,165,250,.22)',background:'#0b1811' },
+  rawModalTitle:{ display:'block',fontSize:15,lineHeight:1.2,color:'#e5f7ec',marginTop:2 },
+  rawModalId:{ display:'block',maxWidth:'min(70vw,900px)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontFamily:'monospace',fontSize:9.5,color:'#60a5fa',marginTop:2 },
+  rawModalBody:{ flex:1,minHeight:0,overflow:'hidden' },
+  rawCloseBtn:{ width:38,height:38,flex:'0 0 38px',display:'inline-flex',alignItems:'center',justifyContent:'center',border:'1px solid rgba(248,113,113,.35)',borderRadius:7,background:'rgba(248,113,113,.08)',color:'#fca5a5',fontSize:17,cursor:'pointer' },
   traceQuestion:{ background:'rgba(74,222,128,.07)', border:'1px solid rgba(74,222,128,.18)', borderRadius:'var(--r)', padding:10, marginBottom:12 },
   traceGrid:  { display:'grid', gridTemplateColumns:'80px 1fr', gap:'5px 10px', fontSize:12, color:'var(--muted2)', marginBottom:14 },
   traceHdr:   { color:'var(--tx)', fontSize:13, margin:'16px 0 8px' },
@@ -721,6 +961,9 @@ const s = {
   auditPill:{ fontSize:10, padding:'3px 7px', borderRadius:20, background:'rgba(96,165,250,.1)', color:'#60a5fa', border:'1px solid rgba(96,165,250,.2)', whiteSpace:'nowrap' },
   traceCardBtn:{ width:'100%', textAlign:'left', border:'1px solid var(--b1)', background:'rgba(255,255,255,.035)', color:'var(--tx)', borderRadius:9, padding:10, display:'flex', flexDirection:'column', gap:8, cursor:'pointer' },
   traceCardBtnOn:{ background:'rgba(74,222,128,.08)', borderColor:'rgba(74,222,128,.28)', boxShadow:'inset 3px 0 0 #4ade80' },
+  traceCardTop:{ display:'flex',alignItems:'center',justifyContent:'space-between',gap:7,fontSize:9.5,color:'var(--muted2)' },
+  traceCardQuestion:{ color:'var(--tx)',fontSize:12,lineHeight:1.4,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden' },
+  traceCardId:{ color:'var(--muted2)',fontSize:9.5,fontFamily:'monospace',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',display:'block',width:'100%' },
   ctr:        { textAlign:'center', padding:'3rem', color:'var(--muted2)' },
 };
 

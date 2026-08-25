@@ -10,6 +10,7 @@ import GuestTryPanel   from './components/GuestTryPanel.jsx';
 import HelpGuidePanel  from './components/HelpGuidePanel.jsx';
 import HelpCenterPanel from './components/HelpCenterPanel.jsx';
 import AdminDashboard  from './components/AdminDashboard.jsx';
+import MyTracesPanel   from './components/MyTracesPanel.jsx';
 import HealthcarePanel from './components/HealthcarePanel.jsx';
 import RestaurantPanel from './components/RestaurantPanel.jsx';
 import VideoPanel      from './components/VideoPanel.jsx';
@@ -173,6 +174,7 @@ export default function App() {
     { key:'chat',      icon:'💬', label:t.chat,      show:true, disabled:!embeddedDocs.length,
       title:!embeddedDocs.length?t.embedFirst:undefined },
     { key:'workspaces', icon:'🏢', label:t.workspaces, show:true },
+    { key:'traces',     icon:'◎', label:'My Traces',  show:true },
     { key:'admin',     icon:'⚙', label:t.admin,      show:isAdmin },
   ].filter(t=>t.show);
 
@@ -550,6 +552,7 @@ export default function App() {
           )}
           {tab==='documents' && <div style={{ height:'100%', overflowY:'auto' }}><DocumentsTab onEmbedChange={setEmbeddedDocs} activeWorkspace={activeWorkspace} refreshKey={documentsRefreshKey} openLeasePickerKey={openLeasePickerKey} openHealthcarePickerKey={openHealthcarePickerKey} /></div>}
           {tab==='chat'      && <ChatTab embeddedDocs={embeddedDocs} activeWorkspace={activeWorkspace} />}
+          {tab==='traces'    && <MyTracesPanel activeWorkspace={activeWorkspace} />}
           {tab==='admin' && isAdmin && <div style={{ height:'100%', overflowY:'auto' }}><AdminDashboard /></div>}
         </div>
       </div>
