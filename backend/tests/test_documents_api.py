@@ -13,6 +13,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-openai-key-for-unit-tests")
 from auth.dependencies import get_current_user
 from database.connection import get_db
 from routes import documents
+from routes import workspaces
 
 
 @pytest.fixture
@@ -130,6 +131,11 @@ async def test_trigger_embedding_updates_status_and_schedules_embedding(
     monkeypatch.setattr(documents, "_get_owned", fake_get_owned)
     monkeypatch.setattr(documents, "check_and_log_daily_event", fake_usage)
     monkeypatch.setattr(documents, "_embed_document", fake_embed_document)
+
+    async def fake_require_role(*args, **kwargs):
+        return "editor"
+
+    monkeypatch.setattr(workspaces, "_require_role", fake_require_role)
 
     response = await client.post("/api/documents/doc-1/embed")
 

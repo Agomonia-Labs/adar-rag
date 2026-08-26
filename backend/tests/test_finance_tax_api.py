@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import BackgroundTasks, FastAPI
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 
 from routes import finance_tax
 
@@ -48,6 +48,13 @@ def app(current_user, fake_db):
     app.dependency_overrides[finance_tax.CurrentUser.__metadata__[0].dependency] = override_user
     app.dependency_overrides[finance_tax.get_db] = override_db
     return app
+
+
+@pytest.fixture
+async def client(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
 
 
 @pytest.fixture
@@ -99,7 +106,7 @@ def sample_run():
 
 @pytest.mark.anyio
 async def test_start_tax_submission_run_creates_run_and_schedules_background(
-    app,
+    client,
     monkeypatch,
     ready_docs,
     sample_run,
@@ -136,17 +143,16 @@ async def test_start_tax_submission_run_creates_run_and_schedules_background(
     monkeypatch.setattr(finance_tax, "vertical_run_response", fake_vertical_run_response)
     monkeypatch.setattr(finance_tax, "_execute_tax_submission_background", fake_background)
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
-        response = await client.post(
-            "/api/finance-tax/tax-submission-runs",
-            json={
-                "document_ids": ["doc-w2", "doc-1098"],
-                "client_name": "Avery Morgan",
-                "tax_year": "2025",
-                "filing_status": "Married filing jointly",
-                "notes": "test run",
-            },
-        )
+    response = await client.post(
+        "/api/finance-tax/tax-submission-runs",
+        json={
+            "document_ids": ["doc-w2", "doc-1098"],
+            "client_name": "Avery Morgan",
+            "tax_year": "2025",
+            "filing_status": "Married filing jointly",
+            "notes": "test run",
+        },
+    )
 
     assert response.status_code == 200
     body = response.json()
@@ -162,12 +168,11 @@ async def test_start_tax_submission_run_creates_run_and_schedules_background(
 
 
 @pytest.mark.anyio
-async def test_start_tax_submission_run_rejects_empty_document_list(app):
-    async with AsyncClient(app=app, base_url="http://test") as client:
-        response = await client.post(
-            "/api/finance-tax/tax-submission-runs",
-            json={"document_ids": []},
-        )
+async def test_start_tax_submission_run_rejects_empty_document_list(client):
+    response = await client.post(
+        "/api/finance-tax/tax-submission-runs",
+        json={"document_ids": []},
+    )
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Select at least one tax document"
@@ -175,7 +180,7 @@ async def test_start_tax_submission_run_rejects_empty_document_list(app):
 
 @pytest.mark.anyio
 async def test_start_tax_submission_run_rejects_not_chunked_document(
-    app,
+    client,
     monkeypatch,
 ):
     async def fake_get_doc(db, doc_id, user_id):
@@ -188,18 +193,17 @@ async def test_start_tax_submission_run_rejects_not_chunked_document(
 
     monkeypatch.setattr(finance_tax, "_get_accessible_doc", fake_get_doc)
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
-        response = await client.post(
-            "/api/finance-tax/tax-submission-runs",
-            json={"document_ids": ["doc-raw"], "tax_year": "2025"},
-        )
+    response = await client.post(
+        "/api/finance-tax/tax-submission-runs",
+        json={"document_ids": ["doc-raw"], "tax_year": "2025"},
+    )
 
     assert response.status_code == 400
     assert "Documents must be chunked before running tax submission" in response.json()["detail"]
 
 
 @pytest.mark.anyio
-async def test_get_finance_tax_run_returns_run(app, monkeypatch, sample_run):
+async def test_get_finance_tax_run_returns_run(client, monkeypatch, sample_run):
     sample_run = {
         **sample_run,
         "status": "pending_approval",
@@ -227,8 +231,7 @@ async def test_get_finance_tax_run_returns_run(app, monkeypatch, sample_run):
     monkeypatch.setattr(finance_tax, "get_accessible_vertical_run", fake_get_run)
     monkeypatch.setattr(finance_tax, "vertical_run_response", fake_vertical_run_response)
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
-        response = await client.get("/api/finance-tax/agent-runs/run-1")
+    response = await client.get("/api/finance-tax/agent-runs/run-1")
 
     assert response.status_code == 200
     assert response.json()["status"] == "pending_approval"
@@ -237,7 +240,7 @@ async def test_get_finance_tax_run_returns_run(app, monkeypatch, sample_run):
 
 @pytest.mark.anyio
 async def test_approve_finance_tax_run_saves_updated_packet(
-    app,
+    client,
     monkeypatch,
     sample_run,
 ):
@@ -287,14 +290,13 @@ async def test_approve_finance_tax_run_saves_updated_packet(
     monkeypatch.setattr(finance_tax, "send_finance_tax_packet_notification", fake_notify)
     monkeypatch.setattr(finance_tax, "vertical_run_response", fake_vertical_run_response)
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
-        response = await client.post(
-            "/api/finance-tax/agent-runs/run-1/approve",
-            json={
-                "approved_packet": approved_packet,
-                "notes": "Cash Flow updated in DocIntel.",
-            },
-        )
+    response = await client.post(
+        "/api/finance-tax/agent-runs/run-1/approve",
+        json={
+            "approved_packet": approved_packet,
+            "notes": "Cash Flow updated in DocIntel.",
+        },
+    )
 
     assert response.status_code == 200
     assert approve_payload["run_id"] == "run-1"
