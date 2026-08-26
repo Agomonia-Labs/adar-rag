@@ -21,6 +21,7 @@ from services.telemetry import configure_telemetry, current_otel_ids, shutdown_t
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    observability_task = None
     log.info("═══════════════════════════════════")
     log.info("DocIntel starting up")
     log.info(f"  PORT         = {os.getenv('PORT', '8080')}")
@@ -41,15 +42,25 @@ async def lifespan(app: FastAPI):
         await init_pool()
         log.info("✓ Database pool ready")
         await create_tables()
-        from database.models import create_additional_tables, create_eval_tables
+        from database.models import create_additional_tables, create_eval_tables, create_observability_tables
         await create_additional_tables()
         await create_eval_tables()
+        await create_observability_tables()
+        if os.getenv("OBSERVABILITY_SCHEDULER_ENABLED", "true").lower() in {"1", "true", "yes"}:
+            from services.observability_scheduler import observability_scheduler
+            observability_task = asyncio.create_task(observability_scheduler())
         log.info("✓ Schema ready")
     except Exception as e:
         log.exception(f"✗ Database startup failed: {e}")
 
     log.info("✓ Server ready — listening on port " + os.getenv("PORT", "8080"))
     yield
+    if observability_task:
+        observability_task.cancel()
+        try:
+            await observability_task
+        except asyncio.CancelledError:
+            pass
     shutdown_telemetry()
     log.info("Shutting down DocIntel")
 
@@ -140,6 +151,7 @@ _ROUTERS = [
     ("routes.video",          "video_router",          "/api/video",         ["video"]),
     ("routes.guest",          "guest_router",          "/api/guest",         ["guest"]),
     ("routes.traces",         "traces_router",         "/api/traces",        ["traces"]),
+    ("routes.observability",  "observability_router",  "/api/observability", ["observability"]),
     ("routes.lease",          "lease_router",          "/api/lease",         ["lease"]),
     ("routes.healthcare",     "healthcare_router",     "/api/healthcare",    ["healthcare"]),
     ("routes.restaurant",     "restaurant_router",     "/api/restaurant",    ["restaurant"]),

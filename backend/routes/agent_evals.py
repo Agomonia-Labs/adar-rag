@@ -12,6 +12,7 @@ from database.connection import get_db
 from services.agent_workflow_evaluator import evaluate_agent_workflow
 from services.audit import audit, ip_from, ua_from
 from services.usage import check_and_log_daily_event
+from services.tracing import finish_trace, span, start_trace
 
 
 router = APIRouter()
@@ -33,6 +34,14 @@ async def evaluate_agent_run(
 ):
     user_id = str(current_user["id"])
     run = await _load_accessible_run(db, vertical, run_id, user_id)
+    trace_id = await start_trace(
+        request_type="workflow_evaluation",
+        trace_id=getattr(request.state, "trace_id", None),
+        user_id=user_id,
+        workspace_id=run.get("workspace_id"),
+        input_text=f"Evaluate {vertical} workflow run",
+        metadata={"vertical": vertical, "run_id": run_id},
+    )
     await check_and_log_daily_event(
         db,
         user_id,
@@ -40,7 +49,8 @@ async def evaluate_agent_run(
         "max_evals_day",
         metadata={"mode": "agent_workflow", "vertical": vertical, "run_id": run_id},
     )
-    evaluation = evaluate_agent_workflow(vertical, run)
+    async with span("workflow_quality_evaluation", trace_id=trace_id, metadata={"vertical": vertical}):
+        evaluation = evaluate_agent_workflow(vertical, run)
     saved = None
     if body.persist:
         saved = await _save_evaluation(db, run, evaluation, user_id)
@@ -60,6 +70,7 @@ async def evaluate_agent_run(
             ip_address=ip_from(request),
             user_agent=ua_from(request),
         )
+    await finish_trace(trace_id, "success")
     return _evaluation_response(evaluation, saved)
 
 
@@ -240,6 +251,22 @@ async def _save_evaluation(db, run: dict[str, Any], evaluation: dict[str, Any], 
         json.dumps(evaluation["policy"]),
         json.dumps(evaluation["metadata"]),
     )
+    from services.tracing import current_trace_id
+    trace_id = current_trace_id.get()
+    if trace_id:
+        trace_exists = await db.fetchval("SELECT 1 FROM trace_flows WHERE trace_id=$1", trace_id)
+        if trace_exists:
+            await db.execute(
+                """INSERT INTO trace_evaluation_correlations
+                   (trace_id,evaluation_type,evaluation_source,evaluation_id,score,outcome,reviewer_id,metadata)
+                   VALUES($1,'agent_workflow',$2,$3,$4,$5,$6,$7::jsonb)
+                   ON CONFLICT(trace_id,evaluation_type,evaluation_source,evaluation_id) DO UPDATE SET
+                     score=EXCLUDED.score,outcome=EXCLUDED.outcome,metadata=EXCLUDED.metadata""",
+                trace_id, run["vertical"], row["id"], evaluation["overall_score"],
+                evaluation["gate_status"], user_id,
+                json.dumps({"run_id": str(run["run_id"]), "passed": bool(evaluation["passed"]),
+                            "metric_count": len(evaluation.get("metrics") or [])}),
+            )
     return {"id": str(row["id"]), "created_at": row["created_at"].isoformat()}
 
 

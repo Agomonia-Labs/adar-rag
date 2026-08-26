@@ -896,3 +896,115 @@ async def create_eval_tables() -> None:
             CREATE INDEX IF NOT EXISTS idx_agent_eval_gate         ON agent_workflow_evaluations(gate_status);
         """)
     print("\u2713 Eval tables ready")
+
+
+async def create_observability_tables() -> None:
+    """Create derived observability, SLO, alert, and evaluation-correlation tables."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS trace_evaluation_correlations (
+                id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                trace_id          TEXT NOT NULL REFERENCES trace_flows(trace_id) ON DELETE CASCADE,
+                evaluation_type   TEXT NOT NULL,
+                evaluation_source TEXT NOT NULL,
+                evaluation_id     UUID,
+                score             DOUBLE PRECISION,
+                outcome           TEXT,
+                reviewer_id       UUID REFERENCES users(id) ON DELETE SET NULL,
+                metadata          JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(trace_id, evaluation_type, evaluation_source, evaluation_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_trace_eval_trace ON trace_evaluation_correlations(trace_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_trace_eval_type ON trace_evaluation_correlations(evaluation_type, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS observability_metric_rollups (
+                id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                bucket_start   TIMESTAMPTZ NOT NULL,
+                bucket_minutes INTEGER NOT NULL,
+                metric_name    TEXT NOT NULL,
+                dimension_key  TEXT NOT NULL DEFAULT 'all',
+                dimensions     JSONB NOT NULL DEFAULT '{}'::jsonb,
+                sample_count   INTEGER NOT NULL DEFAULT 0,
+                metric_value   DOUBLE PRECISION,
+                value_sum      DOUBLE PRECISION,
+                value_min      DOUBLE PRECISION,
+                value_max      DOUBLE PRECISION,
+                p50            DOUBLE PRECISION,
+                p95            DOUBLE PRECISION,
+                p99            DOUBLE PRECISION,
+                created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(bucket_start, bucket_minutes, metric_name, dimension_key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_obs_rollup_metric ON observability_metric_rollups(metric_name, bucket_start DESC);
+
+            CREATE TABLE IF NOT EXISTS observability_slo_definitions (
+                id                    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                name                  TEXT NOT NULL UNIQUE,
+                description           TEXT NOT NULL DEFAULT '',
+                metric_name           TEXT NOT NULL,
+                dimension_key         TEXT NOT NULL DEFAULT 'all',
+                target                DOUBLE PRECISION NOT NULL,
+                comparator            TEXT NOT NULL CHECK (comparator IN ('gte','lte')),
+                window_minutes        INTEGER NOT NULL DEFAULT 60,
+                minimum_request_count INTEGER NOT NULL DEFAULT 10,
+                severity              TEXT NOT NULL DEFAULT 'warning' CHECK (severity IN ('info','warning','critical')),
+                enabled               BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS observability_slo_results (
+                id                     UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                slo_id                 UUID NOT NULL REFERENCES observability_slo_definitions(id) ON DELETE CASCADE,
+                window_start           TIMESTAMPTZ NOT NULL,
+                window_end             TIMESTAMPTZ NOT NULL,
+                measured_value         DOUBLE PRECISION,
+                target_value           DOUBLE PRECISION NOT NULL,
+                request_count          INTEGER NOT NULL DEFAULT 0,
+                compliant              BOOLEAN,
+                error_budget_remaining DOUBLE PRECISION,
+                burn_rate              DOUBLE PRECISION,
+                evaluated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_obs_slo_results ON observability_slo_results(slo_id, evaluated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS observability_alerts (
+                id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                slo_id          UUID NOT NULL REFERENCES observability_slo_definitions(id) ON DELETE CASCADE,
+                status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','acknowledged','resolved')),
+                severity        TEXT NOT NULL,
+                title           TEXT NOT NULL,
+                description     TEXT NOT NULL DEFAULT '',
+                observed_value  DOUBLE PRECISION,
+                threshold_value DOUBLE PRECISION,
+                trace_ids       JSONB NOT NULL DEFAULT '[]'::jsonb,
+                first_seen_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                acknowledged_by UUID REFERENCES users(id) ON DELETE SET NULL,
+                acknowledged_at TIMESTAMPTZ,
+                resolved_at     TIMESTAMPTZ
+            );
+            CREATE INDEX IF NOT EXISTS idx_obs_alert_status ON observability_alerts(status, last_seen_at DESC);
+
+            CREATE TABLE IF NOT EXISTS observability_checkpoints (
+                job_name      TEXT PRIMARY KEY,
+                last_run_at   TIMESTAMPTZ,
+                last_status   TEXT,
+                last_error    TEXT,
+                updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+
+            INSERT INTO observability_slo_definitions
+                (name, description, metric_name, target, comparator, window_minutes, minimum_request_count, severity)
+            VALUES
+                ('Request success', 'Completed DocIntel requests that succeed', 'request_success_rate', 0.99, 'gte', 60, 10, 'critical'),
+                ('P95 request latency', 'Ninety-fifth percentile end-to-end latency', 'request_latency_ms', 8000, 'lte', 60, 10, 'warning'),
+                ('Retrieval evidence', 'Requests returning at least one candidate chunk', 'retrieval_evidence_rate', 0.98, 'gte', 60, 10, 'warning'),
+                ('Tool reliability', 'Successful tool and MCP operations', 'tool_success_rate', 0.99, 'gte', 60, 10, 'critical'),
+                ('Evaluation quality', 'Average correlated quality evaluation score', 'evaluation_quality_score', 0.85, 'gte', 1440, 3, 'warning')
+            ON CONFLICT (name) DO NOTHING;
+        """)
+    print("\u2713 Observability schema ready")

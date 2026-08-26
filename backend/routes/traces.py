@@ -102,7 +102,10 @@ async def get_my_trace(
         "SELECT * FROM trace_llm_events WHERE trace_id=$1 ORDER BY created_at ASC",
         trace_id,
     )
-    return build_user_trace_response(trace_data, [dict(row) for row in spans], [dict(row) for row in events])
+    evaluations = await _trace_evaluations(db, trace_id)
+    response = build_user_trace_response(trace_data, [dict(row) for row in spans], [dict(row) for row in events])
+    response["evaluations"] = [_public_evaluation(row) for row in evaluations]
+    return response
 
 
 @router.get("/summary")
@@ -209,12 +212,29 @@ async def get_trace(trace_id: str, admin: AdminUser, db=Depends(get_db)):
     trace_data = dict(trace)
     span_data = [dict(r) for r in spans]
     event_data = [dict(r) for r in llm_events]
+    evaluations = await _trace_evaluations(db, trace_id)
     return {
         "trace": trace_data,
         "spans": span_data,
         "llm_events": event_data,
         "workflow": build_trace_workflow(trace_data, span_data, event_data),
+        "evaluations": evaluations,
     }
+
+
+async def _trace_evaluations(db, trace_id: str) -> list[dict[str, Any]]:
+    rows = await db.fetch(
+        """SELECT id,evaluation_type,evaluation_source,evaluation_id,score,outcome,reviewer_id,metadata,created_at
+           FROM trace_evaluation_correlations WHERE trace_id=$1 ORDER BY created_at DESC""",
+        trace_id,
+    )
+    return [dict(row) for row in rows]
+
+
+def _public_evaluation(row: dict[str, Any]) -> dict[str, Any]:
+    return {key: row.get(key) for key in (
+        "evaluation_type", "evaluation_source", "score", "outcome", "metadata", "created_at"
+    )}
 
 
 async def _validate_user_trace_scope(db, user_id: str, workspace_id: str | None) -> None:

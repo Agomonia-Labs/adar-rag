@@ -215,6 +215,11 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="RERANK_ENABLED=true" \
   --set-env-vars="RERANK_FETCH_K=20" \
   --set-env-vars="RRF_K=60" \
+  --set-env-vars="OBSERVABILITY_SCHEDULER_ENABLED=true" \
+  --set-env-vars="OBSERVABILITY_INTERVAL_SECONDS=300" \
+  --set-env-vars="OBSERVABILITY_ALERT_EMAIL_ENABLED=true" \
+  --set-env-vars="OBSERVABILITY_ROLLUP_RETENTION_DAYS=90" \
+  --set-env-vars="OBSERVABILITY_RESULT_RETENTION_DAYS=180" \
   "${OTEL_FLAGS[@]}" \
   $SECRETS_FLAGS \
   --quiet

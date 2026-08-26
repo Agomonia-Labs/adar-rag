@@ -1,6 +1,7 @@
 // src/components/AdminDashboard.jsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { setUserTier, getAuditLog, fetchAdminStats, fetchAdminUsers, fetchAdminDocuments, updateUserRole, adminDeleteUser, adminDeleteDocument, fetchTraces, fetchTraceSummary, fetchTrace, fetchMcpScopeRequests, fetchMcpScopeGrants, fetchMcpScopeCatalog, assignMcpScopeGrant, decideMcpScopeRequest, revokeMcpScopeGrant } from '../services/api.js';
+import ObservabilityPanel from './ObservabilityPanel.jsx';
 
 const fmtBytes = b => { if(!b)return'0 B';if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';if(b<1073741824)return(b/1048576).toFixed(1)+' MB';return(b/1073741824).toFixed(2)+' GB'; };
 const fmtDate  = s => { if(!s)return'—';return new Date(s).toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}); };
@@ -101,7 +102,7 @@ export default function AdminDashboard() {
     if (k==='traces') loadTraces();
   };
   const visibleTabs = isMobile
-    ? [['overview','📊 Overview'],['users','👥 Users'],['documents','📂 Documents'],['mcp-access','🔐 MCP Access'],['audit','🔍 Audit Log'],['traces','🧭 Traces']]
+    ? [['overview','📊 Overview'],['users','👥 Users'],['documents','📂 Documents'],['mcp-access','🔐 MCP Access'],['observability','🔭 Observability'],['audit','🔍 Audit Log'],['traces','🧭 Traces']]
     : [['overview','📊 Overview'],['users','👥 Users'],['documents','📂 Documents'],['mcp-access','🔐 MCP Access']];
 
   return (
@@ -125,13 +126,14 @@ export default function AdminDashboard() {
         {!isMobile && (
           <select
             aria-label="More admin sections"
-            value={['audit','traces'].includes(tab) ? tab : ''}
+            value={['audit','traces','observability'].includes(tab) ? tab : ''}
             onChange={event => event.target.value && selectTab(event.target.value)}
-            style={{...s.tabMenu,...(['audit','traces'].includes(tab) ? s.tabMenuOn : {})}}
+            style={{...s.tabMenu,...(['audit','traces','observability'].includes(tab) ? s.tabMenuOn : {})}}
           >
             <option value="">More</option>
             <option value="audit">Audit Log</option>
             <option value="traces">Traces{traces.length ? ` (${traces.length})` : ''}</option>
+            <option value="observability">Observability</option>
           </select>
         )}
       </div>
@@ -238,6 +240,7 @@ export default function AdminDashboard() {
           )}
         </div>
       )}
+      {tab === 'observability' && <ObservabilityPanel mobile={isMobile}/>}
       {tab === 'traces' && (
         <div style={{...s.section, ...s.traceSection, ...(isMobile ? s.sectionMobile : {})}}>
           <div style={s.traceSectionHead}>
@@ -466,6 +469,7 @@ export function TraceDetail({ data, traceCount = 0, loading = false, mobile = fa
   const spans = Array.isArray(data?.spans) ? data.spans : [];
   const llmEvents = Array.isArray(data?.llm_events) ? data.llm_events : [];
   const workflow = data ? (data.workflow || legacyWorkflow(trace, spans, llmEvents)) : {nodes:[],summary:{}};
+  const evaluations = Array.isArray(data?.evaluations) ? data.evaluations : [];
   const nodes = Array.isArray(workflow.nodes) ? workflow.nodes : [];
   const [view, setView] = useState('flow');
   const [selectedId, setSelectedId] = useState('');
@@ -495,7 +499,7 @@ export function TraceDetail({ data, traceCount = 0, loading = false, mobile = fa
   );
   const selected = nodes.find(node=>node.id===selectedId) || nodes[0] || null;
   const summary = workflow.summary || {};
-  const rawPayload = {trace,spans,llm_events:llmEvents};
+  const rawPayload = {trace,spans,llm_events:llmEvents,evaluations};
   return (
     <div style={{...s.traceDetail, ...(mobile ? s.traceDetailMobile : {})}}>
       <div style={s.workflowHeader}>
@@ -520,6 +524,15 @@ export function TraceDetail({ data, traceCount = 0, loading = false, mobile = fa
       </div>
 
       {workflow.story && <div style={s.requestStory}><span aria-hidden="true">◎</span><p>{workflow.story}</p></div>}
+
+      {evaluations.length>0 && <div style={s.evaluationStrip}>
+        <span style={s.eyebrow}>Evaluation correlation</span>
+        <div style={s.evaluationCards}>{evaluations.map((evaluation,index)=><div key={evaluation.id||`${evaluation.evaluation_type}-${index}`} style={s.evaluationCard}>
+          <strong>{evaluation.score==null?'Not scored':`${Math.round(Number(evaluation.score)*100)}%`}</strong>
+          <span>{humanize(evaluation.evaluation_source||evaluation.evaluation_type)}</span>
+          <small>{humanize(evaluation.outcome||'pending')} · {fmtDT(evaluation.created_at)}</small>
+        </div>)}</div>
+      </div>}
 
       <div style={s.workflowToolbar}>
         <div style={s.segmented}>
@@ -941,6 +954,9 @@ const s = {
   rawModalBody:{ flex:1,minHeight:0,overflow:'hidden' },
   rawCloseBtn:{ width:38,height:38,flex:'0 0 38px',display:'inline-flex',alignItems:'center',justifyContent:'center',border:'1px solid rgba(248,113,113,.35)',borderRadius:7,background:'rgba(248,113,113,.08)',color:'#fca5a5',fontSize:17,cursor:'pointer' },
   traceQuestion:{ background:'rgba(74,222,128,.07)', border:'1px solid rgba(74,222,128,.18)', borderRadius:'var(--r)', padding:10, marginBottom:12 },
+  evaluationStrip:{ border:'1px solid rgba(192,132,252,.22)',background:'rgba(192,132,252,.055)',borderRadius:7,padding:10,marginBottom:12,display:'grid',gap:7 },
+  evaluationCards:{ display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:6 },
+  evaluationCard:{ border:'1px solid var(--b1)',borderRadius:6,padding:8,display:'grid',gap:2,minWidth:0,fontSize:11,color:'var(--muted2)' },
   traceGrid:  { display:'grid', gridTemplateColumns:'80px 1fr', gap:'5px 10px', fontSize:12, color:'var(--muted2)', marginBottom:14 },
   traceHdr:   { color:'var(--tx)', fontSize:13, margin:'16px 0 8px' },
   traceBox:   { background:'var(--s3)', border:'1px solid var(--b1)', borderRadius:'var(--r)', padding:10, marginBottom:8 },

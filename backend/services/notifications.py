@@ -7,6 +7,32 @@ from services.email import is_email_configured, send_email
 log = logging.getLogger("docintel.notifications")
 
 
+async def send_observability_alert(user_email: str, alert: dict[str, Any]) -> bool:
+    """Notify an administrator when a new SLO violation opens."""
+    if not is_email_configured():
+        log.info("Observability alert email skipped because email is not configured")
+        return False
+    subject = f"DocIntel observability {alert.get('severity', 'warning')}: {alert.get('title', 'SLO violation')}"
+    body = f"""ADAR DocIntel detected an observability threshold violation.
+
+{alert.get('description') or 'An enabled service-level objective is outside its target.'}
+
+Observed value: {alert.get('observed_value')}
+Threshold: {alert.get('threshold_value')}
+First seen: {alert.get('first_seen_at')}
+
+Open Admin Dashboard > Observability to investigate and acknowledge the alert.
+
+- ADAR DocIntel
+"""
+    try:
+        await send_email(to=user_email, subject=subject, body=body)
+        return True
+    except Exception as exc:
+        log.warning("Observability alert notification failed for %s: %s", user_email, exc)
+        return False
+
+
 async def send_embed_complete(user_email: str, doc_name: str, chunk_count: int) -> None:
     """Notify user that document embedding has finished."""
     subject = f"✅ Embedding complete — {doc_name}"

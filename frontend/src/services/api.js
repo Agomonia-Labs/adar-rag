@@ -491,6 +491,23 @@ export async function fetchMyTrace(traceId) {
   return handleRes(await fetch(`${BASE}/traces/mine/${encodeURIComponent(traceId)}`, { headers: authHdr() }));
 }
 
+export async function fetchObservabilityOverview(hours = 24) {
+  return handleRes(await fetch(`${BASE}/observability/overview?hours=${hours}`, { headers: authHdr() }));
+}
+export async function fetchObservabilitySlos() {
+  return handleRes(await fetch(`${BASE}/observability/slos`, { headers: authHdr() }));
+}
+export async function fetchObservabilityAlerts(status = '') {
+  const query = status ? `?status=${encodeURIComponent(status)}` : '';
+  return handleRes(await fetch(`${BASE}/observability/alerts${query}`, { headers: authHdr() }));
+}
+export async function runObservabilityCycle() {
+  return handleRes(await fetch(`${BASE}/observability/run`, { method:'POST', headers:authHdr() }));
+}
+export async function updateObservabilityAlert(alertId, action) {
+  return handleRes(await fetch(`${BASE}/observability/alerts/${alertId}/${action}`, { method:'POST', headers:authHdr() }));
+}
+
 // ── Summarize ─────────────────────────────────────────────────────────────────
 export async function streamSummary(
   { doc_id, document_ids, summary_type, custom_prompt, chunk_indices, redact_pii = false, redactPii = false },

@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from routes.traces import build_trace_workflow, build_user_trace_response
+from routes.traces import _public_evaluation, build_trace_workflow, build_user_trace_response
 
 
 def test_build_trace_workflow_explains_retrieval_rerank_and_response():
@@ -112,3 +112,19 @@ def test_trace_workflow_accepts_legacy_non_object_tool_payloads():
 
     assert workflow["summary"]["candidate_chunk_count"] == 0
     assert workflow["nodes"][1]["service"] == "docintel-backend"
+
+
+def test_requester_evaluation_projection_excludes_reviewer_identity():
+    result = _public_evaluation({
+        "evaluation_type": "agent_workflow",
+        "evaluation_source": "healthcare",
+        "score": 0.91,
+        "outcome": "ready",
+        "reviewer_id": "private-reviewer",
+        "metadata": {"metric_count": 5},
+        "created_at": "2026-08-26T12:00:00Z",
+    })
+
+    assert result["score"] == 0.91
+    assert result["metadata"] == {"metric_count": 5}
+    assert "reviewer_id" not in result
