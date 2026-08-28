@@ -1,4 +1,8 @@
-from services.observability import bounded_dimensions, evaluate_threshold
+from unittest.mock import AsyncMock
+
+import pytest
+
+from services.observability import aggregate_window, bounded_dimensions, evaluate_threshold
 
 
 def test_gte_slo_calculates_error_budget_and_burn_rate():
@@ -43,3 +47,30 @@ def test_dimensions_are_allowlisted_bounded_and_do_not_index_sensitive_values():
     assert "document_id" not in result
     assert "prompt" not in result
     assert "tool_arguments" not in result
+
+
+@pytest.mark.asyncio
+async def test_empty_trace_window_produces_null_latency_without_crashing():
+    db = AsyncMock()
+    db.fetchrow.side_effect = [
+        {
+            "samples": 0,
+            "successes": 0,
+            "average_ms": None,
+            "minimum_ms": None,
+            "maximum_ms": None,
+            "p50": None,
+            "p95": None,
+            "p99": None,
+        },
+        {"samples": 0, "with_evidence": 0},
+        {"samples": 0, "successes": 0},
+        {"samples": 0, "average_score": None},
+    ]
+
+    metrics = await aggregate_window(db, None, None)
+    latency = next(metric for metric in metrics if metric["metric_name"] == "request_latency_ms")
+
+    assert latency["sample_count"] == 0
+    assert latency["metric_value"] is None
+    assert latency["value_sum"] is None

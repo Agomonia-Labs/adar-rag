@@ -19,6 +19,7 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
+  const [uploadPercent, setUploadPercent] = useState(0);
   const [message, setMessage] = useState('');
   const [frameUrls, setFrameUrls] = useState({});
   const [options, setOptions] = useState({
@@ -148,6 +149,7 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
     setUploading(true);
     setLoading(true);
     setMessage('');
+    setUploadPercent(0);
     setUploadProgress(`Uploading ${file.name} directly to cloud storage...`);
     try {
       const result = await uploadLargeVideoDocument(file, workspaceId, {
@@ -157,16 +159,26 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
         maxFrames: options.max_frames,
         segmentSeconds: options.segment_seconds,
         transcriptLanguage: options.transcript_language,
+        onUploadProgress: ({ loaded, total, percent, attempt, retrying }) => {
+          const pct = Number.isFinite(percent) ? percent : 0;
+          setUploadPercent(pct);
+          setUploadProgress(
+            retrying
+              ? `Upload interrupted. Retrying attempt ${attempt}...`
+              : `Uploading ${file.name}: ${pct}% (${formatUploadBytes(loaded)} of ${formatUploadBytes(total)})${attempt > 1 ? `, attempt ${attempt}` : ''}`
+          );
+        },
       });
       const uploadedId = getUploadedDocumentId(result);
       setUploadProgress('Upload complete. Refreshing workspace video list...');
+      setUploadPercent(100);
       const refreshedDocs = await refreshDocs(uploadedId);
       const matchedDoc = findUploadedVideo(refreshedDocs, uploadedId, file);
       if (matchedDoc?.id) {
         setSelectedId(matchedDoc.id);
         await loadStatus(matchedDoc.id);
       }
-      setOpenSections(prev => ({ ...prev, uploaded: true, process: true }));
+      setOpenSections(prev => ({ ...prev, upload: false, uploaded: false, process: true }));
       setMessage('Video uploaded and selected. Select Process Video when you are ready to create timeline, frames, transcript, chunks, and embeddings.');
     } catch (err) {
       setMessage(err.message || 'Video upload failed.');
@@ -174,6 +186,7 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
       setUploading(false);
       setLoading(false);
       setUploadProgress('');
+      setUploadPercent(0);
     }
   }
 
@@ -266,7 +279,14 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
                   <p style={s.uploadHint}>
                     Mobile videos upload directly to cloud storage first, then appear in this workspace for processing.
                   </p>
-                  {uploadProgress && <div style={s.uploadProgress}>{uploadProgress}</div>}
+                  {uploadProgress && (
+                    <div style={s.uploadProgress}>
+                      <div>{uploadProgress}</div>
+                      <div style={s.uploadTrack} role="progressbar" aria-label="Video upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={uploadPercent}>
+                        <div style={{...s.uploadFill, width:`${uploadPercent}%`}} />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </section>
@@ -615,6 +635,19 @@ function formatTime(seconds) {
   return h ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+function formatUploadBytes(bytes) {
+  const value = Math.max(0, Number(bytes) || 0);
+  if (value < 1024) return `${Math.round(value)} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let size = value / 1024;
+  let unit = units[0];
+  for (let index = 1; index < units.length && size >= 1024; index += 1) {
+    size /= 1024;
+    unit = units[index];
+  }
+  return `${size >= 100 ? size.toFixed(0) : size.toFixed(1)} ${unit}`;
+}
+
 const s = {
   overlay: { position:'fixed', inset:0, zIndex:3000, background:'rgba(0,0,0,.68)', display:'flex', alignItems:'center', justifyContent:'center', padding:12 },
   panel: { width:'min(1180px, 100%)', height:'min(860px, calc(100dvh - 24px))', background:'#0b160f', border:'1px solid rgba(74,222,128,.22)', borderRadius:10, boxShadow:'0 24px 80px rgba(0,0,0,.55)', display:'flex', flexDirection:'column', overflow:'hidden' },
@@ -636,6 +669,8 @@ const s = {
   hiddenFileInput: { position:'absolute', width:1, height:1, opacity:0, pointerEvents:'none' },
   uploadHint: { margin:0, color:'var(--muted2)', fontSize:12, lineHeight:1.45 },
   uploadProgress: { padding:'7px 8px', borderRadius:7, background:'rgba(59,130,246,.12)', border:'1px solid rgba(59,130,246,.25)', color:'#bfdbfe', fontSize:12, lineHeight:1.4 },
+  uploadTrack: { height:8, marginTop:7, borderRadius:999, background:'rgba(255,255,255,.1)', overflow:'hidden', border:'1px solid rgba(147,197,253,.18)' },
+  uploadFill: { height:'100%', borderRadius:999, background:'#60a5fa', transition:'width .2s ease' },
   uploadedBox: { display:'flex', flexDirection:'column', gap:8, padding:10, borderTop:'1px solid var(--b2)' },
   uploadedHead: { display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 },
   miniBtn: { padding:'4px 8px', borderRadius:7, border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx)', fontWeight:750, cursor:'pointer', fontSize:11 },
@@ -696,7 +731,7 @@ if (typeof window !== 'undefined') {
       .video-panel-header h2 { font-size: 15px !important; line-height: 1.15 !important; }
       .video-panel-header p { font-size: 9px !important; margin-bottom: 1px !important; }
       .video-panel-body { display: flex !important; flex-direction: column !important; overflow: hidden !important; }
-      .video-panel-sidebar { border-right: none !important; border-bottom: 1px solid rgba(74,222,128,.14) !important; padding: 8px 10px !important; gap: 7px !important; overflow: visible !important; flex: 0 0 auto !important; }
+      .video-panel-sidebar { border-right: none !important; border-bottom: 1px solid rgba(74,222,128,.14) !important; padding: 8px 10px !important; gap: 7px !important; max-height: 46dvh !important; overflow-y: auto !important; overflow-x: hidden !important; flex: 0 1 auto !important; overscroll-behavior: contain !important; -webkit-overflow-scrolling: touch !important; }
       .video-panel-toolbar { display: none !important; }
       .video-panel-sidebar select, .video-panel-sidebar input { min-height: 38px !important; font-size: 13px !important; }
       .video-panel-sidebar strong { max-height: 34px !important; overflow: hidden !important; }

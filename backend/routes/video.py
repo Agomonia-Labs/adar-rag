@@ -13,6 +13,12 @@ from auth.dependencies import CurrentUser
 from database.connection import get_db
 from services.usage import check_document_limit, get_user_limits, log_event
 from services.video_intelligence import is_video_file, process_video_document
+from services.video_dispatch import (
+    create_or_reuse_video_job,
+    dispatch_cloud_run_video_job,
+    mark_video_dispatch_failed,
+    video_dispatch_mode,
+)
 from services.vectordb import find_similar
 import services.storage as gcs
 
@@ -174,8 +180,9 @@ async def complete_video_upload(
     })
 
     if body.process_after_upload:
-        background_tasks.add_task(
-            process_video_document,
+        job_id, reused = await _start_video_job(
+            background_tasks=background_tasks,
+            db=db,
             document_id=doc_id,
             user_id=user_id,
             workspace_id=workspace_id,
@@ -189,6 +196,8 @@ async def complete_video_upload(
             embed_after_processing=body.embed_after_processing,
             transcript_language=body.transcript_language,
         )
+    else:
+        job_id, reused = None, False
 
     return {
         "doc_id": doc_id,
@@ -196,6 +205,8 @@ async def complete_video_upload(
         "status": "processing" if body.process_after_upload else "uploaded",
         "file_size": uploaded_size or file_size,
         "gcs_source_path": body.gcs_source_path,
+        "job_id": job_id,
+        "job_reused": reused,
     }
 
 
@@ -260,8 +271,9 @@ async def process_video(
     if body.segment_seconds < 15 or body.segment_seconds > 600:
         raise HTTPException(400, "segment_seconds must be between 15 and 600")
 
-    background_tasks.add_task(
-        process_video_document,
+    job_id, reused = await _start_video_job(
+        background_tasks=background_tasks,
+        db=db,
         document_id=doc_id,
         user_id=str(row["user_id"]),
         workspace_id=str(row["workspace_id"]) if row.get("workspace_id") else None,
@@ -275,7 +287,13 @@ async def process_video(
         embed_after_processing=body.embed_after_processing,
         transcript_language=body.transcript_language,
     )
-    return {"message": "Video processing started", "doc_id": doc_id}
+    return {
+        "message": "Video processing already active" if reused else "Video processing queued",
+        "doc_id": doc_id,
+        "job_id": job_id,
+        "job_reused": reused,
+        "dispatch_mode": video_dispatch_mode(),
+    }
 
 
 @router.get("/{doc_id}/status")
@@ -314,6 +332,17 @@ async def video_status(doc_id: str, current_user: CurrentUser, db=Depends(get_db
     data["doc_id"] = str(data.get("document_id") or doc_id)
     if not data.get("processing_status"):
         data["processing_status"] = data.get("progress_step") or "not_processed"
+    job = await db.fetchrow(
+        """
+        SELECT id, status, dispatch_mode, dispatch_reference, attempt_count,
+               error_message, created_at, started_at, completed_at, updated_at
+          FROM video_processing_jobs
+         WHERE document_id=$1
+         ORDER BY created_at DESC LIMIT 1
+        """,
+        doc_id,
+    )
+    data["processing_job"] = _jsonable(dict(job)) if job else None
     return data
 
 
@@ -440,6 +469,52 @@ async def _get_accessible_document(db, doc_id: str, user_id: str) -> dict:
     if not data.get("workspace_id") and data.get("effective_workspace_id"):
         data["workspace_id"] = data["effective_workspace_id"]
     return data
+
+
+async def _start_video_job(
+    *, background_tasks: BackgroundTasks, db, document_id: str, user_id: str,
+    workspace_id: str | None, source_gcs_path: str, filename: str,
+    rights_confirmed: bool, source_type: str, source_url: str | None,
+    max_frames: int, segment_seconds: int, embed_after_processing: bool,
+    transcript_language: str,
+) -> tuple[str, bool]:
+    payload = {
+        "filename": filename,
+        "source_gcs_path": source_gcs_path,
+        "source_type": source_type,
+        "source_url": source_url,
+        "rights_confirmed": rights_confirmed,
+        "max_frames": max_frames,
+        "segment_seconds": segment_seconds,
+        "embed_after_processing": embed_after_processing,
+        "transcript_language": transcript_language,
+    }
+    job_id, reused = await create_or_reuse_video_job(
+        document_id=document_id,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        payload=payload,
+    )
+    if reused:
+        return job_id, True
+
+    if video_dispatch_mode() == "inline":
+        background_tasks.add_task(
+            process_video_document,
+            job_id=job_id,
+            document_id=document_id,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            **payload,
+        )
+        return job_id, False
+
+    try:
+        await dispatch_cloud_run_video_job(job_id)
+    except Exception as exc:
+        await mark_video_dispatch_failed(job_id, exc)
+        raise HTTPException(503, f"Video worker dispatch failed: {str(exc)[:240]}") from exc
+    return job_id, False
 
 
 def _video_doc_row(row) -> dict:

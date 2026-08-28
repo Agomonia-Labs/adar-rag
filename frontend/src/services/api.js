@@ -47,6 +47,71 @@ async function handleRes(res) {
   throw new Error(e.detail || e.message || `HTTP ${res.status}`);
 }
 
+const TRANSIENT_UPLOAD_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function fetchUploadStep(url, init, { step, attempts = 3 } = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, init);
+      if (response.ok || !TRANSIENT_UPLOAD_STATUSES.has(response.status) || attempt === attempts) {
+        return response;
+      }
+      lastError = new Error(`${step} returned HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts) break;
+    }
+    await wait(750 * (2 ** (attempt - 1)));
+  }
+  throw new Error(`${step} failed after ${attempts} attempts: ${lastError?.message || 'network error'}`);
+}
+
+function uploadFileOnce(url, file, { method, contentType, onProgress, attempt }) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open(method || 'PUT', url, true);
+    request.setRequestHeader('Content-Type', contentType || 'video/mp4');
+    request.upload.onprogress = event => {
+      const total = event.lengthComputable && event.total > 0 ? event.total : file.size;
+      const loaded = Math.min(event.loaded, total || event.loaded);
+      onProgress?.({ loaded, total, percent: total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : null, attempt });
+    };
+    request.onload = () => resolve({
+      ok: request.status >= 200 && request.status < 300,
+      status: request.status,
+      text: async () => request.responseText || '',
+    });
+    request.onerror = () => reject(new Error('Network connection failed during cloud upload'));
+    request.onabort = () => reject(new Error('Video upload was cancelled'));
+    request.send(file);
+  });
+}
+
+async function uploadFileWithProgress(url, file, options = {}) {
+  const attempts = options.attempts || 3;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await uploadFileOnce(url, file, {...options, attempt});
+      if (response.ok || !TRANSIENT_UPLOAD_STATUSES.has(response.status) || attempt === attempts) {
+        return response;
+      }
+      lastError = new Error(`Cloud storage returned HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts || /cancelled/i.test(error.message || '')) break;
+    }
+    options.onProgress?.({ loaded: 0, total: file.size, percent: 0, attempt: attempt + 1, retrying: true });
+    await wait(750 * (2 ** (attempt - 1)));
+  }
+  throw new Error(`Uploading video to cloud storage failed after ${attempts} attempts: ${lastError?.message || 'network error'}`);
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 export async function register(email, password, full_name) {
   return handleRes(await fetch(`${BASE}/auth/register`, {
@@ -233,7 +298,7 @@ export async function uploadDocuments(files, workspaceId = null, options = {}) {
 
 export async function uploadLargeVideoDocument(file, workspaceId = null, options = {}) {
   if (!isVideoFile(file)) throw new Error('Direct upload is only available for supported video files');
-  const session = await handleRes(await fetch(`${BASE}/video/upload-session`, {
+  const session = await handleRes(await fetchUploadStep(`${BASE}/video/upload-session`, {
     method:'POST',
     headers:{'Content-Type':'application/json', ...authHdr()},
     body: JSON.stringify({
@@ -242,19 +307,19 @@ export async function uploadLargeVideoDocument(file, workspaceId = null, options
       file_size: file.size,
       workspace_id: workspaceId || null,
     }),
-  }));
+  }, {step:'Creating video upload session'}));
 
-  const putRes = await fetch(session.upload_url, {
+  const putRes = await uploadFileWithProgress(session.upload_url, file, {
     method: session.method || 'PUT',
-    headers: {'Content-Type': file.type || 'video/mp4'},
-    body: file,
+    contentType: file.type || 'video/mp4',
+    onProgress: options.onUploadProgress,
   });
   if (!putRes.ok) {
     const detail = (await putRes.text().catch(() => '')).replace(/\s+/g, ' ').trim();
     throw new Error(detail ? `GCS upload failed HTTP ${putRes.status}: ${detail.slice(0, 220)}` : `GCS upload failed HTTP ${putRes.status}`);
   }
 
-  return handleRes(await fetch(`${BASE}/video/upload-complete`, {
+  return handleRes(await fetchUploadStep(`${BASE}/video/upload-complete`, {
     method:'POST',
     headers:{'Content-Type':'application/json', ...authHdr()},
     body: JSON.stringify({
@@ -271,7 +336,7 @@ export async function uploadLargeVideoDocument(file, workspaceId = null, options
       embed_after_processing: options.embedAfterProcessing !== false,
       transcript_language: options.transcriptLanguage || 'auto',
     }),
-  }));
+  }, {step:'Finalizing video upload'}));
 }
 
 export async function listDocuments() {

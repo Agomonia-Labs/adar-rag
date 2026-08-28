@@ -20,6 +20,13 @@ def get_pool() -> asyncpg.Pool:
     return _pool
 
 
+async def close_pool() -> None:
+    global _pool
+    if _pool is not None:
+        await _pool.close()
+        _pool = None
+
+
 async def get_db():
     """FastAPI dependency — yields a connection from the pool."""
     async with get_pool().acquire() as conn:

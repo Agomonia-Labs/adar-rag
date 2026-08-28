@@ -120,9 +120,11 @@ async def aggregate_window(db, start: datetime, end: datetime) -> list[dict[str,
         start, end,
     )
     samples = int(request["samples"] or 0)
+    average_ms = _float(request["average_ms"])
     metrics = [
         _metric("request_success_rate", samples, _ratio(request["successes"], samples)),
-        _metric("request_latency_ms", samples, _float(request["average_ms"]), value_sum=_float(request["average_ms"]) * samples,
+        _metric("request_latency_ms", samples, average_ms,
+                value_sum=average_ms * samples if average_ms is not None else None,
                 value_min=_float(request["minimum_ms"]), value_max=_float(request["maximum_ms"]),
                 p50=_float(request["p50"]), p95=_float(request["p95"]), p99=_float(request["p99"])),
         _metric("retrieval_evidence_rate", int(retrieval["samples"] or 0), _ratio(retrieval["with_evidence"], retrieval["samples"])),

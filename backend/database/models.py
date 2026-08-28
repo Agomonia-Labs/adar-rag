@@ -86,6 +86,22 @@ async def create_tables() -> None:
 # ── Additional tables appended to CREATE_SCHEMA ───────────────────────────────
 CREATE_SCHEMA_ADDITIONS = """
 
+-- Durable dispatch metadata for long-running video workers. The video tables
+-- predate this migration and are retained for backward compatibility.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='video_processing_jobs') THEN
+        ALTER TABLE video_processing_jobs ADD COLUMN IF NOT EXISTS dispatch_mode TEXT NOT NULL DEFAULT 'inline';
+        ALTER TABLE video_processing_jobs ADD COLUMN IF NOT EXISTS dispatch_reference TEXT;
+        ALTER TABLE video_processing_jobs ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0;
+        CREATE INDEX IF NOT EXISTS idx_video_jobs_document_created
+            ON video_processing_jobs(document_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_video_jobs_status
+            ON video_processing_jobs(status, updated_at DESC);
+    END IF;
+END;
+$$;
+
 ALTER TABLE documents
     ADD COLUMN IF NOT EXISTS doc_type      TEXT,
     ADD COLUMN IF NOT EXISTS doc_domain    TEXT,

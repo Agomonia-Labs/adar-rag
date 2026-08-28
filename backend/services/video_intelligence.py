@@ -59,31 +59,37 @@ async def process_video_document(
     segment_seconds: int = DEFAULT_SEGMENT_SECONDS,
     embed_after_processing: bool = True,
     transcript_language: str = "auto",
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     pool = get_pool()
-    job_id = str(uuid4())
+    job_id = job_id or str(uuid4())
     video_id: str | None = None
 
     async with pool.acquire() as conn:
+        input_data = json.dumps({
+            "filename": filename,
+            "source_gcs_path": source_gcs_path,
+            "source_type": source_type,
+            "source_url": source_url,
+            "max_frames": max_frames,
+            "segment_seconds": segment_seconds,
+            "embed_after_processing": embed_after_processing,
+            "transcript_language": transcript_language,
+            "rights_confirmed": rights_confirmed,
+        })
         await conn.execute(
             """
             INSERT INTO video_processing_jobs
-              (id, document_id, user_id, workspace_id, job_type, status, input_data, started_at)
-            VALUES ($1,$2,$3,$4,'process_video','running',$5::jsonb,NOW())
+              (id, document_id, user_id, workspace_id, job_type, status, input_data,
+               started_at, attempt_count, dispatch_mode)
+            VALUES ($1,$2,$3,$4,'process_video','running',$5::jsonb,NOW(),1,'inline')
+            ON CONFLICT (id) DO UPDATE SET
+               status='running', error_message=NULL, completed_at=NULL,
+               started_at=COALESCE(video_processing_jobs.started_at, NOW()),
+               attempt_count=COALESCE(video_processing_jobs.attempt_count, 0) + 1,
+               updated_at=NOW()
             """,
-            job_id,
-            document_id,
-            user_id,
-            workspace_id,
-            json.dumps({
-                "filename": filename,
-                "source_type": source_type,
-                "source_url": source_url,
-                "max_frames": max_frames,
-                "segment_seconds": segment_seconds,
-                "embed_after_processing": embed_after_processing,
-                "transcript_language": transcript_language,
-            }),
+            job_id, document_id, user_id, workspace_id, input_data,
         )
         await conn.execute(
             "UPDATE documents SET status='chunking', error_message=NULL, updated_at=NOW() WHERE id=$1",

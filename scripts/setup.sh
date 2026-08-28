@@ -38,6 +38,7 @@ gcloud services enable \
   secretmanager.googleapis.com \
   artifactregistry.googleapis.com \
   cloudbuild.googleapis.com \
+  run.googleapis.com \
   iam.googleapis.com \
   storage.googleapis.com \
   firebase.googleapis.com \
@@ -78,6 +79,19 @@ echo "▶ Granting IAM permissions..."
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:$SA_EMAIL" \
   --role="roles/storage.objectAdmin" \
+  --condition=None \
+  --quiet
+
+# Launch durable Cloud Run Jobs for long-running video processing.
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$SA_EMAIL" \
+  --role="roles/run.jobsExecutorWithOverrides" \
+  --condition=None \
+  --quiet
+
+gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
+  --member="serviceAccount:$SA_EMAIL" \
+  --role="roles/iam.serviceAccountUser" \
   --condition=None \
   --quiet
 

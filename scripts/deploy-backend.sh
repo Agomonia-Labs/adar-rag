@@ -40,10 +40,17 @@ echo "  ✓ Pushed: $IMAGE"
 
 # ── 4. Enable APIs needed by runtime features ─────────────────────────────────
 echo "▶ Ensuring required Google APIs are enabled..."
-gcloud services enable speech.googleapis.com \
+gcloud services enable speech.googleapis.com run.googleapis.com \
   --project="$PROJECT_ID" \
   --quiet
 echo "  ✓ Speech-to-Text API enabled"
+
+# The backend launches a job execution with a per-request job-id override.
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$SA_EMAIL" \
+  --role="roles/run.jobsExecutorWithOverrides" \
+  --condition=None \
+  --quiet >/dev/null
 
 # ── 5. Determine LLM provider ─────────────────────────────────────────────────
 LLM_PROVIDER=$(gcloud secrets versions access latest \
@@ -139,12 +146,22 @@ OTEL_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-$(
     --format='value(status.url)' 2>/dev/null || true
 )}"
 OTEL_FLAGS=()
+VIDEO_OTEL_FLAGS=()
 if [[ -n "$OTEL_ENDPOINT" ]]; then
   OTEL_FLAGS+=(
     "--set-env-vars=OTEL_ENABLED=true"
     "--set-env-vars=OTEL_SERVICE_NAME=docintel-backend"
     "--set-env-vars=OTEL_SERVICE_VERSION=4.0.0"
     "--set-env-vars=OTEL_DEPLOYMENT_ENVIRONMENT=development"
+    "--set-env-vars=OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf"
+    "--set-env-vars=OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT}"
+    "--set-env-vars=OTEL_CAPTURE_CONTENT=false"
+  )
+  VIDEO_OTEL_FLAGS+=(
+    "--set-env-vars=OTEL_ENABLED=true"
+    "--set-env-vars=OTEL_SERVICE_NAME=docintel-video-worker"
+    "--set-env-vars=OTEL_SERVICE_VERSION=4.0.0"
+    "--set-env-vars=OTEL_DEPLOYMENT_ENVIRONMENT=production"
     "--set-env-vars=OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf"
     "--set-env-vars=OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT}"
     "--set-env-vars=OTEL_CAPTURE_CONTENT=false"
@@ -170,6 +187,12 @@ gcloud run deploy "$SERVICE_NAME" \
   --concurrency=80 \
   --cpu-boost \
   --set-env-vars="LLM_PROVIDER=$LLM_PROVIDER" \
+  --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
+  --set-env-vars="REGION=$REGION" \
+  --set-env-vars="ENVIRONMENT=production" \
+  --set-env-vars="VIDEO_DISPATCH_MODE=cloud_run_job" \
+  --set-env-vars="VIDEO_WORKER_JOB_NAME=docintel-video-worker" \
+  --set-env-vars="VIDEO_WORKER_REGION=$REGION" \
   --set-env-vars="EMBEDDING_DIM=$EMBEDDING_DIM" \
   --set-env-vars="GEMINI_EMBED_MODEL=gemini-embedding-2" \
   --set-env-vars="GEMINI_CHAT_MODEL=gemini-2.5-flash" \
@@ -224,6 +247,53 @@ gcloud run deploy "$SERVICE_NAME" \
   "${OTEL_FLAGS[@]}" \
   $SECRETS_FLAGS \
   --quiet
+
+# Long videos can exceed an HTTP task deadline. Run them as a durable Cloud Run
+# Job using the same image, database, storage, secrets, and service account.
+echo "▶ Deploying durable video worker job..."
+gcloud run jobs deploy docintel-video-worker \
+  --image="$IMAGE" \
+  --region="$REGION" \
+  --project="$PROJECT_ID" \
+  --service-account="$SA_EMAIL" \
+  --set-cloudsql-instances="$PROJECT_ID:$REGION:$DB_INSTANCE" \
+  --command=python \
+  --args=-m,workers.video_worker \
+  --tasks=1 \
+  --parallelism=1 \
+  --max-retries=2 \
+  --task-timeout=4h \
+  --memory=8Gi \
+  --cpu=4 \
+  --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
+  --set-env-vars="REGION=$REGION" \
+  --set-env-vars="ENVIRONMENT=production" \
+  --set-env-vars="LLM_PROVIDER=$LLM_PROVIDER" \
+  --set-env-vars="EMBEDDING_DIM=$EMBEDDING_DIM" \
+  --set-env-vars="GEMINI_EMBED_MODEL=gemini-embedding-2" \
+  --set-env-vars="GEMINI_CHAT_MODEL=gemini-2.5-flash" \
+  --set-env-vars="VIDEO_TRANSCRIBE_AUDIO_ENABLED=true" \
+  --set-env-vars="VIDEO_TRANSCRIBE_PROVIDER=google_speech" \
+  --set-env-vars="VIDEO_TRANSCRIBE_CHUNK_SECONDS=55" \
+  --set-env-vars="VIDEO_TRANSCRIBE_CONCURRENCY=3" \
+  --set-env-vars="VIDEO_FRAME_CONCURRENCY=4" \
+  --set-env-vars="VIDEO_EMBED_CONCURRENCY=4" \
+  --set-env-vars="VIDEO_SOURCE_READ_URL_EXPIRY_SECONDS=21600" \
+  --set-env-vars="VIDEO_REMOTE_STAGE_RETRIES=3" \
+  --set-env-vars="FFMPEG_COMMAND_TIMEOUT_SECONDS=180" \
+  "${VIDEO_OTEL_FLAGS[@]}" \
+  $SECRETS_FLAGS \
+  --quiet
+
+WORKER_READY=$(gcloud run jobs describe docintel-video-worker \
+  --region="$REGION" \
+  --project="$PROJECT_ID" \
+  --format='value(metadata.name)' 2>/dev/null || true)
+if [[ "$WORKER_READY" != "docintel-video-worker" ]]; then
+  echo "Video worker deployment could not be verified" >&2
+  exit 1
+fi
+echo "  ✓ Durable video worker ready: $WORKER_READY"
 
 # ── 8. Get service URL ────────────────────────────────────────────────────────
 SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \

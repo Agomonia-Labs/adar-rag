@@ -13,7 +13,10 @@ GCS_BUCKET    = os.getenv("GCS_BUCKET_NAME", "docintel-documents")
 KEY_PATH      = os.getenv("GCS_SERVICE_ACCOUNT_KEY_PATH", "")
 KEY_JSON_STR  = os.getenv("GCS_SERVICE_ACCOUNT_KEY_JSON", "")
 SIGNED_EXPIRY = int(os.getenv("GCS_SIGNED_URL_EXPIRY_SECONDS", "3600"))
-_IS_CLOUD_RUN = os.getenv("K_SERVICE") is not None   # Cloud Run sets K_SERVICE
+_IS_GOOGLE_RUNTIME = any(
+    os.getenv(name)
+    for name in ("K_SERVICE", "CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION")
+)
 
 
 # ── Client factory ────────────────────────────────────────────────────────────
@@ -88,7 +91,7 @@ async def get_signed_upload_url(
 ) -> str:
     """Generate a signed PUT URL so browsers can upload large files directly to GCS."""
     def _do():
-        if _IS_CLOUD_RUN:
+        if _IS_GOOGLE_RUNTIME:
             import google.auth
             from google.auth.transport import requests as google_requests
 
@@ -136,7 +139,7 @@ async def get_signed_read_url(
 ) -> str:
     """Generate a signed GET URL so video processors can stream from GCS."""
     def _do():
-        if _IS_CLOUD_RUN:
+        if _IS_GOOGLE_RUNTIME:
             import google.auth
             from google.auth.transport import requests as google_requests
 
@@ -196,7 +199,7 @@ async def blob_metadata(blob_path: str) -> dict[str, Any] | None:
 
 async def get_signed_url(blob_path: str, expiry_seconds: int = SIGNED_EXPIRY) -> str:
     def _do():
-        if _IS_CLOUD_RUN:
+        if _IS_GOOGLE_RUNTIME:
             # On Cloud Run: use IAM credentials API for signing (no key file needed)
             # Requires roles/iam.serviceAccountTokenCreator on the service account
             import google.auth

@@ -411,42 +411,43 @@ async def claim_guest_session(
     session = await _require_guest(db, x_guest_token)
     session_id = str(session["id"])
     user_id = str(current_user["id"])
-    await db.execute(
-        """
-        UPDATE documents
-           SET user_id=$1,
-               guest_session_id=NULL,
-               doc_metadata = COALESCE(doc_metadata, '{}'::jsonb) || $2::jsonb,
-               updated_at=NOW()
-         WHERE guest_session_id=$3
-        """,
-        user_id,
-        json.dumps({"guest_preview": False, "claimed_from_guest_session": session_id}),
-        session_id,
-    )
-    await db.execute(
-        """
-        UPDATE document_chunks
-           SET user_id=$1,
-               guest_session_id=NULL
-         WHERE guest_session_id=$2
-            OR document_id IN (
-                 SELECT id FROM documents
-                  WHERE doc_metadata->>'claimed_from_guest_session' = $2
-               )
-        """,
-        user_id,
-        session_id,
-    )
-    await db.execute(
-        """
-        UPDATE guest_sessions
-           SET claimed_by_user_id=$1, claimed_at=NOW(), updated_at=NOW()
-         WHERE id=$2
-        """,
-        user_id,
-        session_id,
-    )
+    async with db.transaction():
+        await db.execute(
+            """
+            UPDATE documents
+               SET user_id=$1,
+                   guest_session_id=NULL,
+                   doc_metadata = COALESCE(doc_metadata, '{}'::jsonb) || $2::jsonb,
+                   updated_at=NOW()
+             WHERE guest_session_id=$3
+            """,
+            user_id,
+            json.dumps({"guest_preview": False, "claimed_from_guest_session": session_id}),
+            session_id,
+        )
+        await db.execute(
+            """
+            UPDATE document_chunks
+               SET user_id=$1,
+                   guest_session_id=NULL
+             WHERE guest_session_id=$2
+                OR document_id IN (
+                     SELECT id FROM documents
+                      WHERE doc_metadata->>'claimed_from_guest_session' = $2::text
+                   )
+            """,
+            user_id,
+            session_id,
+        )
+        await db.execute(
+            """
+            UPDATE guest_sessions
+               SET claimed_by_user_id=$1, claimed_at=NOW(), updated_at=NOW()
+             WHERE id=$2
+            """,
+            user_id,
+            session_id,
+        )
     return {"claimed": True, "guest_session_id": session_id}
 
 
