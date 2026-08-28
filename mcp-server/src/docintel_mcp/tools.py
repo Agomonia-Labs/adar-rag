@@ -13,11 +13,11 @@ from .verticals import WORKFLOW_CATALOG, vertical_name, workflow_definition
 
 def register_tools(mcp: FastMCP, settings: Settings) -> None:
     @mcp.tool()
-    async def create_batch_upload(ctx: Context, files: list[dict[str, Any]], workspace_id: str | None = None, redact_pii: bool = False) -> dict:
+    async def create_batch_upload(ctx: Context, files: list[dict[str, Any]], workspace_id: str | None = None, redact_pii: bool = False, idempotency_key: str | None = None) -> dict:
         """Create one durable batch job and signed upload URL for every document manifest."""
         try:
             async with api_client(ctx, settings, "batches:write") as client:
-                return await client.create_batch_upload({"files": files, "workspace_id": workspace_id, "redact_pii": redact_pii})
+                return await client.create_batch_upload({"files": files, "workspace_id": workspace_id, "redact_pii": redact_pii, "idempotency_key": idempotency_key})
         except DocIntelMcpError as exc: return exc.as_dict()
 
     @mcp.tool()
@@ -29,27 +29,27 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
         except DocIntelMcpError as exc: return exc.as_dict()
 
     @mcp.tool()
-    async def start_batch_embedding(ctx: Context, document_ids: list[str], workspace_id: str | None = None, concurrency: int = 3, force: bool = False) -> dict:
+    async def start_batch_embedding(ctx: Context, document_ids: list[str], workspace_id: str | None = None, concurrency: int = 3, force: bool = False, idempotency_key: str | None = None) -> dict:
         """Start resumable bulk embedding for accessible chunked documents."""
         try:
             async with api_client(ctx, settings, "batches:write") as client:
-                return await client.start_document_batch("embedding", {"document_ids": document_ids, "workspace_id": workspace_id, "concurrency": concurrency, "force": force})
+                return await client.start_document_batch("embedding", {"document_ids": document_ids, "workspace_id": workspace_id, "concurrency": concurrency, "force": force, "idempotency_key": idempotency_key})
         except DocIntelMcpError as exc: return exc.as_dict()
 
     @mcp.tool()
-    async def start_batch_classification(ctx: Context, document_ids: list[str], workspace_id: str | None = None, concurrency: int = 3, force: bool = False) -> dict:
+    async def start_batch_classification(ctx: Context, document_ids: list[str], workspace_id: str | None = None, concurrency: int = 3, force: bool = False, idempotency_key: str | None = None) -> dict:
         """Classify accessible documents with item-level outcomes and retries."""
         try:
             async with api_client(ctx, settings, "batches:write") as client:
-                return await client.start_document_batch("classification", {"document_ids": document_ids, "workspace_id": workspace_id, "concurrency": concurrency, "force": force})
+                return await client.start_document_batch("classification", {"document_ids": document_ids, "workspace_id": workspace_id, "concurrency": concurrency, "force": force, "idempotency_key": idempotency_key})
         except DocIntelMcpError as exc: return exc.as_dict()
 
     @mcp.tool()
-    async def start_workspace_summary(ctx: Context, workspace_id: str, document_ids: list[str] | None = None, summary_type: str = "executive", custom_prompt: str = "", redact_pii: bool = False, language: str = "en", concurrency: int = 2) -> dict:
+    async def start_workspace_summary(ctx: Context, workspace_id: str, document_ids: list[str] | None = None, summary_type: str = "executive", custom_prompt: str = "", redact_pii: bool = False, language: str = "en", concurrency: int = 2, idempotency_key: str | None = None) -> dict:
         """Start hierarchical map-reduce summarization across a large workspace."""
         try:
             async with api_client(ctx, settings, "batches:write") as client:
-                return await client.start_workspace_summary({"workspace_id": workspace_id, "document_ids": document_ids or [], "summary_type": summary_type, "custom_prompt": custom_prompt, "redact_pii": redact_pii, "language": language, "concurrency": concurrency})
+                return await client.start_workspace_summary({"workspace_id": workspace_id, "document_ids": document_ids or [], "summary_type": summary_type, "custom_prompt": custom_prompt, "redact_pii": redact_pii, "language": language, "concurrency": concurrency, "idempotency_key": idempotency_key})
         except DocIntelMcpError as exc: return exc.as_dict()
 
     @mcp.tool()
@@ -475,6 +475,17 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
             return exc.as_dict()
 
     @mcp.tool()
+    async def search_federated_knowledgebase(ctx: Context, question: str, document_ids: list[str], history: list[dict[str, Any]] | None = None, redact_pii: bool = False) -> dict:
+        """Query an explicit authorized document set across multiple workspaces while preserving source citations."""
+        try:
+            async with api_client(ctx, settings, "knowledge:query") as client:
+                result = await client.ask(question, document_ids, None, history, redact_pii)
+            result["sources"] = _normalized_sources(result.get("sources"))
+            result["federated"] = True
+            return result
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
     async def summarize_document(
         ctx: Context,
         document_id: str,
@@ -625,6 +636,166 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
                         },
                     ]
                     await client.save_session_messages(session_id, updated_messages)
+            result["sources"] = _normalized_sources(result.get("sources"))
             return GroundedAnswer(**result).model_dump()
         except DocIntelMcpError as exc:
             return exc.as_dict()
+
+    @mcp.tool()
+    async def get_enterprise_capabilities(ctx: Context) -> dict:
+        """Discover versioned enterprise MCP capabilities and workflow contracts."""
+        try:
+            async with api_client(ctx, settings, "workflows:read") as client: return await client.enterprise_catalog()
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def get_workflow_schema(ctx: Context, workflow: str) -> dict:
+        """Return the versioned input, review, and packet contract for one workflow."""
+        try:
+            async with api_client(ctx, settings, "workflows:read") as client: return await client.workflow_schema(workflow)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def validate_workflow_inputs(ctx: Context, workflow: str, inputs: dict[str, Any]) -> dict:
+        """Validate workflow inputs without starting a run."""
+        try:
+            async with api_client(ctx, settings, "workflows:read") as client: return await client.validate_workflow(workflow, inputs)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def list_operation_events(ctx: Context, after_sequence: int = 0, resource_type: str | None = None, resource_id: str | None = None, limit: int = 100) -> dict:
+        """Read cursor-based job, workflow, review, and packet lifecycle events."""
+        try:
+            async with api_client(ctx, settings, "events:read") as client: return await client.list_events(after_sequence, resource_type, resource_id, limit)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def create_event_subscription(ctx: Context, event_types: list[str], workspace_id: str | None = None, resource_type: str | None = None, resource_id: str | None = None, webhook_url: str | None = None) -> dict:
+        """Create a governed event cursor or HTTPS webhook subscription."""
+        try:
+            async with api_client(ctx, settings, "events:write") as client:
+                return await client.create_subscription({"event_types": event_types, "workspace_id": workspace_id, "resource_type": resource_type, "resource_id": resource_id, "webhook_url": webhook_url})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def list_event_subscriptions(ctx: Context) -> dict:
+        """List event and webhook subscriptions owned by the caller."""
+        try:
+            async with api_client(ctx, settings, "events:read") as client: return await client.list_subscriptions()
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def delete_event_subscription(ctx: Context, subscription_id: str) -> dict:
+        """Delete an event or webhook subscription owned by the caller."""
+        try:
+            async with api_client(ctx, settings, "events:write") as client:
+                return await client.delete_subscription(subscription_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def resume_batch_job(ctx: Context, batch_job_id: str) -> dict:
+        """Resume a failed or interrupted batch from failed items only."""
+        try:
+            async with api_client(ctx, settings, "batches:write") as client: return await client.resume_batch(batch_job_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def create_review_task(ctx: Context, vertical: str, run_id: str, title: str, workspace_id: str | None = None, priority: str = "normal", metadata: dict[str, Any] | None = None) -> dict:
+        """Create or retrieve the governed human-review task for a workflow run."""
+        try:
+            async with api_client(ctx, settings, "reviews:write") as client:
+                return await client.create_review_task({"vertical": vertical, "run_id": run_id, "title": title, "workspace_id": workspace_id, "priority": priority, "metadata": metadata or {}})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def list_review_tasks(ctx: Context, status: str | None = None) -> dict:
+        """List pending or completed human-review tasks accessible to the caller."""
+        try:
+            async with api_client(ctx, settings, "reviews:write") as client: return await client.list_review_tasks(status)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def assign_review_task(ctx: Context, task_id: str) -> dict:
+        """Assign an accessible review task to the authenticated reviewer."""
+        try:
+            async with api_client(ctx, settings, "reviews:write") as client: return await client.assign_review_task(task_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def submit_review_decision(ctx: Context, task_id: str, decision: str, reviewer_notes: str = "") -> dict:
+        """Approve, reject, or request changes for a human-review task."""
+        try:
+            async with api_client(ctx, settings, "reviews:approve") as client: return await client.decide_review_task(task_id, decision, reviewer_notes)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def save_knowledge_artifact(ctx: Context, artifact_type: str, title: str, content: dict[str, Any], workspace_id: str | None = None, source_document_ids: list[str] | None = None, source_trace_id: str | None = None, status: str = "draft") -> dict:
+        """Save a summary, comparison, evidence map, report, or packet as reusable knowledge."""
+        try:
+            async with api_client(ctx, settings, "artifacts:write") as client:
+                return await client.create_artifact({"artifact_type": artifact_type, "title": title, "content": content, "workspace_id": workspace_id, "source_document_ids": source_document_ids or [], "source_trace_id": source_trace_id, "status": status})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def list_knowledge_artifacts(ctx: Context, workspace_id: str | None = None) -> dict:
+        """List reusable knowledge artifacts owned by the caller."""
+        try:
+            async with api_client(ctx, settings, "artifacts:read") as client: return await client.list_artifacts(workspace_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def register_document_version(ctx: Context, document_id: str, previous_document_id: str | None = None, change_summary: str = "", changed_pages: list[int] | None = None) -> dict:
+        """Register document lineage and changed pages for incremental processing."""
+        try:
+            async with api_client(ctx, settings, "versions:write") as client:
+                return await client.register_document_version(document_id, {"previous_document_id": previous_document_id, "change_summary": change_summary, "changed_pages": changed_pages or []})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def list_document_versions(ctx: Context, document_id: str) -> dict:
+        """List accessible versions and change metadata for a document family."""
+        try:
+            async with api_client(ctx, settings, "versions:read") as client: return await client.list_document_versions(document_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def evaluate_trace_quality(ctx: Context, trace_id: str, evaluation_type: str = "groundedness") -> dict:
+        """Evaluate an owned execution trace and correlate the quality result with its evidence chain."""
+        try:
+            async with api_client(ctx, settings, "evaluations:run") as client: return await client.evaluate_trace(trace_id, evaluation_type)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def list_my_traces(ctx: Context, workspace_id: str | None = None, limit: int = 50) -> dict:
+        """List requester-owned execution traces for operational investigation."""
+        try:
+            async with api_client(ctx, settings, "events:read") as client:
+                traces = await client.list_my_traces(max(1, min(limit, 100)), workspace_id)
+            return {"count": len(traces), "traces": traces}
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def get_my_trace(ctx: Context, trace_id: str) -> dict:
+        """Return the requester-safe flow, timeline, model activity, and evaluations for an owned trace."""
+        try:
+            async with api_client(ctx, settings, "events:read") as client: return await client.get_my_trace(trace_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+
+def _normalized_sources(sources: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    result = []
+    for index, source in enumerate(sources or []):
+        result.append({
+            "citation_id": source.get("citation_id") or f"citation-{index + 1}",
+            "document_id": source.get("document_id") or source.get("doc_id"),
+            "document_name": source.get("document_name") or source.get("filename") or source.get("source"),
+            "chunk_id": source.get("chunk_id") or source.get("id"),
+            "chunk_index": source.get("chunk_index", source.get("index")),
+            "page_number": source.get("page_number") or source.get("page"),
+            "start_seconds": source.get("start_seconds"), "end_seconds": source.get("end_seconds"),
+            "retrieval_score": source.get("retrieval_score", source.get("score")),
+            "rerank_score": source.get("rerank_score"), "confidence": source.get("confidence"),
+            "source_url": source.get("source_url") or source.get("url"),
+            "excerpt": str(source.get("excerpt") or source.get("text") or source.get("content") or "")[:600],
+        })
+    return result

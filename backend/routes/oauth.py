@@ -45,6 +45,14 @@ ALLOWED_SCOPES = {
     "packets:write",
     "batches:read",
     "batches:write",
+    "events:read",
+    "events:write",
+    "artifacts:read",
+    "artifacts:write",
+    "versions:read",
+    "versions:write",
+    "evaluations:run",
+    "service:manage",
 }
 
 SCOPE_CATALOG = {
@@ -63,6 +71,14 @@ SCOPE_CATALOG = {
     "packets:write": ("Generate, ingest, or withdraw packets", "high"),
     "batches:read": ("View batch jobs and item results", "medium"),
     "batches:write": ("Start, retry, and cancel batch jobs", "high"),
+    "events:read": ("Read operation progress and lifecycle events", "medium"),
+    "events:write": ("Create event subscriptions and webhooks", "high"),
+    "artifacts:read": ("Read saved knowledge artifacts", "medium"),
+    "artifacts:write": ("Create and update knowledge artifacts", "high"),
+    "versions:read": ("View document version history", "medium"),
+    "versions:write": ("Register document versions and changes", "high"),
+    "evaluations:run": ("Run quality evaluations against owned traces", "high"),
+    "service:manage": ("Create unattended service clients", "critical"),
 }
 _OAUTH_TABLES_READY = False
 
@@ -85,6 +101,13 @@ class ScopeAssignmentBody(BaseModel):
     client_id: str | None = None
     scopes: list[str] = Field(min_length=1)
     reviewer_note: str = Field(default="", max_length=2000)
+    expires_at: datetime | None = None
+
+
+class ServiceClientBody(BaseModel):
+    client_name: str = Field(min_length=2, max_length=200)
+    owner_user_id: str
+    scopes: list[str] = Field(min_length=1)
     expires_at: datetime | None = None
 
 
@@ -269,9 +292,9 @@ def _metadata() -> dict:
         "registration_endpoint": f"{ISSUER}/register",
         "revocation_endpoint": f"{ISSUER}/revoke",
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "grant_types_supported": ["authorization_code", "refresh_token", "client_credentials"],
         "code_challenge_methods_supported": ["S256"],
-        "token_endpoint_auth_methods_supported": ["none"],
+        "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
         "scopes_supported": sorted(ALLOWED_SCOPES),
         "resource_parameter_supported": True,
     }
@@ -667,6 +690,24 @@ async def token(request: Request, db=Depends(get_db)):
     await _ensure_oauth_tables(db)
     form = await request.form()
     grant_type, client_id = str(form.get("grant_type", "")), str(form.get("client_id", ""))
+    if grant_type == "client_credentials":
+        secret = str(form.get("client_secret", ""))
+        row = await db.fetchrow(
+            """SELECT * FROM oauth_service_clients WHERE client_id=$1 AND revoked_at IS NULL
+               AND (expires_at IS NULL OR expires_at>NOW())""", client_id,
+        )
+        if not row or not secrets.compare_digest(str(row["client_secret_hash"]), _hash(secret)):
+            raise HTTPException(401, "invalid_client")
+        allowed = set(str(row["scope"]).split())
+        requested = set(str(form.get("scope", "")).split()) or allowed
+        if not requested <= allowed:
+            raise HTTPException(403, "invalid_scope")
+        resource = str(form.get("resource", MCP_RESOURCE)).rstrip("/")
+        if resource != MCP_RESOURCE:
+            raise HTTPException(400, "invalid_target")
+        scope = " ".join(sorted(requested))
+        access, expires_in = _access_token(str(row["owner_user_id"]), client_id, scope, MCP_RESOURCE)
+        return {"access_token": access, "token_type": "Bearer", "expires_in": expires_in, "scope": scope}
     if grant_type == "authorization_code":
         code_hash = _hash(str(form.get("code", "")))
         async with db.transaction():
@@ -731,7 +772,11 @@ async def introspect(request: Request, db=Depends(get_db)):
     if not scopes <= ALLOWED_SCOPES:
         return {"active": False}
     user = await db.fetchrow("SELECT id,email,role FROM users WHERE id=$1::uuid", claims["sub"])
-    client = await db.fetchrow("SELECT client_id FROM oauth_clients WHERE client_id=$1 AND revoked_at IS NULL", claims.get("client_id"))
+    client = await db.fetchrow(
+        """SELECT client_id FROM oauth_clients WHERE client_id=$1 AND revoked_at IS NULL
+           UNION ALL SELECT client_id FROM oauth_service_clients WHERE client_id=$1 AND revoked_at IS NULL
+             AND (expires_at IS NULL OR expires_at>NOW()) LIMIT 1""", claims.get("client_id"),
+    )
     if not user or not client:
         return {"active": False}
     if user["role"] != "admin":
@@ -748,3 +793,31 @@ async def introspect(request: Request, db=Depends(get_db)):
         "role": user["role"],
         "backend_token": create_access_token(str(user["id"]), user["email"]),
     }
+
+
+@router.post("/api/admin/oauth/service-clients")
+async def create_service_client(body: ServiceClientBody, admin: AdminUser, db=Depends(get_db)):
+    scopes = _normalize_scopes(body.scopes)
+    await _require_scope_grants(db, body.owner_user_id, "", scopes)
+    owner = await db.fetchval("SELECT 1 FROM users WHERE id=$1::uuid", body.owner_user_id)
+    if not owner:
+        raise HTTPException(404, "Owner user not found")
+    client_id = "svc_" + secrets.token_urlsafe(20)
+    client_secret = secrets.token_urlsafe(48)
+    await db.execute(
+        """INSERT INTO oauth_service_clients(client_id,client_name,client_secret_hash,owner_user_id,scope,created_by,expires_at)
+           VALUES($1,$2,$3,$4::uuid,$5,$6::uuid,$7)""",
+        client_id, body.client_name, _hash(client_secret), body.owner_user_id,
+        " ".join(sorted(scopes)), str(admin["id"]), body.expires_at,
+    )
+    return {"client_id": client_id, "client_secret": client_secret, "client_name": body.client_name,
+            "owner_user_id": body.owner_user_id, "scope": " ".join(sorted(scopes)), "expires_at": body.expires_at,
+            "warning": "The client_secret is shown once. Store it in Secret Manager."}
+
+
+@router.delete("/api/admin/oauth/service-clients/{client_id}")
+async def revoke_service_client(client_id: str, admin: AdminUser, db=Depends(get_db)):
+    result = await db.execute("UPDATE oauth_service_clients SET revoked_at=NOW() WHERE client_id=$1 AND revoked_at IS NULL", client_id)
+    if result.endswith("0"):
+        raise HTTPException(404, "Service client not found")
+    return {"revoked": True, "client_id": client_id}

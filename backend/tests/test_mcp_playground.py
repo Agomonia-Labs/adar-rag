@@ -29,6 +29,24 @@ def test_parses_helper_command_and_formats_tool_data(workspace_tool_response):
     ]
 
 
+def test_parses_pasted_shell_line_continuations():
+    parsed = parse_command("""mcp_tool get_workflow_schema \\
+      '{"workflow":"healthcare_prior_auth"}' \\
+      | tool_data | jq""")
+
+    assert parsed.request["params"] == {
+        "name": "get_workflow_schema",
+        "arguments": {"workflow": "healthcare_prior_auth"},
+    }
+
+
+def test_explains_that_browser_playground_does_not_execute_shell_substitution():
+    command = "mcp_tool validate_workflow_inputs \"$(jq -cn --arg id '$DOCUMENT_ID_1' '{}')\""
+    with pytest.raises(HTTPException) as exc:
+        parse_command(command)
+    assert "does not execute shell substitutions" in str(exc.value.detail)
+
+
 @pytest.mark.parametrize("command", [
     "bash -lc 'whoami'",
     "mcp_tool list_workspaces '{}' | cat",

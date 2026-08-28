@@ -804,6 +804,119 @@ CREATE TABLE IF NOT EXISTS batch_job_items (
 CREATE INDEX IF NOT EXISTS idx_batch_items_job ON batch_job_items(job_id, status);
 CREATE INDEX IF NOT EXISTS idx_batch_items_document ON batch_job_items(document_id);
 
+CREATE TABLE IF NOT EXISTS mcp_idempotency_records (
+    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    operation         TEXT NOT NULL,
+    idempotency_key   TEXT NOT NULL,
+    request_hash      TEXT NOT NULL,
+    resource_type     TEXT,
+    resource_id       TEXT,
+    response_data     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status            TEXT NOT NULL DEFAULT 'completed',
+    expires_at        TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '24 hours'),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, operation, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_idempotency_expiry ON mcp_idempotency_records(expires_at);
+
+CREATE TABLE IF NOT EXISTS mcp_events (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id    UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+    event_type      TEXT NOT NULL,
+    resource_type   TEXT NOT NULL,
+    resource_id     TEXT NOT NULL,
+    sequence_number BIGSERIAL,
+    payload         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    trace_id        TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_events_user_sequence ON mcp_events(user_id, sequence_number DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_events_resource ON mcp_events(resource_type, resource_id, sequence_number DESC);
+
+CREATE TABLE IF NOT EXISTS mcp_event_subscriptions (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id    UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+    event_types     JSONB NOT NULL DEFAULT '[]'::jsonb,
+    resource_type   TEXT,
+    resource_id     TEXT,
+    webhook_url     TEXT,
+    webhook_secret  TEXT,
+    status          TEXT NOT NULL DEFAULT 'active',
+    last_sequence   BIGINT NOT NULL DEFAULT 0,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_subscriptions_user ON mcp_event_subscriptions(user_id, status);
+
+CREATE TABLE IF NOT EXISTS mcp_review_tasks (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id    UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+    vertical        TEXT NOT NULL,
+    run_id          TEXT NOT NULL,
+    task_type       TEXT NOT NULL DEFAULT 'workflow_review',
+    title           TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    priority        TEXT NOT NULL DEFAULT 'normal',
+    assigned_to     UUID REFERENCES users(id) ON DELETE SET NULL,
+    decision        TEXT,
+    reviewer_notes  TEXT NOT NULL DEFAULT '',
+    due_at          TIMESTAMPTZ,
+    metadata        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at    TIMESTAMPTZ,
+    UNIQUE(vertical, run_id, task_type)
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_review_queue ON mcp_review_tasks(status, assigned_to, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS knowledge_artifacts (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id    UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+    artifact_type   TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    content         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    source_document_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    source_trace_id TEXT,
+    version         INTEGER NOT NULL DEFAULT 1,
+    status          TEXT NOT NULL DEFAULT 'draft',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_artifacts_scope ON knowledge_artifacts(user_id, workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS document_versions (
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    document_id         UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    root_document_id    UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    previous_document_id UUID REFERENCES documents(id) ON DELETE SET NULL,
+    version_number      INTEGER NOT NULL,
+    change_summary      TEXT NOT NULL DEFAULT '',
+    changed_pages       JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_by          UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(root_document_id, version_number),
+    UNIQUE(document_id)
+);
+CREATE INDEX IF NOT EXISTS idx_document_versions_root ON document_versions(root_document_id, version_number DESC);
+
+CREATE TABLE IF NOT EXISTS oauth_service_clients (
+    client_id          TEXT PRIMARY KEY,
+    client_name        TEXT NOT NULL,
+    client_secret_hash TEXT NOT NULL,
+    owner_user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    scope              TEXT NOT NULL,
+    created_by         UUID REFERENCES users(id) ON DELETE SET NULL,
+    expires_at         TIMESTAMPTZ,
+    revoked_at         TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_service_owner ON oauth_service_clients(owner_user_id, revoked_at);
+
 """
 
 

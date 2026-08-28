@@ -13,6 +13,8 @@ OAuth-enabled MCP server.
 8. [Batch Operations](batch_operations.md)
 9. [Batch Upload Walkthrough](batch_upload.md)
 10. [OAuth Scope Access](oauth_scope_access.md)
+11. [Enterprise MCP Lifecycle](enterprise_platform.md)
+12. [Enterprise MCP Testing](enterprise_testing.md)
 
 Start every workflow from the repository root:
 

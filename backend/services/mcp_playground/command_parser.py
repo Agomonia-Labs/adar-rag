@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 from dataclasses import dataclass
 from typing import Any
@@ -16,8 +17,16 @@ class ParsedCommand:
 
 
 def parse_command(command: str) -> ParsedCommand:
+    command = re.sub(r"\\\s*\r?\n\s*", " ", command.strip())
+    if "$(" in command or re.search(r"\$[A-Za-z_][A-Za-z0-9_]*", command):
+        raise HTTPException(
+            400,
+            "The browser Playground does not execute shell substitutions or environment variables. "
+            "Use literal JSON values, for example: mcp_tool get_document "
+            "'{\"document_id\":\"YOUR_DOCUMENT_ID\"}'",
+        )
     try:
-        tokens = shlex.split(command.strip())
+        tokens = shlex.split(command)
     except ValueError as exc:
         raise HTTPException(400, f"Command quoting is invalid: {exc}") from exc
     if not tokens:

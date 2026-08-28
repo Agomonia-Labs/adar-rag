@@ -12,6 +12,7 @@ from database.connection import get_db
 from services.batch_operations import execute_job, refresh_job
 from services.extractor import detect_type
 from services.usage import check_and_log_daily_event, check_document_limit, get_user_limits
+from services.mcp_enterprise import emit_event, idempotent_result, save_idempotent_result
 import services.storage as gcs
 
 
@@ -24,6 +25,7 @@ class DocumentBatchRequest(BaseModel):
     workspace_id: str | None = None
     concurrency: int = Field(default=3, ge=1, le=10)
     force: bool = False
+    idempotency_key: str | None = Field(default=None, max_length=200)
 
 
 class WorkspaceSummaryRequest(BaseModel):
@@ -34,6 +36,7 @@ class WorkspaceSummaryRequest(BaseModel):
     redact_pii: bool = False
     language: str = "en"
     concurrency: int = Field(default=2, ge=1, le=6)
+    idempotency_key: str | None = Field(default=None, max_length=200)
 
 
 class UploadFileManifest(BaseModel):
@@ -46,6 +49,7 @@ class BatchUploadRequest(BaseModel):
     files: list[UploadFileManifest] = Field(min_length=1)
     workspace_id: str | None = None
     redact_pii: bool = False
+    idempotency_key: str | None = Field(default=None, max_length=200)
 
 
 class CompleteBatchUploadRequest(BaseModel):
@@ -57,6 +61,8 @@ class CompleteBatchUploadRequest(BaseModel):
 async def create_batch_upload(body: BatchUploadRequest, current_user: CurrentUser, db=Depends(get_db)):
     _limit(body.files)
     user_id = str(current_user["id"])
+    replay = await idempotent_result(db, user_id, "batch_upload", body.idempotency_key, body.model_dump(exclude={"idempotency_key"}))
+    if replay: return replay
     await check_document_limit(db, user_id, quantity=len(body.files))
     limits = await get_user_limits(db, user_id)
     max_mb = limits.get("max_file_mb", 10)
@@ -84,7 +90,10 @@ async def create_batch_upload(body: BatchUploadRequest, current_user: CurrentUse
           VALUES($1,$2,'queued','awaiting_upload',$3::jsonb)""", job_id, doc_id, json.dumps(data))
         files.append({"document_id": doc_id, "filename": filename, "upload_url": url, "gcs_source_path": path,
                       "method": "PUT", "headers": {"Content-Type": manifest.content_type}})
-    return {"batch_job_id": job_id, "status": "awaiting_upload", "files": files}
+    response = {"batch_job_id": job_id, "status": "awaiting_upload", "files": files}
+    await save_idempotent_result(db, user_id, "batch_upload", body.idempotency_key, body.model_dump(exclude={"idempotency_key"}), response, resource_type="batch", resource_id=job_id)
+    await emit_event(db, user_id=user_id, workspace_id=body.workspace_id, event_type="batch.created", resource_type="batch", resource_id=job_id, payload={"batch_job_id": job_id, "operation": "upload", "status": "awaiting_upload"})
+    return response
 
 
 @router.post("/{job_id}/uploads/complete")
@@ -96,6 +105,7 @@ async def complete_batch_upload(job_id: str, body: CompleteBatchUploadRequest, b
         await db.execute("UPDATE batch_job_items SET status='skipped',stage='skipped',completed_at=NOW() WHERE job_id=$1 AND NOT(item_key=ANY($2::text[]))", job_id, body.document_ids)
     await db.execute("UPDATE batch_jobs SET status='queued',current_stage='verifying_uploads',updated_at=NOW() WHERE id=$1", job_id)
     background_tasks.add_task(execute_job, job_id, "upload", body.concurrency)
+    await emit_event(db, user_id=str(current_user["id"]), workspace_id=str(job["workspace_id"]) if job["workspace_id"] else None, event_type="batch.started", resource_type="batch", resource_id=job_id, payload={"batch_job_id": job_id, "operation": "upload", "status": "queued", "stage": "verifying_uploads"})
     return {"batch_job_id": job_id, "status": "queued"}
 
 
@@ -115,6 +125,8 @@ async def start_batch_classification(body: DocumentBatchRequest, background_task
 async def start_workspace_summary(body: WorkspaceSummaryRequest, background_tasks: BackgroundTasks,
                                   current_user: CurrentUser, db=Depends(get_db)):
     user_id = str(current_user["id"])
+    replay = await idempotent_result(db, user_id, "workspace_summary", body.idempotency_key, body.model_dump(exclude={"idempotency_key"}))
+    if replay: return replay
     await _require_workspace(db, body.workspace_id, user_id, "viewer")
     rows = await db.fetch("""SELECT d.id FROM documents d JOIN workspace_members wm ON wm.workspace_id=d.workspace_id
       WHERE d.workspace_id=$1 AND wm.user_id=$2 AND d.status IN ('chunked','embedding','embedded')
@@ -128,7 +140,10 @@ async def start_workspace_summary(body: WorkspaceSummaryRequest, background_task
     config = body.model_dump()
     job_id = await _create_job(db, user_id, body.workspace_id, "workspace_summary", ids, config)
     background_tasks.add_task(execute_job, job_id, "workspace_summary", body.concurrency)
-    return {"batch_job_id": job_id, "status": "queued", "total_items": len(ids)}
+    response = {"batch_job_id": job_id, "status": "queued", "total_items": len(ids)}
+    await save_idempotent_result(db, user_id, "workspace_summary", body.idempotency_key, body.model_dump(exclude={"idempotency_key"}), response, resource_type="batch", resource_id=job_id)
+    await emit_event(db, user_id=user_id, workspace_id=body.workspace_id, event_type="batch.started", resource_type="batch", resource_id=job_id, payload={"batch_job_id": job_id, "operation": "workspace_summary", "status": "queued"})
+    return response
 
 
 @router.get("")
@@ -144,6 +159,7 @@ async def list_batch_jobs(current_user: CurrentUser, workspace_id: str | None = 
 
 @router.get("/{job_id}")
 async def get_batch_status(job_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    await refresh_job(job_id)
     job = await _job(db, job_id, str(current_user["id"]))
     items = await db.fetch("SELECT * FROM batch_job_items WHERE job_id=$1 ORDER BY created_at", job_id)
     return {**_serialize(job), "items": [_serialize(row) for row in items]}
@@ -163,7 +179,13 @@ async def retry_batch_failures(job_id: str, background_tasks: BackgroundTasks, c
     await db.execute("UPDATE batch_job_items SET status='queued',stage='retry_queued',error_message=NULL,completed_at=NULL WHERE job_id=$1 AND status='failed'", job_id)
     await db.execute("UPDATE batch_jobs SET status='queued',cancel_requested=FALSE,completed_at=NULL,current_stage='retry_queued',updated_at=NOW() WHERE id=$1", job_id)
     background_tasks.add_task(execute_job, job_id, job["operation"], int(_json(job["configuration"]).get("concurrency", 3)))
+    await emit_event(db, user_id=str(current_user["id"]), workspace_id=str(job["workspace_id"]) if job["workspace_id"] else None, event_type="batch.resumed", resource_type="batch", resource_id=job_id, payload={"batch_job_id": job_id, "operation": job["operation"], "status": "queued", "stage": "retry_queued"})
     return {"batch_job_id": job_id, "status": "queued"}
+
+
+@router.post("/{job_id}/resume")
+async def resume_batch_job(job_id: str, background_tasks: BackgroundTasks, current_user: CurrentUser, db=Depends(get_db)):
+    return await retry_batch_failures(job_id, background_tasks, current_user, db)
 
 
 @router.post("/{job_id}/cancel")
@@ -171,12 +193,15 @@ async def cancel_batch_job(job_id: str, current_user: CurrentUser, db=Depends(ge
     await _job(db, job_id, str(current_user["id"]), write=True)
     await db.execute("UPDATE batch_jobs SET cancel_requested=TRUE,status='cancelling',current_stage='cancelling',updated_at=NOW() WHERE id=$1", job_id)
     await db.execute("UPDATE batch_job_items SET status='skipped',stage='cancelled',completed_at=NOW(),updated_at=NOW() WHERE job_id=$1 AND status='queued'", job_id)
+    await emit_event(db, user_id=str(current_user["id"]), event_type="batch.cancelled", resource_type="batch", resource_id=job_id, payload={"batch_job_id": job_id, "status": "cancelling"})
     return {"batch_job_id": job_id, "status": "cancelling"}
 
 
 async def _start_document_job(operation, body, background_tasks, current_user, db):
     _limit(body.document_ids)
     user_id = str(current_user["id"])
+    replay = await idempotent_result(db, user_id, f"batch_{operation}", body.idempotency_key, body.model_dump(exclude={"idempotency_key"}))
+    if replay: return replay
     await _require_workspace(db, body.workspace_id, user_id, "editor")
     rows = await db.fetch("""SELECT d.id,d.chunk_count FROM documents d WHERE d.id=ANY($1::uuid[]) AND
       (d.user_id=$2 OR EXISTS(SELECT 1 FROM workspace_members wm WHERE wm.workspace_id=d.workspace_id AND wm.user_id=$2))""", body.document_ids, user_id)
@@ -189,7 +214,10 @@ async def _start_document_job(operation, body, background_tasks, current_user, d
     config = body.model_dump()
     job_id = await _create_job(db, user_id, body.workspace_id, operation, ids, config)
     background_tasks.add_task(execute_job, job_id, operation, body.concurrency)
-    return {"batch_job_id": job_id, "status": "queued", "total_items": len(ids)}
+    response = {"batch_job_id": job_id, "status": "queued", "total_items": len(ids)}
+    await save_idempotent_result(db, user_id, f"batch_{operation}", body.idempotency_key, body.model_dump(exclude={"idempotency_key"}), response, resource_type="batch", resource_id=job_id)
+    await emit_event(db, user_id=user_id, workspace_id=body.workspace_id, event_type="batch.started", resource_type="batch", resource_id=job_id, payload={"batch_job_id": job_id, "operation": operation, "status": "queued"})
+    return response
 
 
 async def _create_job(db, user_id, workspace_id, operation, ids, config):

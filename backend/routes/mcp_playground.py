@@ -49,7 +49,9 @@ async def oauth_callback(state: str = "", code: str = "", error: str = "", db=De
             message = str(exc.detail)
             success = False
     payload = json.dumps({"type": "docintel-mcp-oauth", "success": success, "message": message})
-    frontend_origin = urlsplit(os.getenv("APP_URL", "http://localhost:5173")).geturl().rstrip("/")
+    frontend_url = os.getenv("MCP_PLAYGROUND_FRONTEND_ORIGIN") or os.getenv("APP_URL", "http://localhost:5173")
+    parsed_frontend = urlsplit(frontend_url)
+    frontend_origin = f"{parsed_frontend.scheme}://{parsed_frontend.netloc}"
     target_origin = json.dumps(frontend_origin)
     return HTMLResponse(f"""<!doctype html><html><body style="font-family:system-ui;background:#0f1f0f;color:#e5e7eb;padding:32px">
       <h2>{html.escape(message)}</h2><p>You may close this window.</p>

@@ -33,17 +33,28 @@ export default function McpPlayground({ onClose, language = 'en' }) {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [scopeProfile, setScopeProfile] = useState('read');
   const outputRef = useRef(null);
+  const oauthPollRef = useRef(null);
 
   useEffect(() => {
     refreshStatus();
     getMcpPlaygroundExamples().then(data => setExamples(data.examples || [])).catch(() => {});
-    const receive = event => {
+    const receive = async event => {
       if (![window.location.origin, API_ORIGIN].includes(event.origin) || event.data?.type !== 'docintel-mcp-oauth') return;
       addSystem(event.data.message, event.data.success ? 'success' : 'error');
-      refreshStatus();
+      if (event.data.success) await waitForConnection();
+      else await refreshStatus();
     };
+    const refreshOnFocus = () => refreshStatus();
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') refreshStatus(); };
     window.addEventListener('message', receive);
-    return () => window.removeEventListener('message', receive);
+    window.addEventListener('focus', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.removeEventListener('message', receive);
+      window.removeEventListener('focus', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      clearInterval(oauthPollRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -51,8 +62,33 @@ export default function McpPlayground({ onClose, language = 'en' }) {
   }, [entries, busy]);
 
   async function refreshStatus() {
-    try { setStatus(await getMcpPlaygroundStatus()); }
-    catch (error) { addSystem(error.message, 'error'); }
+    try {
+      const next = await getMcpPlaygroundStatus();
+      setStatus(next);
+      return next;
+    } catch (error) {
+      addSystem(error.message, 'error');
+      return { connected:false, scopes:[] };
+    }
+  }
+
+  async function waitForConnection(popup = null) {
+    clearInterval(oauthPollRef.current);
+    let attempts = 0;
+    let finished = false;
+    const check = async () => {
+      attempts += 1;
+      const next = await refreshStatus();
+      if (next.connected || attempts >= 120 || (popup && popup.closed && attempts > 5)) {
+        finished = true;
+        clearInterval(oauthPollRef.current);
+        oauthPollRef.current = null;
+      }
+    };
+    await check();
+    if (!finished) {
+      oauthPollRef.current = window.setInterval(check, 1000);
+    }
   }
 
   async function connect() {
@@ -60,7 +96,10 @@ export default function McpPlayground({ onClose, language = 'en' }) {
     try {
       setBusy(true);
       const data = await startMcpPlaygroundOAuth(SCOPE_PROFILES[scopeProfile]);
-      if (popup) popup.location = data.authorization_url;
+      if (popup) {
+        popup.location = data.authorization_url;
+        void waitForConnection(popup);
+      }
       else window.location.assign(data.authorization_url);
     } catch (error) {
       popup?.close();

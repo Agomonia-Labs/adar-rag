@@ -138,3 +138,58 @@ def register_resources(mcp: FastMCP, settings: Settings) -> None:
             return json.dumps({"document_id": document_id, "frames": timeline.get("frames", [])}, ensure_ascii=True, default=str)
         except DocIntelMcpError as exc:
             return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://enterprise/catalog")
+    async def enterprise_catalog(ctx: Context) -> str:
+        """Versioned enterprise capabilities, workflow schemas, and governance contracts."""
+        try:
+            async with api_client(ctx, settings, "workflows:read") as client:
+                result = await client.enterprise_catalog()
+            return json.dumps(result, ensure_ascii=True, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://events/{after_sequence}")
+    async def operation_events(after_sequence: str, ctx: Context) -> str:
+        """Cursor-based operation events after a sequence number."""
+        try:
+            async with api_client(ctx, settings, "events:read") as client:
+                result = await client.list_events(int(after_sequence or 0))
+            return json.dumps(result, ensure_ascii=True, default=str)
+        except (DocIntelMcpError, ValueError) as exc:
+            return json.dumps(exc.as_dict() if isinstance(exc, DocIntelMcpError) else {"error": "after_sequence must be an integer"})
+
+    @mcp.resource("docintel://reviews/queue/{status}")
+    async def review_queue(status: str, ctx: Context) -> str:
+        """Human-review queue filtered by status or 'all'."""
+        try:
+            async with api_client(ctx, settings, "reviews:write") as client:
+                result = await client.list_review_tasks(None if status == "all" else status)
+            return json.dumps(result, ensure_ascii=True, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://artifacts/{workspace_id}")
+    async def knowledge_artifacts(workspace_id: str, ctx: Context) -> str:
+        """Reusable knowledge artifacts in a workspace or personal scope."""
+        try:
+            async with api_client(ctx, settings, "artifacts:read") as client:
+                result = await client.list_artifacts(None if workspace_id == "personal" else workspace_id)
+            return json.dumps(result, ensure_ascii=True, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://documents/{document_id}/versions")
+    async def document_versions(document_id: str, ctx: Context) -> str:
+        """Version lineage and changed-page metadata for an accessible document."""
+        try:
+            async with api_client(ctx, settings, "versions:read") as client:
+                result = await client.list_document_versions(document_id)
+            return json.dumps(result, ensure_ascii=True, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://traces/{trace_id}")
+    async def requester_trace(trace_id: str, ctx: Context) -> str:
+        """Requester-safe execution and evaluation details for an owned trace."""
+        try:
+            async with api_client(ctx, settings, "events:read") as client:
+                result = await client.get_my_trace(trace_id)
+            return json.dumps(result, ensure_ascii=True, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())

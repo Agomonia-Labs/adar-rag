@@ -45,6 +45,26 @@ Tools:
 - `save_vertical_review`
 - `approve_vertical_run`
 - `generate_vertical_packet`
+- `get_enterprise_capabilities`
+- `get_workflow_schema`
+- `validate_workflow_inputs`
+- `search_federated_knowledgebase`
+- `list_operation_events`
+- `create_event_subscription`
+- `list_event_subscriptions`
+- `delete_event_subscription`
+- `resume_batch_job`
+- `create_review_task`
+- `list_review_tasks`
+- `assign_review_task`
+- `submit_review_decision`
+- `save_knowledge_artifact`
+- `list_knowledge_artifacts`
+- `register_document_version`
+- `list_document_versions`
+- `evaluate_trace_quality`
+- `list_my_traces`
+- `get_my_trace`
 
 Resources:
 
@@ -58,6 +78,12 @@ Resources:
 - `docintel://videos/{document_id}/frames`
 - `docintel://workflows/catalog`
 - `docintel://workflows/{vertical}/runs/{run_id}`
+- `docintel://enterprise/catalog`
+- `docintel://events/{after_sequence}`
+- `docintel://reviews/queue/{status}`
+- `docintel://artifacts/{workspace_id}`
+- `docintel://documents/{document_id}/versions`
+- `docintel://traces/{trace_id}`
 
 Direct uploads use a two-step flow: obtain a short-lived signed PUT URL, upload
 the bytes directly to cloud storage, then call `complete_document_upload` to

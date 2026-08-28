@@ -32,6 +32,10 @@ def test_scope_normalization_rejects_self_assigned_unknown_scope():
     assert exc.value.status_code == 400
 
 
+def test_enterprise_scopes_are_discoverable_for_admin_assignment():
+    assert {"events:read", "reviews:approve", "artifacts:write", "versions:write", "evaluations:run"} <= ALLOWED_SCOPES
+
+
 class ScopeDb:
     def __init__(self, role="user", scopes=()):
         self.role = role

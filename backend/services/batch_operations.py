@@ -13,6 +13,7 @@ from routes.summarize import _load_chunk_texts, _stream_summary
 from services.classifier import classify_document
 from services.extractor import extract_text
 import services.storage as gcs
+from services.mcp_enterprise import emit_event
 
 
 MAX_CONCURRENCY = int(os.getenv("BATCH_MAX_CONCURRENCY", "4"))
@@ -33,7 +34,7 @@ async def refresh_job(job_id: str) -> dict:
         done = int(c.get("succeeded") or 0) + int(c.get("failed") or 0) + int(c.get("skipped") or 0)
         total = int(c.get("total") or 0)
         progress = round(done * 100 / total) if total else 0
-        job_state = await db.fetchrow("SELECT cancel_requested FROM batch_jobs WHERE id=$1", job_id)
+        job_state = await db.fetchrow("SELECT cancel_requested,status,user_id,workspace_id,operation FROM batch_jobs WHERE id=$1", job_id)
         status = "running"
         completed_at = None
         if total and done == total:
@@ -48,6 +49,13 @@ async def refresh_job(job_id: str) -> dict:
             WHERE id=$1 RETURNING *
         """, job_id, total, c.get("queued", 0), c.get("running", 0), c.get("succeeded", 0),
              c.get("failed", 0), c.get("skipped", 0), progress, status, completed_at, current_stage)
+        if status in {"completed", "completed_with_errors", "cancelled"} and job_state and job_state["status"] not in {"completed", "completed_with_errors", "cancelled"}:
+            await emit_event(
+                db, user_id=str(job_state["user_id"]),
+                workspace_id=str(job_state["workspace_id"]) if job_state["workspace_id"] else None,
+                event_type=f"batch.{status}", resource_type="batch", resource_id=job_id,
+                payload={"batch_job_id": job_id, "operation": job_state["operation"], "status": status, "progress_pct": progress, "stage": current_stage},
+            )
         return dict(row)
 
 

@@ -373,6 +373,63 @@ class DocIntelApiClient:
                 raise DocIntelMcpError("query_failed", event.get("error", "Grounded query failed"), trace_id=trace_id)
         return {"answer": "".join(answer_parts), "sources": sources, "trace_id": trace_id}
 
+    async def enterprise_catalog(self) -> dict:
+        return await self.request("GET", "/api/mcp-enterprise/catalog")
+
+    async def workflow_schema(self, workflow: str) -> dict:
+        return await self.request("GET", f"/api/mcp-enterprise/workflows/{workflow}")
+
+    async def validate_workflow(self, workflow: str, payload: dict[str, Any]) -> dict:
+        return await self.request("POST", f"/api/mcp-enterprise/workflows/{workflow}/validate", json=payload)
+
+    async def list_events(self, after: int = 0, resource_type: str | None = None, resource_id: str | None = None, limit: int = 100) -> dict:
+        return await self.request("GET", "/api/mcp-enterprise/events", params={"after": after, "resource_type": resource_type, "resource_id": resource_id, "limit": limit})
+
+    async def create_subscription(self, payload: dict[str, Any]) -> dict:
+        return await self.request("POST", "/api/mcp-enterprise/subscriptions", json=payload)
+
+    async def list_subscriptions(self) -> dict:
+        return await self.request("GET", "/api/mcp-enterprise/subscriptions")
+
+    async def delete_subscription(self, subscription_id: str) -> dict:
+        return await self.request("DELETE", f"/api/mcp-enterprise/subscriptions/{subscription_id}")
+
+    async def create_review_task(self, payload: dict[str, Any]) -> dict:
+        return await self.request("POST", "/api/mcp-enterprise/reviews", json=payload)
+
+    async def list_review_tasks(self, status: str | None = None) -> dict:
+        return await self.request("GET", "/api/mcp-enterprise/reviews", params={"status": status})
+
+    async def assign_review_task(self, task_id: str) -> dict:
+        return await self.request("POST", f"/api/mcp-enterprise/reviews/{task_id}/assign")
+
+    async def decide_review_task(self, task_id: str, decision: str, reviewer_notes: str) -> dict:
+        return await self.request("POST", f"/api/mcp-enterprise/reviews/{task_id}/decision", json={"decision": decision, "reviewer_notes": reviewer_notes})
+
+    async def create_artifact(self, payload: dict[str, Any]) -> dict:
+        return await self.request("POST", "/api/mcp-enterprise/artifacts", json=payload)
+
+    async def list_artifacts(self, workspace_id: str | None = None) -> dict:
+        return await self.request("GET", "/api/mcp-enterprise/artifacts", params={"workspace_id": workspace_id})
+
+    async def register_document_version(self, document_id: str, payload: dict[str, Any]) -> dict:
+        return await self.request("POST", f"/api/mcp-enterprise/documents/{document_id}/versions", json=payload)
+
+    async def list_document_versions(self, document_id: str) -> dict:
+        return await self.request("GET", f"/api/mcp-enterprise/documents/{document_id}/versions")
+
+    async def evaluate_trace(self, trace_id: str, evaluation_type: str) -> dict:
+        return await self.request("POST", "/api/mcp-enterprise/evaluations", json={"trace_id": trace_id, "evaluation_type": evaluation_type})
+
+    async def list_my_traces(self, limit: int = 50, workspace_id: str | None = None) -> list[dict]:
+        return await self.request("GET", "/api/traces/mine", params={"limit": limit, "workspace_id": workspace_id})
+
+    async def get_my_trace(self, trace_id: str) -> dict:
+        return await self.request("GET", f"/api/traces/mine/{trace_id}")
+
+    async def resume_batch(self, job_id: str) -> dict:
+        return await self.request("POST", f"/api/batches/{job_id}/resume")
+
     async def _stream_sse(self, path: str, payload: dict) -> AsyncIterator[tuple[dict, str | None]]:
         try:
             async with self._client.stream("POST", path, json=payload, headers={"Accept": "text/event-stream"}) as response:

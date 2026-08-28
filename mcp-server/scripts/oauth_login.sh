@@ -8,7 +8,7 @@ docintel_mcp_oauth_login() {
   local callback_port="${DOCINTEL_OAUTH_CALLBACK_PORT:-8765}"
   local callback_url="http://127.0.0.1:${callback_port}/callback"
   local client_file="${DOCINTEL_OAUTH_CLIENT_FILE:-${HOME}/.config/docintel/mcp-oauth-client.json}"
-  local scopes="${DOCINTEL_MCP_SCOPES:-workspaces:read documents:read documents:write knowledge:query knowledge:generate sessions:write video:read video:process workflows:read workflows:write reviews:write reviews:approve packets:write batches:read batches:write}"
+  local scopes="${DOCINTEL_MCP_SCOPES:-workspaces:read documents:read documents:write knowledge:query knowledge:generate sessions:write video:read video:process workflows:read workflows:write reviews:write reviews:approve packets:write batches:read batches:write events:read events:write artifacts:read artifacts:write versions:read versions:write evaluations:run}"
   local timeout_seconds="${DOCINTEL_OAUTH_TIMEOUT_SECONDS:-300}"
   local work_dir listener_pid authorization_url register_response token_response
   local callback_file ready_file returned_state authorization_code elapsed

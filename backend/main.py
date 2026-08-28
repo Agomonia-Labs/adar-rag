@@ -159,6 +159,7 @@ _ROUTERS = [
     ("routes.agent_evals",    "agent_evals_router",    "/api/agent-evals",   ["agent-evals"]),
     ("routes.mcp_playground", "mcp_playground_router", "/api/mcp-playground", ["mcp-playground"]),
     ("routes.batches",        "batches_router",        "/api/batches",        ["batches"]),
+    ("routes.mcp_enterprise", "mcp_enterprise_router", "/api/mcp-enterprise", ["mcp-enterprise"]),
 ]
 
 for _module, _attr, _prefix, _tags in _ROUTERS:

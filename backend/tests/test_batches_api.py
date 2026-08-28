@@ -55,6 +55,7 @@ def app(fake_db, monkeypatch):
     async def noop(*_args, **_kwargs): return None
     async def limits(*_args, **_kwargs): return {"max_file_mb": 100}
     async def signed_url(*_args, **_kwargs): return "https://storage.example/upload"
+    async def refresh(*_args, **_kwargs): return {}
 
     app.dependency_overrides[get_current_user] = user
     app.dependency_overrides[get_db] = db
@@ -63,6 +64,8 @@ def app(fake_db, monkeypatch):
     monkeypatch.setattr(batches, "check_document_limit", noop)
     monkeypatch.setattr(batches, "get_user_limits", limits)
     monkeypatch.setattr(batches.gcs, "get_signed_upload_url", signed_url)
+    monkeypatch.setattr(batches, "emit_event", noop)
+    monkeypatch.setattr(batches, "refresh_job", refresh)
     return app
 
 
