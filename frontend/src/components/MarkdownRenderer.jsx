@@ -1,6 +1,6 @@
 // src/components/MarkdownRenderer.jsx
 // Renders markdown from LLM responses: tables, headings, lists, bold, italic, code.
-import React, { useMemo } from 'react';
+import React, { useEffect, useId, useMemo, useState } from 'react';
 
 export default function MarkdownRenderer({ text, style }) {
   const blocks = useMemo(() => parseBlocks(text || ''), [text]);
@@ -36,7 +36,9 @@ function Block({ block }) {
       </ol>
     );
 
-    case 'code': return (
+    case 'code': return block.language === 'mermaid'
+      ? <MermaidBlock source={block.text} />
+      : (
       <pre style={s.pre}><code>{block.text}</code></pre>
     );
 
@@ -53,6 +55,63 @@ function Block({ block }) {
     default:
       return <p style={s.p}>{inline(block.text)}</p>;
   }
+}
+
+function MermaidBlock({ source }) {
+  const reactId = useId();
+  const [svg, setSvg] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    const renderId = `docintel-mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+
+    (async () => {
+      try {
+        const { default: mermaid } = await import('mermaid');
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme: 'dark',
+          flowchart: { htmlLabels: false, useMaxWidth: true },
+          sequence: { useMaxWidth: true, wrap: true },
+        });
+        const result = await mermaid.render(renderId, source);
+        if (active) {
+          setSvg(result.svg);
+          setError('');
+        }
+      } catch (err) {
+        if (active) {
+          setSvg('');
+          setError(err?.message || 'Unable to render this diagram.');
+        }
+      }
+    })();
+
+    return () => { active = false; };
+  }, [reactId, source]);
+
+  if (error) {
+    return (
+      <div style={s.diagramError}>
+        <strong>Diagram preview unavailable</strong>
+        <span>{error}</span>
+        <pre style={s.pre}><code>{source}</code></pre>
+      </div>
+    );
+  }
+
+  if (!svg) return <div style={s.diagramLoading}>Rendering diagram...</div>;
+
+  return (
+    <div
+      style={s.diagramWrap}
+      role="img"
+      aria-label="Generated Mermaid diagram"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
 }
 
 // ── Table ─────────────────────────────────────────────────────────────────────
@@ -167,6 +226,7 @@ function parseBlocks(text) {
 
     // Fenced code block
     if (line.startsWith('```')) {
+      const language = line.slice(3).trim().toLowerCase();
       const codeLines = [];
       i++;
       while (i < lines.length && !lines[i].startsWith('```')) {
@@ -174,7 +234,7 @@ function parseBlocks(text) {
         i++;
       }
       i++; // closing ```
-      blocks.push({ type:'code', text: codeLines.join('\n') });
+      blocks.push({ type:'code', language, text: codeLines.join('\n') });
       continue;
     }
 
@@ -260,6 +320,9 @@ const s = {
   ol:         { margin:'0 0 .65rem', paddingLeft:'1.4rem' },
   li:         { marginBottom:4, color:'var(--tx)', lineHeight:1.65 },
   pre:        { background:'rgba(0,0,0,.2)', border:'1px solid var(--b2)', borderRadius:6, padding:'10px 14px', overflowX:'auto', margin:'0 0 .65rem', fontSize:12.5, fontFamily:'monospace', color:'var(--tx2)' },
+  diagramWrap:{ background:'rgba(255,255,255,.035)', border:'1px solid var(--b2)', borderRadius:8, padding:12, overflowX:'auto', margin:'0 0 .75rem', minHeight:120 },
+  diagramLoading:{ background:'rgba(255,255,255,.035)', border:'1px solid var(--b2)', borderRadius:8, padding:18, margin:'0 0 .75rem', color:'var(--muted)', textAlign:'center' },
+  diagramError:{ display:'grid', gap:7, border:'1px solid rgba(248,113,113,.35)', background:'rgba(248,113,113,.06)', borderRadius:8, padding:12, margin:'0 0 .75rem', color:'#fca5a5', fontSize:12.5 },
   hr:         { border:'none', borderTop:'1px solid var(--b1)', margin:'.75rem 0' },
   inlineCode: { background:'rgba(255,255,255,.08)', border:'1px solid var(--b2)', padding:'1px 5px', borderRadius:4, fontSize:'0.88em', fontFamily:'monospace', color:'var(--teal)' },
   link:       { color:'var(--blue)', textDecoration:'underline' },

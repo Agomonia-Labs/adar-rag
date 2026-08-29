@@ -12,6 +12,7 @@
     "axios": "^1.16.1",
     "date-fns": "^4.2.1",
     "lucide-react": "^1.16.0",
+    "mermaid": "^11.17.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hot-toast": "^2.6.0"
