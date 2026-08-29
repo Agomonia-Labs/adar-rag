@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID, uuid4
@@ -13,7 +14,9 @@ from auth.dependencies import CurrentUser
 from database.connection import get_db
 from services.usage import check_document_limit, get_user_limits, log_event
 from services.video_intelligence import is_video_file, process_video_document
+from services.video_checkpoints import summary as checkpoint_summary
 from services.video_dispatch import (
+    VIDEO_JOB_STALE_SECONDS,
     create_or_reuse_video_job,
     dispatch_cloud_run_video_job,
     mark_video_dispatch_failed,
@@ -335,7 +338,8 @@ async def video_status(doc_id: str, current_user: CurrentUser, db=Depends(get_db
     job = await db.fetchrow(
         """
         SELECT id, status, dispatch_mode, dispatch_reference, attempt_count,
-               error_message, created_at, started_at, completed_at, updated_at
+               error_message, heartbeat_at, lease_owner, lease_expires_at,
+               created_at, started_at, completed_at, updated_at
           FROM video_processing_jobs
          WHERE document_id=$1
          ORDER BY created_at DESC LIMIT 1
@@ -343,6 +347,23 @@ async def video_status(doc_id: str, current_user: CurrentUser, db=Depends(get_db
         doc_id,
     )
     data["processing_job"] = _jsonable(dict(job)) if job else None
+    if job:
+        data["checkpoint_summary"] = _jsonable(await checkpoint_summary(str(job["id"])))
+        now = datetime.now(timezone.utc)
+        lease_expires_at = job["lease_expires_at"]
+        last_activity_at = job["heartbeat_at"] or job["updated_at"]
+        active = job["status"] in {"queued", "dispatching", "running"}
+        data["processing_stalled"] = bool(
+            active
+            and (
+                (lease_expires_at is not None and lease_expires_at < now)
+                or (
+                    lease_expires_at is None
+                    and last_activity_at is not None
+                    and last_activity_at < now - timedelta(seconds=VIDEO_JOB_STALE_SECONDS)
+                )
+            )
+        )
     return data
 
 

@@ -94,6 +94,9 @@ BEGIN
         ALTER TABLE video_processing_jobs ADD COLUMN IF NOT EXISTS dispatch_mode TEXT NOT NULL DEFAULT 'inline';
         ALTER TABLE video_processing_jobs ADD COLUMN IF NOT EXISTS dispatch_reference TEXT;
         ALTER TABLE video_processing_jobs ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE video_processing_jobs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+        ALTER TABLE video_processing_jobs ADD COLUMN IF NOT EXISTS lease_owner TEXT;
+        ALTER TABLE video_processing_jobs ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
         CREATE INDEX IF NOT EXISTS idx_video_jobs_document_created
             ON video_processing_jobs(document_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_video_jobs_status
@@ -101,6 +104,32 @@ BEGIN
     END IF;
 END;
 $$;
+
+CREATE TABLE IF NOT EXISTS video_processing_checkpoints (
+    id               UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    job_id           UUID        NOT NULL,
+    document_id      UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    stage            TEXT        NOT NULL,
+    item_key         TEXT        NOT NULL DEFAULT 'stage',
+    status           TEXT        NOT NULL DEFAULT 'pending',
+    input_data       JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    output_data      JSONB,
+    error_message    TEXT,
+    attempt_count    INTEGER     NOT NULL DEFAULT 0,
+    lease_owner      TEXT,
+    lease_expires_at TIMESTAMPTZ,
+    started_at       TIMESTAMPTZ,
+    completed_at     TIMESTAMPTZ,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (job_id, stage, item_key)
+);
+CREATE INDEX IF NOT EXISTS idx_video_checkpoints_job_stage
+    ON video_processing_checkpoints(job_id, stage, status);
+CREATE INDEX IF NOT EXISTS idx_video_checkpoints_document
+    ON video_processing_checkpoints(document_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_video_checkpoints_lease
+    ON video_processing_checkpoints(status, lease_expires_at);
 
 ALTER TABLE documents
     ADD COLUMN IF NOT EXISTS doc_type      TEXT,

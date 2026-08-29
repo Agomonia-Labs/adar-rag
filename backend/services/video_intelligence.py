@@ -22,6 +22,7 @@ from services import storage as gcs
 from services.notifications import send_video_processing_notification
 from services.text_safety import sanitize_text_for_storage
 from services.vectordb import delete_document_vectors, store_chunk
+from services import video_checkpoints as checkpoints
 
 log = logging.getLogger("docintel.video")
 
@@ -38,6 +39,7 @@ FFMPEG_REMOTE_TIMEOUT_US = int(os.getenv("FFMPEG_REMOTE_TIMEOUT_US", "30000000")
 VIDEO_REMOTE_STAGE_RETRIES = int(os.getenv("VIDEO_REMOTE_STAGE_RETRIES", "3"))
 VIDEO_REMOTE_RETRY_DELAY_SECONDS = float(os.getenv("VIDEO_REMOTE_RETRY_DELAY_SECONDS", "3"))
 FFMPEG_COMMAND_TIMEOUT_SECONDS = int(os.getenv("FFMPEG_COMMAND_TIMEOUT_SECONDS", "180"))
+VIDEO_JOB_MAX_ATTEMPTS = max(1, int(os.getenv("VIDEO_JOB_MAX_ATTEMPTS", "3")))
 
 
 def is_video_file(filename: str = "", file_type: str = "", content_type: str = "") -> bool:
@@ -63,6 +65,7 @@ async def process_video_document(
 ) -> dict[str, Any]:
     pool = get_pool()
     job_id = job_id or str(uuid4())
+    checkpoint_owner = checkpoints.worker_id()
     video_id: str | None = None
 
     async with pool.acquire() as conn:
@@ -87,9 +90,12 @@ async def process_video_document(
                status='running', error_message=NULL, completed_at=NULL,
                started_at=COALESCE(video_processing_jobs.started_at, NOW()),
                attempt_count=COALESCE(video_processing_jobs.attempt_count, 0) + 1,
+               heartbeat_at=NOW(), lease_owner=$6,
+               lease_expires_at=NOW() + ($7 * INTERVAL '1 second'),
                updated_at=NOW()
             """,
             job_id, document_id, user_id, workspace_id, input_data,
+            checkpoint_owner, checkpoints.LEASE_SECONDS,
         )
         await conn.execute(
             "UPDATE documents SET status='chunking', error_message=NULL, updated_at=NOW() WHERE id=$1",
@@ -105,6 +111,7 @@ async def process_video_document(
     frame_paths: list[tuple[int, float, str]] = []
     local_source_path: str | None = None
     try:
+        await checkpoints.heartbeat(job_id, checkpoint_owner)
         await _update_video_progress(
             document_id,
             step="preparing_remote_source",
@@ -119,32 +126,48 @@ async def process_video_document(
             progress_pct=16,
             message="Reading duration, codec, resolution, and audio metadata.",
         )
-        try:
-            metadata, source_ref = await _run_remote_stage_with_retries(
-                document_id=document_id,
-                source_gcs_path=source_gcs_path,
-                source_ref=source_ref,
-                stage_name="extracting_metadata",
-                progress_pct=16,
-                message="Retrying remote metadata extraction with a fresh signed URL.",
-                run_stage=lambda ref: asyncio.to_thread(_probe_video, ref),
+        metadata = await checkpoints.completed_output(job_id, "metadata")
+        if metadata is None:
+            await _require_checkpoint(
+                job_id=job_id, document_id=document_id, stage="metadata",
+                owner=checkpoint_owner, input_data={"source_gcs_path": source_gcs_path},
             )
-        except Exception as exc:
-            log.warning(
-                "Remote ffprobe failed after retries for document %s; falling back to streaming temp file: %s",
-                document_id,
-                exc,
-            )
-            await _update_video_progress(
-                document_id,
-                step="remote_probe_fallback",
-                progress_pct=18,
-                message="Remote video probe failed; using streaming fallback for this file.",
-            )
-            source_ref = await _create_signed_source_ref(source_gcs_path)
-            local_source_path = await asyncio.to_thread(_download_signed_url_to_temp_file, source_ref, filename)
-            source_ref = local_source_path
-            metadata = await asyncio.to_thread(_probe_video, source_ref)
+            try:
+                try:
+                    metadata, source_ref = await _run_remote_stage_with_retries(
+                        document_id=document_id,
+                        source_gcs_path=source_gcs_path,
+                        source_ref=source_ref,
+                        stage_name="extracting_metadata",
+                        progress_pct=16,
+                        message="Retrying remote metadata extraction with a fresh signed URL.",
+                        run_stage=lambda ref: asyncio.to_thread(_probe_video, ref),
+                    )
+                except Exception as exc:
+                    log.warning(
+                        "Remote ffprobe failed after retries for document %s; falling back to streaming temp file: %s",
+                        document_id,
+                        exc,
+                    )
+                    await _update_video_progress(
+                        document_id,
+                        step="remote_probe_fallback",
+                        progress_pct=18,
+                        message="Remote video probe failed; using streaming fallback for this file.",
+                    )
+                    source_ref = await _create_signed_source_ref(source_gcs_path)
+                    local_source_path = await asyncio.to_thread(_download_signed_url_to_temp_file, source_ref, filename)
+                    source_ref = local_source_path
+                    metadata = await asyncio.to_thread(_probe_video, source_ref)
+                await checkpoints.complete(
+                    job_id=job_id, stage="metadata", output_data=metadata,
+                    owner=checkpoint_owner,
+                )
+            except Exception as exc:
+                await checkpoints.fail(
+                    job_id=job_id, stage="metadata", error=exc, owner=checkpoint_owner,
+                )
+                raise
         duration = float(metadata.get("duration_seconds") or 0)
         frames_dir = f"users/{user_id}/documents/{document_id}/video/frames/"
         clips_dir = f"users/{user_id}/documents/{document_id}/video/clips/"
@@ -212,22 +235,45 @@ async def process_video_document(
             progress_pct=26,
             message="Extracting and transcribing the video audio." if TRANSCRIBE_AUDIO_ENABLED else "Audio transcription is disabled.",
         )
-        if TRANSCRIBE_AUDIO_ENABLED and _is_remote_ref(source_ref):
-            transcript, source_ref = await _run_remote_stage_with_retries(
-                document_id=document_id,
-                source_gcs_path=source_gcs_path,
-                source_ref=source_ref,
-                stage_name="transcribing_audio",
-                progress_pct=26,
-                message="Retrying remote audio transcription with a fresh signed URL.",
-                run_stage=lambda ref: _transcribe_audio(ref, document_id=document_id, transcript_language=transcript_language),
+        transcript_result = await checkpoints.completed_output(job_id, "transcript")
+        if transcript_result is not None:
+            transcript = str(transcript_result.get("text") or "")
+        elif TRANSCRIBE_AUDIO_ENABLED:
+            await _require_checkpoint(
+                job_id=job_id, document_id=document_id, stage="transcript",
+                owner=checkpoint_owner, input_data={"language": transcript_language},
             )
+            try:
+                if _is_remote_ref(source_ref):
+                    transcript, source_ref = await _run_remote_stage_with_retries(
+                        document_id=document_id,
+                        source_gcs_path=source_gcs_path,
+                        source_ref=source_ref,
+                        stage_name="transcribing_audio",
+                        progress_pct=26,
+                        message="Retrying remote audio transcription with a fresh signed URL.",
+                        run_stage=lambda ref: _transcribe_audio(
+                            ref, document_id=document_id, transcript_language=transcript_language,
+                            job_id=job_id, checkpoint_owner=checkpoint_owner,
+                        ),
+                    )
+                else:
+                    transcript = await _transcribe_audio(
+                        source_ref, document_id=document_id,
+                        transcript_language=transcript_language, job_id=job_id,
+                        checkpoint_owner=checkpoint_owner,
+                    )
+                await checkpoints.complete(
+                    job_id=job_id, stage="transcript", output_data={"text": transcript},
+                    owner=checkpoint_owner,
+                )
+            except Exception as exc:
+                await checkpoints.fail(
+                    job_id=job_id, stage="transcript", error=exc, owner=checkpoint_owner,
+                )
+                raise
         else:
-            transcript = await _transcribe_audio(
-                source_ref,
-                document_id=document_id,
-                transcript_language=transcript_language,
-            ) if TRANSCRIBE_AUDIO_ENABLED else ""
+            transcript = ""
         await _update_video_progress(
             document_id,
             step="sampling_frames",
@@ -257,6 +303,8 @@ async def process_video_document(
             document_id=document_id,
             frames_dir=frames_dir,
             frame_paths=frame_paths,
+            job_id=job_id,
+            checkpoint_owner=checkpoint_owner,
         )
 
         await _update_video_progress(
@@ -280,15 +328,33 @@ async def process_video_document(
             progress_pct=80,
             message="Saving timeline, frames, transcript, and chunk artifacts.",
         )
-        await _persist_video_artifacts(
-            document_id=document_id,
-            user_id=user_id,
-            workspace_id=workspace_id,
-            video_id=video_id,
-            frames=frames,
-            segments=segments,
-            chunks=chunks,
-        )
+        persisted = await checkpoints.completed_output(job_id, "persist_artifacts")
+        if persisted is None:
+            await _require_checkpoint(
+                job_id=job_id, document_id=document_id, stage="persist_artifacts",
+                owner=checkpoint_owner,
+                input_data={"frames": len(frames), "segments": len(segments), "chunks": len(chunks)},
+            )
+            try:
+                await _persist_video_artifacts(
+                    document_id=document_id,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    video_id=video_id,
+                    frames=frames,
+                    segments=segments,
+                    chunks=chunks,
+                )
+                await checkpoints.complete(
+                    job_id=job_id, stage="persist_artifacts", output_data={"saved": True},
+                    owner=checkpoint_owner,
+                )
+            except Exception as exc:
+                await checkpoints.fail(
+                    job_id=job_id, stage="persist_artifacts", error=exc,
+                    owner=checkpoint_owner,
+                )
+                raise
 
         embed_status = "not_requested"
         embed_error = ""
@@ -300,13 +366,19 @@ async def process_video_document(
                     progress_pct=88,
                     message=f"Embedding {len(chunks)} video chunks for chat and search.",
                 )
-                await _embed_generated_chunks(document_id, user_id, workspace_id, chunks)
+                await _embed_generated_chunks(
+                    document_id, user_id, workspace_id, chunks,
+                    job_id=job_id, checkpoint_owner=checkpoint_owner,
+                )
                 embed_status = "embedded"
                 document_status = "embedded"
             except Exception as exc:
-                embed_status = "failed"
                 embed_error = str(exc)[:500]
-                document_status = "chunked"
+                log.warning(
+                    "Video embedding failed for document %s and will resume from checkpoints: %s",
+                    document_id, embed_error,
+                )
+                raise
         else:
             document_status = "chunked"
 
@@ -337,7 +409,8 @@ async def process_video_document(
             await conn.execute(
                 """
                 UPDATE video_processing_jobs
-                   SET status='completed', output_data=$1::jsonb, completed_at=NOW(), updated_at=NOW()
+                   SET status='completed', output_data=$1::jsonb, completed_at=NOW(),
+                       lease_owner=NULL, lease_expires_at=NULL, heartbeat_at=NOW(), updated_at=NOW()
                  WHERE id=$2
                 """,
                 json.dumps(output),
@@ -386,11 +459,14 @@ async def process_video_document(
             await conn.execute(
                 """
                 UPDATE video_processing_jobs
-                   SET status='error', error_message=$1, completed_at=NOW(), updated_at=NOW()
+                   SET status=CASE WHEN attempt_count >= $3 THEN 'dead_letter' ELSE 'error' END,
+                       error_message=$1, completed_at=NOW(),
+                       lease_owner=NULL, lease_expires_at=NULL, updated_at=NOW()
                  WHERE id=$2
                 """,
                 error,
                 job_id,
+                VIDEO_JOB_MAX_ATTEMPTS,
             )
             await conn.execute(
                 "UPDATE documents SET status='error', error_message=$1, updated_at=NOW() WHERE id=$2",
@@ -745,13 +821,19 @@ async def _caption_frame(path: str, timestamp: float) -> str:
         return ""
 
 
-async def _transcribe_audio(path: str, *, document_id: str | None = None, transcript_language: str = "auto") -> str:
+async def _transcribe_audio(
+    path: str, *, document_id: str | None = None, transcript_language: str = "auto",
+    job_id: str | None = None, checkpoint_owner: str | None = None,
+) -> str:
     provider = os.getenv("VIDEO_TRANSCRIBE_PROVIDER") or os.getenv("LLM_PROVIDER", "openai")
     provider = provider.lower().strip()
     if provider == "openai":
         return await _transcribe_audio_openai(path)
     if provider in {"gemini", "google", "google_speech", "speech", "vertex"}:
-        return await _transcribe_audio_google_speech(path, document_id=document_id, transcript_language=transcript_language)
+        return await _transcribe_audio_google_speech(
+            path, document_id=document_id, transcript_language=transcript_language,
+            job_id=job_id, checkpoint_owner=checkpoint_owner,
+        )
     log.warning("Audio transcription skipped: unsupported provider %s", provider)
     return ""
 
@@ -800,7 +882,10 @@ async def _transcribe_audio_openai(path: str) -> str:
         _safe_unlink(tmp.name, label="OpenAI audio transcript temp file")
 
 
-async def _transcribe_audio_google_speech(path: str, *, document_id: str | None = None, transcript_language: str = "auto") -> str:
+async def _transcribe_audio_google_speech(
+    path: str, *, document_id: str | None = None, transcript_language: str = "auto",
+    job_id: str | None = None, checkpoint_owner: str | None = None,
+) -> str:
     api_key = (
         os.getenv("GOOGLE_SPEECH_API_KEY")
         or os.getenv("GOOGLE_STT_API_KEY")
@@ -829,7 +914,19 @@ async def _transcribe_audio_google_speech(path: str, *, document_id: str | None 
             length = chunk_seconds if duration <= 0 else min(chunk_seconds, max(1.0, duration - start))
             if length <= 0:
                 return index, ""
+            item_key = f"{index:06d}"
+            if job_id:
+                saved = await checkpoints.completed_output(job_id, "transcript_chunk", item_key)
+                if saved is not None:
+                    completed += 1
+                    return index, str(saved.get("text") or "")
             async with semaphore:
+                if job_id and document_id and checkpoint_owner:
+                    await _require_checkpoint(
+                        job_id=job_id, document_id=document_id, stage="transcript_chunk",
+                        item_key=item_key, owner=checkpoint_owner,
+                        input_data={"index": index, "start": start, "length": length},
+                    )
                 if document_id:
                     await _update_video_progress(
                         document_id,
@@ -849,20 +946,30 @@ async def _transcribe_audio_google_speech(path: str, *, document_id: str | None 
                         )
                     text = await _google_speech_recognize(client, api_key, chunk_path, language_code, alternative_language_codes)
                     text = sanitize_text_for_storage(text).strip()
-                    if not text:
-                        return index, ""
                     end = start + length
-                    return index, f"[{_fmt_time(start)}-{_fmt_time(end)}] {text}"
+                    result = f"[{_fmt_time(start)}-{_fmt_time(end)}] {text}" if text else ""
+                    if job_id and checkpoint_owner:
+                        await checkpoints.complete(
+                            job_id=job_id, stage="transcript_chunk", item_key=item_key,
+                            output_data={"text": result, "start": start, "end": end},
+                            owner=checkpoint_owner,
+                        )
+                    return index, result
                 except Exception as exc:
-                    log.warning("Audio chunk %s/%s skipped at %.2fs: %s", index + 1, total, start, exc)
+                    log.warning("Audio chunk %s/%s failed at %.2fs: %s", index + 1, total, start, exc)
+                    if job_id and checkpoint_owner:
+                        await checkpoints.fail(
+                            job_id=job_id, stage="transcript_chunk", item_key=item_key,
+                            error=exc, owner=checkpoint_owner,
+                        )
                     if document_id:
                         await _update_video_progress(
                             document_id,
                             step="transcribing_audio",
                             progress_pct=_phase_pct(26, 44, completed, total),
-                            message=f"Skipped audio chunk {index + 1} of {total}: {str(exc)[:160]}",
+                            message=f"Audio chunk {index + 1} of {total} failed and will be retried: {str(exc)[:160]}",
                         )
-                    return index, ""
+                    raise
                 finally:
                     _safe_unlink(chunk_path, label="audio transcript chunk temp file")
                     completed += 1
@@ -879,6 +986,8 @@ async def _transcribe_audio_google_speech(path: str, *, document_id: str | None 
         return "\n".join(text for _, text in sorted(results) if text)
     except Exception as exc:
         log.warning("Google audio transcription skipped: %s", exc)
+        if job_id:
+            raise
         return ""
 
 
@@ -887,6 +996,8 @@ async def _process_frames_parallel(
     document_id: str,
     frames_dir: str,
     frame_paths: list[tuple[int, float, str]],
+    job_id: str | None = None,
+    checkpoint_owner: str | None = None,
 ) -> list[dict]:
     if not frame_paths:
         return []
@@ -898,7 +1009,19 @@ async def _process_frames_parallel(
     async def process_one(item: tuple[int, float, str]) -> dict:
         nonlocal completed
         frame_index, timestamp, path = item
+        item_key = f"{frame_index:06d}"
+        if job_id:
+            saved = await checkpoints.completed_output(job_id, "frame", item_key)
+            if saved is not None:
+                completed += 1
+                return saved
         async with semaphore:
+            if job_id and checkpoint_owner:
+                await _require_checkpoint(
+                    job_id=job_id, document_id=document_id, stage="frame",
+                    item_key=item_key, owner=checkpoint_owner,
+                    input_data={"frame_index": frame_index, "timestamp_seconds": timestamp},
+                )
             await _update_video_progress(
                 document_id,
                 step="processing_frames",
@@ -906,8 +1029,27 @@ async def _process_frames_parallel(
                 message=f"Uploading and captioning frame {completed + 1} of {total}.",
             )
             frame_gcs_path = f"{frames_dir}frame_{frame_index:04d}_{int(timestamp):06d}s.jpg"
-            await gcs.upload_bytes(frame_gcs_path, Path(path).read_bytes(), "image/jpeg")
-            caption = await _caption_frame(path, timestamp) if FRAME_CAPTION_ENABLED else ""
+            try:
+                await gcs.upload_bytes(frame_gcs_path, Path(path).read_bytes(), "image/jpeg")
+                caption = await _caption_frame(path, timestamp) if FRAME_CAPTION_ENABLED else ""
+                result = {
+                    "frame_index": frame_index,
+                    "timestamp_seconds": timestamp,
+                    "frame_path": frame_gcs_path,
+                    "caption": caption,
+                }
+                if job_id and checkpoint_owner:
+                    await checkpoints.complete(
+                        job_id=job_id, stage="frame", item_key=item_key,
+                        output_data=result, owner=checkpoint_owner,
+                    )
+            except Exception as exc:
+                if job_id and checkpoint_owner:
+                    await checkpoints.fail(
+                        job_id=job_id, stage="frame", item_key=item_key,
+                        error=exc, owner=checkpoint_owner,
+                    )
+                raise
             completed += 1
             await _update_video_progress(
                 document_id,
@@ -915,12 +1057,7 @@ async def _process_frames_parallel(
                 progress_pct=_phase_pct(46, 61, completed, total),
                 message=f"Processed frame {completed} of {total}.",
             )
-            return {
-                "frame_index": frame_index,
-                "timestamp_seconds": timestamp,
-                "frame_path": frame_gcs_path,
-                "caption": caption,
-            }
+            return result
 
     frames = await asyncio.gather(*(process_one(item) for item in frame_paths))
     return sorted(frames, key=lambda frame: frame["frame_index"])
@@ -1229,10 +1366,33 @@ async def _persist_video_artifacts(
     await gcs.upload_json(gcs.metadata_path(user_id, document_id), meta_obj)
 
 
-async def _embed_generated_chunks(document_id: str, user_id: str, workspace_id: str | None, chunks: list[dict]) -> None:
+async def _embed_generated_chunks(
+    document_id: str, user_id: str, workspace_id: str | None, chunks: list[dict],
+    *, job_id: str | None = None, checkpoint_owner: str | None = None,
+) -> None:
     from services.llm import embed
 
-    await delete_document_vectors(document_id)
+    setup = await checkpoints.completed_output(job_id, "embedding_setup") if job_id else None
+    if setup is None:
+        if job_id and checkpoint_owner:
+            await _require_checkpoint(
+                job_id=job_id, document_id=document_id, stage="embedding_setup",
+                owner=checkpoint_owner, input_data={"chunk_count": len(chunks)},
+            )
+        try:
+            await delete_document_vectors(document_id)
+            if job_id and checkpoint_owner:
+                await checkpoints.complete(
+                    job_id=job_id, stage="embedding_setup",
+                    output_data={"vectors_cleared": True}, owner=checkpoint_owner,
+                )
+        except Exception as exc:
+            if job_id and checkpoint_owner:
+                await checkpoints.fail(
+                    job_id=job_id, stage="embedding_setup", error=exc,
+                    owner=checkpoint_owner,
+                )
+            raise
     total = len(chunks)
     if total == 0:
         return
@@ -1242,25 +1402,57 @@ async def _embed_generated_chunks(document_id: str, user_id: str, workspace_id: 
 
     async def embed_one(chunk: dict) -> None:
         nonlocal completed
+        item_key = f"{int(chunk['chunk_index']):06d}"
+        if job_id:
+            saved = await checkpoints.completed_output(job_id, "embedding", item_key)
+            if saved is not None:
+                completed += 1
+                return
         async with semaphore:
+            if job_id and checkpoint_owner:
+                await _require_checkpoint(
+                    job_id=job_id, document_id=document_id, stage="embedding",
+                    item_key=item_key, owner=checkpoint_owner,
+                    input_data={"chunk_index": chunk["chunk_index"], "chunk_total": total},
+                )
             await _update_video_progress(
                 document_id,
                 step="embedding_chunks",
                 progress_pct=_phase_pct(88, 99, completed, total),
                 message=f"Embedding video chunk {completed + 1} of {total}.",
             )
-            content = sanitize_text_for_storage(chunk["content"])
-            vector = await embed(content)
-            await store_chunk(
-                document_id=document_id,
-                user_id=user_id,
-                workspace_id=workspace_id,
-                chunk_index=chunk["chunk_index"],
-                chunk_total=total,
-                content=content,
-                embedding=vector,
-                chunk_metadata=chunk["chunk_metadata"],
-            )
+            try:
+                content = sanitize_text_for_storage(chunk["content"])
+                vector = await embed(content)
+                pool = get_pool()
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "DELETE FROM document_chunks WHERE document_id=$1 AND chunk_index=$2",
+                        document_id, chunk["chunk_index"],
+                    )
+                await store_chunk(
+                    document_id=document_id,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    chunk_index=chunk["chunk_index"],
+                    chunk_total=total,
+                    content=content,
+                    embedding=vector,
+                    chunk_metadata=chunk["chunk_metadata"],
+                )
+                if job_id and checkpoint_owner:
+                    await checkpoints.complete(
+                        job_id=job_id, stage="embedding", item_key=item_key,
+                        output_data={"chunk_index": chunk["chunk_index"]},
+                        owner=checkpoint_owner,
+                    )
+            except Exception as exc:
+                if job_id and checkpoint_owner:
+                    await checkpoints.fail(
+                        job_id=job_id, stage="embedding", item_key=item_key,
+                        error=exc, owner=checkpoint_owner,
+                    )
+                raise
             completed += 1
             await _update_video_progress(
                 document_id,
@@ -1270,6 +1462,21 @@ async def _embed_generated_chunks(document_id: str, user_id: str, workspace_id: 
             )
 
     await asyncio.gather(*(embed_one(chunk) for chunk in chunks))
+
+
+async def _require_checkpoint(
+    *, job_id: str, document_id: str, stage: str, owner: str,
+    item_key: str = "stage", input_data: dict[str, Any] | None = None,
+) -> None:
+    acquired = await checkpoints.begin(
+        job_id=job_id, document_id=document_id, stage=stage, item_key=item_key,
+        input_data=input_data, owner=owner,
+    )
+    if not acquired:
+        raise RuntimeError(
+            f"Checkpoint {stage}/{item_key} is currently leased by another video worker"
+        )
+    await checkpoints.heartbeat(job_id, owner)
 
 
 def _chunk(index: int, document_id: str, user_id: str, filename: str, chunk_type: str, start: float, end: float, content: str, extra: dict | None = None) -> dict:

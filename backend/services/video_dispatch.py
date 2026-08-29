@@ -10,6 +10,7 @@ from database.connection import get_pool
 
 
 ACTIVE_VIDEO_JOB_STATUSES = ("queued", "dispatching", "running")
+VIDEO_JOB_STALE_SECONDS = max(300, int(os.getenv("VIDEO_JOB_STALE_SECONDS", "1200")))
 
 
 def video_dispatch_mode() -> str:
@@ -29,14 +30,42 @@ async def create_or_reuse_video_job(
             await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", document_id)
             existing = await conn.fetchrow(
                 """
-                SELECT id FROM video_processing_jobs
-                 WHERE document_id=$1 AND status = ANY($2::text[])
+                SELECT id, status,
+                       COALESCE(lease_expires_at, updated_at + ($2 * INTERVAL '1 second')) < NOW() AS stale
+                  FROM video_processing_jobs
+                 WHERE document_id=$1
+                   AND status = ANY($3::text[])
                  ORDER BY created_at DESC LIMIT 1
                 """,
-                document_id, list(ACTIVE_VIDEO_JOB_STATUSES),
+                document_id, VIDEO_JOB_STALE_SECONDS,
+                [*ACTIVE_VIDEO_JOB_STATUSES, "error", "dead_letter"],
             )
             if existing:
-                return str(existing["id"]), True
+                if existing["status"] in ACTIVE_VIDEO_JOB_STATUSES and not existing["stale"]:
+                    return str(existing["id"]), True
+                checkpoint_exists = await conn.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM video_processing_checkpoints WHERE job_id=$1)",
+                    existing["id"],
+                )
+                if checkpoint_exists:
+                    await conn.execute(
+                        """
+                        UPDATE video_processing_jobs
+                           SET status='queued', error_message=NULL, completed_at=NULL,
+                               lease_owner=NULL, lease_expires_at=NULL, updated_at=NOW()
+                         WHERE id=$1
+                        """,
+                        existing["id"],
+                    )
+                    await conn.execute(
+                        """
+                        UPDATE documents
+                           SET status='chunking', error_message=NULL, updated_at=NOW()
+                         WHERE id=$1
+                        """,
+                        document_id,
+                    )
+                    return str(existing["id"]), False
 
             job_id = str(uuid4())
             await conn.execute(

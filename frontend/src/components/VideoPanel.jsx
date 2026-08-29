@@ -429,6 +429,22 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
                       <p style={s.progressWarning}>Processing may be stalled. Refresh status or check backend logs if this does not change.</p>
                     )}
                   </div>
+                  {status?.checkpoint_summary?.stages?.length > 0 && (
+                    <div style={s.checkpointBox}>
+                      <div style={s.checkpointHead}>
+                        <strong>Durable recovery checkpoints</strong>
+                        <span>{status.processing_stalled ? 'Worker lease expired' : 'Resume protection active'}</span>
+                      </div>
+                      <div style={s.checkpointList}>
+                        {status.checkpoint_summary.stages.map(stage => (
+                          <div key={stage.stage} style={s.checkpointRow}>
+                            <span>{formatStep(stage.stage)}</span>
+                            <small>{formatCheckpointCounts(stage.counts)} · {stage.attempts || 0} attempt{stage.attempts === 1 ? '' : 's'}</small>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {(status?.error_message || status?.document_error) && (
                     <p style={s.error}>{status.error_message || status.document_error}</p>
                   )}
@@ -577,6 +593,19 @@ function formatAge(value) {
   return `${hours} hour${hours === 1 ? '' : 's'} ago`;
 }
 
+function formatCheckpointCounts(counts = {}) {
+  const labels = [
+    ['completed', 'done'],
+    ['running', 'running'],
+    ['failed', 'failed'],
+    ['pending', 'pending'],
+  ];
+  const parts = labels
+    .filter(([key]) => Number(counts[key] || 0) > 0)
+    .map(([key, label]) => `${counts[key]} ${label}`);
+  return parts.join(' · ') || 'No items';
+}
+
 function isProgressStale(updatedAt, status) {
   const active = ['running', 'processing', 'queued'].includes(String(status || '').toLowerCase());
   if (!active || !updatedAt) return false;
@@ -704,6 +733,10 @@ const s = {
   progressFill: { height:'100%', borderRadius:999, background:'linear-gradient(90deg,#22c55e,#86efac)', transition:'width .35s ease' },
   progressMessage: { margin:'8px 0 0', color:'var(--tx2)', fontSize:12.5, lineHeight:1.45 },
   progressWarning: { margin:'6px 0 0', color:'#fde68a', fontSize:12, lineHeight:1.45, fontWeight:800 },
+  checkpointBox: { marginTop:9, padding:10, borderRadius:8, background:'rgba(59,130,246,.07)', border:'1px solid rgba(96,165,250,.2)' },
+  checkpointHead: { display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, flexWrap:'wrap', color:'#bfdbfe', fontSize:12 },
+  checkpointList: { display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(210px,1fr))', gap:6, marginTop:8 },
+  checkpointRow: { display:'flex', flexDirection:'column', gap:2, minWidth:0, padding:'6px 8px', borderRadius:6, background:'rgba(0,0,0,.14)', color:'var(--tx)', fontSize:12 },
   askRow: { display:'grid', gridTemplateColumns:'minmax(0,1fr) auto', gap:8, alignItems:'stretch' },
   textarea: { minHeight:74, resize:'vertical', padding:10, borderRadius:8, border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx)', fontSize:13, lineHeight:1.45 },
   answerBox: { marginTop:10, padding:11, borderRadius:8, border:'1px solid rgba(74,222,128,.18)', background:'rgba(74,222,128,.055)' },

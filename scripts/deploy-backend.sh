@@ -210,6 +210,9 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="VIDEO_TRANSCRIBE_CONCURRENCY=3" \
   --set-env-vars="VIDEO_FRAME_CONCURRENCY=4" \
   --set-env-vars="VIDEO_EMBED_CONCURRENCY=4" \
+  --set-env-vars="VIDEO_CHECKPOINT_LEASE_SECONDS=900" \
+  --set-env-vars="VIDEO_JOB_STALE_SECONDS=1200" \
+  --set-env-vars="VIDEO_JOB_MAX_ATTEMPTS=3" \
   --set-env-vars="GOOGLE_SPEECH_MODEL=latest_long" \
   --set-env-vars="VIDEO_MAX_FRAMES=12" \
   --set-env-vars="VIDEO_SEGMENT_SECONDS=60" \
@@ -278,6 +281,9 @@ gcloud run jobs deploy docintel-video-worker \
   --set-env-vars="VIDEO_TRANSCRIBE_CONCURRENCY=3" \
   --set-env-vars="VIDEO_FRAME_CONCURRENCY=4" \
   --set-env-vars="VIDEO_EMBED_CONCURRENCY=4" \
+  --set-env-vars="VIDEO_CHECKPOINT_LEASE_SECONDS=900" \
+  --set-env-vars="VIDEO_JOB_STALE_SECONDS=1200" \
+  --set-env-vars="VIDEO_JOB_MAX_ATTEMPTS=3" \
   --set-env-vars="VIDEO_SOURCE_READ_URL_EXPIRY_SECONDS=21600" \
   --set-env-vars="VIDEO_REMOTE_STAGE_RETRIES=3" \
   --set-env-vars="FFMPEG_COMMAND_TIMEOUT_SECONDS=180" \

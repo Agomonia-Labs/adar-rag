@@ -32,7 +32,7 @@ async def test_create_video_job_reuses_active_job():
     conn = MagicMock()
     conn.transaction.return_value = _Transaction()
     conn.execute = AsyncMock()
-    conn.fetchrow = AsyncMock(return_value={"id": "existing-job"})
+    conn.fetchrow = AsyncMock(return_value={"id": "existing-job", "status": "running", "stale": False})
     pool = MagicMock()
     pool.acquire.return_value = _Acquire(conn)
 
@@ -43,6 +43,28 @@ async def test_create_video_job_reuses_active_job():
 
     assert (job_id, reused) == ("existing-job", True)
     assert conn.execute.await_count == 1  # advisory lock only; no duplicate insert
+
+
+@pytest.mark.asyncio
+async def test_create_video_job_resumes_failed_job_with_checkpoints():
+    conn = MagicMock()
+    conn.transaction.return_value = _Transaction()
+    conn.execute = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value={"id": "failed-job", "status": "error", "stale": True})
+    conn.fetchval = AsyncMock(return_value=True)
+    pool = MagicMock()
+    pool.acquire.return_value = _Acquire(conn)
+
+    with patch.object(video_dispatch, "get_pool", return_value=pool):
+        job_id, reused = await video_dispatch.create_or_reuse_video_job(
+            document_id="doc-1", user_id="user-1", workspace_id=None,
+            payload={"filename": "v.mp4"},
+        )
+
+    assert (job_id, reused) == ("failed-job", False)
+    assert conn.fetchval.await_count == 1
+    statements = [call.args[0] for call in conn.execute.await_args_list]
+    assert any("SET status='queued'" in statement for statement in statements)
 
 
 @pytest.mark.asyncio
