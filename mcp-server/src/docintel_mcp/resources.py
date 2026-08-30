@@ -90,6 +90,32 @@ def register_resources(mcp: FastMCP, settings: Settings) -> None:
         except DocIntelMcpError as exc:
             return json.dumps(exc.as_dict())
 
+    @mcp.resource("docintel://conversations/{session_id}")
+    async def conversation(session_id: str, ctx: Context) -> str:
+        """Conversation turns, consent, review state, processing status, and knowledgebase document linkage."""
+        try:
+            async with api_client(ctx, settings, "sessions:write") as client:
+                result = await client.get_conversation_recording(session_id)
+            return json.dumps(result, ensure_ascii=False, default=str)
+        except DocIntelMcpError as exc:
+            return json.dumps(exc.as_dict(), ensure_ascii=False)
+
+    @mcp.resource("docintel://conversations/{session_id}/transcript")
+    async def conversation_transcript(session_id: str, ctx: Context) -> str:
+        """Editable transcript draft before approval, or processed transcript segments after publication."""
+        try:
+            async with api_client(ctx, settings, "sessions:write") as client:
+                result = await client.get_conversation_recording(session_id)
+            payload = {
+                "session_id": session_id, "review_status": result.get("review_status"),
+                "processing_status": result.get("processing_status"), "document_id": result.get("document_id"),
+                "editable_transcript": result.get("editable_transcript") or "",
+                "segments": result.get("segments") or [],
+            }
+            return json.dumps(payload, ensure_ascii=False, default=str)
+        except DocIntelMcpError as exc:
+            return json.dumps(exc.as_dict(), ensure_ascii=False)
+
     @mcp.resource("docintel://videos/{document_id}")
     async def video(document_id: str, ctx: Context) -> str:
         """Processing status and metadata for an accessible video."""

@@ -16,6 +16,7 @@ OAuth-enabled MCP server.
 11. [Enterprise MCP Lifecycle](enterprise_platform.md)
 12. [Enterprise MCP Testing](enterprise_testing.md)
 13. [Complete MCP Coverage Guide](mcp_coverage_guide.md)
+14. [Conversation Recording Assistant](conversation_recording.md)
 
 Start every workflow from the repository root:
 

@@ -206,6 +206,121 @@ async def test_video_lifecycle_and_timestamp_question_use_video_endpoints():
 
 
 @pytest.mark.asyncio
+async def test_conversation_recording_lifecycle_uses_governed_endpoints():
+    seen: list[tuple[str, str]] = []
+
+    async def handler(request: httpx.Request):
+        seen.append((request.method, request.url.path))
+        path = request.url.path
+        if path == "/api/telephony/conversation/sessions":
+            payload = json.loads(request.content)
+            assert payload["language_code"] == "bn-BD"
+            assert payload["template_id"] == "customer-knowledge-capture"
+            return httpx.Response(200, json={"id": "conversation-1", "review_status": "collecting"})
+        if path.endswith("/consent"):
+            assert json.loads(request.content) == {"confirmed": True}
+            return httpx.Response(200, json={"consent_status": "confirmed"})
+        if path.endswith("/turns"):
+            assert b"transcript=Account+information" in request.content
+            return httpx.Response(200, json={"assistant_text": "What else should I record?"})
+        if path.endswith("/finalize"):
+            return httpx.Response(200, json={"review_status": "pending_review"})
+        if path == "/api/telephony/calls/conversation-1" and request.method == "GET":
+            return httpx.Response(200, json={
+                "id": "conversation-1", "document_id": None,
+                "turns": [
+                    {"role": "assistant", "speaker": "assistant", "transcript": "How may I help?"},
+                    {"role": "user", "speaker": "participant", "transcript": "Account information"},
+                ],
+            })
+        if path.endswith("/approve-transcript"):
+            assert json.loads(request.content)["transcript"] == "Customer: Reviewed text"
+            return httpx.Response(200, json={"document_id": "doc-1", "processing_status": "chunking"})
+        if path == "/api/telephony/calls/conversation-1" and request.method == "DELETE":
+            return httpx.Response(200, json={"deleted": True})
+        raise AssertionError(f"Unexpected request: {request.method} {path}")
+
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        started = await client.start_conversation_recording("workspace-1", "bn-IN")
+        consent = await client.confirm_conversation_consent("conversation-1", True)
+        turn = await client.add_conversation_text_turn("conversation-1", "Account information")
+        finished = await client.finish_conversation_recording("conversation-1")
+        record = await client.get_conversation_recording("conversation-1")
+        approved = await client.approve_conversation_transcript("conversation-1", "Customer: Reviewed text")
+        deleted = await client.delete_conversation_recording("conversation-1")
+
+    assert started["id"] == record["id"] == "conversation-1"
+    assert record["editable_transcript"] == (
+        "assistant: How may I help?\nparticipant: Account information"
+    )
+    assert consent["consent_status"] == "confirmed"
+    assert turn["assistant_text"].startswith("What else")
+    assert finished["review_status"] == "pending_review"
+    assert approved["document_id"] == "doc-1"
+    assert deleted["deleted"] is True
+    assert seen[-1] == ("DELETE", "/api/telephony/calls/conversation-1")
+
+
+@pytest.mark.asyncio
+async def test_list_conversation_recordings_filters_other_channels():
+    async def handler(request: httpx.Request):
+        assert request.url.path == "/api/telephony/calls"
+        assert request.url.params["workspace_id"] == "workspace-1"
+        return httpx.Response(200, json=[
+            {"id": "conversation-1", "source_channel": "in_app"},
+            {"id": "phone-1", "source_channel": "telnyx"},
+        ])
+
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        result = await client.list_conversation_recordings("workspace-1")
+
+    assert [item["id"] for item in result] == ["conversation-1"]
+
+
+@pytest.mark.asyncio
+async def test_approve_conversation_uses_stored_turns_when_transcript_is_blank():
+    requests: list[tuple[str, str]] = []
+
+    async def handler(request: httpx.Request):
+        requests.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={
+                "id": "conversation-1",
+                "turns": [
+                    {"speaker": "participant", "transcript": "Please update my account."},
+                    {"speaker": "assistant", "transcript": "The information has been captured."},
+                ],
+            })
+        payload = json.loads(request.content)
+        assert payload["transcript"] == (
+            "participant: Please update my account.\n"
+            "assistant: The information has been captured."
+        )
+        return httpx.Response(200, json={"document_id": "doc-1", "status": "queued"})
+
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        result = await client.approve_conversation_transcript("conversation-1", "")
+
+    assert result["document_id"] == "doc-1"
+    assert requests == [
+        ("GET", "/api/telephony/calls/conversation-1"),
+        ("POST", "/api/telephony/conversation/sessions/conversation-1/approve-transcript"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_approve_conversation_rejects_blank_transcript_without_stored_turns():
+    async def handler(_request: httpx.Request):
+        return httpx.Response(200, json={"id": "conversation-1", "turns": []})
+
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(DocIntelMcpError) as error:
+            await client.approve_conversation_transcript("conversation-1", "")
+
+    assert error.value.code == "empty_transcript"
+
+
+@pytest.mark.asyncio
 async def test_summary_and_comparison_collect_streaming_results():
     async def handler(request: httpx.Request):
         if request.url.path.startswith("/api/summarize/"):

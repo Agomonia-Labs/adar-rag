@@ -21,6 +21,7 @@ def _request(category: str, name: str, method: str, params: dict | None, descrip
 def example_catalog() -> list[dict]:
     ws, doc, doc2, session, run = ("YOUR_WORKSPACE_ID", "YOUR_DOCUMENT_ID",
                                     "YOUR_SECOND_DOCUMENT_ID", "YOUR_SESSION_ID", "YOUR_RUN_ID")
+    conversation = "YOUR_CONVERSATION_SESSION_ID"
     examples = [
         _request("Discovery", "Initialize server", "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "docintel-playground", "version": "1.0"}}, "Negotiate MCP protocol capabilities."),
         _request("Discovery", "List all tools", "tools/list", {}, "Inspect live tools and input schemas."),
@@ -45,6 +46,14 @@ def example_catalog() -> list[dict]:
         _tool("Chat Sessions", "update_chat_session", {"session_id": session, "title": "Updated Session", "document_ids": [doc]}, "Rename a session or change documents."),
         _tool("Chat Sessions", "ask", {"question": "What changed and what action is required?", "document_ids": [doc], "workspace_id": ws, "session_id": session, "history": [], "redact_pii": False}, "Ask and optionally persist a grounded answer."),
         _tool("Chat Sessions", "delete_chat_session", {"session_id": session, "confirm": True}, "Delete a persistent session."),
+        _tool("Conversation Recording", "start_conversation_recording", {"workspace_id": ws, "language_code": "en-US"}, "Start a governed conversation recording session; use bn-BD for Bangla."),
+        _tool("Conversation Recording", "confirm_conversation_consent", {"session_id": conversation, "confirmed": True}, "Record participant consent before collecting turns."),
+        _tool("Conversation Recording", "add_conversation_turn", {"session_id": conversation, "transcript": "I would like to add this information to the knowledgebase."}, "Add one transcribed participant turn and receive the assistant follow-up."),
+        _tool("Conversation Recording", "finish_conversation_recording", {"session_id": conversation}, "Finish collection and move the editable transcript into review."),
+        _tool("Conversation Recording", "get_conversation_recording", {"session_id": conversation}, "Read turns, review state, processing progress, and published document linkage."),
+        _tool("Conversation Recording", "list_conversation_recordings", {"workspace_id": ws}, "List conversation recordings visible in a workspace."),
+        _tool("Conversation Recording", "approve_conversation_transcript", {"session_id": conversation, "transcript": "Customer: Reviewed transcript text.", "confirm": True}, "Approve edited text and publish it for chunking and embedding."),
+        _tool("Conversation Recording", "delete_conversation_recording", {"session_id": conversation, "confirm": True}, "Delete the conversation and all owned derived records."),
         _tool("Video", "create_video_upload", {"filename": "sample.mp4", "content_type": "video/mp4", "file_size": 104857600, "workspace_id": ws}, "Create a signed video upload URL."),
         _tool("Video", "complete_video_upload", {"doc_id": doc, "filename": "sample.mp4", "content_type": "video/mp4", "file_size": 104857600, "gcs_source_path": "PATH_FROM_CREATE_UPLOAD", "workspace_id": ws, "process_after_upload": False, "rights_confirmed": True, "transcript_language": "auto", "max_frames": 12, "segment_seconds": 60, "embed_after_processing": True}, "Verify video upload and optionally process."),
         _tool("Video", "list_videos", {"workspace_id": ws}, "List videos and processing progress."),
@@ -80,6 +89,8 @@ def example_catalog() -> list[dict]:
         ("Document", "docintel://documents/YOUR_DOCUMENT_ID", "Read document metadata."),
         ("Document chunks", "docintel://documents/YOUR_DOCUMENT_ID/chunks", "Read document chunks."),
         ("Chat session", "docintel://sessions/YOUR_SESSION_ID", "Read a chat session."),
+        ("Conversation recording", "docintel://conversations/YOUR_CONVERSATION_SESSION_ID", "Read conversation turns and lifecycle state."),
+        ("Conversation transcript", "docintel://conversations/YOUR_CONVERSATION_SESSION_ID/transcript", "Read the editable transcript draft or published segments."),
         ("Video", "docintel://videos/YOUR_DOCUMENT_ID", "Read video metadata."),
         ("Video timeline", "docintel://videos/YOUR_DOCUMENT_ID/timeline", "Read the video timeline."),
         ("Video transcript", "docintel://videos/YOUR_DOCUMENT_ID/transcript", "Read the video transcript."),

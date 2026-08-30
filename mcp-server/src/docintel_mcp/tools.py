@@ -195,6 +195,79 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
             return exc.as_dict()
 
     @mcp.tool()
+    async def start_conversation_recording(
+        ctx: Context, workspace_id: str | None = None, language_code: str = "en-US",
+    ) -> dict:
+        """Create an editable Conversation Recording Assistant session. Bangla is normalized to bn-BD."""
+        try:
+            async with api_client(ctx, settings, "sessions:write") as client:
+                return await client.start_conversation_recording(workspace_id, language_code)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def confirm_conversation_consent(ctx: Context, session_id: str, confirmed: bool) -> dict:
+        """Record participant consent before accepting conversation turns."""
+        try:
+            async with api_client(ctx, settings, "sessions:write") as client:
+                return await client.confirm_conversation_consent(session_id, confirmed)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def add_conversation_turn(ctx: Context, session_id: str, transcript: str) -> dict:
+        """Add one participant text turn and return the assistant response and updated collection state."""
+        try:
+            async with api_client(ctx, settings, "sessions:write") as client:
+                return await client.add_conversation_text_turn(session_id, transcript)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def finish_conversation_recording(ctx: Context, session_id: str) -> dict:
+        """Stop collection and move the transcript into human review without publishing it."""
+        try:
+            async with api_client(ctx, settings, "sessions:write") as client:
+                return await client.finish_conversation_recording(session_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def get_conversation_recording(ctx: Context, session_id: str) -> dict:
+        """Read an accessible conversation, turns, editable transcript source, review state, and processing status."""
+        try:
+            async with api_client(ctx, settings, "sessions:write") as client:
+                return await client.get_conversation_recording(session_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def list_conversation_recordings(ctx: Context, workspace_id: str | None = None) -> dict:
+        """List accessible in-app conversation recordings in personal or workspace scope."""
+        try:
+            async with api_client(ctx, settings, "sessions:write") as client:
+                items = await client.list_conversation_recordings(workspace_id)
+            return {"workspace_id": workspace_id, "count": len(items), "conversations": items}
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def approve_conversation_transcript(
+        ctx: Context, session_id: str, transcript: str, confirm: bool = False,
+    ) -> dict:
+        """Approve the edited transcript and start knowledgebase chunking and embedding. Requires confirm=true."""
+        if not confirm:
+            return {"ok": False, "error": {"code": "confirmation_required", "message": "Set confirm=true to publish the transcript"}}
+        try:
+            async with api_client(ctx, settings, "reviews:approve") as client:
+                return await client.approve_conversation_transcript(session_id, transcript)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def delete_conversation_recording(ctx: Context, session_id: str, confirm: bool = False) -> dict:
+        """Delete the recording, transcript, chunks, vectors, and derived records. Requires confirm=true."""
+        if not confirm:
+            return {"ok": False, "error": {"code": "confirmation_required", "message": "Set confirm=true to delete the conversation"}}
+        try:
+            async with api_client(ctx, settings, "sessions:write") as client:
+                return await client.delete_conversation_recording(session_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
     async def list_workspaces(ctx: Context) -> dict:
         """List DocIntel workspaces accessible to the authenticated user."""
         try:

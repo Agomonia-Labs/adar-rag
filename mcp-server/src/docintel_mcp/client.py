@@ -344,6 +344,64 @@ class DocIntelApiClient:
             json={"messages": messages},
         )
 
+    async def start_conversation_recording(self, workspace_id: str | None, language_code: str) -> dict:
+        return await self.request("POST", "/api/telephony/conversation/sessions", json={
+            "workspace_id": workspace_id,
+            "template_id": "customer-knowledge-capture",
+            "language_code": "bn-BD" if language_code.lower().startswith("bn") else language_code,
+            "title": "Conversation Recording",
+            "redact_pii": True,
+        })
+
+    async def confirm_conversation_consent(self, session_id: str, confirmed: bool) -> dict:
+        return await self.request(
+            "POST", f"/api/telephony/conversation/sessions/{session_id}/consent",
+            json={"confirmed": confirmed},
+        )
+
+    async def add_conversation_text_turn(self, session_id: str, transcript: str) -> dict:
+        return await self.request(
+            "POST", f"/api/telephony/conversation/sessions/{session_id}/turns",
+            data={"transcript": transcript},
+        )
+
+    async def finish_conversation_recording(self, session_id: str) -> dict:
+        return await self.request("POST", f"/api/telephony/conversation/sessions/{session_id}/finalize")
+
+    async def get_conversation_recording(self, session_id: str) -> dict:
+        result = await self.request("GET", f"/api/telephony/calls/{session_id}")
+        turns = result.get("turns") or []
+        result["editable_transcript"] = "\n".join(
+            f"{turn.get('speaker') or turn.get('role') or 'speaker'}: {turn.get('transcript') or ''}".strip()
+            for turn in turns
+            if str(turn.get("transcript") or "").strip()
+        )
+        return result
+
+    async def list_conversation_recordings(self, workspace_id: str | None) -> list[dict]:
+        params = {"workspace_id": workspace_id} if workspace_id else None
+        calls = await self.request("GET", "/api/telephony/calls", params=params)
+        return [item for item in calls if item.get("source_channel") == "in_app"]
+
+    async def approve_conversation_transcript(self, session_id: str, transcript: str) -> dict:
+        transcript = str(transcript or "").strip()
+        if not transcript:
+            record = await self.get_conversation_recording(session_id)
+            transcript = str(record.get("editable_transcript") or "").strip()
+        if not transcript:
+            raise DocIntelMcpError(
+                "empty_transcript",
+                "The conversation has no transcript to approve. Add a turn and finish the conversation first.",
+                status_code=400,
+            )
+        return await self.request(
+            "POST", f"/api/telephony/conversation/sessions/{session_id}/approve-transcript",
+            json={"transcript": transcript},
+        )
+
+    async def delete_conversation_recording(self, session_id: str) -> dict:
+        return await self.request("DELETE", f"/api/telephony/calls/{session_id}")
+
     async def ask(
         self,
         question: str,

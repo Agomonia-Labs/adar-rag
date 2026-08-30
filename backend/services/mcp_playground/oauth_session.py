@@ -26,7 +26,8 @@ CALLBACK_URL = os.getenv(
 )
 DEFAULT_SCOPES = os.getenv(
     "MCP_PLAYGROUND_SCOPES",
-    "workspaces:read documents:read knowledge:query knowledge:generate video:read workflows:read batches:read",
+    "workspaces:read documents:read knowledge:query knowledge:generate sessions:write "
+    "reviews:approve video:read workflows:read batches:read",
 ).split()
 
 

@@ -67,6 +67,21 @@ def test_destructive_tool_requires_confirmation():
     validate_request(request, confirm=True)
 
 
+@pytest.mark.parametrize("tool_name", [
+    "approve_conversation_transcript",
+    "delete_conversation_recording",
+])
+def test_conversation_publication_and_deletion_require_confirmation(tool_name):
+    request = parse_command(
+        f'mcp_tool {tool_name} \'{{"session_id":"conversation-1","confirm":true}}\''
+    ).request
+
+    with pytest.raises(HTTPException) as exc:
+        validate_request(request, confirm=False)
+    assert exc.value.status_code == 409
+    validate_request(request, confirm=True)
+
+
 def test_rejects_non_playground_json_rpc_method():
     request = {"jsonrpc": "2.0", "id": 1, "method": "completion/complete"}
     with pytest.raises(HTTPException) as exc:
@@ -87,12 +102,15 @@ def test_catalog_covers_registered_tools_and_resources():
         "search_video", "search_knowledgebase", "summarize_document", "summarize_documents",
         "compare_documents", "create_chat_session", "list_chat_sessions", "get_chat_session",
         "update_chat_session", "delete_chat_session", "ask",
+        "start_conversation_recording", "confirm_conversation_consent", "add_conversation_turn",
+        "finish_conversation_recording", "get_conversation_recording", "list_conversation_recordings",
+        "approve_conversation_transcript", "delete_conversation_recording",
         "create_batch_upload", "complete_batch_upload", "start_batch_embedding", "start_batch_classification",
         "start_workspace_summary", "list_batch_jobs", "get_batch_status", "get_batch_results",
         "retry_batch_failures", "cancel_batch_job",
     }
     assert tools == expected
-    assert sum(item["category"] == "Resources" for item in catalog) == 12
+    assert sum(item["category"] == "Resources" for item in catalog) == 14
 
 
 def test_formats_json_resource_text_as_structured_data():

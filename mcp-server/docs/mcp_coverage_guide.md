@@ -433,6 +433,35 @@ mcp_tool delete_chat_session '{"session_id":"YOUR_SESSION_ID","confirm":true}' |
 mcp_tool ask '{"question":"What changed since the previous discussion?","document_ids":["YOUR_DOCUMENT_ID"],"workspace_id":"YOUR_WORKSPACE_ID","session_id":"YOUR_SESSION_ID","history":[],"redact_pii":false}' | tool_data | jq '.'
 ```
 
+### Conversation Recording Assistant
+
+The conversation workflow exposes eight tools covering session creation,
+consent, transcribed turns, completion, review, approval, listing, and deletion.
+It also exposes full-record and transcript resources. Audio capture remains a
+client responsibility; MCP carries the resulting text through the governed
+DocIntel lifecycle.
+
+```text
+start_conversation_recording       sessions:write
+confirm_conversation_consent       sessions:write
+add_conversation_turn              sessions:write
+finish_conversation_recording      sessions:write
+get_conversation_recording         sessions:write
+list_conversation_recordings       sessions:write
+approve_conversation_transcript    reviews:approve + confirm:true
+delete_conversation_recording      sessions:write + confirm:true
+```
+
+Resources:
+
+```text
+docintel://conversations/{session_id}
+docintel://conversations/{session_id}/transcript
+```
+
+See [Conversation Recording Assistant](conversation_recording.md) for the full
+consent-to-knowledgebase walkthrough.
+
 ### Batch operations
 
 #### 35. `create_batch_upload`
