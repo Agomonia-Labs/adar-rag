@@ -295,6 +295,45 @@ ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCE
 CREATE INDEX IF NOT EXISTS idx_docs_workspace   ON documents(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_workspace ON document_chunks(workspace_id);
 
+-- Completed-call ingestion. Calls become regular documents after transcription,
+-- so existing workspace authorization, retrieval, chat, and deletion still apply.
+CREATE TABLE IF NOT EXISTS telephony_integrations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), provider TEXT NOT NULL,
+    external_account_id TEXT NOT NULL, workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+    owner_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE, configuration JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(provider, external_account_id)
+);
+CREATE TABLE IF NOT EXISTS telephony_calls (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), provider TEXT NOT NULL DEFAULT 'google',
+    external_call_id TEXT NOT NULL, external_account_id TEXT,
+    document_id UUID UNIQUE REFERENCES documents(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+    direction TEXT NOT NULL DEFAULT 'inbound', caller_number TEXT, destination_number TEXT,
+    language_code TEXT NOT NULL DEFAULT 'en-US', consent_status TEXT NOT NULL DEFAULT 'unknown',
+    recording_gcs_uri TEXT, recording_url TEXT, recording_mime_type TEXT NOT NULL DEFAULT 'audio/wav',
+    duration_seconds DOUBLE PRECISION, processing_status TEXT NOT NULL DEFAULT 'received',
+    processing_step TEXT NOT NULL DEFAULT 'received', progress_pct INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT, summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+    provider_payload JSONB NOT NULL DEFAULT '{}'::jsonb, started_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ, processed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(provider, external_call_id)
+);
+CREATE INDEX IF NOT EXISTS idx_telephony_calls_workspace ON telephony_calls(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_telephony_calls_user ON telephony_calls(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_telephony_calls_status ON telephony_calls(processing_status, updated_at DESC);
+CREATE TABLE IF NOT EXISTS telephony_segments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), call_id UUID NOT NULL REFERENCES telephony_calls(id) ON DELETE CASCADE,
+    segment_index INTEGER NOT NULL, speaker TEXT NOT NULL DEFAULT 'speaker_1',
+    start_seconds DOUBLE PRECISION NOT NULL DEFAULT 0, end_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+    transcript TEXT NOT NULL, confidence DOUBLE PRECISION, metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(call_id, segment_index)
+);
+CREATE INDEX IF NOT EXISTS idx_telephony_segments_call ON telephony_segments(call_id, segment_index);
+
 -- User tier + custom limits (billing / tiered enforcement)
 ALTER TABLE users
     ADD COLUMN IF NOT EXISTS tier          TEXT    NOT NULL DEFAULT 'free',

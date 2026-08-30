@@ -108,6 +108,32 @@ async def send_video_processing_notification(
         return False
 
 
+async def send_call_processing_notification(
+    user_email: str,
+    *,
+    call_name: str,
+    status: str,
+    segment_count: int = 0,
+    error_message: str = "",
+) -> bool:
+    completed = status == "completed"
+    subject = f"Conversation intelligence ready - {call_name}" if completed else f"Conversation processing failed - {call_name}"
+    body = (
+        f"Your recorded conversation has been processed into DocIntel.\n\n"
+        f"Call: {call_name}\nTranscript segments: {segment_count}\n\n"
+        "You can review the transcript and ask grounded questions from the DocIntel knowledgebase.\n"
+        if completed else
+        f"DocIntel could not process the recorded conversation.\n\nCall: {call_name}\nError: {error_message or 'Processing failed'}\n"
+    )
+    body += "\n- ADAR DocIntel\n"
+    try:
+        await send_email(to=user_email, subject=subject, body=body)
+        return True
+    except Exception as exc:
+        log.warning("Call processing notification failed for %s: %s", user_email, exc)
+        return False
+
+
 async def send_verification_email(user_email: str, token: str, app_url: str) -> None:
     """Send email address verification link."""
     link = f"{app_url.rstrip('/')}/verify-email?token={token}"

@@ -149,6 +149,7 @@ _ROUTERS = [
     ("routes.evals",          "evals_router",          "/api/evals",         ["evals"]),
     ("routes.voice",          "voice_router",          "/api/voice",         ["voice"]),
     ("routes.video",          "video_router",          "/api/video",         ["video"]),
+    ("routes.telephony",      "telephony_router",      "/api/telephony",     ["telephony"]),
     ("routes.guest",          "guest_router",          "/api/guest",         ["guest"]),
     ("routes.traces",         "traces_router",         "/api/traces",        ["traces"]),
     ("routes.observability",  "observability_router",  "/api/observability", ["observability"]),

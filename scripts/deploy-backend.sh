@@ -89,6 +89,14 @@ else
   echo "  Video STT    : ⚠ docintel-google-speech-key not found; GOOGLE_AI_KEY fallback will be used"
 fi
 
+# Provider-neutral completed-call webhook authentication.
+if gcloud secrets describe docintel-telephony-webhook-secret --project="$PROJECT_ID" &>/dev/null; then
+  SECRETS+=("TELEPHONY_WEBHOOK_SECRET=docintel-telephony-webhook-secret:latest")
+  echo "  Telephony webhook: enabled"
+else
+  echo "  Telephony webhook: not configured (authenticated test ingestion remains available)"
+fi
+
 # Gmail SMTP — add only if both secrets exist in Secret Manager
 if gcloud secrets describe docintel-gmail-user --project="$PROJECT_ID" &>/dev/null \
   && gcloud secrets describe docintel-gmail-app-password --project="$PROJECT_ID" &>/dev/null; then
@@ -214,6 +222,8 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="VIDEO_JOB_STALE_SECONDS=1200" \
   --set-env-vars="VIDEO_JOB_MAX_ATTEMPTS=3" \
   --set-env-vars="GOOGLE_SPEECH_MODEL=latest_long" \
+  --set-env-vars="TELEPHONY_SPEECH_MODEL=telephony" \
+  --set-env-vars="TELEPHONY_TRANSCRIPTION_TIMEOUT_SECONDS=3600" \
   --set-env-vars="VIDEO_MAX_FRAMES=12" \
   --set-env-vars="VIDEO_SEGMENT_SECONDS=60" \
   --set-env-vars="VIDEO_FRAME_CAPTION_ENABLED=true" \

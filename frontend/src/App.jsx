@@ -14,6 +14,7 @@ import MyTracesPanel   from './components/MyTracesPanel.jsx';
 import HealthcarePanel from './components/HealthcarePanel.jsx';
 import RestaurantPanel from './components/RestaurantPanel.jsx';
 import VideoPanel      from './components/VideoPanel.jsx';
+import ConversationPanel from './components/ConversationPanel.jsx';
 import FinanceTaxPanel from './components/FinanceTaxPanel.jsx';
 import TalentPanel     from './components/TalentPanel.jsx';
 import McpPlayground   from './components/mcp-playground/McpPlayground.jsx';
@@ -37,6 +38,7 @@ export default function App() {
   const [showNewVisit,     setShowNewVisit]     = useState(false);
   const [showRestaurantPanel, setShowRestaurantPanel] = useState(false);
   const [showVideoPanel,   setShowVideoPanel]   = useState(false);
+  const [showConversationPanel, setShowConversationPanel] = useState(false);
   const [showFinanceTaxPanel, setShowFinanceTaxPanel] = useState(false);
   const [showTalentPanel, setShowTalentPanel] = useState(false);
   const [showMcpPlayground, setShowMcpPlayground] = useState(false);
@@ -217,6 +219,11 @@ export default function App() {
     setShowVideoPanel(true);
   };
 
+  const openConversationWorkflow = () => {
+    closeMenus();
+    setShowConversationPanel(true);
+  };
+
   const openFinanceTaxWorkflow = () => {
     closeMenus();
     setShowFinanceTaxPanel(true);
@@ -262,6 +269,9 @@ export default function App() {
           activeWorkspace={activeWorkspace}
           onClose={() => setShowVideoPanel(false)}
         />
+      )}
+      {showConversationPanel && (
+        <ConversationPanel activeWorkspace={activeWorkspace} onClose={() => setShowConversationPanel(false)} />
       )}
       {showFinanceTaxPanel && (
         <FinanceTaxPanel
@@ -383,6 +393,13 @@ export default function App() {
                     </button>
                   </div>
                   <div style={s.verticalGroup}>
+                    <div style={s.verticalGroupTitle}>Speech</div>
+                    <button style={s.verticalItem} onClick={openConversationWorkflow}>
+                      <span>☎</span>
+                      <span>Conversation Intelligence</span>
+                    </button>
+                  </div>
+                  <div style={s.verticalGroup}>
                     <div style={s.verticalGroupTitle}>Finance</div>
                     <button
                       style={s.verticalItem}
@@ -493,6 +510,10 @@ export default function App() {
                 <button type="button" style={s.menuItem} onClick={openVideoWorkflow}>
                   <span>🎥</span>
                   <span>Video Intelligence Workflow</span>
+                </button>
+                <button type="button" style={s.menuItem} onClick={openConversationWorkflow}>
+                  <span>☎</span>
+                  <span>Conversation Intelligence</span>
                 </button>
                 <button type="button" style={s.menuItem} onClick={openFinanceTaxWorkflow}>
                   <span>💼</span>

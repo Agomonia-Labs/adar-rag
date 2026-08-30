@@ -398,6 +398,24 @@ export async function askVideoQuestion(docId, question, limit = 8) {
   }));
 }
 
+// ── Conversation Intelligence ────────────────────────────────────────────────
+export async function listTelephonyCalls(workspaceId = null) {
+  const qs = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : '';
+  return handleRes(await fetch(`${BASE}/telephony/calls${qs}`, { headers: authHdr() }));
+}
+
+export async function getTelephonyCall(callId) {
+  return handleRes(await fetch(`${BASE}/telephony/calls/${callId}`, { headers: authHdr() }));
+}
+
+export async function retryTelephonyCall(callId) {
+  return handleRes(await fetch(`${LONG_BASE}/telephony/calls/${callId}/retry`, { method:'POST', headers:authHdr() }));
+}
+
+export async function deleteTelephonyCall(callId) {
+  return handleRes(await fetch(`${BASE}/telephony/calls/${callId}`, { method:'DELETE', headers:authHdr() }));
+}
+
 // ── Chat ──────────────────────────────────────────────────────────────────────
 export async function streamChat({ question, documentIds, document_ids, history, workspaceId = null, traceId = null, redactPii = false }, { onToken, onDone, onError }) {
   const docIds = documentIds || document_ids;  // accept both forms

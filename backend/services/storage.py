@@ -61,6 +61,14 @@ async def upload_text(blob_path: str, text: str) -> None:
 async def upload_json(blob_path: str, obj: Any) -> None:
     await upload_bytes(blob_path, json.dumps(obj, indent=2).encode(), "application/json")
 
+async def copy_blob(source_path: str, destination_path: str) -> None:
+    """Copy an object inside the configured bucket without downloading it."""
+    def _do():
+        client = _make_client()
+        bucket = client.bucket(GCS_BUCKET)
+        bucket.copy_blob(bucket.blob(source_path), bucket, destination_path)
+    await asyncio.to_thread(_do)
+
 
 # ── Download ──────────────────────────────────────────────────────────────────
 async def download_text(blob_path: str) -> str:
