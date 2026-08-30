@@ -334,6 +334,49 @@ CREATE TABLE IF NOT EXISTS telephony_segments (
 );
 CREATE INDEX IF NOT EXISTS idx_telephony_segments_call ON telephony_segments(call_id, segment_index);
 
+-- Provider-neutral, in-app conversation assistant. The existing telephony call
+-- remains the durable conversation/document envelope; these tables add guided
+-- collection and immediately persisted conversational turns.
+ALTER TABLE telephony_calls ADD COLUMN IF NOT EXISTS source_channel TEXT NOT NULL DEFAULT 'external';
+ALTER TABLE telephony_calls ADD COLUMN IF NOT EXISTS template_id UUID;
+ALTER TABLE telephony_calls ADD COLUMN IF NOT EXISTS session_state JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE telephony_calls ADD COLUMN IF NOT EXISTS review_status TEXT NOT NULL DEFAULT 'draft';
+ALTER TABLE telephony_calls ADD COLUMN IF NOT EXISTS consent_confirmed_at TIMESTAMPTZ;
+CREATE TABLE IF NOT EXISTS conversation_templates (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+    owner_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    instructions TEXT NOT NULL DEFAULT '',
+    fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_conversation_templates_workspace
+    ON conversation_templates(workspace_id, active, created_at DESC);
+CREATE TABLE IF NOT EXISTS conversation_turns (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    call_id UUID NOT NULL REFERENCES telephony_calls(id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    speaker TEXT NOT NULL,
+    transcript TEXT NOT NULL,
+    audio_gcs_path TEXT,
+    started_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ,
+    confidence DOUBLE PRECISION,
+    collected_fields JSONB NOT NULL DEFAULT '{}'::jsonb,
+    citations JSONB NOT NULL DEFAULT '[]'::jsonb,
+    trace_id UUID,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(call_id, sequence)
+);
+CREATE INDEX IF NOT EXISTS idx_conversation_turns_call
+    ON conversation_turns(call_id, sequence);
+
 -- User tier + custom limits (billing / tiered enforcement)
 ALTER TABLE users
     ADD COLUMN IF NOT EXISTS tier          TEXT    NOT NULL DEFAULT 'free',

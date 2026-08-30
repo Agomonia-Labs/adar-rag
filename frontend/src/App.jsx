@@ -396,7 +396,7 @@ export default function App() {
                     <div style={s.verticalGroupTitle}>Speech</div>
                     <button style={s.verticalItem} onClick={openConversationWorkflow}>
                       <span>☎</span>
-                      <span>Conversation Intelligence</span>
+                      <span>Conversation Assistant</span>
                     </button>
                   </div>
                   <div style={s.verticalGroup}>
@@ -513,7 +513,7 @@ export default function App() {
                 </button>
                 <button type="button" style={s.menuItem} onClick={openConversationWorkflow}>
                   <span>☎</span>
-                  <span>Conversation Intelligence</span>
+                  <span>Conversation Assistant</span>
                 </button>
                 <button type="button" style={s.menuItem} onClick={openFinanceTaxWorkflow}>
                   <span>💼</span>

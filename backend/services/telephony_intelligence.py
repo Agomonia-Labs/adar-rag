@@ -9,6 +9,7 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from services.chunker import Chunk
+from services.conversation_assistant import json_object_value
 from services.llm import embed
 from services.notifications import send_call_processing_notification
 from services.pii import redact_text
@@ -153,6 +154,7 @@ async def process_call(call_id: str, transcript_override: str | None = None, red
         if not row:
             raise ValueError("Call not found")
         call = dict(row)
+        source_type = "conversation_assistant" if call.get("source_channel") == "in_app" else "telephony"
         await _set_progress(call_id, "processing", "transcribing", 20)
 
         if transcript_override and transcript_override.strip():
@@ -191,13 +193,13 @@ async def process_call(call_id: str, transcript_override: str | None = None, red
         chunks = [Chunk(
             text=f"[{s['start_seconds']:.2f}-{s['end_seconds']:.2f}] {s['speaker']}: {s['transcript']}",
             index=i, total=len(segments),
-            doc_meta={"source_type": "telephony", "call_id": call_id, "speaker": s["speaker"],
+            doc_meta={"source_type": source_type, "call_id": call_id, "speaker": s["speaker"],
                       "start_seconds": s["start_seconds"], "end_seconds": s["end_seconds"]},
         ) for i, s in enumerate(segments)]
         for chunk in chunks:
             await gcs.upload_text(gcs.chunk_path(user_id, doc_id, chunk.index), chunk.text)
         await gcs.upload_json(gcs.metadata_path(user_id, doc_id), {
-            "document": {"id": doc_id, "source_type": "telephony", "call_id": call_id,
+            "document": {"id": doc_id, "source_type": source_type, "call_id": call_id,
                          "total_chunks": len(chunks), "pii_redactions": redaction_total},
             "chunks": [{"index": c.index, "gcs_path": gcs.chunk_path(user_id, doc_id, c.index),
                         **c.to_metadata()} for c in chunks],
@@ -212,6 +214,9 @@ async def process_call(call_id: str, transcript_override: str | None = None, red
                               embedding=await embed(chunk.text), chunk_metadata=chunk.to_metadata())
 
         summary = _summary(segments)
+        session_state = json_object_value(call.get("session_state"))
+        summary["collected_fields"] = json_object_value(session_state.get("collected_fields"))
+        summary["missing_required_fields"] = list(session_state.get("missing_required_fields") or [])
         async with pool.acquire() as db:
             await db.execute(
                 """UPDATE telephony_calls SET processing_status='completed', processing_step='completed',
@@ -224,7 +229,8 @@ async def process_call(call_id: str, transcript_override: str | None = None, red
                    doc_domain='conversation', doc_language=$3, error_message=NULL,
                    doc_metadata=doc_metadata || $4::jsonb, updated_at=NOW() WHERE id=$1""",
                 doc_id, len(chunks), call["language_code"].split("-")[0],
-                json.dumps({"telephony_call_id": call_id, "source_type": "telephony"}),
+                json.dumps({"conversation_id": call_id, "source_type": source_type,
+                            "review_status": call.get("review_status") or "draft"}),
             )
         await send_call_processing_notification(call["email"], call_name=call["original_name"],
                                                 status="completed", segment_count=len(segments))

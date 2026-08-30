@@ -40,10 +40,10 @@ echo "  ✓ Pushed: $IMAGE"
 
 # ── 4. Enable APIs needed by runtime features ─────────────────────────────────
 echo "▶ Ensuring required Google APIs are enabled..."
-gcloud services enable speech.googleapis.com run.googleapis.com \
+gcloud services enable speech.googleapis.com texttospeech.googleapis.com run.googleapis.com \
   --project="$PROJECT_ID" \
   --quiet
-echo "  ✓ Speech-to-Text API enabled"
+echo "  ✓ Speech-to-Text and Text-to-Speech APIs enabled"
 
 # The backend launches a job execution with a per-request job-id override.
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
@@ -87,6 +87,13 @@ if gcloud secrets describe docintel-google-speech-key --project="$PROJECT_ID" &>
   echo "  Video STT    : enabled (docintel-google-speech-key)"
 else
   echo "  Video STT    : ⚠ docintel-google-speech-key not found; GOOGLE_AI_KEY fallback will be used"
+fi
+
+if gcloud secrets describe docintel-google-tts-key --project="$PROJECT_ID" &>/dev/null; then
+  SECRETS+=("GOOGLE_TTS_API_KEY=docintel-google-tts-key:latest")
+  echo "  Conversation TTS: enabled (docintel-google-tts-key)"
+else
+  echo "  Conversation TTS: using existing Google API key fallback"
 fi
 
 # Provider-neutral completed-call webhook authentication.

@@ -416,6 +416,51 @@ export async function deleteTelephonyCall(callId) {
   return handleRes(await fetch(`${BASE}/telephony/calls/${callId}`, { method:'DELETE', headers:authHdr() }));
 }
 
+export async function startConversationSession(payload) {
+  return handleRes(await fetch(`${BASE}/telephony/conversation/sessions`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function synthesizeConversationSpeech(text, languageCode) {
+  const response = await fetch(`${BASE}/telephony/conversation/speech`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({text, language_code:languageCode}),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || `Speech synthesis failed (${response.status})`);
+  }
+  return response.blob();
+}
+
+export async function setConversationConsent(sessionId, confirmed) {
+  return handleRes(await fetch(`${BASE}/telephony/conversation/sessions/${sessionId}/consent`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify({confirmed}),
+  }));
+}
+
+export async function addConversationTurn(sessionId, { transcript = '', audio = null } = {}) {
+  const form = new FormData();
+  form.append('transcript', transcript);
+  if (audio) form.append('audio', audio, audio.name || 'conversation-turn.webm');
+  return handleRes(await fetch(`${LONG_BASE}/telephony/conversation/sessions/${sessionId}/turns`, {
+    method:'POST', headers:authHdr(), body:form,
+  }));
+}
+
+export async function finalizeConversationSession(sessionId) {
+  return handleRes(await fetch(`${LONG_BASE}/telephony/conversation/sessions/${sessionId}/finalize`, {
+    method:'POST', headers:authHdr(),
+  }));
+}
+
+export async function approveConversationTranscript(sessionId, transcript) {
+  return handleRes(await fetch(`${LONG_BASE}/telephony/conversation/sessions/${sessionId}/approve-transcript`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify({transcript}),
+  }));
+}
+
 // ── Chat ──────────────────────────────────────────────────────────────────────
 export async function streamChat({ question, documentIds, document_ids, history, workspaceId = null, traceId = null, redactPii = false }, { onToken, onDone, onError }) {
   const docIds = documentIds || document_ids;  // accept both forms

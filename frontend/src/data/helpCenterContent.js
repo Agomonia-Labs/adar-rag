@@ -148,6 +148,31 @@ export const HELP_CENTER_ARTICLES = [
     ],
   },
   {
+    id: 'conversation-assistant',
+    category: 'workflow',
+    icon: '🎙',
+    title: 'Conversation Assistant',
+    audience: ['Business users', 'Interviewers', 'Reviewers'],
+    summary: 'Capture a consented conversation, collect guided information, and publish it into the workspace knowledgebase.',
+    sections: [
+      {
+        heading: 'Live guided workflow',
+        steps: [
+          'Choose a workspace, conversation template, and spoken language.',
+          'Confirm that the participant consented to recording and AI processing.',
+          'Record one participant turn at a time or enter a typed response.',
+          'Review the transcript, assistant follow-up, citations, and collected fields after every turn.',
+          'Edit and save structured information before finishing the conversation.',
+          'Finalize the session to create chunks, embeddings, summary, and a reusable workspace document.',
+        ],
+      },
+      {
+        heading: 'Trust and governance',
+        body: 'Every turn is saved immediately and scoped to the selected workspace. The assistant can retrieve only documents available to the signed-in user. Collected information remains reviewable, and finalization publishes the transcript through the same governed document, chunking, embedding, deletion, and trace mechanisms used elsewhere in DocIntel.',
+      },
+    ],
+  },
+  {
     id: 'speech-transcripts',
     category: 'workflow',
     icon: '🎙',
