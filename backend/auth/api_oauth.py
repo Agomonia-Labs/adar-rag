@@ -21,6 +21,8 @@ class ApiPrincipal:
     user: dict
     client_id: str
     scopes: frozenset[str]
+    token_kind: str = "user"
+    organization_id: str | None = None
 
     @property
     def user_id(self) -> str:
@@ -62,11 +64,15 @@ async def get_api_principal(
         user_id,
     )
     client = await db.fetchrow(
-        """SELECT client_id FROM oauth_clients WHERE client_id=$1 AND revoked_at IS NULL
+        """SELECT client_id,'user'::text AS token_kind,NULL::uuid AS organization_id
+             FROM oauth_clients WHERE client_id=$1 AND revoked_at IS NULL
            UNION ALL
-           SELECT client_id FROM oauth_service_clients
-            WHERE client_id=$1 AND revoked_at IS NULL
+           SELECT s.client_id,'service'::text AS token_kind,s.organization_id
+             FROM oauth_service_clients s
+             LEFT JOIN developer_organizations o ON o.id=s.organization_id
+            WHERE s.client_id=$1 AND s.revoked_at IS NULL
               AND (expires_at IS NULL OR expires_at>NOW())
+              AND (s.organization_id IS NULL OR o.status='active')
            LIMIT 1""",
         client_id,
     )
@@ -78,7 +84,17 @@ async def get_api_principal(
         if not scopes <= granted:
             raise _bearer_error(status.HTTP_401_UNAUTHORIZED, "One or more API scope grants were revoked")
 
-    return ApiPrincipal(user=dict(user), client_id=client_id, scopes=scopes)
+    client_kind = str(client.get("token_kind") or "user")
+    token_kind = str(claims.get("token_kind") or client_kind)
+    organization_id = str(client.get("organization_id")) if client.get("organization_id") else None
+    if token_kind != client_kind:
+        raise _bearer_error(status.HTTP_401_UNAUTHORIZED, "API token client type is invalid")
+    if organization_id != (str(claims.get("organization_id")) if claims.get("organization_id") else None):
+        raise _bearer_error(status.HTTP_401_UNAUTHORIZED, "API token organization is invalid")
+    return ApiPrincipal(
+        user=dict(user), client_id=client_id, scopes=scopes,
+        token_kind=token_kind, organization_id=organization_id,
+    )
 
 
 def require_api_scope(scope: str) -> Callable:
@@ -103,6 +119,8 @@ async def validate_api_workspace_context(
     """Validate the optional stateless workspace selector for public API calls."""
     workspace_id = (request.headers.get("X-DocIntel-Workspace-ID") or "personal").strip()
     if not workspace_id or workspace_id.lower() == "personal":
+        if principal.token_kind == "service" and principal.organization_id:
+            raise HTTPException(status_code=403, detail="Organization applications require an explicitly granted workspace")
         request.state.api_workspace_id = None
         return None
     role = await db.fetchval(
@@ -112,6 +130,14 @@ async def validate_api_workspace_context(
     )
     if not role:
         raise HTTPException(status_code=403, detail="OAuth user cannot access the selected workspace")
+    if principal.token_kind == "service" and principal.organization_id:
+        granted = await db.fetchval(
+            """SELECT 1 FROM oauth_service_workspace_grants
+               WHERE client_id=$1 AND workspace_id=$2::uuid""",
+            principal.client_id, workspace_id,
+        )
+        if not granted:
+            raise HTTPException(status_code=403, detail="OAuth application is not granted access to this workspace")
     request.state.api_workspace_id = workspace_id
     request.state.api_workspace_role = role
     return workspace_id

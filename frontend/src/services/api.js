@@ -214,6 +214,40 @@ export async function claimGuestSession() {
   return data;
 }
 
+// Developer applications and organization-owned machine credentials.
+export async function listDeveloperOrganizations() {
+  return handleRes(await fetch(`${BASE}/v1/developer/organizations`, { headers:authHdr() }));
+}
+export async function createDeveloperOrganization(payload) {
+  return handleRes(await fetch(`${BASE}/v1/developer/organizations`, {
+    method:'POST', headers:{ ...authHdr(), 'Content-Type':'application/json' }, body:JSON.stringify(payload),
+  }));
+}
+export async function listDeveloperApps() {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps`, { headers:authHdr() }));
+}
+export async function createDeveloperApp(payload) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps`, {
+    method:'POST', headers:{ ...authHdr(), 'Content-Type':'application/json' }, body:JSON.stringify(payload),
+  }));
+}
+export async function getDeveloperApp(clientId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}`, { headers:authHdr() }));
+}
+export async function rotateDeveloperAppSecret(clientId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/rotate-secret`, {
+    method:'POST', headers:authHdr(),
+  }));
+}
+export async function revokeDeveloperApp(clientId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}`, {
+    method:'DELETE', headers:authHdr(),
+  }));
+}
+export async function getDeveloperAppAudit(clientId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/audit`, { headers:authHdr() }));
+}
+
 export async function streamGuestChat({ question, documentIds, history = [], redactPii = false }, { onToken, onDone, onError }) {
   await ensureGuestSession();
   const res = await fetch(`${STREAM_BASE}/guest/chat/stream`, {

@@ -18,6 +18,7 @@ import ConversationPanel from './components/ConversationPanel.jsx';
 import FinanceTaxPanel from './components/FinanceTaxPanel.jsx';
 import TalentPanel     from './components/TalentPanel.jsx';
 import McpPlayground   from './components/mcp-playground/McpPlayground.jsx';
+import DeveloperApplications from './components/developer-apps/DeveloperApplications.jsx';
 import { ToastContainer } from './components/Toast.jsx';
 import { claimGuestSession, getMe, getWorkspace }       from './services/api.js';
 import { LANGUAGES, getLanguage, getStrings } from './i18n.js';
@@ -42,6 +43,7 @@ export default function App() {
   const [showFinanceTaxPanel, setShowFinanceTaxPanel] = useState(false);
   const [showTalentPanel, setShowTalentPanel] = useState(false);
   const [showMcpPlayground, setShowMcpPlayground] = useState(false);
+  const [showDeveloperApplications, setShowDeveloperApplications] = useState(false);
   const [openLeasePickerKey, setOpenLeasePickerKey] = useState(0);
   const [openHealthcarePickerKey, setOpenHealthcarePickerKey] = useState(0);
   const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0);
@@ -239,6 +241,11 @@ export default function App() {
     setShowMcpPlayground(true);
   };
 
+  const openDeveloperApplications = () => {
+    closeMenus();
+    setShowDeveloperApplications(true);
+  };
+
   return (
     <>
       <ToastContainer />
@@ -280,6 +287,7 @@ export default function App() {
         />
       )}
       {showMcpPlayground && <McpPlayground language={uiLang} onClose={() => setShowMcpPlayground(false)} />}
+      {showDeveloperApplications && <DeveloperApplications activeWorkspace={activeWorkspace} onClose={() => setShowDeveloperApplications(false)} />}
       {showTalentPanel && (
         <TalentPanel activeWorkspace={activeWorkspace} onClose={() => setShowTalentPanel(false)} />
       )}
@@ -446,6 +454,7 @@ export default function App() {
                     <button style={s.desktopToolItem} onClick={() => { closeMenus(); setShowHelpGuide(true); }}>📘 {t.guide}</button>
                     <button style={s.desktopToolItem} onClick={() => { closeMenus(); setShowHelpCenter(true); }}>❓ {t.helpCenter}</button>
                     <button style={s.desktopToolItem} onClick={openMcpPlayground}>⌘ {t.mcpPlayground}</button>
+                    <button style={s.desktopToolItem} onClick={openDeveloperApplications}>🔑 Developer Applications</button>
                   </div>
                   <label style={s.desktopLanguageRow} title={t.language}>
                     <span>🌐 {t.language}</span>
@@ -542,6 +551,10 @@ export default function App() {
                 <button type="button" style={s.menuItem} onClick={openMcpPlayground}>
                   <span>⌘</span>
                   <span>{t.mcpPlayground}</span>
+                </button>
+                <button type="button" style={s.menuItem} onClick={openDeveloperApplications}>
+                  <span>🔑</span>
+                  <span>Developer Applications</span>
                 </button>
                 <label style={s.menuLangWrap} title={t.language}>
                   <span>🌐</span>

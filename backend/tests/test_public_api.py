@@ -132,6 +132,69 @@ async def test_current_identity_reports_token_user_and_workspace_count():
 
 
 @pytest.mark.anyio
+async def test_organization_service_client_requires_explicit_workspace_grant():
+    class WorkspaceDb:
+        def __init__(self, granted):
+            self.granted = granted
+
+        async def fetchval(self, sql, *_args):
+            if "workspace_members" in sql:
+                return "editor"
+            if "oauth_service_workspace_grants" in sql:
+                return 1 if self.granted else None
+            return None
+
+    class Request:
+        headers = {"X-DocIntel-Workspace-ID": "22222222-2222-2222-2222-222222222222"}
+
+        class State:
+            pass
+
+        state = State()
+
+    principal = ApiPrincipal(
+        user={"id": "11111111-1111-1111-1111-111111111111"},
+        client_id="svc-client",
+        scopes=frozenset({"documents:read"}),
+        token_kind="service",
+        organization_id="33333333-3333-3333-3333-333333333333",
+    )
+    with pytest.raises(HTTPException) as exc:
+        await validate_api_workspace_context(Request(), principal, WorkspaceDb(False))
+    assert exc.value.status_code == 403
+    assert "not granted" in str(exc.value.detail)
+
+    selected = await validate_api_workspace_context(Request(), principal, WorkspaceDb(True))
+    assert selected == "22222222-2222-2222-2222-222222222222"
+
+
+@pytest.mark.anyio
+async def test_organization_service_client_cannot_use_personal_context():
+    class WorkspaceDb:
+        async def fetchval(self, *_args):
+            return None
+
+    class Request:
+        headers = {"X-DocIntel-Workspace-ID": "personal"}
+
+        class State:
+            pass
+
+        state = State()
+
+    principal = ApiPrincipal(
+        user={"id": "11111111-1111-1111-1111-111111111111"},
+        client_id="svc-client",
+        scopes=frozenset({"documents:read"}),
+        token_kind="service",
+        organization_id="33333333-3333-3333-3333-333333333333",
+    )
+    with pytest.raises(HTTPException) as exc:
+        await validate_api_workspace_context(Request(), principal, WorkspaceDb())
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.anyio
 async def test_workspace_header_is_rejected_for_non_member():
     class Request:
         headers = {"X-DocIntel-Workspace-ID": "workspace-b"}

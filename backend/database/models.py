@@ -1052,6 +1052,26 @@ CREATE TABLE IF NOT EXISTS document_versions (
 );
 CREATE INDEX IF NOT EXISTS idx_document_versions_root ON document_versions(root_document_id, version_number DESC);
 
+CREATE TABLE IF NOT EXISTS developer_organizations (
+    id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name               TEXT NOT NULL,
+    slug               TEXT NOT NULL UNIQUE,
+    status             TEXT NOT NULL DEFAULT 'active',
+    created_by         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS developer_organization_members (
+    organization_id    UUID NOT NULL REFERENCES developer_organizations(id) ON DELETE CASCADE,
+    user_id            UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role               TEXT NOT NULL DEFAULT 'developer',
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY(organization_id,user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_developer_org_members_user
+    ON developer_organization_members(user_id,organization_id);
+
 CREATE TABLE IF NOT EXISTS oauth_service_clients (
     client_id          TEXT PRIMARY KEY,
     client_name        TEXT NOT NULL,
@@ -1063,7 +1083,32 @@ CREATE TABLE IF NOT EXISTS oauth_service_clients (
     revoked_at         TIMESTAMPTZ,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE oauth_service_clients ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES developer_organizations(id) ON DELETE CASCADE;
+ALTER TABLE oauth_service_clients ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 CREATE INDEX IF NOT EXISTS idx_oauth_service_owner ON oauth_service_clients(owner_user_id, revoked_at);
+CREATE INDEX IF NOT EXISTS idx_oauth_service_org ON oauth_service_clients(organization_id, revoked_at);
+
+CREATE TABLE IF NOT EXISTS oauth_service_workspace_grants (
+    client_id          TEXT NOT NULL REFERENCES oauth_service_clients(client_id) ON DELETE CASCADE,
+    workspace_id       UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    granted_by         UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY(client_id,workspace_id)
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_service_workspace
+    ON oauth_service_workspace_grants(workspace_id,client_id);
+
+CREATE TABLE IF NOT EXISTS oauth_service_audit_events (
+    id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id    UUID REFERENCES developer_organizations(id) ON DELETE SET NULL,
+    client_id          TEXT,
+    actor_user_id      UUID REFERENCES users(id) ON DELETE SET NULL,
+    event_type         TEXT NOT NULL,
+    metadata           JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_service_audit_org
+    ON oauth_service_audit_events(organization_id,created_at DESC);
 
 """
 

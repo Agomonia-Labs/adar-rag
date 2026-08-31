@@ -1,4 +1,4 @@
-from routes.developer_api import DeveloperAppCreate, _hash_secret
+from routes.developer_api import DeveloperAppCreate, DeveloperOrganizationCreate, _hash_secret
 
 
 def test_client_secret_hash_is_deterministic_and_not_plaintext():
@@ -15,3 +15,19 @@ def test_developer_app_defaults_to_public_pkce_client():
     )
     assert app.client_type == "public"
 
+
+def test_confidential_app_accepts_organization_and_workspace_boundaries():
+    app = DeveloperAppCreate(
+        name="Procurement integration",
+        client_type="confidential",
+        scopes=["documents:read", "knowledge:query"],
+        organization_id="11111111-1111-1111-1111-111111111111",
+        workspace_ids=["22222222-2222-2222-2222-222222222222"],
+    )
+    assert app.organization_id is not None
+    assert app.workspace_ids == ["22222222-2222-2222-2222-222222222222"]
+
+
+def test_organization_slug_is_optional_and_derived_by_endpoint():
+    organization = DeveloperOrganizationCreate(name="Agomonia Enterprise")
+    assert organization.slug is None

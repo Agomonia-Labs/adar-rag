@@ -2,6 +2,9 @@
 
 For a complete runnable verification sequence, see
 [REST API End-to-End Testing](rest_api_end_to_end_testing.md).
+For organization-owned machine identities, explicit workspace grants, secret
+rotation, and audit, see
+[Enterprise OAuth Applications](enterprise_oauth_applications.md).
 
 The versioned REST API gives enterprise applications the same governed document
 and knowledge workflows used by DocIntel's UI and MCP server. REST and MCP use

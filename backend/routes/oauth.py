@@ -243,6 +243,40 @@ async def _ensure_oauth_tables(db) -> None:
                 AND global_grant.client_id IS NULL
                 AND global_grant.revoked_at IS NULL
            );
+        CREATE TABLE IF NOT EXISTS developer_organizations (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            name TEXT NOT NULL,
+            slug TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS developer_organization_members (
+            organization_id UUID NOT NULL REFERENCES developer_organizations(id) ON DELETE CASCADE,
+            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            role TEXT NOT NULL DEFAULT 'developer',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY(organization_id,user_id)
+        );
+        ALTER TABLE oauth_service_clients ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES developer_organizations(id) ON DELETE CASCADE;
+        ALTER TABLE oauth_service_clients ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+        CREATE TABLE IF NOT EXISTS oauth_service_workspace_grants (
+            client_id TEXT NOT NULL REFERENCES oauth_service_clients(client_id) ON DELETE CASCADE,
+            workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            granted_by UUID REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY(client_id,workspace_id)
+        );
+        CREATE TABLE IF NOT EXISTS oauth_service_audit_events (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            organization_id UUID REFERENCES developer_organizations(id) ON DELETE SET NULL,
+            client_id TEXT,
+            actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+            event_type TEXT NOT NULL,
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
         """
     )
     _OAUTH_TABLES_READY = True
@@ -676,13 +710,18 @@ async def _issue_authorization_code(db, values: dict[str, str], user_id):
     return RedirectResponse(values["redirect_uri"] + separator + urlencode(query), status_code=303)
 
 
-def _access_token(user_id: str, client_id: str, scope: str, resource: str) -> tuple[str, int]:
+def _access_token(
+    user_id: str, client_id: str, scope: str, resource: str,
+    *, extra_claims: dict | None = None,
+) -> tuple[str, int]:
     now = datetime.now(timezone.utc)
     expires = now + timedelta(minutes=ACCESS_MINUTES)
-    token = jwt.encode({
+    claims = {
         "iss": ISSUER, "sub": user_id, "aud": resource, "client_id": client_id,
         "scope": scope, "iat": now, "exp": expires, "jti": secrets.token_urlsafe(16),
-    }, SECRET_KEY, algorithm=ALGORITHM)
+    }
+    claims.update(extra_claims or {})
+    token = jwt.encode(claims, SECRET_KEY, algorithm=ALGORITHM)
     return token, int((expires - now).total_seconds())
 
 
@@ -714,8 +753,11 @@ async def token(request: Request, db=Depends(get_db)):
     if grant_type == "client_credentials":
         secret = str(form.get("client_secret", ""))
         row = await db.fetchrow(
-            """SELECT * FROM oauth_service_clients WHERE client_id=$1 AND revoked_at IS NULL
-               AND (expires_at IS NULL OR expires_at>NOW())""", client_id,
+            """SELECT s.* FROM oauth_service_clients s
+               LEFT JOIN developer_organizations o ON o.id=s.organization_id
+               WHERE s.client_id=$1 AND s.revoked_at IS NULL
+                 AND (s.expires_at IS NULL OR s.expires_at>NOW())
+                 AND (s.organization_id IS NULL OR o.status='active')""", client_id,
         )
         if not row or not secrets.compare_digest(str(row["client_secret_hash"]), _hash(secret)):
             raise HTTPException(401, "invalid_client")
@@ -726,8 +768,26 @@ async def token(request: Request, db=Depends(get_db)):
         resource = str(form.get("resource", MCP_RESOURCE)).rstrip("/")
         if resource not in SUPPORTED_RESOURCES:
             raise HTTPException(400, "invalid_target")
+        if row.get("organization_id") and resource == MCP_RESOURCE:
+            raise HTTPException(400, detail={
+                "code": "invalid_target",
+                "message": "Organization service applications currently use the REST API resource; MCP delegated workspace enforcement is not enabled yet",
+            })
         scope = " ".join(sorted(requested))
-        access, expires_in = _access_token(str(row["owner_user_id"]), client_id, scope, resource)
+        extra_claims = {"token_kind": "service"}
+        if row.get("organization_id"):
+            extra_claims["organization_id"] = str(row["organization_id"])
+        access, expires_in = _access_token(
+            str(row["owner_user_id"]), client_id, scope, resource,
+            extra_claims=extra_claims,
+        )
+        await db.execute(
+            """INSERT INTO oauth_service_audit_events
+               (organization_id,client_id,actor_user_id,event_type,metadata)
+               VALUES($1,$2,$3::uuid,'token.issued',$4::jsonb)""",
+            row.get("organization_id"), client_id, row["owner_user_id"],
+            json.dumps({"resource": resource, "scope": scope}),
+        )
         return {"access_token": access, "token_type": "Bearer", "expires_in": expires_in, "scope": scope}
     if grant_type == "authorization_code":
         code_hash = _hash(str(form.get("code", "")))
@@ -794,9 +854,14 @@ async def introspect(request: Request, db=Depends(get_db)):
         return {"active": False}
     user = await db.fetchrow("SELECT id,email,role FROM users WHERE id=$1::uuid", claims["sub"])
     client = await db.fetchrow(
-        """SELECT client_id FROM oauth_clients WHERE client_id=$1 AND revoked_at IS NULL
-           UNION ALL SELECT client_id FROM oauth_service_clients WHERE client_id=$1 AND revoked_at IS NULL
-             AND (expires_at IS NULL OR expires_at>NOW()) LIMIT 1""", claims.get("client_id"),
+        """SELECT client_id,'user'::text AS token_kind,NULL::uuid AS organization_id
+             FROM oauth_clients WHERE client_id=$1 AND revoked_at IS NULL
+           UNION ALL
+           SELECT s.client_id,'service'::text AS token_kind,s.organization_id
+             FROM oauth_service_clients s LEFT JOIN developer_organizations o ON o.id=s.organization_id
+            WHERE s.client_id=$1 AND s.revoked_at IS NULL
+              AND (s.expires_at IS NULL OR s.expires_at>NOW())
+              AND (s.organization_id IS NULL OR o.status='active') LIMIT 1""", claims.get("client_id"),
     )
     if not user or not client:
         return {"active": False}
@@ -812,6 +877,8 @@ async def introspect(request: Request, db=Depends(get_db)):
         "exp": claims["exp"],
         "email": user["email"],
         "role": user["role"],
+        "token_kind": claims.get("token_kind", client.get("token_kind", "user")),
+        "organization_id": claims.get("organization_id"),
         "backend_token": create_access_token(str(user["id"]), user["email"]),
     }
 
