@@ -101,6 +101,31 @@ async def test_required_scope_returns_oauth_insufficient_scope_challenge():
 
 
 @pytest.mark.anyio
+async def test_current_identity_reports_token_user_and_workspace_count():
+    class IdentityDb:
+        async def fetchval(self, sql, user_id):
+            assert "workspace_members" in sql
+            assert user_id == "user-2"
+            return 3
+
+    principal = ApiPrincipal(
+        user={
+            "id": "user-2",
+            "email": "second@example.com",
+            "full_name": "Second User",
+            "role": "user",
+        },
+        client_id="client-2",
+        scopes=frozenset({"workspaces:read"}),
+    )
+    result = await public_api.api_current_identity(principal, IdentityDb())
+
+    assert result["data"]["user_id"] == "user-2"
+    assert result["data"]["email"] == "second@example.com"
+    assert result["data"]["workspace_count"] == 3
+
+
+@pytest.mark.anyio
 async def test_public_upload_reuses_document_upload_pipeline(monkeypatch):
     captured = {}
 

@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
-from auth.api_oauth import ApiPrincipal, require_api_scope
+from auth.api_oauth import ApiPrincipal, get_api_principal, require_api_scope
 from database.connection import get_db
 from routes.chat import ChatRequest, chat_stream_endpoint
 from routes.documents import (
@@ -23,7 +23,7 @@ from routes.workspaces import get_workspace, list_workspace_documents, list_work
 
 
 router = APIRouter()
-API_VERSION = "2026-08-31"
+API_VERSION = "2026-08-31.2"
 
 WorkspaceReader = Annotated[ApiPrincipal, Depends(require_api_scope("workspaces:read"))]
 DocumentReader = Annotated[ApiPrincipal, Depends(require_api_scope("documents:read"))]
@@ -46,7 +46,32 @@ async def api_catalog(principal: DocumentReader):
             "complete_upload": "/api/v1/uploads/complete",
             "grounded_query": "/api/v1/knowledge/query/stream",
             "document_summary": "/api/v1/summaries/documents/{document_id}/stream",
+            "batches": "/api/v1/batches",
+            "operations_catalog": "/api/v1/operations/catalog",
+            "events": "/api/v1/events",
+            "reviews": "/api/v1/reviews",
+            "artifacts": "/api/v1/artifacts",
+            "evaluations": "/api/v1/evaluations",
         },
+    }
+
+
+@router.get("/me")
+async def api_current_identity(principal: ApiPrincipal = Depends(get_api_principal), db=Depends(get_db)):
+    workspace_count = await db.fetchval(
+        "SELECT COUNT(*) FROM workspace_members WHERE user_id=$1::uuid",
+        principal.user_id,
+    )
+    return {
+        "data": {
+            "user_id": principal.user_id,
+            "email": principal.user.get("email"),
+            "full_name": principal.user.get("full_name") or "",
+            "role": principal.user.get("role"),
+            "client_id": principal.client_id,
+            "scopes": sorted(principal.scopes),
+            "workspace_count": int(workspace_count or 0),
+        }
     }
 
 

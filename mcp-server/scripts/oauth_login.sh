@@ -17,7 +17,7 @@ docintel_oauth_login() {
     api|rest)
       target="api"
       default_resource="https://docintel.adar.agomoniai.com/api/v1"
-      default_scopes="workspaces:read documents:read documents:write knowledge:query knowledge:generate"
+      default_scopes="workspaces:read documents:read documents:write knowledge:query knowledge:generate workflows:read batches:read batches:write events:read events:write reviews:write reviews:approve artifacts:read artifacts:write versions:read versions:write evaluations:run"
       token_prefix="API"
       client_label="REST API"
       ;;
@@ -40,6 +40,15 @@ docintel_oauth_login() {
   local timeout_seconds="${DOCINTEL_OAUTH_TIMEOUT_SECONDS:-300}"
   local work_dir listener_pid authorization_url register_response token_response
   local callback_file ready_file returned_state authorization_code elapsed
+
+  # A failed user switch must not leave a valid token for the previous user in
+  # the caller's shell.
+  unset DOCINTEL_ACCESS_TOKEN DOCINTEL_REFRESH_TOKEN DOCINTEL_TOKEN_SCOPE DOCINTEL_TOKEN_EXPIRES_IN
+  if [[ "$target" == "mcp" ]]; then
+    unset MCP_ACCESS_TOKEN MCP_REFRESH_TOKEN MCP_TOKEN_SCOPE MCP_TOKEN_EXPIRES_IN
+  else
+    unset API_ACCESS_TOKEN API_REFRESH_TOKEN API_TOKEN_SCOPE API_TOKEN_EXPIRES_IN
+  fi
 
   for command in curl jq python3; do
     if ! command -v "$command" >/dev/null 2>&1; then
@@ -292,6 +301,34 @@ PY
   echo "${token_prefix}_ACCESS_TOKEN loaded (${#DOCINTEL_ACCESS_TOKEN} characters; expires in ${DOCINTEL_TOKEN_EXPIRES_IN}s)."
   echo "${token_prefix}_REFRESH_TOKEN loaded (${#DOCINTEL_REFRESH_TOKEN} characters)."
   echo "Granted scopes: $DOCINTEL_TOKEN_SCOPE"
+  local token_subject
+  token_subject="$(DOCINTEL_TOKEN="$DOCINTEL_ACCESS_TOKEN" python3 - <<'PY'
+import base64
+import json
+import os
+
+try:
+    payload = os.environ["DOCINTEL_TOKEN"].split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    print(json.loads(base64.urlsafe_b64decode(payload))["sub"])
+except Exception:
+    print("unknown")
+PY
+)"
+  echo "Authenticated user ID: $token_subject"
+  if [[ "$target" == "api" ]]; then
+    local identity_response
+    identity_response="$(curl -fsS "${resource%/}/me" \
+      -H "Authorization: Bearer $DOCINTEL_ACCESS_TOKEN")" || {
+      echo "Token was issued, but API identity verification failed." >&2
+      return 1
+    }
+    export DOCINTEL_AUTHENTICATED_USER_ID="$(jq -r '.data.user_id // empty' <<<"$identity_response")"
+    export DOCINTEL_AUTHENTICATED_EMAIL="$(jq -r '.data.email // empty' <<<"$identity_response")"
+    export DOCINTEL_WORKSPACE_COUNT="$(jq -r '.data.workspace_count // 0' <<<"$identity_response")"
+    echo "Authenticated as: $DOCINTEL_AUTHENTICATED_EMAIL"
+    echo "Accessible workspaces: $DOCINTEL_WORKSPACE_COUNT"
+  fi
 }
 
 # Backward-compatible entry point used by existing MCP documentation.

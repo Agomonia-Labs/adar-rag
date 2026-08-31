@@ -32,6 +32,22 @@ tokens are audience-bound and cannot be exchanged between the two resources.
 | Delete document | `DELETE /api/v1/documents/{id}` | `documents:write` |
 | Grounded streaming query | `POST /api/v1/knowledge/query/stream` | `knowledge:query` |
 | Streaming summary | `POST /api/v1/summaries/documents/{id}/stream` | `knowledge:generate` |
+| Operations catalog | `GET /api/v1/operations/catalog` | `workflows:read` |
+| Workflow schema | `GET /api/v1/workflows/{workflow}/schema` | `workflows:read` |
+| Validate workflow inputs | `POST /api/v1/workflows/{workflow}/validate` | `workflows:read` |
+| Batch upload | `POST /api/v1/batches/uploads` | `batches:write` |
+| Batch embedding/classification | `POST /api/v1/batches/{operation}` | `batches:write` |
+| Batch status/results | `GET /api/v1/batches/{id}` | `batches:read` |
+| Retry, resume, or cancel batch | `POST /api/v1/batches/{id}/{action}` | `batches:write` |
+| Lifecycle events | `GET /api/v1/events` | `events:read` |
+| Webhook subscriptions | `/api/v1/event-subscriptions` | `events:read` or `events:write` |
+| Human review tasks | `/api/v1/reviews` | `reviews:write` or `reviews:approve` |
+| Knowledge artifacts | `/api/v1/artifacts` | `artifacts:read` or `artifacts:write` |
+| Document versions | `/api/v1/documents/{id}/versions` | `versions:read` or `versions:write` |
+| Trace evaluation | `POST /api/v1/evaluations` | `evaluations:run` |
+
+For runnable examples of the operations increment, see
+[REST API Operations Testing](rest_api_operations_testing.md).
 
 ## Register an Application
 

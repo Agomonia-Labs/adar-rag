@@ -940,6 +940,11 @@ examples, and [docs/rest_api_end_to_end_testing.md](docs/rest_api_end_to_end_tes
 for the complete runnable test sequence. MCP remains available as a separate
 OAuth resource for agent clients.
 
+The second public API increment adds durable batches, workflow contracts,
+events and webhooks, human review tasks, knowledge artifacts, document versions,
+and trace evaluations. See
+[docs/rest_api_operations_testing.md](docs/rest_api_operations_testing.md).
+
 ## MCP Integration
 
 DocIntel supports document, speech, and video intelligence through its web UI

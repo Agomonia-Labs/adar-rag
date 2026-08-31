@@ -91,4 +91,5 @@ def require_api_scope(scope: str) -> Callable:
             )
         return principal
 
+    dependency.required_scope = scope
     return dependency
