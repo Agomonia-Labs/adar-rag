@@ -4,7 +4,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
-from auth.api_oauth import ApiPrincipal, get_api_principal, require_api_scope
+from auth.api_oauth import (
+    ApiPrincipal,
+    get_api_principal,
+    require_api_scope,
+    validate_api_workspace_context,
+)
 from database.connection import get_db
 from routes.chat import ChatRequest, chat_stream_endpoint
 from routes.documents import (
@@ -22,8 +27,8 @@ from routes.summarize import SummarizeRequest, summarize_document
 from routes.workspaces import get_workspace, list_workspace_documents, list_workspaces
 
 
-router = APIRouter()
-API_VERSION = "2026-08-31.2"
+router = APIRouter(dependencies=[Depends(validate_api_workspace_context)])
+API_VERSION = "2026-08-31.3"
 
 WorkspaceReader = Annotated[ApiPrincipal, Depends(require_api_scope("workspaces:read"))]
 DocumentReader = Annotated[ApiPrincipal, Depends(require_api_scope("documents:read"))]
@@ -41,6 +46,7 @@ async def api_catalog(principal: DocumentReader):
         "scopes": sorted(principal.scopes),
         "capabilities": {
             "workspaces": "/api/v1/workspaces",
+            "workspace_contexts": "/api/v1/me/workspaces",
             "documents": "/api/v1/documents",
             "create_upload": "/api/v1/uploads",
             "complete_upload": "/api/v1/uploads/complete",
@@ -91,8 +97,24 @@ async def api_list_workspace_documents(workspace_id: str, principal: DocumentRea
 
 
 @router.get("/documents")
-async def api_list_documents(principal: DocumentReader, db=Depends(get_db)):
-    return {"data": await list_documents(current_user=principal.user, db=db)}
+async def api_list_documents(
+    request: Request,
+    principal: DocumentReader,
+    db=Depends(get_db),
+):
+    workspace_id = getattr(request.state, "api_workspace_id", None)
+    if workspace_id:
+        documents = await list_workspace_documents(
+            workspace_id, current_user=principal.user, db=db
+        )
+        return {
+            "data": documents,
+            "context": {"workspace_id": workspace_id, "workspace_type": "team"},
+        }
+    return {
+        "data": await list_documents(current_user=principal.user, db=db),
+        "context": {"workspace_id": None, "workspace_type": "personal"},
+    }
 
 
 @router.get("/documents/{document_id}")

@@ -4,12 +4,12 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
-from auth.api_oauth import ApiPrincipal, require_api_scope
+from auth.api_oauth import ApiPrincipal, require_api_scope, validate_api_workspace_context
 from database.connection import get_db
 from routes import batches, mcp_enterprise
 
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(validate_api_workspace_context)])
 
 BatchReader = Annotated[ApiPrincipal, Depends(require_api_scope("batches:read"))]
 BatchWriter = Annotated[ApiPrincipal, Depends(require_api_scope("batches:write"))]
@@ -297,4 +297,3 @@ async def api_run_evaluation(
     db=Depends(get_db),
 ):
     return await mcp_enterprise.evaluate_trace(body, current_user=principal.user, db=db)
-

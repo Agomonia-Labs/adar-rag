@@ -34,6 +34,7 @@ ACCESS_MINUTES = int(os.getenv("OAUTH_ACCESS_TOKEN_MINUTES", "15"))
 REFRESH_DAYS = int(os.getenv("OAUTH_REFRESH_TOKEN_DAYS", "30"))
 ALLOWED_SCOPES = {
     "workspaces:read",
+    "workspaces:write",
     "documents:read",
     "documents:write",
     "knowledge:query",
@@ -60,6 +61,7 @@ ALLOWED_SCOPES = {
 
 SCOPE_CATALOG = {
     "workspaces:read": ("View accessible workspaces", "low"),
+    "workspaces:write": ("Create and administer workspace membership", "high"),
     "documents:read": ("View document metadata and content", "medium"),
     "documents:write": ("Upload, modify, and delete documents", "high"),
     "knowledge:query": ("Ask grounded questions across knowledge", "medium"),

@@ -162,6 +162,7 @@ _ROUTERS = [
     ("routes.batches",        "batches_router",        "/api/batches",        ["batches"]),
     ("routes.mcp_enterprise", "mcp_enterprise_router", "/api/mcp-enterprise", ["mcp-enterprise"]),
     ("routes.public_api",     "router",                "/api/v1",             ["public-api"]),
+    ("routes.public_workspaces_api", "router",         "/api/v1",             ["public-api-workspaces"]),
     ("routes.public_operations_api", "router",         "/api/v1",             ["public-api-operations"]),
     ("routes.developer_api",  "router",                "/api/v1/developer",   ["developer-api"]),
 ]

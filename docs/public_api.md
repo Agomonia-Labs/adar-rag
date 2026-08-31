@@ -20,8 +20,13 @@ tokens are audience-bound and cannot be exchanged between the two resources.
 | Operation | Method and path | Scope |
 | --- | --- | --- |
 | API catalog | `GET /api/v1` | `documents:read` |
+| Current OAuth identity | `GET /api/v1/me` | Any valid API scope |
+| Personal, owned, and shared contexts | `GET /api/v1/me/workspaces` | `workspaces:read` |
+| Select and validate workspace | `POST /api/v1/workspace-context` | `workspaces:read` |
 | List workspaces | `GET /api/v1/workspaces` | `workspaces:read` |
 | Get workspace | `GET /api/v1/workspaces/{id}` | `workspaces:read` |
+| Create, rename, or delete workspace | `/api/v1/workspaces` | `workspaces:write` |
+| Add, update, or remove members | `/api/v1/workspaces/{id}/members` | `workspaces:write` |
 | List documents | `GET /api/v1/documents` | `documents:read` |
 | Workspace documents | `GET /api/v1/workspaces/{id}/documents` | `documents:read` |
 | Document metadata | `GET /api/v1/documents/{id}` | `documents:read` |
@@ -48,6 +53,8 @@ tokens are audience-bound and cannot be exchanged between the two resources.
 
 For runnable examples of the operations increment, see
 [REST API Operations Testing](rest_api_operations_testing.md).
+For identity switching, Personal context, and team membership examples, see
+[REST API Workspace Access](rest_api_workspace_access.md).
 
 ## Register an Application
 
@@ -81,9 +88,15 @@ cd /Users/brajadas/project/adar-rag
 source deploy.sh --oauth-login --oauth-target api
 
 echo "API token loaded: ${#API_ACCESS_TOKEN} characters"
-curl -sS https://docintel.adar.agomoniai.com/api/v1 \
-  -H "Authorization: Bearer $API_ACCESS_TOKEN" | jq
+docintel_api_request GET /me | jq
+docintel_api_request GET /me/workspaces | jq
+docintel_api_select_workspace personal
+docintel_api_request GET /documents | jq
 ```
+
+`GET /documents` is context-aware: it returns Personal documents when
+`DOCINTEL_WORKSPACE_ID=personal` and team documents after a validated team
+workspace selection.
 
 Override the production resource when testing another deployment:
 

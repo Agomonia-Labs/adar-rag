@@ -19,11 +19,15 @@ OAUTH_ISSUER_URL=https://auth.docintel.adar.agomoniai.com
 OAUTH_API_RESOURCE=https://docintel.adar.agomoniai.com/api/v1
 ```
 
-The user must have these approved OAuth scopes:
+The user must have these approved OAuth scopes for document testing:
 
 ```text
 workspaces:read documents:read documents:write knowledge:query knowledge:generate
 ```
+
+Workspace creation and member administration additionally require
+`workspaces:write`. If it is not approved, omit it from the login request and
+test against Personal or an existing shared workspace.
 
 ## 1. OAuth Login for the REST Audience
 
@@ -44,7 +48,23 @@ API_TOKEN_SCOPE
 API_TOKEN_EXPIRES_IN
 DOCINTEL_ACCESS_TOKEN
 DOCINTEL_REFRESH_TOKEN
+DOCINTEL_AUTHENTICATED_USER_ID
+DOCINTEL_AUTHENTICATED_EMAIL
+DOCINTEL_WORKSPACE_ID
 ```
+
+It also defines `docintel_api_request` and `docintel_api_select_workspace` in
+the current shell. If OAuth is already complete and only the helper functions
+need to be reloaded, use:
+
+```bash
+export DOCINTEL_OAUTH_DEFINE_ONLY=1
+source mcp-server/scripts/oauth_login.sh
+unset DOCINTEL_OAUTH_DEFINE_ONLY
+```
+
+Do not run the script with `bash`; source it so functions and token variables
+remain in the current shell.
 
 Set common test variables:
 
@@ -90,57 +110,62 @@ https://docintel.adar.agomoniai.com/api/v1
 ## 3. API Catalog
 
 ```bash
-curl -sS "$API_BASE/api/v1" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" | jq
+docintel_api_request GET "" | jq
+docintel_api_request GET /me | jq
 ```
 
 Expected result: API name, version, OAuth client ID, granted scopes, and endpoint
 capabilities.
 
-## 4. Workspaces
+## 4. Personal and Team Workspace Contexts
 
-List accessible workspaces:
+List Personal, owned, and shared contexts:
 
 ```bash
-WORKSPACES="$(
-  curl -sS "$API_BASE/api/v1/workspaces" \
-    -H "Authorization: Bearer $ACCESS_TOKEN"
-)"
-
-printf '%s\n' "$WORKSPACES" | jq
+WORKSPACES="$(docintel_api_request GET /me/workspaces)"
+printf '%s\n' "$WORKSPACES" | jq '.data'
 ```
 
-Select the first workspace or set a known ID manually:
+Personal is represented by `key: "personal"` and `id: null`. Select it and
+verify that the request helper exports the context:
 
 ```bash
-export WORKSPACE_ID="$(
-  printf '%s\n' "$WORKSPACES" | jq -r '.data[0].id // empty'
-)"
+docintel_api_select_workspace personal
+echo "$DOCINTEL_WORKSPACE_ID"
+docintel_api_request GET /documents | jq
+```
 
-test -n "$WORKSPACE_ID" || {
-  echo "No accessible workspace was returned. Set WORKSPACE_ID manually."
-  return 1 2>/dev/null || exit 1
-}
+Select the first real team workspace, if available:
+
+```bash
+export WORKSPACE_ID="$(printf '%s\n' "$WORKSPACES" |
+  jq -r '[.data[] | select(.id != null)][0].id // empty')"
+
+if [[ -n "$WORKSPACE_ID" ]]; then
+  docintel_api_select_workspace "$WORKSPACE_ID"
+  docintel_api_request GET /documents | jq
+else
+  echo "No team workspace is available; continuing with Personal."
+  docintel_api_select_workspace personal
+fi
 
 echo "Workspace: $WORKSPACE_ID"
 ```
 
-Get workspace details:
+For a team workspace, verify details and role:
 
 ```bash
-curl -sS "$API_BASE/api/v1/workspaces/$WORKSPACE_ID" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" | jq
+[[ -z "$WORKSPACE_ID" ]] || docintel_api_request GET "/workspaces/$WORKSPACE_ID" | jq
 ```
 
 ## 5. Documents and Chunks
 
-List workspace documents:
+`GET /documents` follows the selected context. It returns only the OAuth user's
+unassigned documents for Personal, or documents visible through membership for
+a selected team workspace:
 
 ```bash
-DOCUMENTS="$(
-  curl -sS "$API_BASE/api/v1/workspaces/$WORKSPACE_ID/documents" \
-    -H "Authorization: Bearer $ACCESS_TOKEN"
-)"
+DOCUMENTS="$(docintel_api_request GET /documents)"
 
 printf '%s\n' "$DOCUMENTS" | jq
 ```
@@ -159,23 +184,25 @@ echo "Embedded document: $DOCUMENT_ID"
 Get document metadata:
 
 ```bash
-curl -sS "$API_BASE/api/v1/documents/$DOCUMENT_ID" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" | jq
+docintel_api_request GET "/documents/$DOCUMENT_ID" | jq
 ```
 
 Get its chunk manifest:
 
 ```bash
-curl -sS "$API_BASE/api/v1/documents/$DOCUMENT_ID/chunks" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" | jq
+docintel_api_request GET "/documents/$DOCUMENT_ID/chunks" | jq
 ```
 
-List personal documents that do not belong to a workspace:
+Switch back to Personal explicitly:
 
 ```bash
-curl -sS "$API_BASE/api/v1/documents" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" | jq
+docintel_api_select_workspace personal
+docintel_api_request GET /documents | jq
 ```
+
+An empty `data` array is valid and means this user has no documents in the
+selected context. Check the response's `context.workspace_type` before assuming
+the request failed.
 
 ## 6. Upload a New Document
 
@@ -506,4 +533,3 @@ The end-to-end test is successful when:
 5. Summary and Q&A endpoints stream grounded output.
 6. Refresh-token rotation produces a usable replacement access token.
 7. Missing, wrong-audience, under-scoped, and unauthorized requests are rejected.
-

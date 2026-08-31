@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Annotated, Callable
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 
@@ -93,3 +93,25 @@ def require_api_scope(scope: str) -> Callable:
 
     dependency.required_scope = scope
     return dependency
+
+
+async def validate_api_workspace_context(
+    request: Request,
+    principal: ApiPrincipal = Depends(get_api_principal),
+    db=Depends(get_db),
+) -> str | None:
+    """Validate the optional stateless workspace selector for public API calls."""
+    workspace_id = (request.headers.get("X-DocIntel-Workspace-ID") or "personal").strip()
+    if not workspace_id or workspace_id.lower() == "personal":
+        request.state.api_workspace_id = None
+        return None
+    role = await db.fetchval(
+        "SELECT role FROM workspace_members WHERE workspace_id=$1::uuid AND user_id=$2::uuid",
+        workspace_id,
+        principal.user_id,
+    )
+    if not role:
+        raise HTTPException(status_code=403, detail="OAuth user cannot access the selected workspace")
+    request.state.api_workspace_id = workspace_id
+    request.state.api_workspace_role = role
+    return workspace_id

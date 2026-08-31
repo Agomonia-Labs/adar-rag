@@ -17,7 +17,7 @@ docintel_oauth_login() {
     api|rest)
       target="api"
       default_resource="https://docintel.adar.agomoniai.com/api/v1"
-      default_scopes="workspaces:read documents:read documents:write knowledge:query knowledge:generate workflows:read batches:read batches:write events:read events:write reviews:write reviews:approve artifacts:read artifacts:write versions:read versions:write evaluations:run"
+      default_scopes="workspaces:read workspaces:write documents:read documents:write knowledge:query knowledge:generate workflows:read batches:read batches:write events:read events:write reviews:write reviews:approve artifacts:read artifacts:write versions:read versions:write evaluations:run"
       token_prefix="API"
       client_label="REST API"
       ;;
@@ -328,6 +328,21 @@ PY
     export DOCINTEL_WORKSPACE_COUNT="$(jq -r '.data.workspace_count // 0' <<<"$identity_response")"
     echo "Authenticated as: $DOCINTEL_AUTHENTICATED_EMAIL"
     echo "Accessible workspaces: $DOCINTEL_WORKSPACE_COUNT"
+    local workspace_response requested_workspace
+    workspace_response="$(curl -fsS "${resource%/}/me/workspaces" \
+      -H "Authorization: Bearer $DOCINTEL_ACCESS_TOKEN")" || return 1
+    requested_workspace="${DOCINTEL_WORKSPACE_ID:-}"
+    if [[ -n "$requested_workspace" && "$requested_workspace" != "personal" ]]; then
+      if ! jq -e --arg id "$requested_workspace" '.data[] | select(.id==$id)' \
+          <<<"$workspace_response" >/dev/null; then
+        echo "DOCINTEL_WORKSPACE_ID is not accessible to $DOCINTEL_AUTHENTICATED_EMAIL" >&2
+        unset DOCINTEL_WORKSPACE_ID
+        return 1
+      fi
+    fi
+    export DOCINTEL_WORKSPACE_ID="${requested_workspace:-personal}"
+    export DOCINTEL_WORKSPACE_HEADER="X-DocIntel-Workspace-ID: $DOCINTEL_WORKSPACE_ID"
+    echo "Active workspace: $DOCINTEL_WORKSPACE_ID"
   fi
 }
 
@@ -375,6 +390,44 @@ docintel_mcp_refresh_token() {
   export DOCINTEL_OAUTH_TARGET=mcp
   export DOCINTEL_REFRESH_TOKEN="${MCP_REFRESH_TOKEN:-${DOCINTEL_REFRESH_TOKEN:-}}"
   docintel_oauth_refresh_token
+}
+
+docintel_api_select_workspace() {
+  if [[ -z "${API_ACCESS_TOKEN:-}" ]]; then
+    echo "API_ACCESS_TOKEN is not loaded" >&2
+    return 1
+  fi
+  local workspace_id="${1:-personal}" payload response
+  if [[ "$workspace_id" == "personal" ]]; then
+    payload='{"workspace_id":null}'
+  else
+    payload="$(jq -cn --arg id "$workspace_id" '{workspace_id:$id}')"
+  fi
+  response="$(curl -fsS -X POST "${DOCINTEL_API_URL%/}/workspace-context" \
+    -H "Authorization: Bearer $API_ACCESS_TOKEN" \
+    -H "Content-Type: application/json" \
+    --data "$payload")" || return 1
+  export DOCINTEL_WORKSPACE_ID="$workspace_id"
+  export DOCINTEL_WORKSPACE_HEADER="X-DocIntel-Workspace-ID: $workspace_id"
+  jq . <<<"$response"
+}
+
+docintel_api_request() {
+  if [[ -z "${API_ACCESS_TOKEN:-}" ]]; then
+    echo "API_ACCESS_TOKEN is not loaded" >&2
+    return 1
+  fi
+  # `path` is a special zsh array tied to PATH. Do not shadow it here or zsh
+  # will be unable to locate curl while this function is running.
+  local method="${1:-GET}" api_path="${2:-}" body="${3:-}"
+  local args=(-sS -X "$method" "${DOCINTEL_API_URL%/}${api_path}" \
+    -H "Authorization: Bearer $API_ACCESS_TOKEN" \
+    -H "X-DocIntel-Workspace-ID: ${DOCINTEL_WORKSPACE_ID:-personal}" \
+    -H "Accept: application/json")
+  if [[ -n "$body" ]]; then
+    args+=(-H "Content-Type: application/json" --data "$body")
+  fi
+  curl "${args[@]}"
 }
 
 mcp_request() {

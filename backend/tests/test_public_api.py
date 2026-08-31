@@ -9,7 +9,13 @@ import pytest
 from fastapi import BackgroundTasks, HTTPException
 from jose import jwt
 
-from auth.api_oauth import API_RESOURCE_METADATA, ApiPrincipal, get_api_principal, require_api_scope
+from auth.api_oauth import (
+    API_RESOURCE_METADATA,
+    ApiPrincipal,
+    get_api_principal,
+    require_api_scope,
+    validate_api_workspace_context,
+)
 from auth.service import ALGORITHM, SECRET_KEY
 from routes import public_api
 from routes.documents import DirectUploadCompleteRequest, DirectUploadSessionRequest
@@ -123,6 +129,104 @@ async def test_current_identity_reports_token_user_and_workspace_count():
     assert result["data"]["user_id"] == "user-2"
     assert result["data"]["email"] == "second@example.com"
     assert result["data"]["workspace_count"] == 3
+
+
+@pytest.mark.anyio
+async def test_workspace_header_is_rejected_for_non_member():
+    class Request:
+        headers = {"X-DocIntel-Workspace-ID": "workspace-b"}
+
+        class State:
+            pass
+
+        state = State()
+
+    class Db:
+        async def fetchval(self, _sql, *_args):
+            return None
+
+    with pytest.raises(HTTPException) as exc:
+        await validate_api_workspace_context(
+            Request(),
+            ApiPrincipal(
+                user={"id": "user-a"},
+                client_id="client-a",
+                scopes=frozenset({"documents:read"}),
+            ),
+            Db(),
+        )
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_personal_workspace_header_needs_no_team_membership():
+    class Request:
+        headers = {"X-DocIntel-Workspace-ID": "personal"}
+
+        class State:
+            pass
+
+        state = State()
+
+    result = await validate_api_workspace_context(
+        Request(),
+        ApiPrincipal(user={"id": "user-a"}, client_id="client-a", scopes=frozenset({"documents:read"})),
+        db=None,
+    )
+    assert result is None
+    assert Request.state.api_workspace_id is None
+
+
+@pytest.mark.anyio
+async def test_document_listing_uses_selected_team_workspace(monkeypatch):
+    captured = {}
+
+    async def fake_workspace_documents(workspace_id, current_user, db):
+        captured.update(workspace_id=workspace_id, user=current_user, db=db)
+        return [{"id": "team-doc"}]
+
+    monkeypatch.setattr(public_api, "list_workspace_documents", fake_workspace_documents)
+
+    class Request:
+        class State:
+            api_workspace_id = "workspace-1"
+
+        state = State()
+
+    principal = ApiPrincipal(
+        user={"id": "user-1"},
+        client_id="client-1",
+        scopes=frozenset({"documents:read"}),
+    )
+    result = await public_api.api_list_documents(Request(), principal, db="db")
+
+    assert result["data"] == [{"id": "team-doc"}]
+    assert result["context"]["workspace_id"] == "workspace-1"
+    assert captured["user"]["id"] == "user-1"
+
+
+@pytest.mark.anyio
+async def test_document_listing_defaults_to_personal_documents(monkeypatch):
+    async def fake_personal_documents(current_user, db):
+        return [{"id": "personal-doc", "user_id": current_user["id"]}]
+
+    monkeypatch.setattr(public_api, "list_documents", fake_personal_documents)
+
+    class Request:
+        class State:
+            api_workspace_id = None
+
+        state = State()
+
+    principal = ApiPrincipal(
+        user={"id": "user-2"},
+        client_id="client-1",
+        scopes=frozenset({"documents:read"}),
+    )
+    result = await public_api.api_list_documents(Request(), principal, db="db")
+
+    assert result["data"][0]["user_id"] == "user-2"
+    assert result["context"]["workspace_type"] == "personal"
 
 
 @pytest.mark.anyio
