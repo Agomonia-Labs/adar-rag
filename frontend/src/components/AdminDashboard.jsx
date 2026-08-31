@@ -1,6 +1,6 @@
 // src/components/AdminDashboard.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { setUserTier, getAuditLog, fetchAdminStats, fetchAdminUsers, fetchAdminDocuments, updateUserRole, adminDeleteUser, adminDeleteDocument, fetchTraces, fetchTraceSummary, fetchTrace, fetchMcpScopeRequests, fetchMcpScopeGrants, fetchMcpScopeCatalog, assignMcpScopeGrant, decideMcpScopeRequest, revokeMcpScopeGrant } from '../services/api.js';
+import { setUserTier, getAuditLog, fetchAdminStats, fetchAdminUsers, fetchAdminDocuments, updateUserRole, adminDeleteUser, adminDeleteDocument, fetchTraces, fetchTraceSummary, fetchTrace, fetchMcpScopeRequests, fetchMcpScopeGrants, fetchMcpScopeCatalog, assignMcpScopeGrant, decideMcpScopeRequest, revokeMcpScopeGrant, fetchDeveloperScopeRequests, decideDeveloperScopeRequest } from '../services/api.js';
 import ObservabilityPanel from './ObservabilityPanel.jsx';
 
 const fmtBytes = b => { if(!b)return'0 B';if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';if(b<1073741824)return(b/1048576).toFixed(1)+' MB';return(b/1073741824).toFixed(2)+' GB'; };
@@ -17,6 +17,7 @@ export default function AdminDashboard() {
   const [docs,   setDocs]   = useState([]);
   const [audit,  setAudit]  = useState([]);
   const [scopeRequests, setScopeRequests] = useState([]);
+  const [developerScopeRequests, setDeveloperScopeRequests] = useState([]);
   const [scopeGrants, setScopeGrants] = useState([]);
   const [scopeCatalog, setScopeCatalog] = useState([]);
   const [traces, setTraces] = useState([]);
@@ -72,17 +73,23 @@ export default function AdminDashboard() {
   const loadMcpAccess = async() => {
     setError('');
     try {
-      const [requests, grants, catalog] = await Promise.all([
-        fetchMcpScopeRequests('pending'), fetchMcpScopeGrants(), fetchMcpScopeCatalog(),
+      const [requests, grants, catalog, developerRequests] = await Promise.all([
+        fetchMcpScopeRequests('pending'), fetchMcpScopeGrants(), fetchMcpScopeCatalog(), fetchDeveloperScopeRequests('pending'),
       ]);
       setScopeRequests(requests.requests || []);
       setScopeGrants(grants.grants || []);
       setScopeCatalog(catalog.scopes || []);
+      setDeveloperScopeRequests(developerRequests.data || []);
     } catch(e) { setError(e.message); }
   };
   const decideScope = async(id, decision) => {
     const note = window.prompt(`${decision === 'approved' ? 'Approval' : 'Denial'} note (optional)`) || '';
     try { await decideMcpScopeRequest(id, decision, note); await loadMcpAccess(); }
+    catch(e) { setError(e.message); }
+  };
+  const decideDeveloperScope = async(id, decision) => {
+    const note = window.prompt(`${decision === 'approved' ? 'Approval' : 'Denial'} note for this service application (optional)`) || '';
+    try { await decideDeveloperScopeRequest(id, decision, note); await loadMcpAccess(); }
     catch(e) { setError(e.message); }
   };
   const revokeScope = async(grant) => {
@@ -180,12 +187,14 @@ export default function AdminDashboard() {
       {!loading && tab==='mcp-access' && (
         <McpAccessPanel
           requests={scopeRequests}
+          developerRequests={developerScopeRequests}
           grants={scopeGrants}
           users={users}
           catalog={scopeCatalog}
           mobile={isMobile}
           onAssign={assignScope}
           onDecision={decideScope}
+          onDeveloperDecision={decideDeveloperScope}
           onRevoke={revokeScope}
           onRefresh={loadMcpAccess}
         />
@@ -308,7 +317,7 @@ export default function AdminDashboard() {
   );
 }
 
-function McpAccessPanel({ requests, grants, users, catalog, mobile, onAssign, onDecision, onRevoke, onRefresh }) {
+function McpAccessPanel({ requests, developerRequests, grants, users, catalog, mobile, onAssign, onDecision, onDeveloperDecision, onRevoke, onRefresh }) {
   const [userId, setUserId] = useState('');
   const [scope, setScope] = useState('knowledge:generate');
   const [note, setNote] = useState('');
@@ -335,6 +344,32 @@ function McpAccessPanel({ requests, grants, users, catalog, mobile, onAssign, on
         </div>
         <input value={note} onChange={event=>setNote(event.target.value)} placeholder="Assignment reason or ticket reference" style={{...s.traceSearch,width:'100%',marginTop:8,boxSizing:'border-box'}} />
         <div style={{...s.mobileActions,marginTop:10}}><ABtn onClick={assign} disabled={assigning || !userId || !scope}>{assigning?'Assigning…':'Assign scope'}</ABtn></div>
+      </section>
+      <section style={{...s.section, ...(mobile ? s.sectionMobile : {})}}>
+        <h3 style={s.secTitle}>Pending application scope requests ({developerRequests.length})</h3>
+        <p style={s.pageSub}>Review confidential OAuth application access by organization, application, requesting user, and stated purpose.</p>
+        <div style={{...s.infoBanner,margin:'10px 0'}}>Approval updates the owner grant and the selected application. The client must request a new token before using the scope.</div>
+        <div style={s.cardList}>
+          {developerRequests.map(item => (
+            <article key={item.id} style={s.mobileCard}>
+              <div style={s.mobileCardHead}>
+                <div style={s.mobileTitleBlock}>
+                  <strong style={s.mobileTitle}>{item.scope}</strong>
+                  <span style={s.mobileSub}>{item.organization_name || 'User-owned'} · {item.client_name}</span>
+                  <span style={s.mobileSub}>{item.email}</span>
+                  <code style={{fontSize:10,color:'var(--muted2)',wordBreak:'break-all'}}>{item.client_id}</code>
+                </div>
+                <span style={{color:'#fbbf24',fontSize:11,fontWeight:700}}>PENDING</span>
+              </div>
+              {item.reason && <p style={{fontSize:12,color:'var(--muted2)',margin:'8px 0'}}>{item.reason}</p>}
+              <div style={s.mobileActions}>
+                <ABtn onClick={()=>onDeveloperDecision(item.id,'approved')}>Approve</ABtn>
+                <ABtn danger onClick={()=>onDeveloperDecision(item.id,'denied')}>Deny</ABtn>
+              </div>
+            </article>
+          ))}
+          {!developerRequests.length && <div style={s.infoBanner}>No pending confidential application scope requests.</div>}
+        </div>
       </section>
       <section style={{...s.section, ...(mobile ? s.sectionMobile : {})}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>

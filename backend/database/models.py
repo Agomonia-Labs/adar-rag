@@ -1110,6 +1110,24 @@ CREATE TABLE IF NOT EXISTS oauth_service_audit_events (
 CREATE INDEX IF NOT EXISTS idx_oauth_service_audit_org
     ON oauth_service_audit_events(organization_id,created_at DESC);
 
+CREATE TABLE IF NOT EXISTS oauth_service_scope_requests (
+    id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    client_id          TEXT NOT NULL REFERENCES oauth_service_clients(client_id) ON DELETE CASCADE,
+    organization_id    UUID REFERENCES developer_organizations(id) ON DELETE CASCADE,
+    requested_by       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    scope              TEXT NOT NULL,
+    reason             TEXT NOT NULL DEFAULT '',
+    status             TEXT NOT NULL DEFAULT 'pending',
+    reviewer_id        UUID REFERENCES users(id) ON DELETE SET NULL,
+    reviewer_note      TEXT NOT NULL DEFAULT '',
+    reviewed_at        TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(client_id,scope)
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_service_scope_requests_status
+    ON oauth_service_scope_requests(status,created_at);
+
 """
 
 

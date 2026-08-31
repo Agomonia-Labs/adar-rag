@@ -1,4 +1,14 @@
-from routes.developer_api import DeveloperAppCreate, DeveloperOrganizationCreate, _hash_secret
+import pytest
+from pydantic import ValidationError
+
+from routes.developer_api import (
+    DeveloperAppCreate,
+    DeveloperOrganizationCreate,
+    DeveloperOrganizationUpdate,
+    DeveloperScopeRequestCreate,
+    DeveloperScopeRequestDecision,
+    _hash_secret,
+)
 
 
 def test_client_secret_hash_is_deterministic_and_not_plaintext():
@@ -31,3 +41,22 @@ def test_confidential_app_accepts_organization_and_workspace_boundaries():
 def test_organization_slug_is_optional_and_derived_by_endpoint():
     organization = DeveloperOrganizationCreate(name="Agomonia Enterprise")
     assert organization.slug is None
+
+
+def test_organization_lifecycle_accepts_supported_states_only():
+    assert DeveloperOrganizationUpdate(status="suspended").status == "suspended"
+    with pytest.raises(ValidationError):
+        DeveloperOrganizationUpdate(status="deleted")
+
+
+def test_service_scope_request_requires_at_least_one_scope():
+    request = DeveloperScopeRequestCreate(scopes=["knowledge:generate"], reason="Generate reviewed summaries")
+    assert request.scopes == ["knowledge:generate"]
+    with pytest.raises(ValidationError):
+        DeveloperScopeRequestCreate(scopes=[])
+
+
+def test_service_scope_decision_is_explicit():
+    assert DeveloperScopeRequestDecision(decision="approved").decision == "approved"
+    with pytest.raises(ValidationError):
+        DeveloperScopeRequestDecision(decision="pending")

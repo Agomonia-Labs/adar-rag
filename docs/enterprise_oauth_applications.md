@@ -8,6 +8,9 @@ workspaces.
 Use **Tools > Developer Applications** in DocIntel to create organizations and
 applications, rotate or revoke credentials, and inspect credential audit events.
 The client secret is displayed only when the application is created or rotated.
+The same screen supports organization membership, role and ownership changes,
+organization suspension, application scope/workspace editing, and additional
+scope requests.
 
 ## Security Boundary
 
@@ -49,6 +52,11 @@ curl -sS -X PUT \
   -H "Content-Type: application/json" \
   --data '{"email":"integration.owner@example.com","role":"admin"}' | jq
 ```
+
+Owners can rename, suspend, or reactivate the organization. A final owner cannot
+be removed or demoted; promote another member to owner first. Suspension retains
+members, applications, and audit history while preventing organization service
+tokens from being used.
 
 ## 2. Register a Confidential Application
 
@@ -135,6 +143,33 @@ curl -sS -X PUT "$DOCINTEL_URL/api/v1/developer/apps/$CLIENT_ID/scopes" \
   --data '{"scopes":["workspaces:read","documents:read","knowledge:query"]}' | jq
 ```
 
+If an application needs a scope that its owner has not yet been granted, submit
+an approval request instead of bypassing policy:
+
+```bash
+curl -sS -X POST \
+  "$DOCINTEL_URL/api/v1/developer/apps/$CLIENT_ID/scope-requests" \
+  -H "Authorization: Bearer $DOCINTEL_LOGIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "scopes":["knowledge:generate"],
+    "reason":"Generate reviewed summaries for the procurement workspace"
+  }' | jq
+```
+
+Scopes already assigned to the owner are enabled immediately. Other scopes are
+queued for a DocIntel administrator, who can approve or deny them from **Admin
+Dashboard > MCP Access**. Approval updates both the owner's active assignment
+and this confidential application. Obtain a new client-credentials token after
+approval; an existing token does not acquire new claims.
+
+Review request status:
+
+```bash
+curl -sS "$DOCINTEL_URL/api/v1/developer/apps/$CLIENT_ID/scope-requests" \
+  -H "Authorization: Bearer $DOCINTEL_LOGIN_TOKEN" | jq
+```
+
 Replace the full workspace grant set:
 
 ```bash
@@ -173,12 +208,16 @@ curl -sS -X DELETE "$DOCINTEL_URL/api/v1/developer/apps/$CLIENT_ID" \
 | Purpose | Method and path |
 | --- | --- |
 | List or create organizations | `GET/POST /api/v1/developer/organizations` |
+| Rename, suspend, or reactivate organization | `PATCH /api/v1/developer/organizations/{id}` |
 | List or update members | `GET/PUT /api/v1/developer/organizations/{id}/members` |
 | Remove a member | `DELETE /api/v1/developer/organizations/{id}/members/{user_id}` |
 | List or register applications | `GET/POST /api/v1/developer/apps` |
 | Application detail | `GET /api/v1/developer/apps/{client_id}` |
 | Replace scopes | `PUT /api/v1/developer/apps/{client_id}/scopes` |
 | Replace workspace grants | `PUT /api/v1/developer/apps/{client_id}/workspaces` |
+| Submit or list application scope requests | `POST/GET /api/v1/developer/apps/{client_id}/scope-requests` |
+| Admin list application scope requests | `GET /api/v1/developer/admin/scope-requests` |
+| Admin approve or deny application scope | `POST /api/v1/developer/admin/scope-requests/{request_id}/decision` |
 | Rotate secret | `POST /api/v1/developer/apps/{client_id}/rotate-secret` |
 | Application audit | `GET /api/v1/developer/apps/{client_id}/audit` |
 | Revoke application | `DELETE /api/v1/developer/apps/{client_id}` |

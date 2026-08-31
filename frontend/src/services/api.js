@@ -44,7 +44,11 @@ function isVideoFile(file) {
 async function handleRes(res) {
   if (res.ok) return res.json();
   const e = await res.json().catch(() => ({}));
-  throw new Error(e.detail || e.message || `HTTP ${res.status}`);
+  const detail = e.detail || e.message;
+  const message = typeof detail === 'string'
+    ? detail
+    : detail?.message || detail?.code || (detail ? JSON.stringify(detail) : `HTTP ${res.status}`);
+  throw new Error(message);
 }
 
 const TRANSIENT_UPLOAD_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
@@ -223,6 +227,24 @@ export async function createDeveloperOrganization(payload) {
     method:'POST', headers:{ ...authHdr(), 'Content-Type':'application/json' }, body:JSON.stringify(payload),
   }));
 }
+export async function updateDeveloperOrganization(organizationId, payload) {
+  return handleRes(await fetch(`${BASE}/v1/developer/organizations/${encodeURIComponent(organizationId)}`, {
+    method:'PATCH', headers:{ ...authHdr(), 'Content-Type':'application/json' }, body:JSON.stringify(payload),
+  }));
+}
+export async function listDeveloperOrganizationMembers(organizationId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/organizations/${encodeURIComponent(organizationId)}/members`, { headers:authHdr() }));
+}
+export async function upsertDeveloperOrganizationMember(organizationId, payload) {
+  return handleRes(await fetch(`${BASE}/v1/developer/organizations/${encodeURIComponent(organizationId)}/members`, {
+    method:'PUT', headers:{ ...authHdr(), 'Content-Type':'application/json' }, body:JSON.stringify(payload),
+  }));
+}
+export async function removeDeveloperOrganizationMember(organizationId, userId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(userId)}`, {
+    method:'DELETE', headers:authHdr(),
+  }));
+}
 export async function listDeveloperApps() {
   return handleRes(await fetch(`${BASE}/v1/developer/apps`, { headers:authHdr() }));
 }
@@ -246,6 +268,24 @@ export async function revokeDeveloperApp(clientId) {
 }
 export async function getDeveloperAppAudit(clientId) {
   return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/audit`, { headers:authHdr() }));
+}
+export async function updateDeveloperAppScopes(clientId, scopes) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/scopes`, {
+    method:'PUT', headers:{ ...authHdr(), 'Content-Type':'application/json' }, body:JSON.stringify({ scopes }),
+  }));
+}
+export async function updateDeveloperAppWorkspaces(clientId, workspaceIds) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/workspaces`, {
+    method:'PUT', headers:{ ...authHdr(), 'Content-Type':'application/json' }, body:JSON.stringify({ workspace_ids:workspaceIds }),
+  }));
+}
+export async function listDeveloperAppScopeRequests(clientId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/scope-requests`, { headers:authHdr() }));
+}
+export async function requestDeveloperAppScopes(clientId, scopes, reason = '') {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/scope-requests`, {
+    method:'POST', headers:{ ...authHdr(), 'Content-Type':'application/json' }, body:JSON.stringify({ scopes, reason }),
+  }));
 }
 
 export async function streamGuestChat({ question, documentIds, history = [], redactPii = false }, { onToken, onDone, onError }) {
@@ -614,6 +654,17 @@ export async function decideMcpScopeRequest(requestId, decision, reviewerNote = 
 export async function revokeMcpScopeGrant(grantId) {
   return handleRes(await fetch(`${BASE}/admin/oauth/scope-grants/${grantId}`, {
     method:'DELETE', headers:authHdr(),
+  }));
+}
+
+export async function fetchDeveloperScopeRequests(status = 'pending') {
+  return handleRes(await fetch(`${BASE}/v1/developer/admin/scope-requests?status=${encodeURIComponent(status)}`, { headers:authHdr() }));
+}
+
+export async function decideDeveloperScopeRequest(requestId, decision, reviewerNote = '') {
+  return handleRes(await fetch(`${BASE}/v1/developer/admin/scope-requests/${encodeURIComponent(requestId)}/decision`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({ decision, reviewer_note:reviewerNote }),
   }));
 }
 

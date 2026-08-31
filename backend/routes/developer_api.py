@@ -10,12 +10,13 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from auth.dependencies import CurrentUser
+from auth.dependencies import AdminUser, CurrentUser
 from database.connection import get_db
 from routes.oauth import (
     _active_scopes,
     _ensure_oauth_tables,
     _normalize_scopes,
+    _upsert_scope_grant,
     _valid_redirect_uri,
 )
 
@@ -43,6 +44,11 @@ class DeveloperOrganizationCreate(BaseModel):
     slug: str | None = Field(default=None, max_length=100)
 
 
+class DeveloperOrganizationUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=200)
+    status: Literal["active", "suspended"] | None = None
+
+
 class DeveloperScopeUpdate(BaseModel):
     scopes: list[str] = Field(min_length=1)
 
@@ -56,6 +62,17 @@ class DeveloperOrganizationMemberInput(BaseModel):
     role: Literal["owner", "admin", "developer", "viewer"] = "developer"
 
 
+class DeveloperScopeRequestCreate(BaseModel):
+    scopes: list[str] = Field(min_length=1)
+    reason: str = Field(default="", max_length=2000)
+
+
+class DeveloperScopeRequestDecision(BaseModel):
+    decision: Literal["approved", "denied"]
+    reviewer_note: str = Field(default="", max_length=2000)
+    expires_at: datetime | None = None
+
+
 def _hash_secret(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
@@ -66,11 +83,15 @@ async def _require_service_management(db, user_id: str) -> None:
         raise HTTPException(403, "The user is not approved for service:manage")
 
 
-async def _require_org_role(db, organization_id: str, user_id: str, roles=("owner", "admin")) -> str:
+async def _require_org_role(
+    db, organization_id: str, user_id: str,
+    roles=("owner", "admin"), *, require_active: bool = True,
+) -> str:
+    status_clause = "AND o.status='active'" if require_active else ""
     role = await db.fetchval(
-        """SELECT role FROM developer_organization_members m
+        f"""SELECT role FROM developer_organization_members m
            JOIN developer_organizations o ON o.id=m.organization_id
-           WHERE m.organization_id=$1::uuid AND m.user_id=$2::uuid AND o.status='active'""",
+           WHERE m.organization_id=$1::uuid AND m.user_id=$2::uuid {status_clause}""",
         organization_id, user_id,
     )
     if role not in roles:
@@ -129,9 +150,39 @@ async def create_developer_organization(body: DeveloperOrganizationCreate, curre
     return {"data": _serialize_app(row)}
 
 
+@router.patch("/organizations/{organization_id}")
+async def update_developer_organization(
+    organization_id: str, body: DeveloperOrganizationUpdate,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    actor_id = str(current_user["id"])
+    actor_role = await _require_org_role(db, organization_id, actor_id, require_active=False)
+    if body.name is None and body.status is None:
+        raise HTTPException(400, "Provide an organization name or status")
+    if body.status is not None and actor_role != "owner":
+        raise HTTPException(403, "Only an organization owner can change organization status")
+    row = await db.fetchrow(
+        """UPDATE developer_organizations
+              SET name=COALESCE($2,name),status=COALESCE($3,status),updated_at=NOW()
+            WHERE id=$1::uuid RETURNING *""",
+        organization_id, body.name.strip() if body.name else None, body.status,
+    )
+    if not row:
+        raise HTTPException(404, "Developer organization not found")
+    await _audit(
+        db, event_type="organization.updated", actor_user_id=actor_id,
+        organization_id=organization_id,
+        metadata={key: value for key, value in {"name": body.name, "status": body.status}.items() if value is not None},
+    )
+    return {"data": _serialize_app(row)}
+
+
 @router.get("/organizations/{organization_id}/members")
 async def list_developer_organization_members(organization_id: str, current_user: CurrentUser, db=Depends(get_db)):
-    await _require_org_role(db, organization_id, str(current_user["id"]), ("owner", "admin", "developer", "viewer"))
+    await _require_org_role(
+        db, organization_id, str(current_user["id"]),
+        ("owner", "admin", "developer", "viewer"), require_active=False,
+    )
     rows = await db.fetch(
         """SELECT u.id AS user_id,u.email,u.full_name,m.role,m.created_at
            FROM developer_organization_members m JOIN users u ON u.id=m.user_id
@@ -146,10 +197,24 @@ async def put_developer_organization_member(
     current_user: CurrentUser, db=Depends(get_db),
 ):
     actor_id = str(current_user["id"])
-    await _require_org_role(db, organization_id, actor_id)
+    actor_role = await _require_org_role(db, organization_id, actor_id)
     user = await db.fetchrow("SELECT id,email FROM users WHERE LOWER(email)=LOWER($1)", body.email.strip())
     if not user:
         raise HTTPException(404, "The user must register with DocIntel before joining an organization")
+    current_role = await db.fetchval(
+        """SELECT role FROM developer_organization_members
+           WHERE organization_id=$1::uuid AND user_id=$2::uuid""",
+        organization_id, user["id"],
+    )
+    if (body.role == "owner" or current_role == "owner") and actor_role != "owner":
+        raise HTTPException(403, "Only an organization owner can change ownership")
+    if current_role == "owner" and body.role != "owner":
+        owners = await db.fetchval(
+            "SELECT COUNT(*) FROM developer_organization_members WHERE organization_id=$1::uuid AND role='owner'",
+            organization_id,
+        )
+        if int(owners or 0) <= 1:
+            raise HTTPException(400, "Promote another owner before changing the final owner's role")
     await db.execute(
         """INSERT INTO developer_organization_members(organization_id,user_id,role)
            VALUES($1::uuid,$2,$3) ON CONFLICT(organization_id,user_id)
@@ -166,17 +231,21 @@ async def delete_developer_organization_member(
     organization_id: str, member_user_id: str, current_user: CurrentUser, db=Depends(get_db),
 ):
     actor_id = str(current_user["id"])
-    await _require_org_role(db, organization_id, actor_id)
-    if member_user_id == actor_id:
+    actor_role = await _require_org_role(db, organization_id, actor_id)
+    member_role = await db.fetchval(
+        """SELECT role FROM developer_organization_members
+           WHERE organization_id=$1::uuid AND user_id=$2::uuid""", organization_id, member_user_id,
+    )
+    if not member_role:
+        raise HTTPException(404, "Organization member not found")
+    if member_role == "owner":
+        if actor_role != "owner":
+            raise HTTPException(403, "Only an organization owner can remove another owner")
         owners = await db.fetchval(
-            """SELECT COUNT(*) FROM developer_organization_members
-               WHERE organization_id=$1::uuid AND role='owner'""", organization_id,
+            "SELECT COUNT(*) FROM developer_organization_members WHERE organization_id=$1::uuid AND role='owner'",
+            organization_id,
         )
-        current_role = await db.fetchval(
-            """SELECT role FROM developer_organization_members
-               WHERE organization_id=$1::uuid AND user_id=$2::uuid""", organization_id, actor_id,
-        )
-        if current_role == "owner" and int(owners or 0) <= 1:
+        if int(owners or 0) <= 1:
             raise HTTPException(400, "The final organization owner cannot be removed")
     result = await db.execute(
         """DELETE FROM developer_organization_members
@@ -195,12 +264,13 @@ async def list_developer_apps(current_user: CurrentUser, db=Depends(get_db)):
     rows = await db.fetch(
         """SELECT client_id,client_name,client_type,redirect_uris,default_scope AS scope,
                   created_at,updated_at,NULL::timestamptz AS expires_at,revoked_at,
-                  NULL::uuid AS organization_id,NULL::text AS organization_name
+                  NULL::uuid AS organization_id,NULL::text AS organization_name,
+                  NULL::text AS organization_role
              FROM oauth_clients WHERE owner_user_id=$1::uuid
             UNION ALL
            SELECT s.client_id,s.client_name,'confidential',NULL::jsonb,s.scope,
                   s.created_at,s.updated_at,s.expires_at,s.revoked_at,
-                  s.organization_id,o.name AS organization_name
+                  s.organization_id,o.name AS organization_name,m.role AS organization_role
              FROM oauth_service_clients s
              LEFT JOIN developer_organizations o ON o.id=s.organization_id
              LEFT JOIN developer_organization_members m ON m.organization_id=s.organization_id AND m.user_id=$1::uuid
@@ -380,6 +450,142 @@ async def update_developer_scopes(client_id: str, body: DeveloperScopeUpdate, cu
                  organization_id=str(app["organization_id"]) if app["organization_id"] else None,
                  metadata={"scopes": sorted(scopes)})
     return {"client_id": client_id, "scopes": sorted(scopes)}
+
+
+@router.get("/apps/{client_id}/scope-requests")
+async def list_developer_scope_requests(client_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    await _ensure_oauth_tables(db)
+    user_id = str(current_user["id"])
+    app = await db.fetchrow("SELECT * FROM oauth_service_clients WHERE client_id=$1", client_id)
+    if not app:
+        raise HTTPException(404, "Developer application not found")
+    if app["organization_id"]:
+        await _require_org_role(db, str(app["organization_id"]), user_id, ("owner", "admin", "developer", "viewer"))
+    elif str(app["owner_user_id"]) != user_id:
+        raise HTTPException(403, "Application owner access is required")
+    rows = await db.fetch(
+        """SELECT id,scope,reason,status,reviewer_note,reviewed_at,created_at,updated_at
+             FROM oauth_service_scope_requests WHERE client_id=$1 ORDER BY created_at DESC""",
+        client_id,
+    )
+    return {"data": [_serialize_app(row) for row in rows]}
+
+
+@router.post("/apps/{client_id}/scope-requests", status_code=201)
+async def create_developer_scope_request(
+    client_id: str, body: DeveloperScopeRequestCreate,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    await _ensure_oauth_tables(db)
+    user_id = str(current_user["id"])
+    await _require_service_management(db, user_id)
+    requested = _normalize_scopes(body.scopes)
+    app = await db.fetchrow("SELECT * FROM oauth_service_clients WHERE client_id=$1 AND revoked_at IS NULL", client_id)
+    if not app:
+        raise HTTPException(404, "Active confidential application not found")
+    if app["organization_id"]:
+        await _require_org_role(db, str(app["organization_id"]), user_id)
+    elif str(app["owner_user_id"]) != user_id:
+        raise HTTPException(403, "Application owner access is required")
+    current_app_scopes = set(str(app["scope"] or "").split())
+    user_scopes = await _active_scopes(db, user_id)
+    immediately_available = (requested - current_app_scopes) & user_scopes
+    pending = (requested - current_app_scopes) - user_scopes
+    if immediately_available:
+        updated = current_app_scopes | immediately_available
+        await db.execute(
+            "UPDATE oauth_service_clients SET scope=$2,updated_at=NOW() WHERE client_id=$1",
+            client_id, " ".join(sorted(updated)),
+        )
+    for scope in sorted(pending):
+        await db.execute(
+            """INSERT INTO oauth_service_scope_requests
+               (client_id,organization_id,requested_by,scope,reason,status)
+               VALUES($1,$2::uuid,$3::uuid,$4,$5,'pending')
+               ON CONFLICT(client_id,scope) DO UPDATE SET
+                 requested_by=EXCLUDED.requested_by,reason=EXCLUDED.reason,status='pending',
+                 reviewer_id=NULL,reviewer_note='',reviewed_at=NULL,updated_at=NOW()""",
+            client_id, app["organization_id"], user_id, scope, body.reason.strip(),
+        )
+    await _audit(
+        db, event_type="scopes.requested", actor_user_id=user_id, client_id=client_id,
+        organization_id=str(app["organization_id"]) if app["organization_id"] else None,
+        metadata={"pending_scopes": sorted(pending), "immediately_added": sorted(immediately_available), "reason": body.reason.strip()},
+    )
+    return {
+        "client_id": client_id,
+        "already_enabled": sorted(requested & current_app_scopes),
+        "immediately_added": sorted(immediately_available),
+        "requested_scopes": sorted(pending),
+        "status": "pending" if pending else "updated",
+    }
+
+
+@router.get("/admin/scope-requests")
+async def list_admin_developer_scope_requests(
+    admin: AdminUser, status: str = "pending", db=Depends(get_db),
+):
+    await _ensure_oauth_tables(db)
+    if status not in {"pending", "approved", "denied", "all"}:
+        raise HTTPException(400, "Invalid request status")
+    condition = "" if status == "all" else "WHERE r.status=$1"
+    args = () if status == "all" else (status,)
+    rows = await db.fetch(
+        f"""SELECT r.*,u.email,s.client_name,o.name AS organization_name
+              FROM oauth_service_scope_requests r
+              JOIN users u ON u.id=r.requested_by
+              JOIN oauth_service_clients s ON s.client_id=r.client_id
+              LEFT JOIN developer_organizations o ON o.id=r.organization_id
+              {condition} ORDER BY r.created_at""", *args,
+    )
+    return {"data": [_serialize_app(row) for row in rows]}
+
+
+@router.post("/admin/scope-requests/{request_id}/decision")
+async def decide_admin_developer_scope_request(
+    request_id: str, body: DeveloperScopeRequestDecision,
+    admin: AdminUser, db=Depends(get_db),
+):
+    await _ensure_oauth_tables(db)
+    admin_id = str(admin["id"])
+    async with db.transaction():
+        request = await db.fetchrow(
+            "SELECT * FROM oauth_service_scope_requests WHERE id=$1::uuid FOR UPDATE", request_id,
+        )
+        if not request:
+            raise HTTPException(404, "Service application scope request not found")
+        if request["status"] != "pending":
+            raise HTTPException(409, "Scope request has already been reviewed")
+        app = await db.fetchrow(
+            "SELECT * FROM oauth_service_clients WHERE client_id=$1 AND revoked_at IS NULL FOR UPDATE",
+            request["client_id"],
+        )
+        if not app:
+            raise HTTPException(404, "Active confidential application not found")
+        await db.execute(
+            """UPDATE oauth_service_scope_requests
+                  SET status=$2,reviewer_id=$3::uuid,reviewer_note=$4,
+                      reviewed_at=NOW(),updated_at=NOW()
+                WHERE id=$1::uuid""",
+            request_id, body.decision, admin_id, body.reviewer_note.strip(),
+        )
+        if body.decision == "approved":
+            await _upsert_scope_grant(
+                db, str(app["owner_user_id"]), None, str(request["scope"]),
+                admin_id, body.reviewer_note.strip(), body.expires_at,
+            )
+            scopes = set(str(app["scope"] or "").split()) | {str(request["scope"])}
+            await db.execute(
+                "UPDATE oauth_service_clients SET scope=$2,updated_at=NOW() WHERE client_id=$1",
+                request["client_id"], " ".join(sorted(scopes)),
+            )
+        await _audit(
+            db, event_type=f"scope_request.{body.decision}", actor_user_id=admin_id,
+            client_id=str(request["client_id"]),
+            organization_id=str(request["organization_id"]) if request["organization_id"] else None,
+            metadata={"scope": request["scope"], "reviewer_note": body.reviewer_note.strip()},
+        )
+    return {"request_id": request_id, "client_id": request["client_id"], "scope": request["scope"], "status": body.decision}
 
 
 @router.put("/apps/{client_id}/workspaces")
