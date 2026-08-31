@@ -7,7 +7,7 @@ embedding it, asking grounded questions, and optionally deleting it.
 
 ```bash
 cd /Users/brajadas/project/adar-rag
-source mcp-server/scripts/oauth_login.sh
+source deploy.sh --oauth-login --oauth-target mcp
 ```
 
 Complete login and MFA in the browser, then confirm that the token is loaded:

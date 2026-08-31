@@ -11,12 +11,20 @@ performs discovery, dynamic registration, PKCE, browser login, email MFA, state
 validation, callback handling, and token exchange:
 
 ```bash
+cd /Users/brajadas/project/adar-rag
+source deploy.sh --oauth-login --oauth-target mcp
+```
+
+The original command remains backward compatible:
+
+```bash
 source mcp-server/scripts/oauth_login.sh
 ```
 
-On success it exports `MCP_ACCESS_TOKEN`, `MCP_REFRESH_TOKEN`, `CLIENT_ID`, and
-the endpoint variables, and defines `mcp_request`. Refresh and rotate tokens
-without another browser login using:
+On success it exports `MCP_ACCESS_TOKEN`, `MCP_REFRESH_TOKEN`, `CLIENT_ID`,
+`MCP_URL`, and the generic `DOCINTEL_*` token variables. It also defines
+`mcp_request`, `mcp_tool`, and `tool_data`. Refresh and rotate tokens without
+another browser login using:
 
 ```bash
 docintel_mcp_refresh_token
@@ -49,18 +57,20 @@ Expected result:
 
 ## 2. Configure the Test Shell
 
-Export the MCP endpoint and the access token returned by the DocIntel login and
-MFA flow. Do not paste the token into this file or commit it to Git.
+When the login helper was used, configure only the protocol version because the
+endpoint and tokens are already loaded. Do not paste tokens into this file or
+commit them to Git.
 
 ```bash
-export MCP_URL="http://localhost:8081/mcp"
 export MCP_PROTOCOL_VERSION="2025-06-18"
-export DOCINTEL_ACCESS_TOKEN="<your-access-token>"
+export DOCINTEL_ACCESS_TOKEN="$MCP_ACCESS_TOKEN"
 
 echo "Token loaded: ${#DOCINTEL_ACCESS_TOKEN} characters"
+echo "MCP endpoint: $MCP_URL"
 ```
 
-Add this helper once in the current terminal. Every later test uses it.
+The sourced login helper already defines `mcp_request`. The following manual
+definition is needed only when testing without that helper.
 
 ```bash
 mcp_request() {

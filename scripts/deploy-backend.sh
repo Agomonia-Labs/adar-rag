@@ -243,6 +243,8 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="JWT_ACCESS_TOKEN_EXPIRE_MINUTES=480" \
   --set-env-vars="OAUTH_ISSUER_URL=https://auth.docintel.adar.agomoniai.com" \
   --set-env-vars="OAUTH_MCP_RESOURCE=https://mcp.docintel.adar.agomoniai.com/mcp" \
+  --set-env-vars="OAUTH_API_RESOURCE=https://docintel.adar.agomoniai.com/api/v1" \
+  --set-env-vars="OAUTH_API_DOCUMENTATION_URL=https://labs.agomoniai.com/developers/api" \
   --set-env-vars="OAUTH_ACCESS_TOKEN_MINUTES=15" \
   --set-env-vars="OAUTH_REFRESH_TOKEN_DAYS=30" \
   --set-env-vars="DOCINTEL_MCP_URL=https://mcp.docintel.adar.agomoniai.com/mcp" \

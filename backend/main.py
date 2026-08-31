@@ -161,6 +161,8 @@ _ROUTERS = [
     ("routes.mcp_playground", "mcp_playground_router", "/api/mcp-playground", ["mcp-playground"]),
     ("routes.batches",        "batches_router",        "/api/batches",        ["batches"]),
     ("routes.mcp_enterprise", "mcp_enterprise_router", "/api/mcp-enterprise", ["mcp-enterprise"]),
+    ("routes.public_api",     "router",                "/api/v1",             ["public-api"]),
+    ("routes.developer_api",  "router",                "/api/v1/developer",   ["developer-api"]),
 ]
 
 for _module, _attr, _prefix, _tags in _ROUTERS:

@@ -1,14 +1,42 @@
 #!/usr/bin/env bash
 # Source this file so the generated token variables remain in your current shell:
 #   source mcp-server/scripts/oauth_login.sh
+#   DOCINTEL_OAUTH_TARGET=api source mcp-server/scripts/oauth_login.sh
 
-docintel_mcp_oauth_login() {
-  local issuer="${DOCINTEL_MCP_ISSUER_URL:-https://auth.docintel.adar.agomoniai.com}"
-  local mcp_url="${DOCINTEL_MCP_URL:-https://mcp.docintel.adar.agomoniai.com/mcp}"
+docintel_oauth_login() {
+  local target="${DOCINTEL_OAUTH_TARGET:-mcp}"
+  local issuer="${DOCINTEL_OAUTH_ISSUER_URL:-${DOCINTEL_MCP_ISSUER_URL:-https://auth.docintel.adar.agomoniai.com}}"
+  local default_resource default_scopes protected_resource_metadata token_prefix client_label
+  case "$target" in
+    mcp)
+      default_resource="https://mcp.docintel.adar.agomoniai.com/mcp"
+      default_scopes="workspaces:read documents:read documents:write knowledge:query knowledge:generate sessions:write video:read video:process workflows:read workflows:write reviews:write reviews:approve packets:write batches:read batches:write events:read events:write artifacts:read artifacts:write versions:read versions:write evaluations:run"
+      token_prefix="MCP"
+      client_label="MCP"
+      ;;
+    api|rest)
+      target="api"
+      default_resource="https://docintel.adar.agomoniai.com/api/v1"
+      default_scopes="workspaces:read documents:read documents:write knowledge:query knowledge:generate"
+      token_prefix="API"
+      client_label="REST API"
+      ;;
+    *)
+      echo "DOCINTEL_OAUTH_TARGET must be 'mcp' or 'api'" >&2
+      return 2
+      ;;
+  esac
+  local resource scopes
+  if [[ "$target" == "mcp" ]]; then
+    resource="${DOCINTEL_OAUTH_RESOURCE:-${DOCINTEL_MCP_URL:-$default_resource}}"
+    scopes="${DOCINTEL_OAUTH_SCOPES:-${DOCINTEL_MCP_SCOPES:-$default_scopes}}"
+  else
+    resource="${DOCINTEL_OAUTH_RESOURCE:-$default_resource}"
+    scopes="${DOCINTEL_OAUTH_SCOPES:-$default_scopes}"
+  fi
   local callback_port="${DOCINTEL_OAUTH_CALLBACK_PORT:-8765}"
   local callback_url="http://127.0.0.1:${callback_port}/callback"
   local client_file="${DOCINTEL_OAUTH_CLIENT_FILE:-${HOME}/.config/docintel/mcp-oauth-client.json}"
-  local scopes="${DOCINTEL_MCP_SCOPES:-workspaces:read documents:read documents:write knowledge:query knowledge:generate sessions:write video:read video:process workflows:read workflows:write reviews:write reviews:approve packets:write batches:read batches:write events:read events:write artifacts:read artifacts:write versions:read versions:write evaluations:run}"
   local timeout_seconds="${DOCINTEL_OAUTH_TIMEOUT_SECONDS:-300}"
   local work_dir listener_pid authorization_url register_response token_response
   local callback_file ready_file returned_state authorization_code elapsed
@@ -29,11 +57,16 @@ docintel_mcp_oauth_login() {
     return 1
   fi
 
-  if ! curl -fsS "${mcp_url%/mcp}/.well-known/oauth-protected-resource/mcp" \
+  if [[ "$target" == "mcp" ]]; then
+    protected_resource_metadata="${DOCINTEL_OAUTH_PROTECTED_RESOURCE_METADATA:-${resource%/mcp}/.well-known/oauth-protected-resource/mcp}"
+  else
+    protected_resource_metadata="${DOCINTEL_OAUTH_PROTECTED_RESOURCE_METADATA:-${issuer%/}/.well-known/oauth-protected-resource/api}"
+  fi
+  if ! curl -fsS "$protected_resource_metadata" \
     | jq -e --arg issuer "${issuer%/}" '
         any(.authorization_servers[]?; rtrimstr("/") == ($issuer | rtrimstr("/")))
       ' >/dev/null; then
-    echo "MCP protected-resource discovery does not advertise $issuer" >&2
+    echo "$client_label protected-resource discovery does not advertise $issuer" >&2
     return 1
   fi
 
@@ -49,10 +82,10 @@ docintel_mcp_oauth_login() {
       curl -fsS -X POST "${issuer%/}/register" \
         -H "Content-Type: application/json" \
         --data "$(jq -cn --arg callback "$callback_url" '{
-          client_name:"DocIntel Manual MCP Client",
+          client_name:("DocIntel Manual " + $label + " Client"),
           redirect_uris:[$callback],
           token_endpoint_auth_method:"none"
-        }')"
+        }' --arg label "$client_label")"
     )" || {
       echo "Dynamic client registration failed" >&2
       return 1
@@ -73,6 +106,7 @@ docintel_mcp_oauth_login() {
   fi
 
   export DOCINTEL_OAUTH_CLIENT_ID="$CLIENT_ID"
+  export DOCINTEL_OAUTH_TARGET="$target"
   echo "OAuth client: $CLIENT_ID"
 
   read -r CODE_VERIFIER CODE_CHALLENGE OAUTH_STATE < <(
@@ -153,7 +187,7 @@ PY
   fi
 
   export OAUTH_ISSUER="${issuer%/}"
-  export MCP_URL="$mcp_url"
+  export DOCINTEL_OAUTH_RESOURCE="$resource"
   export CALLBACK_URL="$callback_url"
   export OAUTH_SCOPE="$scopes"
 
@@ -169,7 +203,7 @@ params = {
     "state": os.environ["OAUTH_STATE"],
     "code_challenge": os.environ["CODE_CHALLENGE"],
     "code_challenge_method": "S256",
-    "resource": os.environ["MCP_URL"],
+    "resource": os.environ["DOCINTEL_OAUTH_RESOURCE"],
 }
 print(os.environ["OAUTH_ISSUER"] + "/authorize?" + urlencode(params))
 PY
@@ -231,28 +265,46 @@ PY
   }
   rm -rf "$work_dir"
 
-  export MCP_ACCESS_TOKEN="$(jq -r '.access_token // empty' <<<"$token_response")"
-  export MCP_REFRESH_TOKEN="$(jq -r '.refresh_token // empty' <<<"$token_response")"
-  export MCP_TOKEN_SCOPE="$(jq -r '.scope // empty' <<<"$token_response")"
-  export MCP_TOKEN_EXPIRES_IN="$(jq -r '.expires_in // empty' <<<"$token_response")"
-  if [[ -z "$MCP_ACCESS_TOKEN" || -z "$MCP_REFRESH_TOKEN" ]]; then
+  export DOCINTEL_ACCESS_TOKEN="$(jq -r '.access_token // empty' <<<"$token_response")"
+  export DOCINTEL_REFRESH_TOKEN="$(jq -r '.refresh_token // empty' <<<"$token_response")"
+  export DOCINTEL_TOKEN_SCOPE="$(jq -r '.scope // empty' <<<"$token_response")"
+  export DOCINTEL_TOKEN_EXPIRES_IN="$(jq -r '.expires_in // empty' <<<"$token_response")"
+  if [[ -z "$DOCINTEL_ACCESS_TOKEN" || -z "$DOCINTEL_REFRESH_TOKEN" ]]; then
     echo "Token response did not contain the required tokens:" >&2
     jq 'del(.access_token,.refresh_token)' <<<"$token_response" >&2
     return 1
   fi
 
-  echo "OAuth login completed."
-  echo "MCP_ACCESS_TOKEN loaded (${#MCP_ACCESS_TOKEN} characters; expires in ${MCP_TOKEN_EXPIRES_IN}s)."
-  echo "MCP_REFRESH_TOKEN loaded (${#MCP_REFRESH_TOKEN} characters)."
-  echo "Granted scopes: $MCP_TOKEN_SCOPE"
+  if [[ "$target" == "mcp" ]]; then
+    export MCP_URL="$resource"
+    export MCP_ACCESS_TOKEN="$DOCINTEL_ACCESS_TOKEN"
+    export MCP_REFRESH_TOKEN="$DOCINTEL_REFRESH_TOKEN"
+    export MCP_TOKEN_SCOPE="$DOCINTEL_TOKEN_SCOPE"
+    export MCP_TOKEN_EXPIRES_IN="$DOCINTEL_TOKEN_EXPIRES_IN"
+  else
+    export DOCINTEL_API_URL="$resource"
+    export API_ACCESS_TOKEN="$DOCINTEL_ACCESS_TOKEN"
+    export API_REFRESH_TOKEN="$DOCINTEL_REFRESH_TOKEN"
+    export API_TOKEN_SCOPE="$DOCINTEL_TOKEN_SCOPE"
+    export API_TOKEN_EXPIRES_IN="$DOCINTEL_TOKEN_EXPIRES_IN"
+  fi
+  echo "$client_label OAuth login completed."
+  echo "${token_prefix}_ACCESS_TOKEN loaded (${#DOCINTEL_ACCESS_TOKEN} characters; expires in ${DOCINTEL_TOKEN_EXPIRES_IN}s)."
+  echo "${token_prefix}_REFRESH_TOKEN loaded (${#DOCINTEL_REFRESH_TOKEN} characters)."
+  echo "Granted scopes: $DOCINTEL_TOKEN_SCOPE"
 }
 
-docintel_mcp_refresh_token() {
-  if [[ -z "${MCP_REFRESH_TOKEN:-}" || -z "${CLIENT_ID:-}" ]]; then
-    echo "MCP_REFRESH_TOKEN and CLIENT_ID must be loaded" >&2
+# Backward-compatible entry point used by existing MCP documentation.
+docintel_mcp_oauth_login() {
+  DOCINTEL_OAUTH_TARGET=mcp docintel_oauth_login
+}
+
+docintel_oauth_refresh_token() {
+  if [[ -z "${DOCINTEL_REFRESH_TOKEN:-}" || -z "${CLIENT_ID:-}" ]]; then
+    echo "DOCINTEL_REFRESH_TOKEN and CLIENT_ID must be loaded" >&2
     return 1
   fi
-  local response old_refresh="$MCP_REFRESH_TOKEN"
+  local response old_refresh="$DOCINTEL_REFRESH_TOKEN"
   response="$(
     curl -fsS -X POST "${OAUTH_ISSUER%/}/token" \
       -H "Content-Type: application/x-www-form-urlencoded" \
@@ -260,14 +312,32 @@ docintel_mcp_refresh_token() {
       --data-urlencode "client_id=$CLIENT_ID" \
       --data-urlencode "refresh_token=$old_refresh"
   )" || {
-    echo "Refresh failed; run docintel_mcp_oauth_login again" >&2
+    echo "Refresh failed; run docintel_oauth_login again" >&2
     return 1
   }
-  export MCP_ACCESS_TOKEN="$(jq -r '.access_token // empty' <<<"$response")"
-  export MCP_REFRESH_TOKEN="$(jq -r '.refresh_token // empty' <<<"$response")"
-  export MCP_TOKEN_EXPIRES_IN="$(jq -r '.expires_in // empty' <<<"$response")"
-  [[ -n "$MCP_ACCESS_TOKEN" && -n "$MCP_REFRESH_TOKEN" ]] || return 1
-  echo "MCP tokens refreshed and rotated."
+  export DOCINTEL_ACCESS_TOKEN="$(jq -r '.access_token // empty' <<<"$response")"
+  export DOCINTEL_REFRESH_TOKEN="$(jq -r '.refresh_token // empty' <<<"$response")"
+  export DOCINTEL_TOKEN_SCOPE="$(jq -r '.scope // empty' <<<"$response")"
+  export DOCINTEL_TOKEN_EXPIRES_IN="$(jq -r '.expires_in // empty' <<<"$response")"
+  [[ -n "$DOCINTEL_ACCESS_TOKEN" && -n "$DOCINTEL_REFRESH_TOKEN" ]] || return 1
+  if [[ "${DOCINTEL_OAUTH_TARGET:-mcp}" == "mcp" ]]; then
+    export MCP_ACCESS_TOKEN="$DOCINTEL_ACCESS_TOKEN"
+    export MCP_REFRESH_TOKEN="$DOCINTEL_REFRESH_TOKEN"
+    export MCP_TOKEN_SCOPE="$DOCINTEL_TOKEN_SCOPE"
+    export MCP_TOKEN_EXPIRES_IN="$DOCINTEL_TOKEN_EXPIRES_IN"
+  else
+    export API_ACCESS_TOKEN="$DOCINTEL_ACCESS_TOKEN"
+    export API_REFRESH_TOKEN="$DOCINTEL_REFRESH_TOKEN"
+    export API_TOKEN_SCOPE="$DOCINTEL_TOKEN_SCOPE"
+    export API_TOKEN_EXPIRES_IN="$DOCINTEL_TOKEN_EXPIRES_IN"
+  fi
+  echo "DocIntel OAuth tokens refreshed and rotated."
+}
+
+docintel_mcp_refresh_token() {
+  export DOCINTEL_OAUTH_TARGET=mcp
+  export DOCINTEL_REFRESH_TOKEN="${MCP_REFRESH_TOKEN:-${DOCINTEL_REFRESH_TOKEN:-}}"
+  docintel_oauth_refresh_token
 }
 
 mcp_request() {
@@ -321,5 +391,5 @@ tool_data() {
 }
 
 if [[ "${DOCINTEL_OAUTH_DEFINE_ONLY:-0}" != "1" ]]; then
-  docintel_mcp_oauth_login
+  docintel_oauth_login
 fi

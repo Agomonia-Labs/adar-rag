@@ -25,7 +25,10 @@ oauth_router = router
 
 ISSUER = os.getenv("OAUTH_ISSUER_URL", "http://localhost:8000").rstrip("/")
 MCP_RESOURCE = os.getenv("OAUTH_MCP_RESOURCE", "http://localhost:8081/mcp").rstrip("/")
+API_RESOURCE = os.getenv("OAUTH_API_RESOURCE", "http://localhost:8000/api/v1").rstrip("/")
+API_DOCUMENTATION_URL = os.getenv("OAUTH_API_DOCUMENTATION_URL", "https://labs.agomoniai.com/developers/api")
 MCP_AUDIENCE = MCP_RESOURCE
+SUPPORTED_RESOURCES = {MCP_RESOURCE, API_RESOURCE}
 MCP_INTROSPECTION_SECRET = os.getenv("MCP_INTROSPECTION_SECRET", "")
 ACCESS_MINUTES = int(os.getenv("OAUTH_ACCESS_TOKEN_MINUTES", "15"))
 REFRESH_DAYS = int(os.getenv("OAUTH_REFRESH_TOKEN_DAYS", "30"))
@@ -152,6 +155,10 @@ async def _ensure_oauth_tables(db) -> None:
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             revoked_at TIMESTAMPTZ
         );
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS owner_user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS client_type TEXT NOT NULL DEFAULT 'public';
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS default_scope TEXT NOT NULL DEFAULT '';
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
         CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
             code_hash TEXT PRIMARY KEY,
             client_id TEXT NOT NULL REFERENCES oauth_clients(client_id),
@@ -297,6 +304,7 @@ def _metadata() -> dict:
         "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
         "scopes_supported": sorted(ALLOWED_SCOPES),
         "resource_parameter_supported": True,
+        "resource_indicators_supported": sorted(SUPPORTED_RESOURCES),
     }
 
 
@@ -491,6 +499,17 @@ async def authorization_server_metadata():
     return _metadata()
 
 
+@router.get("/.well-known/oauth-protected-resource/api")
+async def api_protected_resource_metadata():
+    return {
+        "resource": API_RESOURCE,
+        "authorization_servers": [ISSUER],
+        "bearer_methods_supported": ["header"],
+        "scopes_supported": sorted(ALLOWED_SCOPES),
+        "resource_documentation": API_DOCUMENTATION_URL,
+    }
+
+
 @router.post("/register")
 async def register_client(request: Request, db=Depends(get_db), _rl=Depends(ip_10_per_min)):
     await _ensure_oauth_tables(db)
@@ -542,7 +561,7 @@ async def _validate_authorization(values: dict[str, str], db):
         raise HTTPException(400, "Authorization code with S256 PKCE is required")
     if len(values["code_challenge"]) < 43:
         raise HTTPException(400, "A valid PKCE code_challenge is required")
-    if values["resource"].rstrip("/") != MCP_RESOURCE:
+    if values["resource"].rstrip("/") not in SUPPORTED_RESOURCES:
         raise HTTPException(400, "Invalid OAuth resource")
     scopes = set(values["scope"].split())
     if not scopes or not scopes <= ALLOWED_SCOPES:
@@ -646,7 +665,7 @@ async def _issue_authorization_code(db, values: dict[str, str], user_id):
            (code_hash,client_id,user_id,redirect_uri,scope,resource,code_challenge,expires_at)
            VALUES($1,$2,$3,$4,$5,$6,$7,$8)""",
         _hash(code), values["client_id"], user_id, values["redirect_uri"], approved_scope,
-        MCP_RESOURCE, values["code_challenge"], datetime.now(timezone.utc) + timedelta(minutes=5),
+        values["resource"].rstrip("/"), values["code_challenge"], datetime.now(timezone.utc) + timedelta(minutes=5),
     )
     query = {"code": code}
     if values["state"]:
@@ -703,10 +722,10 @@ async def token(request: Request, db=Depends(get_db)):
         if not requested <= allowed:
             raise HTTPException(403, "invalid_scope")
         resource = str(form.get("resource", MCP_RESOURCE)).rstrip("/")
-        if resource != MCP_RESOURCE:
+        if resource not in SUPPORTED_RESOURCES:
             raise HTTPException(400, "invalid_target")
         scope = " ".join(sorted(requested))
-        access, expires_in = _access_token(str(row["owner_user_id"]), client_id, scope, MCP_RESOURCE)
+        access, expires_in = _access_token(str(row["owner_user_id"]), client_id, scope, resource)
         return {"access_token": access, "token_type": "Bearer", "expires_in": expires_in, "scope": scope}
     if grant_type == "authorization_code":
         code_hash = _hash(str(form.get("code", "")))

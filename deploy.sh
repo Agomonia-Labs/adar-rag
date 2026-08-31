@@ -32,6 +32,7 @@
 #   source deploy.sh --oauth-login
 #   source deploy.sh --oauth-login --oauth-callback-port 8766
 #   source deploy.sh --oauth-login --oauth-scopes "workspaces:read documents:read"
+#   source deploy.sh --oauth-login --oauth-target api
 
 # OAuth login is a sourced-shell operation. Handle it before enabling strict
 # shell options so sourcing this script does not change the caller's shell.
@@ -53,6 +54,8 @@ if $OAUTH_LOGIN_REQUESTED; then
   OAUTH_CLIENT_ID=""
   OAUTH_ISSUER=""
   OAUTH_MCP_URL=""
+  OAUTH_TARGET=""
+  OAUTH_RESOURCE=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --oauth-login) shift ;;
@@ -62,16 +65,31 @@ if $OAUTH_LOGIN_REQUESTED; then
       --oauth-client-id) OAUTH_CLIENT_ID="${2:?--oauth-client-id requires a value}"; shift 2 ;;
       --oauth-issuer) OAUTH_ISSUER="${2:?--oauth-issuer requires a value}"; shift 2 ;;
       --mcp-url) OAUTH_MCP_URL="${2:?--mcp-url requires a value}"; shift 2 ;;
+      --oauth-target) OAUTH_TARGET="${2:?--oauth-target requires mcp or api}"; shift 2 ;;
+      --oauth-resource|--api-url) OAUTH_RESOURCE="${2:?$1 requires a value}"; shift 2 ;;
       *) echo "Unsupported OAuth option: $1" >&2; return 2 ;;
     esac
   done
 
-  [[ -n "$OAUTH_SCOPES" ]] && export DOCINTEL_MCP_SCOPES="$OAUTH_SCOPES"
+  if [[ -n "$OAUTH_TARGET" && "$OAUTH_TARGET" != "mcp" && "$OAUTH_TARGET" != "api" ]]; then
+    echo "--oauth-target must be 'mcp' or 'api'" >&2
+    return 2
+  fi
+  # Avoid carrying an API resource or custom scope set into a later MCP login
+  # (or vice versa) when both flows run in the same sourced shell.
+  if [[ -n "$OAUTH_TARGET" ]]; then
+    [[ -z "$OAUTH_RESOURCE" ]] && unset DOCINTEL_OAUTH_RESOURCE
+    [[ -z "$OAUTH_SCOPES" ]] && unset DOCINTEL_OAUTH_SCOPES
+  fi
+
+  [[ -n "$OAUTH_SCOPES" ]] && export DOCINTEL_OAUTH_SCOPES="$OAUTH_SCOPES"
   [[ -n "$OAUTH_CALLBACK_PORT" ]] && export DOCINTEL_OAUTH_CALLBACK_PORT="$OAUTH_CALLBACK_PORT"
   [[ -n "$OAUTH_TIMEOUT" ]] && export DOCINTEL_OAUTH_TIMEOUT_SECONDS="$OAUTH_TIMEOUT"
   [[ -n "$OAUTH_CLIENT_ID" ]] && export DOCINTEL_OAUTH_CLIENT_ID="$OAUTH_CLIENT_ID"
   [[ -n "$OAUTH_ISSUER" ]] && export DOCINTEL_MCP_ISSUER_URL="$OAUTH_ISSUER"
   [[ -n "$OAUTH_MCP_URL" ]] && export DOCINTEL_MCP_URL="$OAUTH_MCP_URL"
+  [[ -n "$OAUTH_TARGET" ]] && export DOCINTEL_OAUTH_TARGET="$OAUTH_TARGET"
+  [[ -n "$OAUTH_RESOURCE" ]] && export DOCINTEL_OAUTH_RESOURCE="$OAUTH_RESOURCE"
 
   # shellcheck disable=SC1091
   source mcp-server/scripts/oauth_login.sh
@@ -99,7 +117,8 @@ for arg in "$@"; do
       echo "Usage: bash deploy.sh [--all|--backend|--frontend|--mcp|--otel|--no-mcp|--no-otel]"
       echo "       source deploy.sh --oauth-login [OAuth options]"
       echo "OAuth options: --oauth-scopes, --oauth-callback-port, --oauth-timeout,"
-      echo "               --oauth-client-id, --oauth-issuer, --mcp-url"
+      echo "               --oauth-client-id, --oauth-issuer, --oauth-target,"
+      echo "               --oauth-resource, --api-url, --mcp-url"
       exit 0
       ;;
     *)

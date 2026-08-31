@@ -931,6 +931,15 @@ DocIntel is designed to support many verticals on one reusable architecture:
 
 The product thesis is simple: organizations and individuals should be able to turn unstructured documents and conversations into governed, searchable, domain-specific intelligence without building a custom AI platform for every use case.
 
+## Public API
+
+Enterprise applications can use the audience-bound OAuth REST API for direct
+cloud uploads, document lifecycle operations, grounded queries, and summaries.
+See [docs/public_api.md](docs/public_api.md) for scopes, OAuth, and end-to-end
+examples, and [docs/rest_api_end_to_end_testing.md](docs/rest_api_end_to_end_testing.md)
+for the complete runnable test sequence. MCP remains available as a separate
+OAuth resource for agent clients.
+
 ## MCP Integration
 
 DocIntel supports document, speech, and video intelligence through its web UI
