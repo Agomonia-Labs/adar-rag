@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from auth.api_oauth import ApiPrincipal, require_api_scope, validate_api_workspace_context
 from database.connection import get_db
 from routes import batches, mcp_enterprise
+from services.mcp_enterprise import process_webhook_deliveries
 
 
 router = APIRouter(dependencies=[Depends(validate_api_workspace_context)])
@@ -152,6 +153,27 @@ async def api_operations_catalog(principal: WorkflowReader):
     return await mcp_enterprise.enterprise_catalog(current_user=principal.user)
 
 
+@router.get("/operations")
+async def api_list_operations(
+    principal: BatchReader,
+    workspace_id: str | None = None,
+    status: str | None = None,
+    limit: int = Query(25, ge=1, le=100),
+    db=Depends(get_db),
+):
+    result = await batches.list_batch_jobs(
+        current_user=principal.user, workspace_id=workspace_id, operation=None,
+        status=status, limit=limit, db=db,
+    )
+    return {"operations": [_operation_view(job) for job in result["jobs"]]}
+
+
+@router.get("/operations/{operation_id}")
+async def api_get_operation(operation_id: str, principal: BatchReader, db=Depends(get_db)):
+    job = await batches.get_batch_status(operation_id, current_user=principal.user, db=db)
+    return _operation_view(job, include_items=True)
+
+
 @router.get("/workflows/{workflow}/schema")
 async def api_workflow_schema(workflow: str, principal: WorkflowReader):
     return await mcp_enterprise.workflow_schema(workflow, current_user=principal.user)
@@ -204,6 +226,107 @@ async def api_delete_event_subscription(
     return await mcp_enterprise.delete_subscription(
         subscription_id, current_user=principal.user, db=db
     )
+
+
+@router.get("/webhook-deliveries")
+async def api_list_webhook_deliveries(
+    principal: EventReader,
+    subscription_id: str | None = None,
+    status: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    db=Depends(get_db),
+):
+    rows = await db.fetch(
+        """SELECT d.*,e.event_type,e.resource_type,e.resource_id,e.sequence_number
+           FROM mcp_webhook_deliveries d
+           JOIN mcp_event_subscriptions s ON s.id=d.subscription_id
+           JOIN mcp_events e ON e.id=d.event_id
+           WHERE s.user_id=$1::uuid AND ($2::uuid IS NULL OR d.subscription_id=$2::uuid)
+             AND ($3::text IS NULL OR d.status=$3)
+           ORDER BY d.created_at DESC LIMIT $4""",
+        str(principal.user["id"]), subscription_id, status, limit,
+    )
+    return {"deliveries": [_serialize(row) for row in rows]}
+
+
+@router.post("/webhook-deliveries/{delivery_id}/retry", status_code=202)
+async def api_retry_webhook_delivery(
+    delivery_id: str, background_tasks: BackgroundTasks, principal: EventWriter,
+    db=Depends(get_db),
+):
+    delivery = await db.fetchrow(
+        """UPDATE mcp_webhook_deliveries d SET status='pending',next_attempt_at=NOW(),last_error=NULL,updated_at=NOW()
+           FROM mcp_event_subscriptions s WHERE d.id=$1::uuid AND s.id=d.subscription_id
+             AND s.user_id=$2::uuid RETURNING d.id""",
+        delivery_id, str(principal.user["id"]),
+    )
+    if not delivery:
+        raise HTTPException(404, "Webhook delivery not found")
+    background_tasks.add_task(process_webhook_deliveries, delivery_ids=[delivery_id])
+    return {"delivery_id": delivery_id, "status": "pending"}
+
+
+@router.post("/webhook-deliveries/process-due", status_code=202)
+async def api_process_due_webhook_deliveries(
+    background_tasks: BackgroundTasks,
+    principal: EventWriter,
+    limit: int = Query(50, ge=1, le=200),
+):
+    background_tasks.add_task(process_webhook_deliveries, limit=limit)
+    return {"status": "accepted", "limit": limit}
+
+
+@router.post("/events/{event_id}/replay", status_code=202)
+async def api_replay_event(
+    event_id: str, background_tasks: BackgroundTasks, principal: EventWriter,
+    db=Depends(get_db),
+):
+    rows = await db.fetch(
+        """INSERT INTO mcp_webhook_deliveries(subscription_id,event_id,status,next_attempt_at,attempt_count,last_error)
+           SELECT s.id,e.id,'pending',NOW(),0,NULL FROM mcp_events e
+           JOIN mcp_event_subscriptions s ON s.user_id=e.user_id AND s.status='active' AND s.webhook_url IS NOT NULL
+           WHERE e.id=$1::uuid AND e.user_id=$2::uuid
+             AND (s.workspace_id IS NULL OR s.workspace_id=e.workspace_id)
+             AND (s.resource_type IS NULL OR s.resource_type=e.resource_type)
+             AND (s.resource_id IS NULL OR s.resource_id=e.resource_id)
+             AND (s.event_types='[]'::jsonb OR s.event_types ? e.event_type)
+           ON CONFLICT(subscription_id,event_id) DO UPDATE SET status='pending',next_attempt_at=NOW(),
+             attempt_count=0,last_error=NULL,updated_at=NOW() RETURNING id""",
+        event_id, str(principal.user["id"]),
+    )
+    if not rows:
+        exists = await db.fetchval("SELECT 1 FROM mcp_events WHERE id=$1::uuid AND user_id=$2::uuid", event_id, str(principal.user["id"]))
+        if not exists:
+            raise HTTPException(404, "Event not found")
+    ids = [str(row["id"]) for row in rows]
+    if ids:
+        background_tasks.add_task(process_webhook_deliveries, delivery_ids=ids)
+    return {"event_id": event_id, "delivery_ids": ids, "status": "pending" if ids else "no_matching_subscriptions"}
+
+
+def _operation_view(job: dict[str, Any], *, include_items: bool = False) -> dict[str, Any]:
+    result = {
+        "operation_id": str(job.get("id") or job.get("batch_job_id")),
+        "operation_type": job.get("operation"), "resource_type": "batch",
+        "status": job.get("status"), "progress_pct": job.get("progress_pct", 0),
+        "current_step": job.get("current_stage"), "workspace_id": job.get("workspace_id"),
+        "total_items": job.get("total_items", 0), "succeeded_items": job.get("succeeded_items", 0),
+        "failed_items": job.get("failed_items", 0), "cancel_requested": job.get("cancel_requested", False),
+        "error": job.get("error_message"), "created_at": job.get("created_at"),
+        "updated_at": job.get("updated_at"), "completed_at": job.get("completed_at"),
+    }
+    if include_items:
+        result["items"] = job.get("items", [])
+        result["result"] = job.get("result", {})
+    return result
+
+
+def _serialize(row) -> dict[str, Any]:
+    value = dict(row)
+    for key, item in list(value.items()):
+        if hasattr(item, "isoformat"):
+            value[key] = item.isoformat()
+    return value
 
 
 # Human review, knowledge artifacts, versions, and evaluations

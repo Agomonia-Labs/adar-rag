@@ -41,9 +41,15 @@ def route_scope(path: str, method: str) -> str:
         ("/batches/embedding", "POST", "batches:write"),
         ("/batches/{job_id}/cancel", "POST", "batches:write"),
         ("/operations/catalog", "GET", "workflows:read"),
+        ("/operations", "GET", "batches:read"),
+        ("/operations/{operation_id}", "GET", "batches:read"),
         ("/workflows/{workflow}/validate", "POST", "workflows:read"),
         ("/events", "GET", "events:read"),
         ("/event-subscriptions", "POST", "events:write"),
+        ("/webhook-deliveries", "GET", "events:read"),
+        ("/webhook-deliveries/{delivery_id}/retry", "POST", "events:write"),
+        ("/webhook-deliveries/process-due", "POST", "events:write"),
+        ("/events/{event_id}/replay", "POST", "events:write"),
         ("/reviews", "POST", "reviews:write"),
         ("/reviews/{task_id}/decision", "POST", "reviews:approve"),
         ("/artifacts", "GET", "artifacts:read"),
@@ -97,4 +103,3 @@ async def test_workflow_validation_delegates_to_versioned_contract(monkeypatch):
     assert result["valid"] is True
     assert captured["workflow"] == "healthcare_prior_auth"
     assert captured["user"]["id"] == "user-1"
-

@@ -3,9 +3,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import asyncio
+import random
+import time
 from typing import Any
 
 from services.tracing import current_trace_id
+from database.connection import get_pool
 import httpx
 
 
@@ -68,24 +72,81 @@ async def emit_event(
     event = {"id": str(row["id"]), "sequence_number": row["sequence_number"], "event_type": event_type,
              "resource_type": resource_type, "resource_id": resource_id, "payload": bounded_payload(payload or {}),
              "created_at": row["created_at"].isoformat()}
+    delivery_ids = []
     for subscription in subscriptions:
-        await _deliver_webhook(db, dict(subscription), event)
+        delivery_id = await db.fetchval(
+            """INSERT INTO mcp_webhook_deliveries(subscription_id,event_id)
+               VALUES($1,$2) ON CONFLICT(subscription_id,event_id) DO UPDATE
+               SET updated_at=NOW() RETURNING id""",
+            subscription["id"], row["id"],
+        )
+        delivery_ids.append(str(delivery_id))
+    if delivery_ids:
+        asyncio.create_task(process_webhook_deliveries(delivery_ids=delivery_ids))
 
 
-async def _deliver_webhook(db, subscription: dict[str, Any], event: dict[str, Any]) -> None:
+async def _deliver_webhook(db, delivery: dict[str, Any], subscription: dict[str, Any], event: dict[str, Any]) -> None:
     body = json.dumps(event, separators=(",", ":"), default=str).encode()
-    signature = hmac.new(str(subscription.get("webhook_secret") or "").encode(), body, hashlib.sha256).hexdigest()
+    timestamp = str(int(time.time()))
+    signed = timestamp.encode() + b"." + body
+    signature = hmac.new(str(subscription.get("webhook_secret") or "").encode(), signed, hashlib.sha256).hexdigest()
+    attempt = int(delivery.get("attempt_count") or 0) + 1
     try:
         async with httpx.AsyncClient(timeout=8, follow_redirects=False) as client:
             response = await client.post(subscription["webhook_url"], content=body, headers={
                 "Content-Type": "application/json", "X-DocIntel-Event": event["event_type"],
+                "X-DocIntel-Event-ID": event["id"], "X-DocIntel-Timestamp": timestamp,
                 "X-DocIntel-Signature-SHA256": signature,
             })
             response.raise_for_status()
-        await db.execute("UPDATE mcp_event_subscriptions SET last_sequence=$2,updated_at=NOW() WHERE id=$1", subscription["id"], event["sequence_number"])
-    except Exception:
-        # Event delivery is best-effort; the durable cursor remains available for replay.
-        await db.execute("UPDATE mcp_event_subscriptions SET updated_at=NOW() WHERE id=$1", subscription["id"])
+        await db.execute(
+            """UPDATE mcp_webhook_deliveries SET status='delivered',attempt_count=$2,
+               last_http_status=$3,response_preview=$4,last_error=NULL,delivered_at=NOW(),updated_at=NOW()
+               WHERE id=$1""", delivery["id"], attempt, response.status_code, response.text[:1000],
+        )
+        await db.execute("UPDATE mcp_event_subscriptions SET last_sequence=GREATEST(last_sequence,$2),updated_at=NOW() WHERE id=$1", subscription["id"], event["sequence_number"])
+    except Exception as exc:
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+        terminal = attempt >= int(delivery.get("max_attempts") or 6)
+        delay_seconds = min(3600, (2 ** min(attempt, 10)) * 5 + random.randint(0, 5))
+        await db.execute(
+            """UPDATE mcp_webhook_deliveries SET status=$2,attempt_count=$3,last_http_status=$4,
+               last_error=$5,next_attempt_at=NOW()+($6 * INTERVAL '1 second'),updated_at=NOW()
+               WHERE id=$1""", delivery["id"], "dead_letter" if terminal else "retrying", attempt,
+            status_code, str(exc)[:2000], delay_seconds,
+        )
+
+
+async def process_webhook_deliveries(*, delivery_ids: list[str] | None = None, limit: int = 50) -> dict[str, int]:
+    """Claim and deliver due webhooks using a connection independent of the caller."""
+    counts = {"processed": 0, "delivered": 0, "failed": 0}
+    async with get_pool().acquire() as db:
+        rows = await db.fetch(
+            """SELECT d.*,s.webhook_url,s.webhook_secret,s.last_sequence,
+                      e.sequence_number,e.event_type,e.resource_type,e.resource_id,e.payload,e.created_at
+               FROM mcp_webhook_deliveries d
+               JOIN mcp_event_subscriptions s ON s.id=d.subscription_id AND s.status='active'
+               JOIN mcp_events e ON e.id=d.event_id
+               WHERE ((d.status IN ('pending','retrying') AND d.next_attempt_at<=NOW())
+                      OR (d.status='delivering' AND d.updated_at<NOW()-INTERVAL '2 minutes'))
+                 AND ($1::uuid[] IS NULL OR d.id=ANY($1::uuid[]))
+               ORDER BY d.next_attempt_at FOR UPDATE OF d SKIP LOCKED LIMIT $2""",
+            delivery_ids or None, limit,
+        )
+        for row in rows:
+            item = dict(row)
+            await db.execute("UPDATE mcp_webhook_deliveries SET status='delivering',updated_at=NOW() WHERE id=$1", item["id"])
+            event = {
+                "id": str(item["event_id"]), "sequence_number": item["sequence_number"],
+                "event_type": item["event_type"], "resource_type": item["resource_type"],
+                "resource_id": item["resource_id"], "payload": _json(item["payload"]),
+                "created_at": item["created_at"].isoformat(),
+            }
+            await _deliver_webhook(db, item, item, event)
+            final = await db.fetchval("SELECT status FROM mcp_webhook_deliveries WHERE id=$1", item["id"])
+            counts["processed"] += 1
+            counts["delivered" if final == "delivered" else "failed"] += 1
+    return counts
 
 
 def normalize_citations(sources: list[dict[str, Any]] | None) -> list[dict[str, Any]]:

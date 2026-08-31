@@ -978,6 +978,27 @@ CREATE TABLE IF NOT EXISTS mcp_event_subscriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_subscriptions_user ON mcp_event_subscriptions(user_id, status);
 
+CREATE TABLE IF NOT EXISTS mcp_webhook_deliveries (
+    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    subscription_id   UUID NOT NULL REFERENCES mcp_event_subscriptions(id) ON DELETE CASCADE,
+    event_id           UUID NOT NULL REFERENCES mcp_events(id) ON DELETE CASCADE,
+    status             TEXT NOT NULL DEFAULT 'pending',
+    attempt_count      INTEGER NOT NULL DEFAULT 0,
+    max_attempts       INTEGER NOT NULL DEFAULT 6,
+    next_attempt_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_http_status   INTEGER,
+    last_error         TEXT,
+    response_preview   TEXT,
+    delivered_at       TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(subscription_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_webhook_due
+    ON mcp_webhook_deliveries(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_webhook_subscription
+    ON mcp_webhook_deliveries(subscription_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS mcp_review_tasks (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
