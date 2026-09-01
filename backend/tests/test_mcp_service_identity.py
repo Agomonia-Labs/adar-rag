@@ -13,6 +13,8 @@ WORKSPACE_ID = "33333333-3333-3333-3333-333333333333"
 class FormRequest:
     def __init__(self, values):
         self.values = values
+        self.headers = {}
+        self.client = None
 
     async def form(self):
         return self.values
@@ -38,6 +40,9 @@ class ServiceTokenDb:
                 "expires_at": None,
             }
         return None
+
+    async def fetch(self, *_args):
+        return []
 
 
 @pytest.mark.anyio

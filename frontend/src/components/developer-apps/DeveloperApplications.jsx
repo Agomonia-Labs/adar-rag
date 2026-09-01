@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, Building2, Copy, Edit3, KeyRound, Play, Plus, RefreshCw, RotateCw, Save, Send, ShieldCheck, Trash2, UserPlus, Webhook, X } from 'lucide-react';
+import { Activity, BarChart3, Building2, Copy, Edit3, KeyRound, Play, Plus, RefreshCw, RotateCw, Save, Send, ShieldCheck, Trash2, UserPlus, Webhook, X } from 'lucide-react';
 import {
   createDeveloperApp, createDeveloperOrganization, fetchMcpScopeCatalog, getDeveloperApp,
   getDeveloperAppAudit, listDeveloperAppScopeRequests, listDeveloperApps,
@@ -11,6 +11,9 @@ import {
   deleteDeveloperWebhook, listDeveloperWebhookDeliveries, listDeveloperWebhooks,
   replayDeveloperWebhookDelivery, rotateDeveloperWebhookSecret, testDeveloperWebhook,
   updateDeveloperWebhook,
+  createDeveloperQuotaPolicy, deleteDeveloperQuotaPolicy, getDeveloperAppUsage,
+  listDeveloperCredentials, listDeveloperQuotaPolicies, revokeDeveloperCredential,
+  updateDeveloperIpAllowlist,
 } from '../../services/api.js';
 import './developerApplications.css';
 
@@ -214,6 +217,7 @@ export default function DeveloperApplications({ activeWorkspace, onClose }) {
       <nav className="devapp-tabs">
         <button className={view === 'applications' ? 'active' : ''} onClick={() => setView('applications')}><KeyRound size={15}/>Applications</button>
         <button className={view === 'webhooks' ? 'active' : ''} onClick={() => setView('webhooks')}><Webhook size={15}/>Webhooks</button>
+        <button className={view === 'governance' ? 'active' : ''} onClick={() => setView('governance')}><BarChart3 size={15}/>Usage & Security</button>
         <button className={view === 'organizations' ? 'active' : ''} onClick={() => setView('organizations')}><Building2 size={15}/>Organizations</button>
       </nav>
       {error && <div className="devapp-error">{error}</div>}
@@ -242,6 +246,10 @@ export default function DeveloperApplications({ activeWorkspace, onClose }) {
         </> : view === 'webhooks' ? <WebhookManagement
           apps={apps.filter(app => app.client_type === 'confidential' && !app.revoked_at && canManageApp(app))}
           workspaces={workspaces} busy={busy} run={run} setSecret={setSecret} setNotice={setNotice}
+        /> : view === 'governance' ? <GovernanceManagement
+          apps={apps.filter(app => app.client_type === 'confidential' && !app.revoked_at)}
+          workspaces={workspaces} busy={busy} run={run} setSecret={setSecret} setNotice={setNotice}
+          canManageApp={canManageApp}
         /> : <>
           <form className="devapp-create app" onSubmit={addApplication}>
             <label><span>Application name</span><input required value={form.name} onChange={e => setForm({...form, name:e.target.value})} placeholder="Procurement integration"/></label>
@@ -419,5 +427,70 @@ function WebhookManagement({ apps, workspaces, busy, run, setSecret, setNotice }
       {deliveries.map(item => <details key={item.id}><summary><span className={`devapp-state ${item.status}`}>{item.status}</span><strong>{item.event_type}</strong><span>{item.attempt_count} attempts</span><time>{new Date(item.created_at).toLocaleString()}</time></summary><div><code>{item.id}</code>{item.last_http_status && <span>HTTP {item.last_http_status}</span>}{item.last_error && <pre>{item.last_error}</pre>}{(Array.isArray(item.attempts) ? item.attempts : []).map(attempt => <p key={attempt.attempt_number}>Attempt {attempt.attempt_number}: {attempt.http_status ? `HTTP ${attempt.http_status}` : attempt.error_message} · {attempt.duration_ms} ms</p>)}{['retrying','dead_letter'].includes(item.status) && <button onClick={() => action(() => replayDeveloperWebhookDelivery(clientId, item.id), 'Webhook delivery queued for replay.')}><RotateCw size={14}/>Replay</button>}</div></details>)}
       {!deliveries.length && <div className="devapp-empty">Delivery attempts will appear after an event is sent.</div>}
     </div></section>
+  </div>;
+}
+
+function GovernanceManagement({ apps, workspaces, busy, run, setSecret, setNotice, canManageApp }) {
+  const [clientId, setClientId] = useState(apps[0]?.client_id || '');
+  const [usage, setUsage] = useState(null);
+  const [policies, setPolicies] = useState([]);
+  const [credentials, setCredentials] = useState([]);
+  const [cidrs, setCidrs] = useState('');
+  const [form, setForm] = useState({ policy_name:'API requests per hour', workspace_id:'', scope:'', operation:'', window_seconds:3600, limit_value:1000 });
+  const selected = apps.find(item => item.client_id === clientId);
+  const manageable = selected && canManageApp(selected);
+
+  useEffect(() => {
+    if (!apps.some(item => item.client_id === clientId)) setClientId(apps[0]?.client_id || '');
+  }, [apps, clientId]);
+  useEffect(() => { if (clientId) load(); }, [clientId]);
+
+  async function load() {
+    const [usageResult, policyResult, credentialResult] = await Promise.all([
+      getDeveloperAppUsage(clientId), listDeveloperQuotaPolicies(clientId), listDeveloperCredentials(clientId),
+    ]);
+    setUsage(usageResult.data || null);
+    setPolicies(policyResult.data || []);
+    setCredentials(credentialResult.data || []);
+    setCidrs((credentialResult.ip_allowlist || []).map(item => item.cidr).join('\n'));
+  }
+  async function addPolicy(event) {
+    event.preventDefault();
+    await run(async () => {
+      await createDeveloperQuotaPolicy(clientId, { ...form, workspace_id:form.workspace_id || null,
+        scope:form.scope || null, operation:form.operation || null,
+        window_seconds:Number(form.window_seconds), limit_value:Number(form.limit_value) });
+      setNotice('Quota policy created.'); await load();
+    });
+  }
+  async function rotate() {
+    await run(async () => {
+      const result = await rotateDeveloperAppSecret(clientId, { name:'Rotated secret', overlap_hours:24 });
+      setSecret(result); setNotice('New secret created with a 24-hour overlap.'); await load();
+    });
+  }
+  if (!apps.length) return <div className="devapp-empty">Create an active confidential application to manage usage and security.</div>;
+  const totals = usage?.totals || {};
+  return <div className="devapp-governance">
+    <div className="devapp-webhook-toolbar">
+      <label><span>Application</span><select value={clientId} onChange={event => setClientId(event.target.value)}>{apps.map(app => <option key={app.client_id} value={app.client_id}>{app.client_name}</option>)}</select></label>
+      <button className="devapp-icon" onClick={() => run(load)} disabled={busy} title="Refresh"><RefreshCw size={16}/></button>
+    </div>
+    <section className="devapp-metrics">
+      {[['Requests', totals.requests], ['Failures', totals.failures], ['Input', totals.input_bytes], ['Output', totals.output_bytes], ['Tokens', totals.token_count]].map(([label,value]) => <div key={label}><span>{label}</span><strong>{Number(value || 0).toLocaleString()}</strong></div>)}
+    </section>
+    <section className="devapp-webhook-section"><h3>Operations · last {usage?.days || 30} days</h3><div className="devapp-table-wrap"><table><thead><tr><th>Operation</th><th>Requests</th><th>Failures</th><th>Avg latency</th></tr></thead><tbody>{(usage?.operations || []).map(item => <tr key={item.operation}><td>{item.operation}</td><td>{item.requests}</td><td>{item.failures}</td><td>{item.average_latency_ms} ms</td></tr>)}</tbody></table></div></section>
+    {manageable && <form className="devapp-webhook-form" onSubmit={addPolicy}>
+      <div className="devapp-webhook-heading wide"><div><BarChart3 size={18}/><strong>Create quota policy</strong></div></div>
+      <label><span>Name</span><input value={form.policy_name} onChange={e => setForm({...form,policy_name:e.target.value})}/></label>
+      <label><span>Workspace</span><select value={form.workspace_id} onChange={e => setForm({...form,workspace_id:e.target.value})}><option value="">All granted workspaces</option>{workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
+      <label><span>Scope (optional)</span><input placeholder="knowledge:query" value={form.scope} onChange={e => setForm({...form,scope:e.target.value})}/></label>
+      <label><span>Operation (optional)</span><input placeholder="post.knowledge/query" value={form.operation} onChange={e => setForm({...form,operation:e.target.value})}/></label>
+      <label><span>Window</span><select value={form.window_seconds} onChange={e => setForm({...form,window_seconds:e.target.value})}><option value="60">Minute</option><option value="3600">Hour</option><option value="86400">Day</option><option value="2592000">30 days</option></select></label>
+      <label><span>Request limit</span><input type="number" min="0" value={form.limit_value} onChange={e => setForm({...form,limit_value:e.target.value})}/></label>
+      <button disabled={busy}><Plus size={15}/>Add policy</button>
+    </form>}
+    <section className="devapp-webhook-section"><h3>Quota policies</h3><div className="devapp-compact-list">{policies.map(item => <article key={item.id}><div><strong>{item.policy_name}</strong><span>{item.limit_value.toLocaleString()} requests / {item.window_seconds}s · {item.scope || item.operation || 'all operations'}</span></div><span className={`devapp-state ${item.status}`}>{item.status}</span>{manageable && item.status === 'active' && <button className="danger" onClick={() => run(async () => { await deleteDeveloperQuotaPolicy(clientId,item.id); await load(); })}><Trash2 size={14}/></button>}</article>)}</div></section>
+    <section className="devapp-webhook-section"><h3>Application credentials</h3>{manageable && <div className="devapp-security-actions"><button onClick={rotate}><RotateCw size={14}/>Rotate with overlap</button><label><span>Allowed CIDRs · one per line; empty allows all</span><textarea value={cidrs} onChange={e => setCidrs(e.target.value)} rows="3"/></label><button onClick={() => run(async () => { await updateDeveloperIpAllowlist(clientId,cidrs.split(/\s+/).filter(Boolean)); setNotice('IP restrictions saved.'); await load(); })}><Save size={14}/>Save IP rules</button></div>}<div className="devapp-compact-list">{credentials.map(item => <article key={item.id}><div><strong>{item.name}</strong><span>{item.secret_hint} · created {new Date(item.created_at).toLocaleDateString()}{item.last_used_at ? ` · used ${new Date(item.last_used_at).toLocaleString()}` : ''}</span></div><span className={`devapp-state ${item.revoked_at ? 'revoked' : 'active'}`}>{item.revoked_at ? 'revoked' : item.expires_at ? 'overlap' : 'active'}</span>{manageable && !item.revoked_at && <button className="danger" onClick={() => run(async () => { await revokeDeveloperCredential(clientId,item.id); await load(); })}><Trash2 size={14}/></button>}</article>)}</div></section>
   </div>;
 }

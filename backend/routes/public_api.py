@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
 from auth.api_oauth import (
     ApiPrincipal,
+    enforce_api_usage,
     get_api_principal,
     require_api_scope,
     validate_api_workspace_context,
@@ -27,7 +28,7 @@ from routes.summarize import SummarizeRequest, summarize_document
 from routes.workspaces import get_workspace, list_workspace_documents, list_workspaces
 
 
-router = APIRouter(dependencies=[Depends(validate_api_workspace_context)])
+router = APIRouter(dependencies=[Depends(validate_api_workspace_context), Depends(enforce_api_usage)])
 API_VERSION = "2026-08-31.3"
 
 WorkspaceReader = Annotated[ApiPrincipal, Depends(require_api_scope("workspaces:read"))]

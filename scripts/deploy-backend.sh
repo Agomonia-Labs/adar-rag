@@ -5,8 +5,8 @@
 set -euo pipefail
 source .deploy-config 2>/dev/null || { echo "Run scripts/setup.sh first"; exit 1; }
 
-TAG="latest"
-if [[ "${1:-}" == "--tag" ]]; then TAG="${2:-latest}"; fi
+TAG="${DOCINTEL_IMAGE_TAG:-$(date -u +%Y%m%d%H%M%S)}"
+if [[ "${1:-}" == "--tag" ]]; then TAG="${2:?--tag requires a value}"; fi
 
 IMAGE="$IMAGE_URL:$TAG"
 IMAGE_LATEST="$IMAGE_URL:latest"
@@ -17,6 +17,23 @@ echo "╚═══════════════════════�
 echo "  Image : $IMAGE"
 echo "  Region: $REGION"
 echo ""
+
+push_with_retry() {
+  local image="$1" attempt delay
+  for attempt in 1 2 3 4 5; do
+    if docker push "$image"; then
+      return 0
+    fi
+    if [[ "$attempt" == "5" ]]; then
+      echo "  ✗ Registry push failed after $attempt attempts: $image" >&2
+      return 1
+    fi
+    delay=$((attempt * attempt * 5))
+    echo "  Artifact Registry push failed (attempt $attempt/5); retrying in ${delay}s..." >&2
+    sleep "$delay"
+    gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet >/dev/null 2>&1 || true
+  done
+}
 
 # ── 1. Configure Docker for Artifact Registry ─────────────────────────────────
 echo "▶ Authenticating Docker..."
@@ -34,8 +51,12 @@ echo "  ✓ Image built"
 
 # ── 3. Push to Artifact Registry ─────────────────────────────────────────────
 echo "▶ Pushing to Artifact Registry..."
-docker push "$IMAGE"
-docker push "$IMAGE_LATEST"
+push_with_retry "$IMAGE"
+if [[ "$IMAGE_LATEST" != "$IMAGE" ]]; then
+  if ! push_with_retry "$IMAGE_LATEST"; then
+    echo "  ⚠ Release tag is available; continuing without updating the optional latest alias." >&2
+  fi
+fi
 echo "  ✓ Pushed: $IMAGE"
 
 # ── 4. Enable APIs needed by runtime features ─────────────────────────────────

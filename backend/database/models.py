@@ -1151,6 +1151,108 @@ CREATE TABLE IF NOT EXISTS oauth_service_scope_requests (
 CREATE INDEX IF NOT EXISTS idx_oauth_service_scope_requests_status
     ON oauth_service_scope_requests(status,created_at);
 
+-- Enterprise usage governance. Existing usage_events remain the canonical
+-- ledger and gain integration dimensions without breaking user-tier metering.
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES developer_organizations(id) ON DELETE SET NULL;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS client_id TEXT;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS principal_type TEXT NOT NULL DEFAULT 'user';
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS scope TEXT;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS operation TEXT;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS request_id TEXT;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS trace_id TEXT;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS job_id TEXT;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS input_bytes BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS output_bytes BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS token_count BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS latency_ms INTEGER;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS status_code INTEGER;
+CREATE INDEX IF NOT EXISTS idx_usage_client_created ON usage_events(client_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_usage_org_created ON usage_events(organization_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_usage_workspace_created ON usage_events(workspace_id,created_at DESC);
+
+CREATE TABLE IF NOT EXISTS usage_quota_policies (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID REFERENCES developer_organizations(id) ON DELETE CASCADE,
+    client_id       TEXT REFERENCES oauth_service_clients(client_id) ON DELETE CASCADE,
+    workspace_id    UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+    scope           TEXT,
+    operation       TEXT,
+    window_seconds  INTEGER NOT NULL CHECK(window_seconds > 0),
+    limit_value     BIGINT NOT NULL CHECK(limit_value >= 0),
+    policy_name     TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'active',
+    effective_from  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at      TIMESTAMPTZ,
+    created_by      UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_usage_policy_lookup
+    ON usage_quota_policies(status,client_id,organization_id,workspace_id,scope,operation);
+
+CREATE TABLE IF NOT EXISTS usage_quota_counters (
+    policy_id       UUID NOT NULL REFERENCES usage_quota_policies(id) ON DELETE CASCADE,
+    window_start    TIMESTAMPTZ NOT NULL,
+    used_units      BIGINT NOT NULL DEFAULT 0,
+    reserved_units  BIGINT NOT NULL DEFAULT 0,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY(policy_id,window_start)
+);
+CREATE INDEX IF NOT EXISTS idx_usage_counter_updated ON usage_quota_counters(updated_at);
+
+CREATE TABLE IF NOT EXISTS usage_reservations (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    policy_id       UUID NOT NULL REFERENCES usage_quota_policies(id) ON DELETE CASCADE,
+    organization_id UUID REFERENCES developer_organizations(id) ON DELETE SET NULL,
+    client_id       TEXT,
+    workspace_id    UUID REFERENCES workspaces(id) ON DELETE SET NULL,
+    operation       TEXT NOT NULL,
+    units_reserved  BIGINT NOT NULL,
+    units_used      BIGINT,
+    window_start    TIMESTAMPTZ NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'reserved',
+    idempotency_key TEXT,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    reconciled_at   TIMESTAMPTZ,
+    UNIQUE(policy_id,idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_usage_reservation_expiry ON usage_reservations(status,expires_at);
+
+-- Multiple independently revocable secrets support zero-downtime rotation.
+CREATE TABLE IF NOT EXISTS oauth_service_client_secrets (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    client_id       TEXT NOT NULL REFERENCES oauth_service_clients(client_id) ON DELETE CASCADE,
+    secret_hash     TEXT NOT NULL,
+    secret_hint     TEXT NOT NULL,
+    name            TEXT NOT NULL DEFAULT 'Primary secret',
+    expires_at      TIMESTAMPTZ,
+    last_used_at    TIMESTAMPTZ,
+    revoked_at      TIMESTAMPTZ,
+    created_by      UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(client_id,secret_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_service_secrets_active
+    ON oauth_service_client_secrets(client_id,revoked_at,expires_at);
+INSERT INTO oauth_service_client_secrets
+    (client_id,secret_hash,secret_hint,name,created_by)
+SELECT client_id,client_secret_hash,'legacy','Legacy primary secret',owner_user_id
+FROM oauth_service_clients
+WHERE revoked_at IS NULL
+ON CONFLICT(client_id,secret_hash) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS oauth_service_ip_allowlists (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    client_id       TEXT NOT NULL REFERENCES oauth_service_clients(client_id) ON DELETE CASCADE,
+    cidr            CIDR NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    created_by      UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(client_id,cidr)
+);
+
 """
 
 

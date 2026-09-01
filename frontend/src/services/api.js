@@ -256,9 +256,38 @@ export async function createDeveloperApp(payload) {
 export async function getDeveloperApp(clientId) {
   return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}`, { headers:authHdr() }));
 }
-export async function rotateDeveloperAppSecret(clientId) {
+export async function rotateDeveloperAppSecret(clientId, payload = {}) {
   return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/rotate-secret`, {
-    method:'POST', headers:authHdr(),
+    method:'POST', headers:{ ...authHdr(), 'Content-Type':'application/json' }, body:JSON.stringify(payload),
+  }));
+}
+export async function getDeveloperAppUsage(clientId, days = 30) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/usage?days=${days}`, { headers:authHdr() }));
+}
+export async function listDeveloperQuotaPolicies(clientId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/quota-policies`, { headers:authHdr() }));
+}
+export async function createDeveloperQuotaPolicy(clientId, payload) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/quota-policies`, {
+    method:'POST', headers:{ ...authHdr(), 'Content-Type':'application/json' }, body:JSON.stringify(payload),
+  }));
+}
+export async function deleteDeveloperQuotaPolicy(clientId, policyId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/quota-policies/${encodeURIComponent(policyId)}`, {
+    method:'DELETE', headers:authHdr(),
+  }));
+}
+export async function listDeveloperCredentials(clientId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/credentials`, { headers:authHdr() }));
+}
+export async function revokeDeveloperCredential(clientId, secretId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/credentials/${encodeURIComponent(secretId)}`, {
+    method:'DELETE', headers:authHdr(),
+  }));
+}
+export async function updateDeveloperIpAllowlist(clientId, cidrs) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/ip-allowlist`, {
+    method:'PUT', headers:{ ...authHdr(), 'Content-Type':'application/json' }, body:JSON.stringify({ cidrs }),
   }));
 }
 export async function revokeDeveloperApp(clientId) {

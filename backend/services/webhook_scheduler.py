@@ -5,6 +5,8 @@ import logging
 import os
 
 from services.mcp_enterprise import process_webhook_deliveries
+from services.usage_governance import release_expired_reservations
+from database.connection import get_pool
 
 
 log = logging.getLogger("docintel.webhooks.scheduler")
@@ -18,6 +20,11 @@ async def webhook_delivery_scheduler() -> None:
             result = await process_webhook_deliveries(limit=100)
             if result["processed"]:
                 log.info("Webhook delivery sweep: %s", result)
+            pool = get_pool()
+            async with pool.acquire() as db:
+                released = await release_expired_reservations(db)
+            if released:
+                log.info("Released %s expired usage reservation(s)", released)
         except asyncio.CancelledError:
             raise
         except Exception:

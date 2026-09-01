@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from typing import Annotated, Callable
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 
 from auth.service import ALGORITHM, SECRET_KEY
 from database.connection import get_db
 from routes.oauth import ALLOWED_SCOPES, API_RESOURCE, ISSUER, _active_scopes
+from services.tracing import current_trace_id
+from services.usage_governance import UsageContext, operation_for_request, reconcile_usage, reserve_usage
 
 
 API_RESOURCE_METADATA = f"{ISSUER}/.well-known/oauth-protected-resource/api"
@@ -100,6 +103,87 @@ async def get_api_principal(
         user=dict(user), client_id=client_id, scopes=scopes,
         token_kind=token_kind, organization_id=organization_id,
     )
+
+
+def _scope_for_request(principal: ApiPrincipal, method: str, path: str) -> str | None:
+    write = method.upper() not in {"GET", "HEAD", "OPTIONS"}
+    candidates = []
+    if "/knowledge/" in path:
+        candidates = ["knowledge:query"]
+    elif "/summaries/" in path:
+        candidates = ["knowledge:generate"]
+    elif "/documents" in path or "/uploads" in path:
+        candidates = ["documents:write" if write else "documents:read"]
+    elif "/workspaces" in path:
+        candidates = ["workspaces:write" if write else "workspaces:read"]
+    elif "/batches" in path:
+        candidates = ["batches:write" if write else "batches:read"]
+    elif "/events" in path or "/webhook" in path:
+        candidates = ["events:write" if write else "events:read"]
+    elif "/reviews" in path:
+        candidates = ["reviews:write", "reviews:approve"] if write else ["workflows:read"]
+    elif "/artifacts" in path:
+        candidates = ["artifacts:write" if write else "artifacts:read"]
+    elif "/evaluations" in path:
+        candidates = ["evaluations:run"]
+    return next((scope for scope in candidates if scope in principal.scopes), None)
+
+
+async def enforce_api_usage(
+    request: Request,
+    response: Response,
+    principal: ApiPrincipal = Depends(get_api_principal),
+    db=Depends(get_db),
+):
+    """Reserve and reconcile one public API unit using shared PostgreSQL state."""
+    operation = operation_for_request(request.method, request.url.path)
+    context = UsageContext(
+        user_id=principal.user_id,
+        client_id=principal.client_id,
+        organization_id=principal.organization_id,
+        workspace_id=getattr(request.state, "api_workspace_id", None),
+        principal_type=principal.token_kind,
+        scope=_scope_for_request(principal, request.method, request.url.path),
+        operation=operation,
+        request_id=request.headers.get("Idempotency-Key") or request.headers.get("X-Request-ID"),
+        trace_id=current_trace_id.get(),
+    )
+    started = time.monotonic()
+    reservation = await reserve_usage(
+        db, context, 1,
+        idempotency_key=request.headers.get("Idempotency-Key"),
+    )
+    if reservation.get("limit") is not None:
+        response.headers["X-RateLimit-Limit"] = str(reservation["limit"])
+        response.headers["X-RateLimit-Remaining"] = str(reservation["remaining"])
+        response.headers["X-RateLimit-Reset"] = str(reservation["reset_at"])
+        response.headers["X-DocIntel-Quota-Policy"] = ",".join(reservation.get("policy_ids", []))
+    response.headers["X-DocIntel-Usage-Units"] = "1"
+    try:
+        yield context
+    except HTTPException as exc:
+        await reconcile_usage(
+            db, context, reservation.get("reservation_ids", []), units_used=1,
+            status_code=exc.status_code,
+            input_bytes=int(request.headers.get("content-length") or 0),
+            latency_ms=round((time.monotonic() - started) * 1000),
+        )
+        raise
+    except Exception:
+        await reconcile_usage(
+            db, context, reservation.get("reservation_ids", []), units_used=1,
+            status_code=500,
+            input_bytes=int(request.headers.get("content-length") or 0),
+            latency_ms=round((time.monotonic() - started) * 1000),
+        )
+        raise
+    else:
+        await reconcile_usage(
+            db, context, reservation.get("reservation_ids", []), units_used=1,
+            status_code=response.status_code or 200,
+            input_bytes=int(request.headers.get("content-length") or 0),
+            latency_ms=round((time.monotonic() - started) * 1000),
+        )
 
 
 def require_api_scope(scope: str) -> Callable:

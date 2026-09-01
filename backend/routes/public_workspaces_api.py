@@ -5,13 +5,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from auth.api_oauth import ApiPrincipal, require_api_scope, validate_api_workspace_context
+from auth.api_oauth import ApiPrincipal, enforce_api_usage, require_api_scope, validate_api_workspace_context
 from database.connection import get_db
 from routes import workspaces
 from services.audit import audit, ip_from, ua_from
 
 
-router = APIRouter(dependencies=[Depends(validate_api_workspace_context)])
+router = APIRouter(dependencies=[Depends(validate_api_workspace_context), Depends(enforce_api_usage)])
 
 WorkspaceReader = Annotated[ApiPrincipal, Depends(require_api_scope("workspaces:read"))]
 WorkspaceWriter = Annotated[ApiPrincipal, Depends(require_api_scope("workspaces:write"))]

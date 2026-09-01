@@ -7,6 +7,8 @@ from routes.developer_api import (
     DeveloperOrganizationUpdate,
     DeveloperScopeRequestCreate,
     DeveloperScopeRequestDecision,
+    DeveloperQuotaPolicyInput,
+    DeveloperSecretRotateInput,
     _hash_secret,
 )
 
@@ -60,3 +62,17 @@ def test_service_scope_decision_is_explicit():
     assert DeveloperScopeRequestDecision(decision="approved").decision == "approved"
     with pytest.raises(ValidationError):
         DeveloperScopeRequestDecision(decision="pending")
+
+
+def test_quota_policy_has_bounded_window_and_limit():
+    policy = DeveloperQuotaPolicyInput(
+        policy_name="Hourly knowledge calls", scope="knowledge:query",
+        window_seconds=3600, limit_value=1000,
+    )
+    assert policy.window_seconds == 3600
+    with pytest.raises(ValidationError):
+        DeveloperQuotaPolicyInput(policy_name="No", window_seconds=0, limit_value=1)
+
+
+def test_secret_rotation_defaults_to_overlap_period():
+    assert DeveloperSecretRotateInput().overlap_hours == 24

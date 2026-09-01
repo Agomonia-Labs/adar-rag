@@ -18,6 +18,8 @@ from auth.router import _ensure_mfa_table, _mfa_enabled, _send_mfa_challenge, _t
 from auth.service import ALGORITHM, SECRET_KEY, create_access_token, decode_token, verify_password
 from database.connection import get_db
 from services.limiter import ip_10_per_min
+from services.service_credentials import ip_allowed, register_secret, verify_secret
+from services.usage_governance import UsageContext, reconcile_usage, reserve_usage
 
 
 router = APIRouter()
@@ -776,8 +778,12 @@ async def token(request: Request, db=Depends(get_db)):
                  AND (s.expires_at IS NULL OR s.expires_at>NOW())
                  AND (s.organization_id IS NULL OR o.status='active')""", client_id,
         )
-        if not row or not secrets.compare_digest(str(row["client_secret_hash"]), _hash(secret)):
+        forwarded_for = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+        remote_ip = forwarded_for or (request.client.host if request.client else None)
+        if not row or not await verify_secret(db, client_id, secret, str(row["client_secret_hash"])):
             raise HTTPException(401, "invalid_client")
+        if not await ip_allowed(db, client_id, remote_ip):
+            raise HTTPException(403, "client_ip_not_allowed")
         allowed = set(str(row["scope"]).split())
         requested = set(str(form.get("scope", "")).split()) or allowed
         if not requested <= allowed:
@@ -920,6 +926,40 @@ async def introspect(request: Request, db=Depends(get_db)):
     }
 
 
+@router.post("/internal/usage/reserve")
+async def reserve_internal_usage(request: Request, db=Depends(get_db)):
+    if not MCP_INTROSPECTION_SECRET or not secrets.compare_digest(
+        request.headers.get("X-MCP-Introspection-Secret", ""), MCP_INTROSPECTION_SECRET,
+    ):
+        raise HTTPException(401, "Unauthorized")
+    body = await request.json()
+    context = UsageContext(
+        user_id=str(body["user_id"]), client_id=str(body["client_id"]),
+        organization_id=body.get("organization_id"), workspace_id=body.get("workspace_id"),
+        principal_type=str(body.get("principal_type") or "user"), scope=body.get("scope"),
+        operation=str(body.get("operation") or "mcp.request"), request_id=body.get("request_id"),
+        trace_id=body.get("trace_id"),
+    )
+    result = await reserve_usage(db, context, idempotency_key=body.get("idempotency_key"))
+    return {**result, "context": context.__dict__}
+
+
+@router.post("/internal/usage/reconcile")
+async def reconcile_internal_usage(request: Request, db=Depends(get_db)):
+    if not MCP_INTROSPECTION_SECRET or not secrets.compare_digest(
+        request.headers.get("X-MCP-Introspection-Secret", ""), MCP_INTROSPECTION_SECRET,
+    ):
+        raise HTTPException(401, "Unauthorized")
+    body = await request.json()
+    context = UsageContext(**body["context"])
+    await reconcile_usage(
+        db, context, [str(item) for item in body.get("reservation_ids") or []],
+        units_used=int(body.get("units_used", 1)), status_code=int(body.get("status_code", 200)),
+        latency_ms=body.get("latency_ms"), metadata=body.get("metadata") or {},
+    )
+    return {"reconciled": True}
+
+
 @router.post("/api/admin/oauth/service-clients")
 async def create_service_client(body: ServiceClientBody, admin: AdminUser, db=Depends(get_db)):
     scopes = _normalize_scopes(body.scopes)
@@ -934,6 +974,9 @@ async def create_service_client(body: ServiceClientBody, admin: AdminUser, db=De
            VALUES($1,$2,$3,$4::uuid,$5,$6::uuid,$7)""",
         client_id, body.client_name, _hash(client_secret), body.owner_user_id,
         " ".join(sorted(scopes)), str(admin["id"]), body.expires_at,
+    )
+    await register_secret(
+        db, client_id, client_secret, name="Initial secret", created_by=str(admin["id"]),
     )
     return {"client_id": client_id, "client_secret": client_secret, "client_name": body.client_name,
             "owner_user_id": body.owner_user_id, "scope": " ".join(sorted(scopes)), "expires_at": body.expires_at,

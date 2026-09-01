@@ -4,13 +4,13 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
-from auth.api_oauth import ApiPrincipal, require_api_scope, validate_api_workspace_context
+from auth.api_oauth import ApiPrincipal, enforce_api_usage, require_api_scope, validate_api_workspace_context
 from database.connection import get_db
 from routes import batches, mcp_enterprise
 from services.mcp_enterprise import process_webhook_deliveries
 
 
-router = APIRouter(dependencies=[Depends(validate_api_workspace_context)])
+router = APIRouter(dependencies=[Depends(validate_api_workspace_context), Depends(enforce_api_usage)])
 
 BatchReader = Annotated[ApiPrincipal, Depends(require_api_scope("batches:read"))]
 BatchWriter = Annotated[ApiPrincipal, Depends(require_api_scope("batches:write"))]

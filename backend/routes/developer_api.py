@@ -22,6 +22,8 @@ from routes.oauth import (
     _valid_redirect_uri,
 )
 from services.mcp_enterprise import dispatch_webhook_deliveries
+from services.service_credentials import register_secret, rotate_secret
+from services.usage_governance import application_usage_summary
 
 
 router = APIRouter()
@@ -100,6 +102,25 @@ class DeveloperWebhookUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=500)
     enabled: bool | None = None
     timeout_seconds: int | None = Field(default=None, ge=2, le=30)
+
+
+class DeveloperQuotaPolicyInput(BaseModel):
+    policy_name: str = Field(min_length=2, max_length=160)
+    workspace_id: str | None = None
+    scope: str | None = Field(default=None, max_length=120)
+    operation: str | None = Field(default=None, max_length=240)
+    window_seconds: int = Field(ge=1, le=2678400)
+    limit_value: int = Field(ge=0, le=10_000_000_000)
+    expires_at: datetime | None = None
+
+
+class DeveloperSecretRotateInput(BaseModel):
+    name: str = Field(default="Rotated secret", min_length=2, max_length=120)
+    overlap_hours: int = Field(default=24, ge=1, le=168)
+
+
+class DeveloperIpAllowlistInput(BaseModel):
+    cidrs: list[str] = Field(default_factory=list, max_length=100)
 
 
 def _hash_secret(value: str) -> str:
@@ -409,6 +430,7 @@ async def create_developer_app(body: DeveloperAppCreate, current_user: CurrentUs
             """INSERT INTO oauth_service_workspace_grants(client_id,workspace_id,granted_by)
                VALUES($1,$2::uuid,$3::uuid)""", client_id, workspace_id, user_id,
         )
+    await register_secret(db, client_id, client_secret, name="Initial secret", created_by=user_id)
     await _audit(db, event_type="application.created", actor_user_id=user_id,
                  client_id=client_id, organization_id=body.organization_id,
                  metadata={"scopes": sorted(scopes), "workspace_ids": sorted(set(body.workspace_ids))})
@@ -479,31 +501,165 @@ async def update_developer_app(client_id: str, body: DeveloperAppUpdate, current
 
 
 @router.post("/apps/{client_id}/rotate-secret")
-async def rotate_developer_secret(client_id: str, current_user: CurrentUser, db=Depends(get_db)):
+async def rotate_developer_secret(
+    client_id: str, current_user: CurrentUser,
+    body: DeveloperSecretRotateInput = DeveloperSecretRotateInput(), db=Depends(get_db),
+):
     user_id = str(current_user["id"])
     await _require_service_management(db, user_id)
-    secret = secrets.token_urlsafe(48)
     app = await db.fetchrow("SELECT * FROM oauth_service_clients WHERE client_id=$1 AND revoked_at IS NULL", client_id)
     if app and app["organization_id"]:
         await _require_org_role(db, str(app["organization_id"]), user_id)
     elif app and str(app["owner_user_id"]) != user_id:
         app = None
-    row = None
-    if app:
-        row = await db.fetchrow(
-            """UPDATE oauth_service_clients SET client_secret_hash=$2,updated_at=NOW()
-               WHERE client_id=$1 RETURNING client_id,client_name,organization_id""",
-            client_id, _hash_secret(secret),
-        )
-    if not row:
+    if not app:
         raise HTTPException(404, "Active confidential application not found")
+    secret_id, secret, previous_expires_at = await rotate_secret(
+        db, client_id, created_by=user_id, overlap_hours=body.overlap_hours, name=body.name.strip(),
+    )
     await _audit(db, event_type="secret.rotated", actor_user_id=user_id, client_id=client_id,
-                 organization_id=str(row["organization_id"]) if row["organization_id"] else None)
+                 organization_id=str(app["organization_id"]) if app["organization_id"] else None,
+                 metadata={"secret_id": secret_id, "overlap_hours": body.overlap_hours})
     return {
-        "client_id": client_id,
+        "client_id": client_id, "secret_id": secret_id,
         "client_secret": secret,
-        "warning": "The previous secret is no longer valid. This secret is shown once.",
+        "previous_secrets_expire_at": previous_expires_at.isoformat(),
+        "warning": "The new secret is shown once. Previous active secrets remain valid during the overlap window.",
     }
+
+
+@router.get("/apps/{client_id}/credentials")
+async def list_developer_credentials(client_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    await _managed_service_app(db, client_id, str(current_user["id"]), readonly=True)
+    rows = await db.fetch(
+        """SELECT id,name,secret_hint,created_at,expires_at,last_used_at,revoked_at
+           FROM oauth_service_client_secrets WHERE client_id=$1 ORDER BY created_at DESC""", client_id,
+    )
+    allowlist = await db.fetch(
+        "SELECT id,cidr::text AS cidr,description,created_at FROM oauth_service_ip_allowlists WHERE client_id=$1 ORDER BY cidr",
+        client_id,
+    )
+    return {"data": [_serialize_app(row) for row in rows],
+            "ip_allowlist": [_serialize_app(row) for row in allowlist]}
+
+
+@router.delete("/apps/{client_id}/credentials/{secret_id}")
+async def revoke_developer_credential(
+    client_id: str, secret_id: str, current_user: CurrentUser, db=Depends(get_db),
+):
+    app = await _managed_service_app(db, client_id, str(current_user["id"]))
+    active = await db.fetchval(
+        """SELECT COUNT(*) FROM oauth_service_client_secrets WHERE client_id=$1
+           AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>NOW())""", client_id,
+    )
+    if int(active or 0) <= 1:
+        raise HTTPException(400, "The final active application secret cannot be revoked")
+    row = await db.fetchrow(
+        """UPDATE oauth_service_client_secrets SET revoked_at=NOW()
+           WHERE id=$1::uuid AND client_id=$2 AND revoked_at IS NULL RETURNING id""", secret_id, client_id,
+    )
+    if not row:
+        raise HTTPException(404, "Active credential not found")
+    await _audit(db, event_type="secret.revoked", actor_user_id=str(current_user["id"]), client_id=client_id,
+                 organization_id=str(app["organization_id"]) if app["organization_id"] else None,
+                 metadata={"secret_id": secret_id})
+    return {"secret_id": secret_id, "revoked": True}
+
+
+@router.put("/apps/{client_id}/ip-allowlist")
+async def update_developer_ip_allowlist(
+    client_id: str, body: DeveloperIpAllowlistInput, current_user: CurrentUser, db=Depends(get_db),
+):
+    import ipaddress
+    app = await _managed_service_app(db, client_id, str(current_user["id"]))
+    try:
+        networks = sorted({str(ipaddress.ip_network(value.strip(), strict=False)) for value in body.cidrs})
+    except ValueError as exc:
+        raise HTTPException(400, f"Invalid CIDR: {exc}") from exc
+    async with db.transaction():
+        await db.execute("DELETE FROM oauth_service_ip_allowlists WHERE client_id=$1", client_id)
+        for cidr in networks:
+            await db.execute(
+                """INSERT INTO oauth_service_ip_allowlists(client_id,cidr,created_by)
+                   VALUES($1,$2::cidr,$3::uuid)""", client_id, cidr, str(current_user["id"]),
+            )
+    await _audit(db, event_type="ip_allowlist.updated", actor_user_id=str(current_user["id"]), client_id=client_id,
+                 organization_id=str(app["organization_id"]) if app["organization_id"] else None,
+                 metadata={"cidrs": networks})
+    return {"client_id": client_id, "cidrs": networks}
+
+
+@router.get("/apps/{client_id}/usage")
+async def get_developer_usage(
+    client_id: str, current_user: CurrentUser, days: int = 30, db=Depends(get_db),
+):
+    await _managed_service_app(db, client_id, str(current_user["id"]), readonly=True)
+    return {"data": await application_usage_summary(db, client_id, days)}
+
+
+@router.get("/apps/{client_id}/quota-policies")
+async def list_developer_quota_policies(
+    client_id: str, current_user: CurrentUser, db=Depends(get_db),
+):
+    await _managed_service_app(db, client_id, str(current_user["id"]), readonly=True)
+    rows = await db.fetch(
+        """SELECT id,policy_name,workspace_id,scope,operation,window_seconds,limit_value,
+                  status,effective_from,expires_at,created_at,updated_at
+             FROM usage_quota_policies WHERE client_id=$1 ORDER BY created_at DESC""",
+        client_id,
+    )
+    return {"data": [_serialize_app(row) for row in rows]}
+
+
+@router.post("/apps/{client_id}/quota-policies", status_code=201)
+async def create_developer_quota_policy(
+    client_id: str, body: DeveloperQuotaPolicyInput,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    app = await _managed_service_app(db, client_id, str(current_user["id"]))
+    if body.workspace_id:
+        await _validate_webhook_workspace(db, client_id, body.workspace_id)
+    if body.scope and body.scope not in set(str(app["scope"] or "").split()):
+        raise HTTPException(400, "Quota scope must be granted to the application")
+    row = await db.fetchrow(
+        """INSERT INTO usage_quota_policies
+           (policy_name,organization_id,client_id,workspace_id,scope,operation,
+            window_seconds,limit_value,created_by,expires_at)
+           VALUES($1,$2::uuid,$3,$4::uuid,$5,$6,$7,$8,$9::uuid,$10)
+           RETURNING *""",
+        body.policy_name.strip(), app["organization_id"], client_id, body.workspace_id,
+        body.scope, body.operation, body.window_seconds, body.limit_value,
+        str(current_user["id"]), body.expires_at,
+    )
+    await _audit(
+        db, event_type="quota.created", actor_user_id=str(current_user["id"]),
+        client_id=client_id,
+        organization_id=str(app["organization_id"]) if app["organization_id"] else None,
+        metadata={"policy_id": str(row["id"]), "limit": body.limit_value,
+                  "window_seconds": body.window_seconds},
+    )
+    return {"data": _serialize_app(row)}
+
+
+@router.delete("/apps/{client_id}/quota-policies/{policy_id}")
+async def delete_developer_quota_policy(
+    client_id: str, policy_id: str, current_user: CurrentUser, db=Depends(get_db),
+):
+    app = await _managed_service_app(db, client_id, str(current_user["id"]))
+    row = await db.fetchrow(
+        """UPDATE usage_quota_policies SET status='revoked',updated_at=NOW()
+           WHERE id=$1::uuid AND client_id=$2 AND status='active' RETURNING id""",
+        policy_id, client_id,
+    )
+    if not row:
+        raise HTTPException(404, "Active quota policy not found")
+    await _audit(
+        db, event_type="quota.revoked", actor_user_id=str(current_user["id"]),
+        client_id=client_id,
+        organization_id=str(app["organization_id"]) if app["organization_id"] else None,
+        metadata={"policy_id": policy_id},
+    )
+    return {"policy_id": policy_id, "revoked": True}
 
 
 @router.put("/apps/{client_id}/scopes")

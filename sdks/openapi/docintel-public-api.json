@@ -1,0 +1,6263 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ADAR DocIntel Public API",
+    "version": "4.0.0"
+  },
+  "paths": {
+    "/.well-known/oauth-authorization-server": {
+      "get": {
+        "tags": [
+          "oauth"
+        ],
+        "summary": "Authorization Server Metadata",
+        "operationId": "authorization_server_metadata__well_known_oauth_authorization_server_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/oauth-protected-resource/api": {
+      "get": {
+        "tags": [
+          "oauth"
+        ],
+        "summary": "Api Protected Resource Metadata",
+        "operationId": "api_protected_resource_metadata__well_known_oauth_protected_resource_api_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/token": {
+      "post": {
+        "tags": [
+          "oauth"
+        ],
+        "summary": "Token",
+        "operationId": "token_token_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "tags": [
+          "public-api"
+        ],
+        "summary": "Api Current Identity",
+        "operationId": "api_current_identity_api_v1_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces": {
+      "get": {
+        "tags": [
+          "public-api"
+        ],
+        "summary": "Api List Workspaces",
+        "operationId": "api_list_workspaces_api_v1_workspaces_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "public-api-workspaces"
+        ],
+        "summary": "Api Create Workspace",
+        "operationId": "api_create_workspace_api_v1_workspaces_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceCreateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}": {
+      "get": {
+        "tags": [
+          "public-api"
+        ],
+        "summary": "Api Get Workspace",
+        "operationId": "api_get_workspace_api_v1_workspaces__workspace_id__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "public-api-workspaces"
+        ],
+        "summary": "Api Update Workspace",
+        "operationId": "api_update_workspace_api_v1_workspaces__workspace_id__patch",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceUpdateInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "public-api-workspaces"
+        ],
+        "summary": "Api Delete Workspace",
+        "operationId": "api_delete_workspace_api_v1_workspaces__workspace_id__delete",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/documents": {
+      "get": {
+        "tags": [
+          "public-api"
+        ],
+        "summary": "Api List Workspace Documents",
+        "operationId": "api_list_workspace_documents_api_v1_workspaces__workspace_id__documents_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/documents": {
+      "get": {
+        "tags": [
+          "public-api"
+        ],
+        "summary": "Api List Documents",
+        "operationId": "api_list_documents_api_v1_documents_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}": {
+      "get": {
+        "tags": [
+          "public-api"
+        ],
+        "summary": "Api Get Document",
+        "operationId": "api_get_document_api_v1_documents__document_id__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "public-api"
+        ],
+        "summary": "Api Delete Document",
+        "operationId": "api_delete_document_api_v1_documents__document_id__delete",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/documents/{document_id}/chunks": {
+      "get": {
+        "tags": [
+          "public-api"
+        ],
+        "summary": "Api Get Document Chunks",
+        "operationId": "api_get_document_chunks_api_v1_documents__document_id__chunks_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/uploads": {
+      "post": {
+        "tags": [
+          "public-api"
+        ],
+        "summary": "Api Create Upload",
+        "description": "Create a signed cloud upload URL so file bytes bypass the API service.",
+        "operationId": "api_create_upload_api_v1_uploads_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectUploadSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/uploads/complete": {
+      "post": {
+        "tags": [
+          "public-api"
+        ],
+        "summary": "Api Complete Upload",
+        "operationId": "api_complete_upload_api_v1_uploads_complete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectUploadCompleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}/embedding": {
+      "post": {
+        "tags": [
+          "public-api"
+        ],
+        "summary": "Api Embed Document",
+        "operationId": "api_embed_document_api_v1_documents__document_id__embedding_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/query/stream": {
+      "post": {
+        "tags": [
+          "public-api"
+        ],
+        "summary": "Api Grounded Query",
+        "operationId": "api_grounded_query_api_v1_knowledge_query_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/summaries/documents/{document_id}/stream": {
+      "post": {
+        "tags": [
+          "public-api"
+        ],
+        "summary": "Api Summarize Document",
+        "operationId": "api_summarize_document_api_v1_summaries_documents__document_id__stream_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SummarizeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/workspaces": {
+      "get": {
+        "tags": [
+          "public-api-workspaces"
+        ],
+        "summary": "Api My Workspaces",
+        "operationId": "api_my_workspaces_api_v1_me_workspaces_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspace-context": {
+      "post": {
+        "tags": [
+          "public-api-workspaces"
+        ],
+        "summary": "Api Select Workspace Context",
+        "operationId": "api_select_workspace_context_api_v1_workspace_context_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceContextInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/members": {
+      "post": {
+        "tags": [
+          "public-api-workspaces"
+        ],
+        "summary": "Api Add Workspace Member",
+        "operationId": "api_add_workspace_member_api_v1_workspaces__workspace_id__members_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceMemberInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/members/{user_id}": {
+      "patch": {
+        "tags": [
+          "public-api-workspaces"
+        ],
+        "summary": "Api Update Workspace Member",
+        "operationId": "api_update_workspace_member_api_v1_workspaces__workspace_id__members__user_id__patch",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceRoleInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "public-api-workspaces"
+        ],
+        "summary": "Api Remove Workspace Member",
+        "operationId": "api_remove_workspace_member_api_v1_workspaces__workspace_id__members__user_id__delete",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/leave": {
+      "post": {
+        "tags": [
+          "public-api-workspaces"
+        ],
+        "summary": "Api Leave Workspace",
+        "operationId": "api_leave_workspace_api_v1_workspaces__workspace_id__leave_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/batches/uploads": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Create Batch Upload",
+        "operationId": "api_create_batch_upload_api_v1_batches_uploads_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchUploadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/batches/{job_id}/uploads/complete": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Complete Batch Upload",
+        "operationId": "api_complete_batch_upload_api_v1_batches__job_id__uploads_complete_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteBatchUploadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/batches/embedding": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Start Batch Embedding",
+        "operationId": "api_start_batch_embedding_api_v1_batches_embedding_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/batches/classification": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Start Batch Classification",
+        "operationId": "api_start_batch_classification_api_v1_batches_classification_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/batches/workspace-summary": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Start Workspace Summary",
+        "operationId": "api_start_workspace_summary_api_v1_batches_workspace_summary_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceSummaryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/batches": {
+      "get": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api List Batch Jobs",
+        "operationId": "api_list_batch_jobs_api_v1_batches_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "operation",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Operation"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 25,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/batches/{job_id}": {
+      "get": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Get Batch Status",
+        "operationId": "api_get_batch_status_api_v1_batches__job_id__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/batches/{job_id}/results": {
+      "get": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Get Batch Results",
+        "operationId": "api_get_batch_results_api_v1_batches__job_id__results_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/batches/{job_id}/retry": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Retry Batch",
+        "operationId": "api_retry_batch_api_v1_batches__job_id__retry_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/batches/{job_id}/resume": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Resume Batch",
+        "operationId": "api_resume_batch_api_v1_batches__job_id__resume_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/batches/{job_id}/cancel": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Cancel Batch",
+        "operationId": "api_cancel_batch_api_v1_batches__job_id__cancel_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/operations/catalog": {
+      "get": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Operations Catalog",
+        "operationId": "api_operations_catalog_api_v1_operations_catalog_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/operations": {
+      "get": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api List Operations",
+        "operationId": "api_list_operations_api_v1_operations_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 25,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/operations/{operation_id}": {
+      "get": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Get Operation",
+        "operationId": "api_get_operation_api_v1_operations__operation_id__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Operation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/{workflow}/schema": {
+      "get": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Workflow Schema",
+        "operationId": "api_workflow_schema_api_v1_workflows__workflow__schema_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workflow",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/{workflow}/validate": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Validate Workflow",
+        "operationId": "api_validate_workflow_api_v1_workflows__workflow__validate_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workflow",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api List Events",
+        "operationId": "api_list_events_api_v1_events_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "After"
+            }
+          },
+          {
+            "name": "resource_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resource Type"
+            }
+          },
+          {
+            "name": "resource_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resource Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/event-subscriptions": {
+      "get": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api List Event Subscriptions",
+        "operationId": "api_list_event_subscriptions_api_v1_event_subscriptions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Create Event Subscription",
+        "operationId": "api_create_event_subscription_api_v1_event_subscriptions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/event-subscriptions/{subscription_id}": {
+      "delete": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Delete Event Subscription",
+        "operationId": "api_delete_event_subscription_api_v1_event_subscriptions__subscription_id__delete",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "subscription_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Subscription Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhook-deliveries": {
+      "get": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api List Webhook Deliveries",
+        "operationId": "api_list_webhook_deliveries_api_v1_webhook_deliveries_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "subscription_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subscription Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhook-deliveries/{delivery_id}/retry": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Retry Webhook Delivery",
+        "operationId": "api_retry_webhook_delivery_api_v1_webhook_deliveries__delivery_id__retry_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "delivery_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Delivery Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhook-deliveries/process-due": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Process Due Webhook Deliveries",
+        "operationId": "api_process_due_webhook_deliveries_api_v1_webhook_deliveries_process_due_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/{event_id}/replay": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Replay Event",
+        "operationId": "api_replay_event_api_v1_events__event_id__replay_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/reviews": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Create Review",
+        "operationId": "api_create_review_api_v1_reviews_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewTaskInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api List Reviews",
+        "operationId": "api_list_reviews_api_v1_reviews_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/reviews/{task_id}/assign": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Assign Review",
+        "operationId": "api_assign_review_api_v1_reviews__task_id__assign_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/reviews/{task_id}/decision": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Decide Review",
+        "operationId": "api_decide_review_api_v1_reviews__task_id__decision_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewDecisionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/artifacts": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Create Artifact",
+        "operationId": "api_create_artifact_api_v1_artifacts_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtifactInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api List Artifacts",
+        "operationId": "api_list_artifacts_api_v1_artifacts_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/documents/{document_id}/versions": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Register Document Version",
+        "operationId": "api_register_document_version_api_v1_documents__document_id__versions_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api List Document Versions",
+        "operationId": "api_list_document_versions_api_v1_documents__document_id__versions_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/evaluations": {
+      "post": {
+        "tags": [
+          "public-api-operations"
+        ],
+        "summary": "Api Run Evaluation",
+        "operationId": "api_run_evaluation_api_v1_evaluations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluationInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AgentEvalRequest": {
+        "properties": {
+          "persist": {
+            "type": "boolean",
+            "title": "Persist",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "AgentEvalRequest"
+      },
+      "AppendMessage": {
+        "properties": {
+          "messages": {
+            "items": {},
+            "type": "array",
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "messages"
+        ],
+        "title": "AppendMessage"
+      },
+      "ArtifactInput": {
+        "properties": {
+          "artifact_type": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 2,
+            "title": "Artifact Type"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 240,
+            "minLength": 2,
+            "title": "Title"
+          },
+          "content": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Content"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "source_document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Source Document Ids"
+          },
+          "source_trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Trace Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "reviewed",
+              "approved"
+            ],
+            "title": "Status",
+            "default": "draft"
+          }
+        },
+        "type": "object",
+        "required": [
+          "artifact_type",
+          "title",
+          "content"
+        ],
+        "title": "ArtifactInput"
+      },
+      "AssignBody": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "tag_id": {
+            "type": "string",
+            "title": "Tag Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_id",
+          "tag_id"
+        ],
+        "title": "AssignBody"
+      },
+      "BatchUploadRequest": {
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/UploadFileManifest"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Files"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "redact_pii": {
+            "type": "boolean",
+            "title": "Redact Pii",
+            "default": false
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "BatchUploadRequest"
+      },
+      "Body_add_conversation_turn_api_telephony_conversation_sessions__session_id__turns_post": {
+        "properties": {
+          "transcript": {
+            "type": "string",
+            "title": "Transcript",
+            "default": ""
+          },
+          "audio": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "binary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audio"
+          }
+        },
+        "type": "object",
+        "title": "Body_add_conversation_turn_api_telephony_conversation_sessions__session_id__turns_post"
+      },
+      "Body_run_healthcare_transcription_workflow_api_healthcare__doc_id__transcription_workflow_post": {
+        "properties": {
+          "audio": {
+            "type": "string",
+            "format": "binary",
+            "title": "Audio"
+          },
+          "consent_confirmed": {
+            "type": "boolean",
+            "title": "Consent Confirmed",
+            "default": false
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "audio"
+        ],
+        "title": "Body_run_healthcare_transcription_workflow_api_healthcare__doc_id__transcription_workflow_post"
+      },
+      "Body_run_new_visit_transcription_workflow_api_healthcare_transcription_workflow_post": {
+        "properties": {
+          "audio": {
+            "type": "string",
+            "format": "binary",
+            "title": "Audio"
+          },
+          "consent_confirmed": {
+            "type": "boolean",
+            "title": "Consent Confirmed",
+            "default": false
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": ""
+          },
+          "visit_title": {
+            "type": "string",
+            "title": "Visit Title",
+            "default": ""
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "audio"
+        ],
+        "title": "Body_run_new_visit_transcription_workflow_api_healthcare_transcription_workflow_post"
+      },
+      "Body_run_restaurant_scribe_workflow_api_restaurant_scribe_workflow_post": {
+        "properties": {
+          "audio": {
+            "items": {
+              "type": "string",
+              "format": "binary"
+            },
+            "type": "array",
+            "title": "Audio"
+          },
+          "authorized_confirmed": {
+            "type": "boolean",
+            "title": "Authorized Confirmed",
+            "default": false
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": ""
+          },
+          "intake_title": {
+            "type": "string",
+            "title": "Intake Title",
+            "default": ""
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "audio"
+        ],
+        "title": "Body_run_restaurant_scribe_workflow_api_restaurant_scribe_workflow_post"
+      },
+      "Body_transcribe_voice_api_voice_transcribe_post": {
+        "properties": {
+          "audio": {
+            "type": "string",
+            "format": "binary",
+            "title": "Audio"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "audio"
+        ],
+        "title": "Body_transcribe_voice_api_voice_transcribe_post"
+      },
+      "Body_upload_documents_api_documents_upload_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string",
+              "format": "binary"
+            },
+            "type": "array",
+            "title": "Files"
+          },
+          "redact_pii": {
+            "type": "boolean",
+            "title": "Redact Pii",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "Body_upload_documents_api_documents_upload_post"
+      },
+      "Body_upload_guest_documents_api_guest_upload_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string",
+              "format": "binary"
+            },
+            "type": "array",
+            "title": "Files"
+          },
+          "redact_pii": {
+            "type": "boolean",
+            "title": "Redact Pii",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "Body_upload_guest_documents_api_guest_upload_post"
+      },
+      "ChatRequest": {
+        "properties": {
+          "question": {
+            "type": "string",
+            "title": "Question"
+          },
+          "document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Document Ids"
+          },
+          "history": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "History",
+            "default": []
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "redact_pii": {
+            "type": "boolean",
+            "title": "Redact Pii",
+            "default": false
+          },
+          "agent_mode": {
+            "type": "string",
+            "title": "Agent Mode",
+            "default": "auto"
+          }
+        },
+        "type": "object",
+        "required": [
+          "question",
+          "document_ids"
+        ],
+        "title": "ChatRequest"
+      },
+      "CheckoutRequest": {
+        "properties": {
+          "plan": {
+            "type": "string",
+            "title": "Plan"
+          }
+        },
+        "type": "object",
+        "required": [
+          "plan"
+        ],
+        "title": "CheckoutRequest"
+      },
+      "CompareRequest": {
+        "properties": {
+          "document_id_1": {
+            "type": "string",
+            "title": "Document Id 1"
+          },
+          "document_id_2": {
+            "type": "string",
+            "title": "Document Id 2"
+          },
+          "redact_pii": {
+            "type": "boolean",
+            "title": "Redact Pii",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_id_1",
+          "document_id_2"
+        ],
+        "title": "CompareRequest"
+      },
+      "CompleteBatchUploadRequest": {
+        "properties": {
+          "document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Document Ids",
+            "default": []
+          },
+          "concurrency": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Concurrency",
+            "default": 3
+          }
+        },
+        "type": "object",
+        "title": "CompleteBatchUploadRequest"
+      },
+      "CompletedCall": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "default": "google"
+          },
+          "external_call_id": {
+            "type": "string",
+            "title": "External Call Id"
+          },
+          "external_account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Account Id"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "recording_gcs_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording Gcs Uri"
+          },
+          "recording_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording Url"
+          },
+          "recording_mime_type": {
+            "type": "string",
+            "title": "Recording Mime Type",
+            "default": "audio/wav"
+          },
+          "language_code": {
+            "type": "string",
+            "title": "Language Code",
+            "default": "en-US"
+          },
+          "direction": {
+            "type": "string",
+            "title": "Direction",
+            "default": "inbound"
+          },
+          "caller_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caller Number"
+          },
+          "destination_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Number"
+          },
+          "consent_status": {
+            "type": "string",
+            "title": "Consent Status",
+            "default": "confirmed"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "transcript": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transcript"
+          },
+          "redact_pii": {
+            "type": "boolean",
+            "title": "Redact Pii",
+            "default": true
+          },
+          "provider_payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Provider Payload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "external_call_id"
+        ],
+        "title": "CompletedCall"
+      },
+      "ConsentRequest": {
+        "properties": {
+          "confirmed": {
+            "type": "boolean",
+            "title": "Confirmed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "confirmed"
+        ],
+        "title": "ConsentRequest"
+      },
+      "ConversationSessionRequest": {
+        "properties": {
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "template_id": {
+            "type": "string",
+            "title": "Template Id",
+            "default": "customer-knowledge-capture"
+          },
+          "language_code": {
+            "type": "string",
+            "title": "Language Code",
+            "default": "en-US"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": "Customer Knowledge Conversation"
+          },
+          "redact_pii": {
+            "type": "boolean",
+            "title": "Redact Pii",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "ConversationSessionRequest"
+      },
+      "ConversationSpeechRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Text"
+          },
+          "language_code": {
+            "type": "string",
+            "title": "Language Code",
+            "default": "en-US"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "ConversationSpeechRequest"
+      },
+      "CreateCase": {
+        "properties": {
+          "question": {
+            "type": "string",
+            "title": "Question"
+          },
+          "expected_answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Answer"
+          },
+          "expected_fields": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Fields"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "title": "CreateCase"
+      },
+      "CreateSession": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": "New Chat"
+          },
+          "document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Document Ids",
+            "default": []
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "type": "object",
+        "title": "CreateSession"
+      },
+      "CreateSuite": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "eval_type": {
+            "type": "string",
+            "title": "Eval Type"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "eval_type"
+        ],
+        "title": "CreateSuite"
+      },
+      "CreateTag": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "CreateTag"
+      },
+      "CreateWorkspace": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "CreateWorkspace"
+      },
+      "DeliveryBatch": {
+        "properties": {
+          "delivery_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Delivery Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "delivery_ids"
+        ],
+        "title": "DeliveryBatch"
+      },
+      "DeveloperAppCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Name"
+          },
+          "client_type": {
+            "type": "string",
+            "enum": [
+              "public",
+              "confidential"
+            ],
+            "title": "Client Type",
+            "default": "public"
+          },
+          "redirect_uris": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Redirect Uris"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Scopes"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "organization_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organization Id"
+          },
+          "workspace_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Workspace Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "scopes"
+        ],
+        "title": "DeveloperAppCreate"
+      },
+      "DeveloperAppUpdate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Name"
+          },
+          "redirect_uris": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Redirect Uris"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "DeveloperAppUpdate"
+      },
+      "DeveloperIpAllowlistInput": {
+        "properties": {
+          "cidrs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Cidrs"
+          }
+        },
+        "type": "object",
+        "title": "DeveloperIpAllowlistInput"
+      },
+      "DeveloperOrganizationCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Name"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "DeveloperOrganizationCreate"
+      },
+      "DeveloperOrganizationMemberInput": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 320,
+            "minLength": 3,
+            "title": "Email"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "developer",
+              "viewer"
+            ],
+            "title": "Role",
+            "default": "developer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "DeveloperOrganizationMemberInput"
+      },
+      "DeveloperOrganizationUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "suspended"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "title": "DeveloperOrganizationUpdate"
+      },
+      "DeveloperQuotaPolicyInput": {
+        "properties": {
+          "policy_name": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 2,
+            "title": "Policy Name"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "operation": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 240
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation"
+          },
+          "window_seconds": {
+            "type": "integer",
+            "maximum": 2678400.0,
+            "minimum": 1.0,
+            "title": "Window Seconds"
+          },
+          "limit_value": {
+            "type": "integer",
+            "maximum": 10000000000.0,
+            "minimum": 0.0,
+            "title": "Limit Value"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "policy_name",
+          "window_seconds",
+          "limit_value"
+        ],
+        "title": "DeveloperQuotaPolicyInput"
+      },
+      "DeveloperScopeRequestCreate": {
+        "properties": {
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Scopes"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Reason",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "scopes"
+        ],
+        "title": "DeveloperScopeRequestCreate"
+      },
+      "DeveloperScopeRequestDecision": {
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approved",
+              "denied"
+            ],
+            "title": "Decision"
+          },
+          "reviewer_note": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Reviewer Note",
+            "default": ""
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "title": "DeveloperScopeRequestDecision"
+      },
+      "DeveloperScopeUpdate": {
+        "properties": {
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Scopes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scopes"
+        ],
+        "title": "DeveloperScopeUpdate"
+      },
+      "DeveloperSecretRotateInput": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 2,
+            "title": "Name",
+            "default": "Rotated secret"
+          },
+          "overlap_hours": {
+            "type": "integer",
+            "maximum": 168.0,
+            "minimum": 1.0,
+            "title": "Overlap Hours",
+            "default": 24
+          }
+        },
+        "type": "object",
+        "title": "DeveloperSecretRotateInput"
+      },
+      "DeveloperWebhookCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 2,
+            "title": "Name"
+          },
+          "endpoint_url": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 10,
+            "title": "Endpoint Url"
+          },
+          "event_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Event Types"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Description",
+            "default": ""
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "maximum": 30.0,
+            "minimum": 2.0,
+            "title": "Timeout Seconds",
+            "default": 10
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "endpoint_url",
+          "event_types"
+        ],
+        "title": "DeveloperWebhookCreate"
+      },
+      "DeveloperWebhookUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160,
+                "minLength": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "endpoint_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000,
+                "minLength": 10
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint Url"
+          },
+          "event_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 20,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Types"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "timeout_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 30.0,
+                "minimum": 2.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Seconds"
+          }
+        },
+        "type": "object",
+        "title": "DeveloperWebhookUpdate"
+      },
+      "DeveloperWorkspaceUpdate": {
+        "properties": {
+          "workspace_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Workspace Ids"
+          }
+        },
+        "type": "object",
+        "title": "DeveloperWorkspaceUpdate"
+      },
+      "DirectUploadCompleteRequest": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type",
+            "default": "application/octet-stream"
+          },
+          "file_size": {
+            "type": "integer",
+            "title": "File Size"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "redact_pii": {
+            "type": "boolean",
+            "title": "Redact Pii",
+            "default": false
+          },
+          "doc_id": {
+            "type": "string",
+            "title": "Doc Id"
+          },
+          "gcs_source_path": {
+            "type": "string",
+            "title": "Gcs Source Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "file_size",
+          "doc_id",
+          "gcs_source_path"
+        ],
+        "title": "DirectUploadCompleteRequest"
+      },
+      "DirectUploadSessionRequest": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type",
+            "default": "application/octet-stream"
+          },
+          "file_size": {
+            "type": "integer",
+            "title": "File Size"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "redact_pii": {
+            "type": "boolean",
+            "title": "Redact Pii",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "file_size"
+        ],
+        "title": "DirectUploadSessionRequest"
+      },
+      "DocumentBatchRequest": {
+        "properties": {
+          "document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Document Ids"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "concurrency": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Concurrency",
+            "default": 3
+          },
+          "force": {
+            "type": "boolean",
+            "title": "Force",
+            "default": false
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_ids"
+        ],
+        "title": "DocumentBatchRequest"
+      },
+      "EvaluationInput": {
+        "properties": {
+          "trace_id": {
+            "type": "string",
+            "title": "Trace Id"
+          },
+          "evaluation_type": {
+            "type": "string",
+            "title": "Evaluation Type",
+            "default": "groundedness"
+          }
+        },
+        "type": "object",
+        "required": [
+          "trace_id"
+        ],
+        "title": "EvaluationInput"
+      },
+      "ExecuteRequest": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Command"
+          },
+          "confirm": {
+            "type": "boolean",
+            "title": "Confirm",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "ExecuteRequest"
+      },
+      "FeedbackRequest": {
+        "properties": {
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "message_id": {
+            "type": "string",
+            "title": "Message Id"
+          },
+          "rating": {
+            "type": "integer",
+            "title": "Rating"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question"
+          },
+          "answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message_id",
+          "rating"
+        ],
+        "title": "FeedbackRequest"
+      },
+      "ForgotRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "ForgotRequest"
+      },
+      "GuestChatRequest": {
+        "properties": {
+          "question": {
+            "type": "string",
+            "title": "Question"
+          },
+          "document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Document Ids"
+          },
+          "history": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "History",
+            "default": []
+          },
+          "redact_pii": {
+            "type": "boolean",
+            "title": "Redact Pii",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "question",
+          "document_ids"
+        ],
+        "title": "GuestChatRequest"
+      },
+      "GuestSessionResponse": {
+        "properties": {
+          "guest_token": {
+            "type": "string",
+            "title": "Guest Token"
+          },
+          "guest_session_id": {
+            "type": "string",
+            "title": "Guest Session Id"
+          },
+          "expires_at": {
+            "type": "string",
+            "title": "Expires At"
+          },
+          "max_uploads": {
+            "type": "integer",
+            "title": "Max Uploads"
+          },
+          "max_queries": {
+            "type": "integer",
+            "title": "Max Queries"
+          },
+          "max_file_mb": {
+            "type": "integer",
+            "title": "Max File Mb"
+          }
+        },
+        "type": "object",
+        "required": [
+          "guest_token",
+          "guest_session_id",
+          "expires_at",
+          "max_uploads",
+          "max_queries",
+          "max_file_mb"
+        ],
+        "title": "GuestSessionResponse"
+      },
+      "GuestSummarizeRequest": {
+        "properties": {
+          "document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Document Ids"
+          },
+          "summary_type": {
+            "type": "string",
+            "title": "Summary Type",
+            "default": "executive"
+          },
+          "redact_pii": {
+            "type": "boolean",
+            "title": "Redact Pii",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_ids"
+        ],
+        "title": "GuestSummarizeRequest"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthcareApprovalRequest": {
+        "properties": {
+          "approved_packet": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved Packet"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persona"
+          }
+        },
+        "type": "object",
+        "title": "HealthcareApprovalRequest"
+      },
+      "HealthcareReviewDraftRequest": {
+        "properties": {
+          "review_packet": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Review Packet"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persona"
+          }
+        },
+        "type": "object",
+        "required": [
+          "review_packet"
+        ],
+        "title": "HealthcareReviewDraftRequest"
+      },
+      "IntegrationRequest": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "default": "google"
+          },
+          "external_account_id": {
+            "type": "string",
+            "title": "External Account Id"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "configuration": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Configuration"
+          }
+        },
+        "type": "object",
+        "required": [
+          "external_account_id"
+        ],
+        "title": "IntegrationRequest"
+      },
+      "InviteMember": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "default": "viewer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "InviteMember"
+      },
+      "LeaseAgentWorkflowRequest": {
+        "properties": {
+          "amendment_document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amendment Document Id"
+          }
+        },
+        "type": "object",
+        "title": "LeaseAgentWorkflowRequest"
+      },
+      "LeaseApprovalRequest": {
+        "properties": {
+          "approved_abstract": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved Abstract"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "title": "LeaseApprovalRequest"
+      },
+      "LeaseCompareRequest": {
+        "properties": {
+          "base_document_id": {
+            "type": "string",
+            "title": "Base Document Id"
+          },
+          "amendment_document_id": {
+            "type": "string",
+            "title": "Amendment Document Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "base_document_id",
+          "amendment_document_id"
+        ],
+        "title": "LeaseCompareRequest"
+      },
+      "LoginRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest"
+      },
+      "MultiSummarizeRequest": {
+        "properties": {
+          "document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Document Ids"
+          },
+          "summary_type": {
+            "type": "string",
+            "title": "Summary Type",
+            "default": "executive"
+          },
+          "custom_prompt": {
+            "type": "string",
+            "title": "Custom Prompt",
+            "default": ""
+          },
+          "redact_pii": {
+            "type": "boolean",
+            "title": "Redact Pii",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_ids"
+        ],
+        "title": "MultiSummarizeRequest"
+      },
+      "OAuthStartRequest": {
+        "properties": {
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Scopes"
+          }
+        },
+        "type": "object",
+        "title": "OAuthStartRequest"
+      },
+      "OTPResendRequest": {
+        "properties": {
+          "mfa_token": {
+            "type": "string",
+            "title": "Mfa Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mfa_token"
+        ],
+        "title": "OTPResendRequest"
+      },
+      "OTPVerifyRequest": {
+        "properties": {
+          "mfa_token": {
+            "type": "string",
+            "title": "Mfa Token"
+          },
+          "otp": {
+            "type": "string",
+            "title": "Otp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mfa_token",
+          "otp"
+        ],
+        "title": "OTPVerifyRequest"
+      },
+      "PriorAuthWorkflowRequest": {
+        "properties": {
+          "policy_document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Policy Document Ids",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "PriorAuthWorkflowRequest"
+      },
+      "ProcessVideoRequest": {
+        "properties": {
+          "rights_confirmed": {
+            "type": "boolean",
+            "title": "Rights Confirmed",
+            "default": false
+          },
+          "source_type": {
+            "type": "string",
+            "title": "Source Type",
+            "default": "upload"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "max_frames": {
+            "type": "integer",
+            "title": "Max Frames",
+            "default": 12
+          },
+          "segment_seconds": {
+            "type": "integer",
+            "title": "Segment Seconds",
+            "default": 60
+          },
+          "embed_after_processing": {
+            "type": "boolean",
+            "title": "Embed After Processing",
+            "default": true
+          },
+          "transcript_language": {
+            "type": "string",
+            "title": "Transcript Language",
+            "default": "auto"
+          }
+        },
+        "type": "object",
+        "title": "ProcessVideoRequest"
+      },
+      "QuickScoreRequest": {
+        "properties": {
+          "question": {
+            "type": "string",
+            "title": "Question"
+          },
+          "answer": {
+            "type": "string",
+            "title": "Answer"
+          },
+          "eval_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Eval Types",
+            "default": [
+              "relevance",
+              "specificity",
+              "confidence"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "question",
+          "answer"
+        ],
+        "title": "QuickScoreRequest"
+      },
+      "RegisterRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          },
+          "full_name": {
+            "type": "string",
+            "title": "Full Name",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "RegisterRequest"
+      },
+      "ResendRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "ResendRequest"
+      },
+      "ResetRequest": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "new_password": {
+            "type": "string",
+            "title": "New Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "new_password"
+        ],
+        "title": "ResetRequest"
+      },
+      "RestaurantApprovalRequest": {
+        "properties": {
+          "approved_packet": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved Packet"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "title": "RestaurantApprovalRequest"
+      },
+      "RestaurantFeedbackAnalyzeRequest": {
+        "properties": {
+          "feedback_text": {
+            "type": "string",
+            "title": "Feedback Text"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": ""
+          },
+          "current_rating": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Rating"
+          },
+          "restaurant_name": {
+            "type": "string",
+            "title": "Restaurant Name",
+            "default": ""
+          },
+          "menu_item_name": {
+            "type": "string",
+            "title": "Menu Item Name",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "feedback_text"
+        ],
+        "title": "RestaurantFeedbackAnalyzeRequest"
+      },
+      "RestaurantFeedbackRequest": {
+        "properties": {
+          "restaurant_id": {
+            "type": "string",
+            "title": "Restaurant Id"
+          },
+          "menu_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Menu Item Id"
+          },
+          "order_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Id"
+          },
+          "rating": {
+            "type": "integer",
+            "title": "Rating"
+          },
+          "feedback_text": {
+            "type": "string",
+            "title": "Feedback Text",
+            "default": ""
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": ""
+          },
+          "source_type": {
+            "type": "string",
+            "title": "Source Type",
+            "default": "text"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "default": []
+          },
+          "signals": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Signals",
+            "default": {}
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "restaurant_id",
+          "rating"
+        ],
+        "title": "RestaurantFeedbackRequest"
+      },
+      "RestaurantFeedbackStatusRequest": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "acknowledged"
+          },
+          "owner_response": {
+            "type": "string",
+            "title": "Owner Response",
+            "default": ""
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "type": "object",
+        "title": "RestaurantFeedbackStatusRequest"
+      },
+      "RestaurantOrderCheckoutRequest": {
+        "properties": {
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "success_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Success Url"
+          },
+          "cancel_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancel Url"
+          }
+        },
+        "type": "object",
+        "title": "RestaurantOrderCheckoutRequest"
+      },
+      "RestaurantOrderDraftRequest": {
+        "properties": {
+          "restaurant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restaurant Id"
+          },
+          "restaurant_name": {
+            "type": "string",
+            "title": "Restaurant Name",
+            "default": ""
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RestaurantOrderItemRequest"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "customer_name": {
+            "type": "string",
+            "title": "Customer Name",
+            "default": ""
+          },
+          "customer_phone": {
+            "type": "string",
+            "title": "Customer Phone",
+            "default": ""
+          },
+          "customer_email": {
+            "type": "string",
+            "title": "Customer Email",
+            "default": ""
+          },
+          "pickup_time_request": {
+            "type": "string",
+            "title": "Pickup Time Request",
+            "default": ""
+          },
+          "special_instructions": {
+            "type": "string",
+            "title": "Special Instructions",
+            "default": ""
+          },
+          "notes": {
+            "type": "string",
+            "title": "Notes",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "RestaurantOrderDraftRequest"
+      },
+      "RestaurantOrderItemRequest": {
+        "properties": {
+          "menu_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Menu Item Id"
+          },
+          "item_name": {
+            "type": "string",
+            "title": "Item Name",
+            "default": ""
+          },
+          "category": {
+            "type": "string",
+            "title": "Category",
+            "default": ""
+          },
+          "unit_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Price"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency",
+            "default": "USD"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity",
+            "default": 1
+          },
+          "quantity_ordered": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quantity Ordered"
+          },
+          "instructions": {
+            "type": "string",
+            "title": "Instructions",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "RestaurantOrderItemRequest"
+      },
+      "RestaurantOrderStatusRequest": {
+        "properties": {
+          "notes": {
+            "type": "string",
+            "title": "Notes",
+            "default": ""
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "type": "object",
+        "title": "RestaurantOrderStatusRequest"
+      },
+      "RestaurantSaveRequest": {
+        "properties": {
+          "restaurant_profile": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Restaurant Profile"
+          },
+          "menu_items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Menu Items",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "restaurant_profile"
+        ],
+        "title": "RestaurantSaveRequest"
+      },
+      "ReviewDecisionInput": {
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approved",
+              "changes_requested",
+              "rejected"
+            ],
+            "title": "Decision"
+          },
+          "reviewer_notes": {
+            "type": "string",
+            "maxLength": 5000,
+            "title": "Reviewer Notes",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "title": "ReviewDecisionInput"
+      },
+      "ReviewTaskInput": {
+        "properties": {
+          "vertical": {
+            "type": "string",
+            "title": "Vertical"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 240,
+            "minLength": 2,
+            "title": "Title"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "title": "Priority",
+            "default": "normal"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "vertical",
+          "run_id",
+          "title"
+        ],
+        "title": "ReviewTaskInput"
+      },
+      "RoleUpdate": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "title": "Role"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "title": "RoleUpdate"
+      },
+      "ScopeAssignmentBody": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Scopes"
+          },
+          "reviewer_note": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Reviewer Note",
+            "default": ""
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "scopes"
+        ],
+        "title": "ScopeAssignmentBody"
+      },
+      "ScopeDecisionBody": {
+        "properties": {
+          "decision": {
+            "type": "string",
+            "title": "Decision"
+          },
+          "assignment_scope": {
+            "type": "string",
+            "title": "Assignment Scope",
+            "default": "user"
+          },
+          "reviewer_note": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Reviewer Note",
+            "default": ""
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "title": "ScopeDecisionBody"
+      },
+      "ScopeRequestBody": {
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "title": "Client Id"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Scopes"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Reason",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "client_id",
+          "scopes"
+        ],
+        "title": "ScopeRequestBody"
+      },
+      "ServiceClientBody": {
+        "properties": {
+          "client_name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Client Name"
+          },
+          "owner_user_id": {
+            "type": "string",
+            "title": "Owner User Id"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Scopes"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "client_name",
+          "owner_user_id",
+          "scopes"
+        ],
+        "title": "ServiceClientBody"
+      },
+      "SessionStateRequest": {
+        "properties": {
+          "collected_fields": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Collected Fields"
+          },
+          "review_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Status"
+          }
+        },
+        "type": "object",
+        "title": "SessionStateRequest"
+      },
+      "SetTierRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "tier": {
+            "type": "string",
+            "title": "Tier"
+          },
+          "custom_limits": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Limits"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "tier"
+        ],
+        "title": "SetTierRequest"
+      },
+      "SloInput": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 2,
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Description",
+            "default": ""
+          },
+          "metric_name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 2,
+            "title": "Metric Name"
+          },
+          "target": {
+            "type": "number",
+            "title": "Target"
+          },
+          "comparator": {
+            "type": "string",
+            "enum": [
+              "gte",
+              "lte"
+            ],
+            "title": "Comparator"
+          },
+          "window_minutes": {
+            "type": "integer",
+            "maximum": 43200.0,
+            "minimum": 5.0,
+            "title": "Window Minutes",
+            "default": 60
+          },
+          "minimum_request_count": {
+            "type": "integer",
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "title": "Minimum Request Count",
+            "default": 10
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "warning",
+              "critical"
+            ],
+            "title": "Severity",
+            "default": "warning"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "metric_name",
+          "target",
+          "comparator"
+        ],
+        "title": "SloInput"
+      },
+      "SubscriptionInput": {
+        "properties": {
+          "event_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Event Types"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "resource_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Type"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id"
+          },
+          "webhook_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webhook Url"
+          }
+        },
+        "type": "object",
+        "title": "SubscriptionInput"
+      },
+      "SummarizeRequest": {
+        "properties": {
+          "summary_type": {
+            "type": "string",
+            "title": "Summary Type",
+            "default": "executive"
+          },
+          "custom_prompt": {
+            "type": "string",
+            "title": "Custom Prompt",
+            "default": ""
+          },
+          "chunk_indices": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Chunk Indices",
+            "default": []
+          },
+          "redact_pii": {
+            "type": "boolean",
+            "title": "Redact Pii",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "SummarizeRequest"
+      },
+      "TalentReviewRequest": {
+        "properties": {
+          "packet": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Packet"
+          },
+          "notes": {
+            "type": "string",
+            "title": "Notes",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "packet"
+        ],
+        "title": "TalentReviewRequest"
+      },
+      "TalentRunRequest": {
+        "properties": {
+          "resume_document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Resume Document Ids"
+          },
+          "job_description_id": {
+            "type": "string",
+            "title": "Job Description Id"
+          },
+          "candidate_name": {
+            "type": "string",
+            "title": "Candidate Name",
+            "default": ""
+          },
+          "notes": {
+            "type": "string",
+            "title": "Notes",
+            "default": ""
+          },
+          "workflow_type": {
+            "type": "string",
+            "title": "Workflow Type",
+            "default": "candidate_readiness"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resume_document_ids",
+          "job_description_id"
+        ],
+        "title": "TalentRunRequest"
+      },
+      "TemplateRequest": {
+        "properties": {
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "instructions": {
+            "type": "string",
+            "title": "Instructions",
+            "default": ""
+          },
+          "fields": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Fields"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "TemplateRequest"
+      },
+      "TokenResponse": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token"
+          },
+          "token_type": {
+            "type": "string",
+            "title": "Token Type",
+            "default": "bearer"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "full_name": {
+            "type": "string",
+            "title": "Full Name"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token",
+          "user_id",
+          "email",
+          "full_name",
+          "role"
+        ],
+        "title": "TokenResponse"
+      },
+      "TranscriptApprovalRequest": {
+        "properties": {
+          "transcript": {
+            "type": "string",
+            "maxLength": 500000,
+            "minLength": 1,
+            "title": "Transcript"
+          }
+        },
+        "type": "object",
+        "required": [
+          "transcript"
+        ],
+        "title": "TranscriptApprovalRequest"
+      },
+      "UpdateMemberRole": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "title": "Role"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "title": "UpdateMemberRole"
+      },
+      "UpdateWorkspace": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "UpdateWorkspace"
+      },
+      "UploadFileManifest": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type",
+            "default": "application/octet-stream"
+          },
+          "file_size": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "File Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "file_size"
+        ],
+        "title": "UploadFileManifest"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "VersionInput": {
+        "properties": {
+          "previous_document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Document Id"
+          },
+          "change_summary": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Change Summary",
+            "default": ""
+          },
+          "changed_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 5000,
+            "title": "Changed Pages"
+          }
+        },
+        "type": "object",
+        "title": "VersionInput"
+      },
+      "VideoQuestionRequest": {
+        "properties": {
+          "question": {
+            "type": "string",
+            "title": "Question"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "default": 8
+          }
+        },
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "title": "VideoQuestionRequest"
+      },
+      "VideoUploadCompleteRequest": {
+        "properties": {
+          "doc_id": {
+            "type": "string",
+            "title": "Doc Id"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type",
+            "default": "video/mp4"
+          },
+          "file_size": {
+            "type": "integer",
+            "title": "File Size"
+          },
+          "gcs_source_path": {
+            "type": "string",
+            "title": "Gcs Source Path"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          },
+          "process_after_upload": {
+            "type": "boolean",
+            "title": "Process After Upload",
+            "default": false
+          },
+          "rights_confirmed": {
+            "type": "boolean",
+            "title": "Rights Confirmed",
+            "default": false
+          },
+          "max_frames": {
+            "type": "integer",
+            "title": "Max Frames",
+            "default": 12
+          },
+          "segment_seconds": {
+            "type": "integer",
+            "title": "Segment Seconds",
+            "default": 60
+          },
+          "embed_after_processing": {
+            "type": "boolean",
+            "title": "Embed After Processing",
+            "default": true
+          },
+          "transcript_language": {
+            "type": "string",
+            "title": "Transcript Language",
+            "default": "auto"
+          }
+        },
+        "type": "object",
+        "required": [
+          "doc_id",
+          "filename",
+          "file_size",
+          "gcs_source_path"
+        ],
+        "title": "VideoUploadCompleteRequest"
+      },
+      "VideoUploadSessionRequest": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type",
+            "default": "video/mp4"
+          },
+          "file_size": {
+            "type": "integer",
+            "title": "File Size"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "file_size"
+        ],
+        "title": "VideoUploadSessionRequest"
+      },
+      "WorkspaceContextInput": {
+        "properties": {
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "type": "object",
+        "title": "WorkspaceContextInput"
+      },
+      "WorkspaceCreateInput": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "WorkspaceCreateInput"
+      },
+      "WorkspaceMemberInput": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 320,
+            "minLength": 3,
+            "title": "Email"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "default": "viewer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "WorkspaceMemberInput"
+      },
+      "WorkspacePersonaRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "personas": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Personas"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "personas"
+        ],
+        "title": "WorkspacePersonaRequest"
+      },
+      "WorkspaceRoleInput": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "title": "Role"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "title": "WorkspaceRoleInput"
+      },
+      "WorkspaceSummaryRequest": {
+        "properties": {
+          "workspace_id": {
+            "type": "string",
+            "title": "Workspace Id"
+          },
+          "document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Document Ids",
+            "default": []
+          },
+          "summary_type": {
+            "type": "string",
+            "title": "Summary Type",
+            "default": "executive"
+          },
+          "custom_prompt": {
+            "type": "string",
+            "title": "Custom Prompt",
+            "default": ""
+          },
+          "redact_pii": {
+            "type": "boolean",
+            "title": "Redact Pii",
+            "default": false
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": "en"
+          },
+          "concurrency": {
+            "type": "integer",
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Concurrency",
+            "default": 2
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "workspace_id"
+        ],
+        "title": "WorkspaceSummaryRequest"
+      },
+      "WorkspaceUpdateInput": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "WorkspaceUpdateInput"
+      }
+    },
+    "securitySchemes": {
+      "OAuth2PasswordBearer": {
+        "type": "oauth2",
+        "flows": {
+          "password": {
+            "scopes": {},
+            "tokenUrl": "/api/auth/login"
+          }
+        }
+      }
+    }
+  }
+}

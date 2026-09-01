@@ -987,6 +987,17 @@ delivery contract and
 complete deployment, authorization, lifecycle-event, signature, retry, replay,
 and troubleshooting test sequence.
 
+## Usage Governance, Credentials, and SDKs
+
+Public REST and MCP activity share a PostgreSQL usage ledger with atomic quota
+reservations across organization, application, workspace, scope, and operation
+boundaries. The Developer Applications **Usage & Security** view provides
+consumption metrics, quota policies, overlapping secret rotation, independent
+credential revocation, and optional CIDR restrictions without adding another
+infrastructure service. Public OpenAPI export plus Python, JavaScript, and Java
+starter clients are documented in
+[docs/usage_quotas_credentials_sdks.md](docs/usage_quotas_credentials_sdks.md).
+
 ## MCP Integration
 
 DocIntel supports document, speech, and video intelligence through its web UI

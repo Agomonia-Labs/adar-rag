@@ -21,6 +21,13 @@
 
     "rewrites": [
       {
+        "source": "/openapi.json",
+        "run": {
+          "serviceId": "docintel-backend",
+          "region":    "us-central1"
+        }
+      },
+      {
         "source": "/api/**",
         "run": {
           "serviceId": "docintel-backend",
