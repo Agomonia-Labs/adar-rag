@@ -64,10 +64,11 @@ async def get_api_principal(
         user_id,
     )
     client = await db.fetchrow(
-        """SELECT client_id,'user'::text AS token_kind,NULL::uuid AS organization_id
+        """SELECT client_id,'user'::text AS token_kind,NULL::uuid AS organization_id,
+                  NULL::text AS client_scope
              FROM oauth_clients WHERE client_id=$1 AND revoked_at IS NULL
            UNION ALL
-           SELECT s.client_id,'service'::text AS token_kind,s.organization_id
+           SELECT s.client_id,'service'::text AS token_kind,s.organization_id,s.scope AS client_scope
              FROM oauth_service_clients s
              LEFT JOIN developer_organizations o ON o.id=s.organization_id
             WHERE s.client_id=$1 AND s.revoked_at IS NULL
@@ -89,6 +90,10 @@ async def get_api_principal(
     organization_id = str(client.get("organization_id")) if client.get("organization_id") else None
     if token_kind != client_kind:
         raise _bearer_error(status.HTTP_401_UNAUTHORIZED, "API token client type is invalid")
+    if client_kind == "service":
+        client_scopes = set(str(client.get("client_scope") or "").split())
+        if not scopes <= client_scopes:
+            raise _bearer_error(status.HTTP_401_UNAUTHORIZED, "One or more application scopes were revoked")
     if organization_id != (str(claims.get("organization_id")) if claims.get("organization_id") else None):
         raise _bearer_error(status.HTTP_401_UNAUTHORIZED, "API token organization is invalid")
     return ApiPrincipal(

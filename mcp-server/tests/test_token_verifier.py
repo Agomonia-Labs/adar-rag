@@ -35,6 +35,9 @@ async def test_verifier_exchanges_mcp_token_for_backend_identity():
             "exp": 2000000000,
             "email": "user@example.com",
             "role": "user",
+            "token_kind": "service",
+            "organization_id": "org-1",
+            "workspace_ids": ["workspace-1"],
             "backend_token": "internal-token",
         })
 
@@ -46,6 +49,9 @@ async def test_verifier_exchanges_mcp_token_for_backend_identity():
     assert result.token == "internal-token"
     assert result.client_id == "client-1"
     assert result.scopes == ["documents:read", "knowledge:query"]
+    assert result.claims["token_kind"] == "service"
+    assert result.claims["organization_id"] == "org-1"
+    assert result.claims["workspace_ids"] == ["workspace-1"]
 
 
 @pytest.mark.asyncio

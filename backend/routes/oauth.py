@@ -785,11 +785,6 @@ async def token(request: Request, db=Depends(get_db)):
         resource = str(form.get("resource", MCP_RESOURCE)).rstrip("/")
         if resource not in SUPPORTED_RESOURCES:
             raise HTTPException(400, "invalid_target")
-        if row.get("organization_id") and resource == MCP_RESOURCE:
-            raise HTTPException(400, detail={
-                "code": "invalid_target",
-                "message": "Organization service applications currently use the REST API resource; MCP delegated workspace enforcement is not enabled yet",
-            })
         scope = " ".join(sorted(requested))
         extra_claims = {"token_kind": "service"}
         if row.get("organization_id"):
@@ -871,10 +866,11 @@ async def introspect(request: Request, db=Depends(get_db)):
         return {"active": False}
     user = await db.fetchrow("SELECT id,email,role FROM users WHERE id=$1::uuid", claims["sub"])
     client = await db.fetchrow(
-        """SELECT client_id,'user'::text AS token_kind,NULL::uuid AS organization_id
+        """SELECT client_id,'user'::text AS token_kind,NULL::uuid AS organization_id,
+                  NULL::text AS client_scope
              FROM oauth_clients WHERE client_id=$1 AND revoked_at IS NULL
            UNION ALL
-           SELECT s.client_id,'service'::text AS token_kind,s.organization_id
+           SELECT s.client_id,'service'::text AS token_kind,s.organization_id,s.scope AS client_scope
              FROM oauth_service_clients s LEFT JOIN developer_organizations o ON o.id=s.organization_id
             WHERE s.client_id=$1 AND s.revoked_at IS NULL
               AND (s.expires_at IS NULL OR s.expires_at>NOW())
@@ -882,10 +878,33 @@ async def introspect(request: Request, db=Depends(get_db)):
     )
     if not user or not client:
         return {"active": False}
+    client_kind = str(client.get("token_kind") or "user")
+    claim_kind = str(claims.get("token_kind") or "user")
+    client_org_id = str(client["organization_id"]) if client.get("organization_id") else None
+    claim_org_id = str(claims["organization_id"]) if claims.get("organization_id") else None
+    if claim_kind != client_kind or claim_org_id != client_org_id:
+        return {"active": False, "reason": "client_identity_changed"}
+    if client_kind == "service":
+        client_scopes = set(str(client.get("client_scope") or "").split())
+        if not scopes <= client_scopes:
+            return {"active": False, "reason": "service_scope_revoked"}
     if user["role"] != "admin":
         granted = await _active_scopes(db, str(user["id"]), str(claims["client_id"]))
         if not scopes <= granted:
             return {"active": False, "reason": "scope_grant_revoked"}
+    workspace_ids: list[str] = []
+    if client_kind == "service" and client_org_id:
+        rows = await db.fetch(
+            """SELECT g.workspace_id
+                 FROM oauth_service_workspace_grants g
+                 JOIN workspace_members m ON m.workspace_id=g.workspace_id
+                WHERE g.client_id=$1 AND m.user_id=$2::uuid
+                ORDER BY g.workspace_id""",
+            str(claims["client_id"]), str(user["id"]),
+        )
+        workspace_ids = [str(row["workspace_id"]) for row in rows]
+        if not workspace_ids:
+            return {"active": False, "reason": "workspace_grants_required"}
     return {
         "active": True,
         "sub": str(user["id"]),
@@ -894,8 +913,9 @@ async def introspect(request: Request, db=Depends(get_db)):
         "exp": claims["exp"],
         "email": user["email"],
         "role": user["role"],
-        "token_kind": claims.get("token_kind", client.get("token_kind", "user")),
-        "organization_id": claims.get("organization_id"),
+        "token_kind": client_kind,
+        "organization_id": client_org_id,
+        "workspace_ids": workspace_ids,
         "backend_token": create_access_token(str(user["id"]), user["email"]),
     }
 

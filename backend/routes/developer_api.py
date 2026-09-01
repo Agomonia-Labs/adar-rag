@@ -4,8 +4,10 @@ import hashlib
 import json
 import secrets
 import re
-from datetime import datetime
-from typing import Literal
+import ipaddress
+from datetime import datetime, timedelta, timezone
+from typing import Any, Literal
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -19,6 +21,7 @@ from routes.oauth import (
     _upsert_scope_grant,
     _valid_redirect_uri,
 )
+from services.mcp_enterprise import dispatch_webhook_deliveries
 
 
 router = APIRouter()
@@ -73,8 +76,81 @@ class DeveloperScopeRequestDecision(BaseModel):
     expires_at: datetime | None = None
 
 
+WEBHOOK_EVENT_TYPES = (
+    "document.uploaded", "document.chunked", "document.embedded", "document.failed",
+    "batch.completed", "video.processing.completed", "workflow.completed",
+    "review.approved", "packet.generated",
+)
+
+
+class DeveloperWebhookCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    endpoint_url: str = Field(min_length=10, max_length=2000)
+    event_types: list[str] = Field(min_length=1, max_length=20)
+    workspace_id: str | None = None
+    description: str = Field(default="", max_length=500)
+    timeout_seconds: int = Field(default=10, ge=2, le=30)
+
+
+class DeveloperWebhookUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=160)
+    endpoint_url: str | None = Field(default=None, min_length=10, max_length=2000)
+    event_types: list[str] | None = Field(default=None, min_length=1, max_length=20)
+    workspace_id: str | None = None
+    description: str | None = Field(default=None, max_length=500)
+    enabled: bool | None = None
+    timeout_seconds: int | None = Field(default=None, ge=2, le=30)
+
+
 def _hash_secret(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _validate_webhook_url(value: str) -> str:
+    parsed = urlparse(value.strip())
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(400, "Webhook endpoints must be public HTTPS URLs")
+    host = parsed.hostname.lower()
+    if host in {"localhost", "metadata.google.internal"} or host.endswith(".local"):
+        raise HTTPException(400, "Webhook endpoints cannot target local or metadata hosts")
+    try:
+        address = ipaddress.ip_address(host)
+        if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved:
+            raise HTTPException(400, "Webhook endpoints cannot target private addresses")
+    except ValueError:
+        pass
+    return value.strip()
+
+
+def _validate_event_types(values: list[str]) -> list[str]:
+    normalized = sorted(set(values))
+    unsupported = sorted(set(normalized) - set(WEBHOOK_EVENT_TYPES))
+    if unsupported:
+        raise HTTPException(400, detail={"code": "unsupported_event_types", "event_types": unsupported})
+    return normalized
+
+
+async def _managed_service_app(db, client_id: str, user_id: str, *, readonly: bool = False):
+    app = await db.fetchrow("SELECT * FROM oauth_service_clients WHERE client_id=$1 AND revoked_at IS NULL", client_id)
+    if not app:
+        raise HTTPException(404, "Active confidential application not found")
+    if app["organization_id"]:
+        roles = ("owner", "admin", "developer", "viewer") if readonly else ("owner", "admin")
+        await _require_org_role(db, str(app["organization_id"]), user_id, roles)
+    elif str(app["owner_user_id"]) != user_id:
+        raise HTTPException(403, "Application owner access is required")
+    return app
+
+
+async def _validate_webhook_workspace(db, client_id: str, workspace_id: str | None) -> None:
+    if not workspace_id:
+        return
+    exists = await db.fetchval(
+        "SELECT 1 FROM oauth_service_workspace_grants WHERE client_id=$1 AND workspace_id=$2::uuid",
+        client_id, workspace_id,
+    )
+    if not exists:
+        raise HTTPException(400, "The webhook workspace must be granted to the application")
 
 
 async def _require_service_management(db, user_id: str) -> None:
@@ -657,6 +733,191 @@ async def revoke_developer_app(client_id: str, current_user: CurrentUser, db=Dep
     return {"client_id": client_id, "revoked": True}
 
 
+@router.get("/apps/{client_id}/webhooks")
+async def list_developer_webhooks(client_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    await _managed_service_app(db, client_id, str(current_user["id"]), readonly=True)
+    rows = await db.fetch(
+        """SELECT s.id,s.client_id,s.organization_id,s.workspace_id,s.name,s.description,
+                  s.webhook_url AS endpoint_url,s.event_types,s.status,s.timeout_seconds,
+                  s.last_sequence,s.created_at,s.updated_at,
+                  COUNT(d.id) FILTER (WHERE d.status='delivered') AS delivered_count,
+                  COUNT(d.id) FILTER (WHERE d.status IN ('retrying','dead_letter')) AS failed_count,
+                  MAX(d.created_at) AS last_delivery_at
+             FROM mcp_event_subscriptions s
+             LEFT JOIN mcp_webhook_deliveries d ON d.subscription_id=s.id
+            WHERE s.client_id=$1
+            GROUP BY s.id ORDER BY s.created_at DESC""", client_id,
+    )
+    return {"data": [_serialize_webhook(row) for row in rows], "event_types": list(WEBHOOK_EVENT_TYPES)}
+
+
+@router.post("/apps/{client_id}/webhooks", status_code=201)
+async def create_developer_webhook(
+    client_id: str, body: DeveloperWebhookCreate, current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    app = await _managed_service_app(db, client_id, user_id)
+    if "events:write" not in str(app["scope"] or "").split():
+        raise HTTPException(403, "The application must have events:write before registering webhooks")
+    await _validate_webhook_workspace(db, client_id, body.workspace_id)
+    secret = "whsec_" + secrets.token_urlsafe(36)
+    row = await db.fetchrow(
+        """INSERT INTO mcp_event_subscriptions
+           (user_id,workspace_id,event_types,webhook_url,webhook_secret,client_id,organization_id,
+            name,description,timeout_seconds,status)
+           VALUES($1::uuid,$2::uuid,$3::jsonb,$4,$5,$6,$7::uuid,$8,$9,$10,'active') RETURNING *""",
+        user_id, body.workspace_id, json.dumps(_validate_event_types(body.event_types)),
+        _validate_webhook_url(body.endpoint_url), secret, client_id, app["organization_id"],
+        body.name.strip(), body.description.strip(), body.timeout_seconds,
+    )
+    await _audit(db, event_type="webhook.created", actor_user_id=user_id, client_id=client_id,
+                 organization_id=str(app["organization_id"]) if app["organization_id"] else None,
+                 metadata={"subscription_id": str(row["id"]), "event_types": _validate_event_types(body.event_types)})
+    result = _serialize_webhook(row)
+    result["signing_secret"] = secret
+    result["warning"] = "The signing secret is shown once. Store it securely."
+    return {"data": result}
+
+
+@router.patch("/apps/{client_id}/webhooks/{subscription_id}")
+async def update_developer_webhook(
+    client_id: str, subscription_id: str, body: DeveloperWebhookUpdate,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    app = await _managed_service_app(db, client_id, user_id)
+    await _validate_webhook_workspace(db, client_id, body.workspace_id)
+    event_types = _validate_event_types(body.event_types) if body.event_types is not None else None
+    endpoint = _validate_webhook_url(body.endpoint_url) if body.endpoint_url is not None else None
+    status = None if body.enabled is None else ("active" if body.enabled else "disabled")
+    row = await db.fetchrow(
+        """UPDATE mcp_event_subscriptions SET
+             name=COALESCE($4,name),description=COALESCE($5,description),
+             webhook_url=COALESCE($6,webhook_url),event_types=COALESCE($7::jsonb,event_types),
+             workspace_id=CASE WHEN $8::boolean THEN $9::uuid ELSE workspace_id END,
+             status=COALESCE($10,status),timeout_seconds=COALESCE($11,timeout_seconds),updated_at=NOW()
+           WHERE id=$1::uuid AND client_id=$2 AND organization_id IS NOT DISTINCT FROM $3::uuid
+           RETURNING *""",
+        subscription_id, client_id, app["organization_id"], body.name.strip() if body.name else None,
+        body.description.strip() if body.description is not None else None, endpoint,
+        json.dumps(event_types) if event_types is not None else None,
+        "workspace_id" in body.model_fields_set, body.workspace_id, status, body.timeout_seconds,
+    )
+    if not row:
+        raise HTTPException(404, "Webhook subscription not found")
+    await _audit(db, event_type="webhook.updated", actor_user_id=user_id, client_id=client_id,
+                 organization_id=str(app["organization_id"]) if app["organization_id"] else None,
+                 metadata={"subscription_id": subscription_id, "status": status})
+    return {"data": _serialize_webhook(row)}
+
+
+@router.delete("/apps/{client_id}/webhooks/{subscription_id}")
+async def delete_developer_webhook(
+    client_id: str, subscription_id: str, current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    app = await _managed_service_app(db, client_id, user_id)
+    result = await db.execute(
+        "DELETE FROM mcp_event_subscriptions WHERE id=$1::uuid AND client_id=$2",
+        subscription_id, client_id,
+    )
+    if result.endswith("0"):
+        raise HTTPException(404, "Webhook subscription not found")
+    await _audit(db, event_type="webhook.deleted", actor_user_id=user_id, client_id=client_id,
+                 organization_id=str(app["organization_id"]) if app["organization_id"] else None,
+                 metadata={"subscription_id": subscription_id})
+    return {"subscription_id": subscription_id, "deleted": True}
+
+
+@router.post("/apps/{client_id}/webhooks/{subscription_id}/rotate-secret")
+async def rotate_developer_webhook_secret(
+    client_id: str, subscription_id: str, current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    app = await _managed_service_app(db, client_id, user_id)
+    secret = "whsec_" + secrets.token_urlsafe(36)
+    row = await db.fetchrow(
+        """UPDATE mcp_event_subscriptions SET previous_webhook_secret=webhook_secret,
+             previous_secret_expires_at=NOW()+INTERVAL '24 hours',webhook_secret=$3,updated_at=NOW()
+           WHERE id=$1::uuid AND client_id=$2 RETURNING id""",
+        subscription_id, client_id, secret,
+    )
+    if not row:
+        raise HTTPException(404, "Webhook subscription not found")
+    await _audit(db, event_type="webhook.secret_rotated", actor_user_id=user_id, client_id=client_id,
+                 organization_id=str(app["organization_id"]) if app["organization_id"] else None,
+                 metadata={"subscription_id": subscription_id, "previous_secret_valid_hours": 24})
+    return {"subscription_id": subscription_id, "signing_secret": secret,
+            "previous_secret_expires_at": (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
+            "warning": "The new signing secret is shown once. The previous secret remains valid for 24 hours."}
+
+
+@router.post("/apps/{client_id}/webhooks/{subscription_id}/test", status_code=202)
+async def test_developer_webhook(
+    client_id: str, subscription_id: str, current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    await _managed_service_app(db, client_id, user_id)
+    subscription = await db.fetchrow(
+        "SELECT * FROM mcp_event_subscriptions WHERE id=$1::uuid AND client_id=$2", subscription_id, client_id,
+    )
+    if not subscription:
+        raise HTTPException(404, "Webhook subscription not found")
+    event = await db.fetchrow(
+        """INSERT INTO mcp_events(user_id,workspace_id,event_type,resource_type,resource_id,payload)
+           VALUES($1::uuid,$2::uuid,'webhook.test','webhook',$3,$4::jsonb) RETURNING id""",
+        user_id, subscription["workspace_id"], subscription_id,
+        json.dumps({"status": "test", "message": "DocIntel webhook endpoint test", "event_source": "developer_ui"}),
+    )
+    delivery_id = await db.fetchval(
+        """INSERT INTO mcp_webhook_deliveries(subscription_id,event_id)
+           VALUES($1,$2) RETURNING id""", subscription_id, event["id"],
+    )
+    await dispatch_webhook_deliveries([str(delivery_id)])
+    return {"delivery_id": str(delivery_id), "status": "pending"}
+
+
+@router.get("/apps/{client_id}/webhook-deliveries")
+async def list_developer_webhook_deliveries(
+    client_id: str, current_user: CurrentUser, subscription_id: str | None = None,
+    limit: int = 100, db=Depends(get_db),
+):
+    await _managed_service_app(db, client_id, str(current_user["id"]), readonly=True)
+    limit = max(1, min(limit, 250))
+    rows = await db.fetch(
+        """SELECT d.*,e.event_type,e.resource_type,e.resource_id,e.created_at AS event_created_at,
+                  COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                    'attempt_number',a.attempt_number,'request_timestamp',a.request_timestamp,
+                    'http_status',a.http_status,'duration_ms',a.duration_ms,
+                    'response_preview',a.response_preview,'error_message',a.error_message,
+                    'created_at',a.created_at) ORDER BY a.attempt_number DESC)
+                    FROM mcp_webhook_delivery_attempts a WHERE a.delivery_id=d.id),'[]'::jsonb) AS attempts
+             FROM mcp_webhook_deliveries d
+             JOIN mcp_event_subscriptions s ON s.id=d.subscription_id
+             JOIN mcp_events e ON e.id=d.event_id
+            WHERE s.client_id=$1 AND ($2::uuid IS NULL OR s.id=$2::uuid)
+            ORDER BY d.created_at DESC LIMIT $3""", client_id, subscription_id, limit,
+    )
+    return {"data": [_serialize_webhook(row) for row in rows]}
+
+
+@router.post("/apps/{client_id}/webhook-deliveries/{delivery_id}/replay", status_code=202)
+async def replay_developer_webhook_delivery(
+    client_id: str, delivery_id: str, current_user: CurrentUser, db=Depends(get_db),
+):
+    await _managed_service_app(db, client_id, str(current_user["id"]))
+    row = await db.fetchrow(
+        """UPDATE mcp_webhook_deliveries d SET status='pending',attempt_count=0,next_attempt_at=NOW(),
+             last_http_status=NULL,last_error=NULL,response_preview=NULL,delivered_at=NULL,updated_at=NOW()
+           FROM mcp_event_subscriptions s WHERE d.id=$1::uuid AND s.id=d.subscription_id AND s.client_id=$2
+           RETURNING d.id""", delivery_id, client_id,
+    )
+    if not row:
+        raise HTTPException(404, "Webhook delivery not found")
+    await dispatch_webhook_deliveries([delivery_id])
+    return {"delivery_id": delivery_id, "status": "pending"}
+
+
 def _serialize_app(row) -> dict:
     value = dict(row)
     redirect_uris = value.get("redirect_uris")
@@ -665,6 +926,25 @@ def _serialize_app(row) -> dict:
     scope = value.pop("scope", None)
     value["redirect_uris"] = redirect_uris or []
     value["scopes"] = str(scope or "").split()
+    for key, item in list(value.items()):
+        if hasattr(item, "isoformat"):
+            value[key] = item.isoformat()
+    return value
+
+
+def _serialize_webhook(row) -> dict[str, Any]:
+    value = dict(row)
+    value.pop("webhook_secret", None)
+    value.pop("previous_webhook_secret", None)
+    if isinstance(value.get("event_types"), str):
+        value["event_types"] = json.loads(value["event_types"] or "[]")
+    if isinstance(value.get("attempts"), str):
+        try:
+            value["attempts"] = json.loads(value["attempts"] or "[]")
+        except json.JSONDecodeError:
+            value["attempts"] = []
+    elif "attempts" in value and not isinstance(value["attempts"], list):
+        value["attempts"] = list(value["attempts"] or []) if isinstance(value["attempts"], (tuple, set)) else []
     for key, item in list(value.items()):
         if hasattr(item, "isoformat"):
             value[key] = item.isoformat()

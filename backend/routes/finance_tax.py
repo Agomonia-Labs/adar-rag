@@ -25,6 +25,7 @@ from services.vertical_agent_runs import (
     approve_vertical_run,
     complete_vertical_run,
     create_vertical_run,
+    emit_packet_generated,
     fail_vertical_run,
     get_accessible_vertical_run,
     run_vertical_step,
@@ -382,6 +383,7 @@ async def generate_finance_tax_advisor_packet_pdf_artifact(
         download_url = await gcs.get_signed_url(source_path)
     except Exception:
         log.warning("Could not create signed URL for finance advisor packet doc_id=%s", doc_id, exc_info=True)
+    await emit_packet_generated(db, run=run, run_id=run_id, document_id=doc_id, filename=filename)
     return {
         "ok": True,
         "run_id": run_id,

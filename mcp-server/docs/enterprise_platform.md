@@ -29,24 +29,18 @@ and supported packet types. Validation does not start a workflow.
 ## OAuth choices
 
 Interactive users use authorization code with S256 PKCE. Automated enterprise
-jobs use `client_credentials` with a confidential service client created by an
-administrator. Service clients are owned by a DocIntel user, audience-bound to
-the MCP resource, and limited to assigned scopes.
+jobs use `client_credentials` with a confidential service application created
+from **Developer Applications**. Organization service identities are
+audience-bound to MCP, limited to assigned scopes, and restricted to explicit
+team-workspace grants. MCP reloads these grants during token introspection and
+rejects personal or cross-workspace access.
 
-Create a service client:
+Create an organization and confidential application as described in
+`docs/enterprise_oauth_applications.md`. Legacy administrator-created service
+clients remain supported for existing integrations, but organization apps are
+the recommended governed deployment model.
 
-```bash
-curl -sS -X POST "$DOCINTEL_API_URL/api/admin/oauth/service-clients" \
-  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data '{
-    "client_name":"nightly-ingestion",
-    "owner_user_id":"SERVICE_OWNER_USER_ID",
-    "scopes":["workspaces:read","documents:read","documents:write","batches:read","batches:write","events:read"]
-  }' | tee /tmp/docintel-service-client.json | jq
-```
-
-The client secret is returned only once. Exchange it for an MCP token:
+Exchange the one-time client secret for an MCP token:
 
 ```bash
 curl -sS -X POST "$OAUTH_ISSUER/token" \
@@ -57,6 +51,10 @@ curl -sS -X POST "$OAUTH_ISSUER/token" \
   --data-urlencode "scope=workspaces:read documents:read batches:read batches:write events:read" \
   --data-urlencode "resource=$MCP_URL" | jq
 ```
+
+For organization applications, `list_workspaces` is filtered to granted
+workspaces. Personal context is denied, and mutations are preflighted against
+the live application grant before they reach the target operation.
 
 ## Idempotent batch operations
 

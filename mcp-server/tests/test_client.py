@@ -54,6 +54,68 @@ async def test_workspace_documents_forwards_token_and_workspace_path():
 
 
 @pytest.mark.asyncio
+async def test_organization_service_lists_only_granted_workspaces():
+    async def handler(_request: httpx.Request):
+        return httpx.Response(200, json=[
+            {"id": "workspace-1", "name": "Granted"},
+            {"id": "workspace-2", "name": "Not granted"},
+        ])
+
+    async with DocIntelApiClient(
+        "https://docintel.test", "service-token",
+        service_client_id="svc-1", organization_id="org-1",
+        allowed_workspace_ids=frozenset({"workspace-1"}),
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        result = await client.list_workspaces()
+
+    assert result == [{"id": "workspace-1", "name": "Granted"}]
+
+
+@pytest.mark.asyncio
+async def test_organization_service_rejects_personal_and_ungranted_workspace():
+    async def handler(_request: httpx.Request):
+        raise AssertionError("Forbidden workspace must be rejected before an upstream request")
+
+    async with DocIntelApiClient(
+        "https://docintel.test", "service-token",
+        service_client_id="svc-1", organization_id="org-1",
+        allowed_workspace_ids=frozenset({"workspace-1", "workspace-2"}),
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        with pytest.raises(DocIntelMcpError) as personal:
+            await client.list_documents(None)
+        with pytest.raises(DocIntelMcpError) as forbidden:
+            await client.list_documents("workspace-3")
+
+    assert personal.value.code == "workspace_required"
+    assert forbidden.value.code == "workspace_forbidden"
+
+
+@pytest.mark.asyncio
+async def test_organization_service_preflights_document_before_mutation():
+    requests: list[tuple[str, str]] = []
+
+    async def handler(request: httpx.Request):
+        requests.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": "doc-2", "workspace_id": "workspace-2"})
+        raise AssertionError("Mutation must not run for a document outside the workspace grant")
+
+    async with DocIntelApiClient(
+        "https://docintel.test", "service-token",
+        service_client_id="svc-1", organization_id="org-1",
+        allowed_workspace_ids=frozenset({"workspace-1"}),
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        with pytest.raises(DocIntelMcpError) as error:
+            await client.delete_document("doc-2")
+
+    assert error.value.code == "workspace_forbidden"
+    assert requests == [("GET", "/api/documents/doc-2")]
+
+
+@pytest.mark.asyncio
 async def test_grounded_answer_collects_sse_tokens_sources_and_trace_id():
     async def handler(request: httpx.Request):
         assert request.url.path == "/api/chat/stream"

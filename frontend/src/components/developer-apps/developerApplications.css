@@ -543,6 +543,207 @@
   border-color: #7f1d1d;
 }
 
+.devapp-state.disabled,
+.devapp-state.dead_letter,
+.devapp-state.retrying {
+  color: #fecaca !important;
+  background: #321313;
+  border-color: #7f1d1d;
+}
+
+.devapp-webhooks {
+  display: grid;
+  gap: 14px;
+}
+
+.devapp-webhook-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+
+.devapp-webhook-toolbar label {
+  flex: 1;
+  display: grid;
+  gap: 5px;
+  color: #a6b5a8;
+  font-size: 12px;
+}
+
+.devapp-webhook-toolbar select,
+.devapp-webhook-form input,
+.devapp-webhook-form select {
+  width: 100%;
+  min-height: 38px;
+  box-sizing: border-box;
+  padding: 8px;
+  color: #e5e7eb;
+  background: #071007;
+  border: 1px solid #294329;
+  border-radius: 6px;
+}
+
+.devapp-webhook-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 13px;
+  background: #0c190c;
+  border: 1px solid #213821;
+  border-radius: 6px;
+}
+
+.devapp-webhook-form > label {
+  display: grid;
+  gap: 5px;
+  color: #a6b5a8;
+  font-size: 12px;
+}
+
+.devapp-webhook-form .wide,
+.devapp-webhook-heading {
+  grid-column: 1 / -1;
+}
+
+.devapp-webhook-heading,
+.devapp-webhook-heading > div,
+.devapp-webhook-section h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+}
+
+.devapp-webhook-heading button,
+.devapp-webhook-form > button,
+.devapp-delivery-list button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  color: #fff;
+  background: #15803d;
+  border: 1px solid #22c55e;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.devapp-webhook-form > button {
+  justify-self: end;
+}
+
+.devapp-event-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.devapp-event-grid label {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px;
+  color: #d1d5db;
+  background: #071007;
+  border: 1px solid #1a301a;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.devapp-event-grid input {
+  width: auto;
+  min-height: 0;
+  accent-color: #22c55e;
+}
+
+.devapp-webhook-section h3 {
+  justify-content: flex-start;
+  margin: 0 0 8px;
+  color: #d1fae5;
+  font-size: 14px;
+}
+
+.devapp-webhook-list,
+.devapp-delivery-list {
+  display: grid;
+  gap: 8px;
+}
+
+.devapp-webhook-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 11px;
+  background: #0c190c;
+  border: 1px solid #213821;
+  border-radius: 6px;
+}
+
+.devapp-webhook-list article > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.devapp-webhook-list code,
+.devapp-webhook-list span,
+.devapp-webhook-stats {
+  color: #819184;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.devapp-webhook-stats {
+  display: grid;
+  text-align: right;
+}
+
+.devapp-webhook-list .devapp-row-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+
+.devapp-delivery-list details {
+  background: #0c190c;
+  border: 1px solid #213821;
+  border-radius: 6px;
+}
+
+.devapp-delivery-list summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.devapp-delivery-list summary span,
+.devapp-delivery-list summary time,
+.devapp-delivery-list details > div p {
+  color: #819184;
+  font-size: 11px;
+}
+
+.devapp-delivery-list details > div {
+  display: grid;
+  gap: 7px;
+  padding: 0 10px 10px;
+}
+
+.devapp-delivery-list pre {
+  margin: 0;
+  padding: 8px;
+  color: #fecaca;
+  background: #210d0d;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .devapp-audit-list article {
   padding: 10px;
   background: #0c190c;
@@ -590,6 +791,7 @@
 
   .devapp-tabs {
     padding-inline: 9px;
+    overflow-x: auto;
   }
 
   .devapp-secret {
@@ -607,6 +809,22 @@
   .devapp-create,
   .devapp-create.app {
     grid-template-columns: 1fr;
+  }
+
+  .devapp-webhook-form,
+  .devapp-event-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .devapp-webhook-list article,
+  .devapp-delivery-list summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .devapp-webhook-list article > div:first-child,
+  .devapp-delivery-list summary strong,
+  .devapp-delivery-list summary time {
+    grid-column: 1 / -1;
   }
 
   .devapp-create label.wide {

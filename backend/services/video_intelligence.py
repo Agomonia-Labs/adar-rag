@@ -23,6 +23,7 @@ from services.notifications import send_video_processing_notification
 from services.text_safety import sanitize_text_for_storage
 from services.vectordb import delete_document_vectors, store_chunk
 from services import video_checkpoints as checkpoints
+from services.mcp_enterprise import emit_event
 
 log = logging.getLogger("docintel.video")
 
@@ -429,6 +430,12 @@ async def process_video_document(
                 json.dumps({"video_intelligence": output}),
                 document_id,
             )
+            await emit_event(
+                conn, user_id=user_id, workspace_id=workspace_id,
+                event_type="video.processing.completed", resource_type="document", resource_id=document_id,
+                payload={"document_id": document_id, "filename": filename, "status": "completed",
+                         "stage": "video_processing", "chunk_count": len(chunks), "progress_pct": 100},
+            )
         await _send_video_notification(
             user_id=user_id,
             filename=filename,
@@ -472,6 +479,12 @@ async def process_video_document(
                 "UPDATE documents SET status='error', error_message=$1, updated_at=NOW() WHERE id=$2",
                 error,
                 document_id,
+            )
+            await emit_event(
+                conn, user_id=user_id, workspace_id=workspace_id,
+                event_type="document.failed", resource_type="document", resource_id=document_id,
+                payload={"document_id": document_id, "filename": filename, "status": "error",
+                         "stage": "video_processing", "message": error},
             )
         await _send_video_notification(
             user_id=user_id,

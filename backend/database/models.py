@@ -999,6 +999,21 @@ CREATE INDEX IF NOT EXISTS idx_mcp_webhook_due
 CREATE INDEX IF NOT EXISTS idx_mcp_webhook_subscription
     ON mcp_webhook_deliveries(subscription_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS mcp_webhook_delivery_attempts (
+    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    delivery_id       UUID NOT NULL REFERENCES mcp_webhook_deliveries(id) ON DELETE CASCADE,
+    attempt_number    INTEGER NOT NULL,
+    request_timestamp BIGINT NOT NULL,
+    http_status       INTEGER,
+    duration_ms       INTEGER,
+    response_preview  TEXT,
+    error_message     TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(delivery_id, attempt_number)
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_webhook_attempt_delivery
+    ON mcp_webhook_delivery_attempts(delivery_id, attempt_number DESC);
+
 CREATE TABLE IF NOT EXISTS mcp_review_tasks (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1085,6 +1100,14 @@ CREATE TABLE IF NOT EXISTS oauth_service_clients (
 );
 ALTER TABLE oauth_service_clients ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES developer_organizations(id) ON DELETE CASCADE;
 ALTER TABLE oauth_service_clients ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE mcp_event_subscriptions ADD COLUMN IF NOT EXISTS client_id TEXT;
+ALTER TABLE mcp_event_subscriptions ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES developer_organizations(id) ON DELETE CASCADE;
+ALTER TABLE mcp_event_subscriptions ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT 'Webhook endpoint';
+ALTER TABLE mcp_event_subscriptions ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE mcp_event_subscriptions ADD COLUMN IF NOT EXISTS previous_webhook_secret TEXT;
+ALTER TABLE mcp_event_subscriptions ADD COLUMN IF NOT EXISTS previous_secret_expires_at TIMESTAMPTZ;
+ALTER TABLE mcp_event_subscriptions ADD COLUMN IF NOT EXISTS timeout_seconds INTEGER NOT NULL DEFAULT 10;
+CREATE INDEX IF NOT EXISTS idx_mcp_subscriptions_client ON mcp_event_subscriptions(client_id, status);
 CREATE INDEX IF NOT EXISTS idx_oauth_service_owner ON oauth_service_clients(owner_user_id, revoked_at);
 CREATE INDEX IF NOT EXISTS idx_oauth_service_org ON oauth_service_clients(organization_id, revoked_at);
 

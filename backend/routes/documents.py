@@ -23,6 +23,7 @@ from services.llm       import embed
 from services.pii       import redact_text
 from services.text_safety import sanitize_text_for_storage
 from services.vectordb  import store_chunk, delete_document_vectors
+from services.mcp_enterprise import emit_event
 import services.storage as gcs
 
 
@@ -71,6 +72,12 @@ async def _chunk_direct_upload(
             await connection.execute(
                 "UPDATE documents SET status='error', error_message=$2, updated_at=NOW() WHERE id=$1",
                 doc_id, str(exc)[:2000],
+            )
+            await emit_event(
+                connection, user_id=user_id, workspace_id=workspace_id,
+                event_type="document.failed", resource_type="document", resource_id=doc_id,
+                payload={"document_id": doc_id, "filename": filename, "status": "error",
+                         "stage": "download", "message": str(exc)[:500]},
             )
     finally:
         if os.path.exists(tmp.name):
@@ -157,6 +164,11 @@ async def complete_direct_upload(
     )
     if result == "INSERT 0 0":
         raise HTTPException(409, "Document upload was already completed")
+    await emit_event(
+        db, user_id=user_id, workspace_id=body.workspace_id,
+        event_type="document.uploaded", resource_type="document", resource_id=body.doc_id,
+        payload={"document_id": body.doc_id, "filename": filename, "status": "chunking", "stage": "uploaded"},
+    )
     background_tasks.add_task(
         _chunk_direct_upload, body.doc_id, user_id, body.gcs_source_path,
         filename, content_type, ftype, body.workspace_id, body.redact_pii,
@@ -243,6 +255,11 @@ async def upload_documents(
 
         # Update status to chunking, then kick off chunking in background
         await db.execute("UPDATE documents SET status='chunking' WHERE id=$1", doc_id)
+        await emit_event(
+            db, user_id=user_id, workspace_id=workspace_id,
+            event_type="document.uploaded", resource_type="document", resource_id=doc_id,
+            payload={"document_id": doc_id, "filename": filename, "status": "chunking", "stage": "uploaded"},
+        )
         background_tasks.add_task(
             _chunk_document, doc_id, user_id, tmp.name, filename, upload.content_type or "", ftype, workspace_id, redact_pii
         )
@@ -428,6 +445,20 @@ async def _chunk_document(doc_id, user_id, file_path, filename, content_type, ft
                 )
             else:
                 await c.execute("UPDATE documents SET status=$1, updated_at=NOW() WHERE id=$2", s, doc_id)
+            if s == "chunked":
+                await emit_event(
+                    c, user_id=user_id, workspace_id=workspace_id,
+                    event_type="document.chunked", resource_type="document", resource_id=doc_id,
+                    payload={"document_id": doc_id, "filename": filename, "status": s,
+                             "stage": "chunking", "chunk_count": chunk_count or 0},
+                )
+            elif s == "error":
+                await emit_event(
+                    c, user_id=user_id, workspace_id=workspace_id,
+                    event_type="document.failed", resource_type="document", resource_id=doc_id,
+                    payload={"document_id": doc_id, "filename": filename, "status": s,
+                             "stage": "chunking", "message": error or "Document chunking failed"},
+                )
 
     try:
         # Extract text
@@ -564,6 +595,13 @@ async def _embed_document(doc_id: str, user_id: str, workspace_id: str | None = 
                 )
             else:
                 await c.execute("UPDATE documents SET status=$1, updated_at=NOW() WHERE id=$2", s, doc_id)
+            await emit_event(
+                c, user_id=user_id, workspace_id=workspace_id,
+                event_type="document.embedded" if s == "embedded" else "document.failed",
+                resource_type="document", resource_id=doc_id,
+                payload={"document_id": doc_id, "status": s, "stage": "embedding",
+                         "message": error or ("Document embedding completed" if s == "embedded" else "Document embedding failed")},
+            )
 
     try:
         # Read chunks from GCS metadata

@@ -44,5 +44,11 @@ class DocIntelTokenVerifier:
             subject=subject,
             scopes=str(result.get("scope", "")).split(),
             expires_at=int(result.get("exp", time.time() + 60)),
-            claims={"email": result.get("email"), "role": result.get("role")},
+            claims={
+                "email": result.get("email"),
+                "role": result.get("role"),
+                "token_kind": result.get("token_kind", "user"),
+                "organization_id": result.get("organization_id"),
+                "workspace_ids": [str(item) for item in result.get("workspace_ids") or []],
+            },
         )

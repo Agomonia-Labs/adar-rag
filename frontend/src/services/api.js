@@ -287,6 +287,43 @@ export async function requestDeveloperAppScopes(clientId, scopes, reason = '') {
     method:'POST', headers:{ ...authHdr(), 'Content-Type':'application/json' }, body:JSON.stringify({ scopes, reason }),
   }));
 }
+export async function listDeveloperWebhooks(clientId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/webhooks`, { headers:authHdr() }));
+}
+export async function createDeveloperWebhook(clientId, payload) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/webhooks`, {
+    method:'POST', headers:{ ...authHdr(), 'Content-Type':'application/json' }, body:JSON.stringify(payload),
+  }));
+}
+export async function updateDeveloperWebhook(clientId, subscriptionId, payload) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/webhooks/${encodeURIComponent(subscriptionId)}`, {
+    method:'PATCH', headers:{ ...authHdr(), 'Content-Type':'application/json' }, body:JSON.stringify(payload),
+  }));
+}
+export async function deleteDeveloperWebhook(clientId, subscriptionId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/webhooks/${encodeURIComponent(subscriptionId)}`, {
+    method:'DELETE', headers:authHdr(),
+  }));
+}
+export async function rotateDeveloperWebhookSecret(clientId, subscriptionId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/webhooks/${encodeURIComponent(subscriptionId)}/rotate-secret`, {
+    method:'POST', headers:authHdr(),
+  }));
+}
+export async function testDeveloperWebhook(clientId, subscriptionId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/webhooks/${encodeURIComponent(subscriptionId)}/test`, {
+    method:'POST', headers:authHdr(),
+  }));
+}
+export async function listDeveloperWebhookDeliveries(clientId, subscriptionId = '') {
+  const query = subscriptionId ? `?subscription_id=${encodeURIComponent(subscriptionId)}` : '';
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/webhook-deliveries${query}`, { headers:authHdr() }));
+}
+export async function replayDeveloperWebhookDelivery(clientId, deliveryId) {
+  return handleRes(await fetch(`${BASE}/v1/developer/apps/${encodeURIComponent(clientId)}/webhook-deliveries/${encodeURIComponent(deliveryId)}/replay`, {
+    method:'POST', headers:authHdr(),
+  }));
+}
 
 export async function streamGuestChat({ question, documentIds, history = [], redactPii = false }, { onToken, onDone, onError }) {
   await ensureGuestSession();

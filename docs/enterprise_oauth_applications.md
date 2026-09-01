@@ -1,9 +1,9 @@
 # Enterprise OAuth Applications
 
 DocIntel organization applications provide machine-to-machine access to the
-public REST API. Each confidential application belongs to an organization,
-receives an explicit scope set, and is restricted to explicitly granted team
-workspaces.
+public REST API and public MCP server. Each confidential application belongs to
+an organization, receives an explicit scope set, and is restricted to explicitly
+granted team workspaces.
 
 Use **Tools > Developer Applications** in DocIntel to create organizations and
 applications, rotate or revoke credentials, and inspect credential audit events.
@@ -22,9 +22,12 @@ scope requests.
 - Personal workspace access is not available to organization service identities.
 - Secrets are hashed at rest and cannot be recovered after initial display.
 - Revoked applications cannot obtain new tokens.
-- Organization service applications currently target the REST API only. MCP
-  remains user-delegated until organization workspace enforcement is enabled
-  across its complete tool and resource surface.
+- MCP introspection reloads application scopes and workspace grants on every
+  authenticated request; revoked access does not wait for token expiration.
+- MCP tools and resources reject personal scope, ungranted workspace context,
+  and cross-workspace results for organization service identities.
+- Destructive document, batch, workflow, session, video, and conversation calls
+  preflight the target before mutation.
 
 ## 1. Create an Organization
 
@@ -96,8 +99,8 @@ control, deployment logs, browser storage, or shell history.
 
 ## 3. Obtain a Service Token
 
-Request only scopes assigned to the application. The resource must be the REST
-API audience.
+Request only scopes assigned to the application. Select the REST API or MCP
+resource for the protocol the integration will call.
 
 ```bash
 export OAUTH_ISSUER="https://auth.docintel.adar.agomoniai.com"
@@ -117,6 +120,35 @@ export ACCESS_TOKEN="$(printf '%s' "$TOKEN_RESPONSE" | jq -r '.access_token')"
 
 Client Credentials does not return a refresh token. Request a new short-lived
 access token when the current token expires.
+
+For MCP, request an audience-bound MCP token instead:
+
+```bash
+export MCP_RESOURCE="https://mcp.docintel.adar.agomoniai.com/mcp"
+
+MCP_TOKEN_RESPONSE="$(curl -sS -X POST "$OAUTH_ISSUER/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "grant_type=client_credentials" \
+  --data-urlencode "client_id=$CLIENT_ID" \
+  --data-urlencode "client_secret=$CLIENT_SECRET" \
+  --data-urlencode "scope=workspaces:read documents:read knowledge:query events:read" \
+  --data-urlencode "resource=$MCP_RESOURCE")"
+
+export DOCINTEL_ACCESS_TOKEN="$(printf '%s' "$MCP_TOKEN_RESPONSE" | jq -r '.access_token')"
+```
+
+Initialize MCP and verify that discovery returns only application-granted
+workspaces:
+
+```bash
+mcp_request '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"service-test","version":"1.0"}}}' | jq
+mcp_tool list_workspaces '{}' | tool_data | jq
+mcp_tool list_documents "$(jq -cn --arg id "$WORKSPACE_ID" '{workspace_id:$id}')" | tool_data | jq
+```
+
+When an application has more than one workspace grant, include `workspace_id`
+on every workspace-scoped MCP call. A single grant is selected automatically
+where the tool supports implicit context.
 
 ## 4. Call a Granted Workspace
 

@@ -945,6 +945,48 @@ events and webhooks, human review tasks, knowledge artifacts, document versions,
 and trace evaluations. See
 [docs/rest_api_operations_testing.md](docs/rest_api_operations_testing.md).
 
+## Developer Applications and Webhook Governance
+
+Developer applications and webhooks are governed integration resources. They
+are intentionally not exposed to every user who belongs to an authorized
+workspace. Workspace membership grants access to permitted workspace content
+and workflows; it does not implicitly grant access to OAuth clients, webhook
+endpoints, signing configuration, or delivery history.
+
+Current visibility and management rules:
+
+| User relationship | View application and webhook activity | Manage webhooks |
+| --- | --- | --- |
+| Personal application owner | Yes | Yes |
+| Organization `owner` or `admin` | Yes | Yes |
+| Organization `developer` or `viewer` | Yes, read-only | No |
+| Workspace member without application or organization membership | No | No |
+
+Webhook subscriptions are application-scoped:
+
+- A webhook assigned to one workspace receives only matching events from that
+  workspace.
+- **All application workspaces** means all workspaces explicitly granted to the
+  OAuth application, not every DocIntel workspace.
+- Workspace-scoped event matching follows the application's workspace grant,
+  even when the event was initiated by a different member or service identity.
+- Signing secrets are shown only when a webhook is created or rotated and are
+  never returned by normal list operations.
+- Event delivery uses HMAC signatures, timestamps, event IDs, idempotency keys,
+  durable delivery records, Cloud Tasks dispatch, retries, dead-letter status,
+  and controlled replay.
+
+To allow a user to inspect organization webhook activity without managing it,
+add the user to the corresponding Developer Organization as a `viewer` or
+`developer`. Do not use workspace membership as an integration-administration
+permission.
+
+See [docs/webhook_event_delivery.md](docs/webhook_event_delivery.md) for the
+delivery contract and
+[docs/webhook_end_to_end_testing.md](docs/webhook_end_to_end_testing.md) for the
+complete deployment, authorization, lifecycle-event, signature, retry, replay,
+and troubleshooting test sequence.
+
 ## MCP Integration
 
 DocIntel supports document, speech, and video intelligence through its web UI

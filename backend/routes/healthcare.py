@@ -38,6 +38,7 @@ from services.vertical_agent_runs import (
     approve_vertical_run,
     complete_vertical_run,
     create_vertical_run,
+    emit_packet_generated,
     fail_vertical_run,
     get_accessible_vertical_run,
     latest_vertical_run,
@@ -228,6 +229,7 @@ async def generate_after_visit_summary_pdf_artifact(
         ip_address=ip_from(request),
         user_agent=ua_from(request),
     )
+    await emit_packet_generated(db, run=run, run_id=run_id, document_id=doc_id, filename=filename)
     return {
         "ok": True,
         "run_id": run_id,
@@ -344,6 +346,7 @@ async def generate_prior_auth_packet_pdf_artifact(
         download_url = await gcs.get_signed_url(source_path)
     except Exception:
         log.warning("Could not create signed URL for prior auth packet doc_id=%s", doc_id, exc_info=True)
+    await emit_packet_generated(db, run=run, run_id=run_id, document_id=doc_id, filename=filename)
     return {
         "ok": True,
         "run_id": run_id,
@@ -457,6 +460,7 @@ async def generate_prior_auth_missing_info_pdf_artifact(
         download_url = await gcs.get_signed_url(source_path)
     except Exception:
         log.warning("Could not create signed URL for missing info request doc_id=%s", doc_id, exc_info=True)
+    await emit_packet_generated(db, run=run, run_id=run_id, document_id=doc_id, filename=filename)
     return {
         "ok": True,
         "run_id": run_id,

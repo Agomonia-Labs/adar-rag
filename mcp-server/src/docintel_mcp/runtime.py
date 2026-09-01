@@ -29,11 +29,24 @@ async def api_client(ctx: Context, settings: Settings, capability: str):
 
             raise DocIntelMcpError("unauthorized", "A verified DocIntel bearer token is required", status_code=401)
         require_capability(settings.enabled_capabilities, capability, set(access_token.scopes))
+        claims = dict(access_token.claims or {})
+        token_kind = str(claims.get("token_kind") or "user")
+        organization_id = claims.get("organization_id")
+        workspace_ids = frozenset(str(item) for item in claims.get("workspace_ids") or [])
         trace_id = current_trace_id() or request_trace_id(ctx)
-        async with DocIntelApiClient(
-            settings.api_base_url,
-            access_token.token,
-            trace_id=trace_id,
-            timeout_seconds=settings.timeout_seconds,
-        ) as client:
-            yield client
+        with traced_span("mcp.identity.authorized", attributes={
+            "mcp.auth.token_kind": token_kind,
+            "mcp.auth.client_id": access_token.client_id,
+            "mcp.auth.organization_id": str(organization_id or ""),
+            "mcp.auth.workspace_grant_count": len(workspace_ids),
+        }):
+            async with DocIntelApiClient(
+                settings.api_base_url,
+                access_token.token,
+                trace_id=trace_id,
+                timeout_seconds=settings.timeout_seconds,
+                service_client_id=access_token.client_id if token_kind == "service" else None,
+                organization_id=str(organization_id) if organization_id else None,
+                allowed_workspace_ids=workspace_ids,
+            ) as client:
+                yield client

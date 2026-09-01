@@ -22,6 +22,7 @@ from services.telemetry import configure_telemetry, current_otel_ids, shutdown_t
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     observability_task = None
+    webhook_task = None
     log.info("═══════════════════════════════════")
     log.info("DocIntel starting up")
     log.info(f"  PORT         = {os.getenv('PORT', '8080')}")
@@ -49,6 +50,9 @@ async def lifespan(app: FastAPI):
         if os.getenv("OBSERVABILITY_SCHEDULER_ENABLED", "true").lower() in {"1", "true", "yes"}:
             from services.observability_scheduler import observability_scheduler
             observability_task = asyncio.create_task(observability_scheduler())
+        if os.getenv("WEBHOOK_DELIVERY_SCHEDULER_ENABLED", "true").lower() in {"1", "true", "yes"}:
+            from services.webhook_scheduler import webhook_delivery_scheduler
+            webhook_task = asyncio.create_task(webhook_delivery_scheduler())
         log.info("✓ Schema ready")
     except Exception as e:
         log.exception(f"✗ Database startup failed: {e}")
@@ -59,6 +63,12 @@ async def lifespan(app: FastAPI):
         observability_task.cancel()
         try:
             await observability_task
+        except asyncio.CancelledError:
+            pass
+    if webhook_task:
+        webhook_task.cancel()
+        try:
+            await webhook_task
         except asyncio.CancelledError:
             pass
     shutdown_telemetry()
@@ -165,6 +175,7 @@ _ROUTERS = [
     ("routes.public_workspaces_api", "router",         "/api/v1",             ["public-api-workspaces"]),
     ("routes.public_operations_api", "router",         "/api/v1",             ["public-api-operations"]),
     ("routes.developer_api",  "router",                "/api/v1/developer",   ["developer-api"]),
+    ("routes.webhook_worker", "router",                "/api/internal/webhooks", ["webhook-worker"]),
 ]
 
 for _module, _attr, _prefix, _tags in _ROUTERS:

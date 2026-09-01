@@ -40,7 +40,7 @@ echo "  ✓ Pushed: $IMAGE"
 
 # ── 4. Enable APIs needed by runtime features ─────────────────────────────────
 echo "▶ Ensuring required Google APIs are enabled..."
-gcloud services enable speech.googleapis.com texttospeech.googleapis.com run.googleapis.com \
+gcloud services enable speech.googleapis.com texttospeech.googleapis.com run.googleapis.com cloudtasks.googleapis.com \
   --project="$PROJECT_ID" \
   --quiet
 echo "  ✓ Speech-to-Text and Text-to-Speech APIs enabled"
@@ -51,6 +51,17 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --role="roles/run.jobsExecutorWithOverrides" \
   --condition=None \
   --quiet >/dev/null
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$SA_EMAIL" \
+  --role="roles/cloudtasks.enqueuer" \
+  --condition=None \
+  --quiet >/dev/null
+
+WEBHOOK_QUEUE_NAME="${WEBHOOK_QUEUE_NAME:-docintel-webhooks}"
+if ! gcloud tasks queues describe "$WEBHOOK_QUEUE_NAME" --project="$PROJECT_ID" --location="$REGION" &>/dev/null; then
+  gcloud tasks queues create "$WEBHOOK_QUEUE_NAME" --project="$PROJECT_ID" --location="$REGION" \
+    --max-attempts=6 --min-backoff=5s --max-backoff=3600s --max-concurrent-dispatches=50 --quiet
+fi
 
 # ── 5. Determine LLM provider ─────────────────────────────────────────────────
 LLM_PROVIDER=$(gcloud secrets versions access latest \
@@ -73,6 +84,14 @@ SECRETS=(
   "GOOGLE_AI_KEY=docintel-gemini-key:latest"
   "MCP_INTROSPECTION_SECRET=docintel-mcp-introspection-secret:latest"
 )
+
+if ! gcloud secrets describe docintel-webhook-worker-token --project="$PROJECT_ID" &>/dev/null; then
+  openssl rand -hex 32 | gcloud secrets create docintel-webhook-worker-token \
+    --project="$PROJECT_ID" --replication-policy=automatic --data-file=- --quiet
+  gcloud secrets add-iam-policy-binding docintel-webhook-worker-token \
+    --project="$PROJECT_ID" --member="serviceAccount:$SA_EMAIL" --role="roles/secretmanager.secretAccessor" --quiet >/dev/null
+fi
+SECRETS+=("WEBHOOK_DELIVERY_WORKER_TOKEN=docintel-webhook-worker-token:latest")
 
 if [[ "$LLM_PROVIDER" == "openai" ]]; then
   SECRETS+=("OPENAI_API_KEY=docintel-openai-key:latest")
@@ -254,6 +273,10 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="MCP_PLAYGROUND_MAX_RESPONSE_BYTES=2097152" \
   --set-env-vars="BATCH_MAX_ITEMS=500" \
   --set-env-vars="BATCH_MAX_CONCURRENCY=4" \
+  --set-env-vars="WEBHOOK_CLOUD_TASKS_QUEUE_PATH=projects/$PROJECT_ID/locations/$REGION/queues/$WEBHOOK_QUEUE_NAME" \
+  --set-env-vars="WEBHOOK_DELIVERY_WORKER_URL=https://docintel.adar.agomoniai.com/api/internal/webhooks/deliver" \
+  --set-env-vars="WEBHOOK_DELIVERY_SCHEDULER_ENABLED=true" \
+  --set-env-vars="WEBHOOK_DELIVERY_SWEEP_SECONDS=30" \
   --set-env-vars="GCS_SIGNED_URL_EXPIRY_SECONDS=3600" \
   --set-env-vars="APP_URL=https://docintel.adar.agomoniai.com" \
   --set-env-vars="EMAIL_FROM_NAME=আদর DocIntel" \
@@ -306,6 +329,8 @@ gcloud run jobs deploy docintel-video-worker \
   --set-env-vars="VIDEO_SOURCE_READ_URL_EXPIRY_SECONDS=21600" \
   --set-env-vars="VIDEO_REMOTE_STAGE_RETRIES=3" \
   --set-env-vars="FFMPEG_COMMAND_TIMEOUT_SECONDS=180" \
+  --set-env-vars="WEBHOOK_CLOUD_TASKS_QUEUE_PATH=projects/$PROJECT_ID/locations/$REGION/queues/$WEBHOOK_QUEUE_NAME" \
+  --set-env-vars="WEBHOOK_DELIVERY_WORKER_URL=https://docintel.adar.agomoniai.com/api/internal/webhooks/deliver" \
   "${VIDEO_OTEL_FLAGS[@]}" \
   $SECRETS_FLAGS \
   --quiet

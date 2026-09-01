@@ -1,13 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Building2, Copy, Edit3, KeyRound, Plus, RefreshCw, Save, Send, ShieldCheck, Trash2, UserPlus, X } from 'lucide-react';
+import { Activity, Building2, Copy, Edit3, KeyRound, Play, Plus, RefreshCw, RotateCw, Save, Send, ShieldCheck, Trash2, UserPlus, Webhook, X } from 'lucide-react';
 import {
   createDeveloperApp, createDeveloperOrganization, fetchMcpScopeCatalog, getDeveloperApp,
   getDeveloperAppAudit, listDeveloperAppScopeRequests, listDeveloperApps,
   listDeveloperOrganizationMembers, listDeveloperOrganizations, listWorkspaces,
   removeDeveloperOrganizationMember, requestDeveloperAppScopes, revokeDeveloperApp,
   rotateDeveloperAppSecret, updateDeveloperAppScopes, updateDeveloperAppWorkspaces,
-  updateDeveloperOrganization, upsertDeveloperOrganizationMember,
+  updateDeveloperOrganization, upsertDeveloperOrganizationMember, createDeveloperWebhook,
+  deleteDeveloperWebhook, listDeveloperWebhookDeliveries, listDeveloperWebhooks,
+  replayDeveloperWebhookDelivery, rotateDeveloperWebhookSecret, testDeveloperWebhook,
+  updateDeveloperWebhook,
 } from '../../services/api.js';
 import './developerApplications.css';
 
@@ -210,14 +213,15 @@ export default function DeveloperApplications({ activeWorkspace, onClose }) {
       </header>
       <nav className="devapp-tabs">
         <button className={view === 'applications' ? 'active' : ''} onClick={() => setView('applications')}><KeyRound size={15}/>Applications</button>
+        <button className={view === 'webhooks' ? 'active' : ''} onClick={() => setView('webhooks')}><Webhook size={15}/>Webhooks</button>
         <button className={view === 'organizations' ? 'active' : ''} onClick={() => setView('organizations')}><Building2 size={15}/>Organizations</button>
       </nav>
       {error && <div className="devapp-error">{error}</div>}
       {notice && <div className="devapp-notice">{notice}</div>}
       {secret && <div className="devapp-secret">
         <div><strong>Save this secret now</strong><span>It will not be shown again.</span></div>
-        <code>{secret.client_id}</code><code>{secret.client_secret}</code>
-        <button onClick={() => navigator.clipboard?.writeText(secret.client_secret)}><Copy size={14}/>Copy secret</button>
+        <code>{secret.client_id || secret.subscription_id}</code><code>{secret.client_secret || secret.signing_secret}</code>
+        <button onClick={() => navigator.clipboard?.writeText(secret.client_secret || secret.signing_secret)}><Copy size={14}/>Copy secret</button>
         <button className="devapp-icon" onClick={() => setSecret(null)} aria-label="Dismiss secret"><X size={16}/></button>
       </div>}
 
@@ -235,7 +239,10 @@ export default function DeveloperApplications({ activeWorkspace, onClose }) {
             </article>)}
             {!organizations.length && <div className="devapp-empty">Create an organization before registering an enterprise application.</div>}
           </div>
-        </> : <>
+        </> : view === 'webhooks' ? <WebhookManagement
+          apps={apps.filter(app => app.client_type === 'confidential' && !app.revoked_at && canManageApp(app))}
+          workspaces={workspaces} busy={busy} run={run} setSecret={setSecret} setNotice={setNotice}
+        /> : <>
           <form className="devapp-create app" onSubmit={addApplication}>
             <label><span>Application name</span><input required value={form.name} onChange={e => setForm({...form, name:e.target.value})} placeholder="Procurement integration"/></label>
             <label><span>Organization</span><select required value={form.organization_id} onChange={e => setForm({...form, organization_id:e.target.value})}>
@@ -316,4 +323,101 @@ export default function DeveloperApplications({ activeWorkspace, onClose }) {
 
 function Inspector({ title, onClose, children }) {
   return <div className="devapp-inspector"><header><strong>{title}</strong><button className="devapp-icon" onClick={onClose} aria-label={`Close ${title}`}><X size={17}/></button></header><div className="devapp-inspector-body">{children}</div></div>;
+}
+
+const WEBHOOK_EVENTS = [
+  'document.uploaded', 'document.chunked', 'document.embedded', 'document.failed',
+  'batch.completed', 'video.processing.completed', 'workflow.completed',
+  'review.approved', 'packet.generated',
+];
+
+function WebhookManagement({ apps, workspaces, busy, run, setSecret, setNotice }) {
+  const [clientId, setClientId] = useState('');
+  const [subscriptions, setSubscriptions] = useState([]);
+  const [deliveries, setDeliveries] = useState([]);
+  const [editingId, setEditingId] = useState('');
+  const [form, setForm] = useState({ name:'', endpoint_url:'', workspace_id:'', event_types:['document.embedded'], timeout_seconds:10 });
+
+  useEffect(() => {
+    if (!clientId && apps[0]?.client_id) setClientId(apps[0].client_id);
+    if (clientId && !apps.some(app => app.client_id === clientId)) setClientId(apps[0]?.client_id || '');
+  }, [apps, clientId]);
+
+  useEffect(() => { if (clientId) load(); else { setSubscriptions([]); setDeliveries([]); } }, [clientId]);
+
+  async function load() {
+    const [hooks, attempts] = await Promise.all([listDeveloperWebhooks(clientId), listDeveloperWebhookDeliveries(clientId)]);
+    setSubscriptions(hooks.data || []);
+    setDeliveries(attempts.data || []);
+  }
+
+  function toggleEvent(eventType) {
+    setForm(current => ({ ...current, event_types:current.event_types.includes(eventType)
+      ? current.event_types.filter(item => item !== eventType) : [...current.event_types, eventType] }));
+  }
+
+  function edit(subscription) {
+    setEditingId(subscription.id);
+    setForm({ name:subscription.name, endpoint_url:subscription.endpoint_url,
+      workspace_id:subscription.workspace_id || '', event_types:subscription.event_types || [],
+      timeout_seconds:subscription.timeout_seconds || 10 });
+  }
+
+  function reset() {
+    setEditingId('');
+    setForm({ name:'', endpoint_url:'', workspace_id:'', event_types:['document.embedded'], timeout_seconds:10 });
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    await run(async () => {
+      const payload = { ...form, workspace_id:form.workspace_id || null };
+      const result = editingId
+        ? await updateDeveloperWebhook(clientId, editingId, payload)
+        : await createDeveloperWebhook(clientId, payload);
+      if (result.data?.signing_secret) setSecret(result.data);
+      setNotice(editingId ? 'Webhook subscription updated.' : 'Webhook subscription created. Save its signing secret now.');
+      reset(); await load();
+    });
+  }
+
+  async function action(operation, message) {
+    await run(async () => { await operation(); setNotice(message); await load(); });
+  }
+
+  if (!apps.length) return <div className="devapp-empty">Create an active confidential application before registering a webhook.</div>;
+  return <div className="devapp-webhooks">
+    <div className="devapp-webhook-toolbar">
+      <label><span>Application</span><select value={clientId} onChange={event => setClientId(event.target.value)}>{apps.map(app => <option key={app.client_id} value={app.client_id}>{app.client_name}</option>)}</select></label>
+      <button className="devapp-icon" onClick={() => run(load)} disabled={busy} title="Refresh webhook activity"><RefreshCw size={16}/></button>
+    </div>
+    <form className="devapp-webhook-form" onSubmit={submit}>
+      <div className="devapp-webhook-heading"><div><Webhook size={18}/><strong>{editingId ? 'Edit endpoint' : 'Register endpoint'}</strong></div>{editingId && <button type="button" onClick={reset}><X size={14}/>Cancel edit</button>}</div>
+      <label><span>Name</span><input required value={form.name} onChange={event => setForm({...form, name:event.target.value})} placeholder="Production document events"/></label>
+      <label className="wide"><span>HTTPS endpoint</span><input required type="url" value={form.endpoint_url} onChange={event => setForm({...form, endpoint_url:event.target.value})} placeholder="https://integration.example.com/webhooks/docintel"/></label>
+      <label><span>Workspace</span><select value={form.workspace_id} onChange={event => setForm({...form, workspace_id:event.target.value})}><option value="">All application workspaces</option>{workspaces.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <label><span>Timeout</span><select value={form.timeout_seconds} onChange={event => setForm({...form, timeout_seconds:Number(event.target.value)})}><option value={5}>5 seconds</option><option value={10}>10 seconds</option><option value={20}>20 seconds</option><option value={30}>30 seconds</option></select></label>
+      <div className="devapp-event-grid wide">{WEBHOOK_EVENTS.map(item => <label key={item}><input type="checkbox" checked={form.event_types.includes(item)} onChange={() => toggleEvent(item)}/><span>{item}</span></label>)}</div>
+      <button disabled={busy || !form.event_types.length}><Save size={15}/>{editingId ? 'Save endpoint' : 'Register webhook'}</button>
+    </form>
+    <section className="devapp-webhook-section"><h3>Endpoints</h3><div className="devapp-webhook-list">
+      {subscriptions.map(item => <article key={item.id}>
+        <div><strong>{item.name}</strong><code>{item.endpoint_url}</code><span>{(item.event_types || []).join(' · ')}</span></div>
+        <span className={`devapp-state ${item.status}`}>{item.status}</span>
+        <div className="devapp-webhook-stats"><span>{item.delivered_count || 0} delivered</span><span>{item.failed_count || 0} failed</span></div>
+        <div className="devapp-row-actions">
+          <button onClick={() => edit(item)} title="Edit endpoint"><Edit3 size={14}/></button>
+          <button onClick={() => action(() => updateDeveloperWebhook(clientId, item.id, { enabled:item.status !== 'active' }), `Webhook ${item.status === 'active' ? 'disabled' : 'enabled'}.`)}>{item.status === 'active' ? 'Disable' : 'Enable'}</button>
+          <button onClick={() => action(() => testDeveloperWebhook(clientId, item.id), 'Test event queued.')} title="Send test event"><Play size={14}/></button>
+          <button onClick={() => action(async () => setSecret(await rotateDeveloperWebhookSecret(clientId, item.id)), 'Signing secret rotated.')} title="Rotate signing secret"><RotateCw size={14}/></button>
+          <button className="danger" onClick={() => window.confirm('Delete this webhook and its delivery history?') && action(() => deleteDeveloperWebhook(clientId, item.id), 'Webhook deleted.')} title="Delete webhook"><Trash2 size={14}/></button>
+        </div>
+      </article>)}
+      {!subscriptions.length && <div className="devapp-empty">No webhook endpoints are registered for this application.</div>}
+    </div></section>
+    <section className="devapp-webhook-section"><h3><Activity size={15}/>Delivery activity</h3><div className="devapp-delivery-list">
+      {deliveries.map(item => <details key={item.id}><summary><span className={`devapp-state ${item.status}`}>{item.status}</span><strong>{item.event_type}</strong><span>{item.attempt_count} attempts</span><time>{new Date(item.created_at).toLocaleString()}</time></summary><div><code>{item.id}</code>{item.last_http_status && <span>HTTP {item.last_http_status}</span>}{item.last_error && <pre>{item.last_error}</pre>}{(Array.isArray(item.attempts) ? item.attempts : []).map(attempt => <p key={attempt.attempt_number}>Attempt {attempt.attempt_number}: {attempt.http_status ? `HTTP ${attempt.http_status}` : attempt.error_message} · {attempt.duration_ms} ms</p>)}{['retrying','dead_letter'].includes(item.status) && <button onClick={() => action(() => replayDeveloperWebhookDelivery(clientId, item.id), 'Webhook delivery queued for replay.')}><RotateCw size={14}/>Replay</button>}</div></details>)}
+      {!deliveries.length && <div className="devapp-empty">Delivery attempts will appear after an event is sent.</div>}
+    </div></section>
+  </div>;
 }

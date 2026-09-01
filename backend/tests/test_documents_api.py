@@ -79,6 +79,7 @@ def patch_external_services(monkeypatch):
     monkeypatch.setattr(documents, "check_document_limit", noop)
     monkeypatch.setattr(documents, "log_event", noop)
     monkeypatch.setattr(documents, "audit", noop)
+    monkeypatch.setattr(documents, "emit_event", noop)
     monkeypatch.setattr(documents.gcs, "upload_bytes", noop)
     monkeypatch.setattr(documents, "_chunk_document", noop)
 

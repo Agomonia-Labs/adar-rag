@@ -53,7 +53,7 @@ async def refresh_job(job_id: str) -> dict:
             await emit_event(
                 db, user_id=str(job_state["user_id"]),
                 workspace_id=str(job_state["workspace_id"]) if job_state["workspace_id"] else None,
-                event_type=f"batch.{status}", resource_type="batch", resource_id=job_id,
+                event_type="batch.completed", resource_type="batch", resource_id=job_id,
                 payload={"batch_job_id": job_id, "operation": job_state["operation"], "status": status, "progress_pct": progress, "stage": current_stage},
             )
         return dict(row)

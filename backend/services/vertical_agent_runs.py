@@ -4,6 +4,7 @@ import json
 from typing import Any, Awaitable, Callable
 
 from fastapi import HTTPException
+from services.mcp_enterprise import emit_event
 
 
 async def create_vertical_run(
@@ -140,19 +141,27 @@ async def run_vertical_step(
 
 
 async def complete_vertical_run(db, run_id: str, result_data: dict[str, Any], status: str = "pending_approval") -> None:
-    await db.execute(
+    row = await db.fetchrow(
         """
         UPDATE vertical_agent_runs
         SET status=$2,
             result_data=$3::jsonb,
             completed_at=NOW(),
             updated_at=NOW()
-        WHERE id=$1
+        WHERE id=$1 RETURNING user_id,workspace_id,vertical,workflow_id
         """,
         run_id,
         status,
         json.dumps(result_data),
     )
+    if row:
+        await emit_event(
+            db, user_id=str(row["user_id"]),
+            workspace_id=str(row["workspace_id"]) if row["workspace_id"] else None,
+            event_type="workflow.completed", resource_type="workflow_run", resource_id=run_id,
+            payload={"run_id": run_id, "status": status, "stage": "completed",
+                     "message": f"{row['vertical']} workflow {row['workflow_id']} completed"},
+        )
 
 
 async def fail_vertical_run(db, run_id: str, error_message: str) -> None:
@@ -178,7 +187,7 @@ async def approve_vertical_run(
     approved_packet: dict[str, Any],
     notes: str | None = None,
 ) -> None:
-    await db.execute(
+    row = await db.fetchrow(
         """
         UPDATE vertical_agent_runs
         SET status='approved',
@@ -187,12 +196,32 @@ async def approve_vertical_run(
             approval_notes=$3,
             result_data=jsonb_set(COALESCE(result_data, '{}'::jsonb), '{approved_packet}', $4::jsonb, true),
             updated_at=NOW()
-        WHERE id=$1
+        WHERE id=$1 RETURNING user_id,workspace_id,vertical,workflow_id
         """,
         run_id,
         user_id,
         notes,
         json.dumps(approved_packet),
+    )
+    if row:
+        await emit_event(
+            db, user_id=str(row["user_id"]),
+            workspace_id=str(row["workspace_id"]) if row["workspace_id"] else None,
+            event_type="review.approved", resource_type="workflow_run", resource_id=run_id,
+            payload={"run_id": run_id, "review_id": run_id, "status": "approved",
+                     "stage": "human_review", "message": f"{row['vertical']} workflow approved"},
+        )
+
+
+async def emit_packet_generated(
+    db, *, run: dict[str, Any], run_id: str, document_id: str, filename: str,
+) -> None:
+    await emit_event(
+        db, user_id=str(run["user_id"]),
+        workspace_id=str(run["workspace_id"]) if run.get("workspace_id") else None,
+        event_type="packet.generated", resource_type="document", resource_id=document_id,
+        payload={"run_id": run_id, "packet_id": document_id, "document_id": document_id,
+                 "filename": filename, "status": "generated", "stage": "packet_generation"},
     )
 
 
