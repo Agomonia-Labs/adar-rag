@@ -869,9 +869,17 @@
 }
 
 .devapp-metrics { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; }
-.devapp-metrics div { border:1px solid var(--border-color,#d9e0e7); padding:10px; background:var(--panel-bg,#fff); border-radius:6px; min-width:0; }
+.devapp-metrics div {
+  min-width:0;
+  padding:10px;
+  color:#e5e7eb;
+  background:#0c190c;
+  border:1px solid #294329;
+  border-radius:6px;
+}
 .devapp-metrics span,.devapp-metrics strong { display:block; overflow-wrap:anywhere; }
-.devapp-metrics span { font-size:11px; opacity:.72; }
+.devapp-metrics span { color:#9fb0a2; font-size:11px; font-weight:700; }
+.devapp-metrics strong { margin-top:4px; color:#d1fae5; font-size:17px; line-height:1.2; }
 .devapp-table-wrap { overflow:auto; }
 .devapp-table-wrap table { width:100%; border-collapse:collapse; font-size:12px; }
 .devapp-table-wrap th,.devapp-table-wrap td { padding:8px; text-align:left; border-bottom:1px solid var(--border-color,#d9e0e7); }
