@@ -24,6 +24,7 @@ Core capabilities:
 - Compare documents and domain objects.
 - Use voice input for chat and workflow intake where browser support is available.
 - Process video into metadata, sampled frames, transcripts, timestamped segments, embeddings, and timestamp-aware Q&A.
+- Build governed courses from documents, speech, and video with grounded tutoring, study tools, and human escalation.
 - Open an in-app DocIntel User Guide from guest preview, desktop header, or mobile menu.
 - Track traces, spans, retrieved context, tool calls, LLM prompts/responses, evaluations, usage, and audit history.
 - Manage workspaces, RBAC, usage tiers, billing/subscription state, and admin controls.
@@ -189,6 +190,23 @@ Usage limits can be enforced by tier for:
 The Usage panel exposes usage status and configured limits to the user.
 
 ## Vertical Workflows
+
+### Learning Intelligence
+
+Learning Intelligence layers course structure and human guidance over DocIntel's existing multimodal knowledge foundation.
+
+MVP capabilities:
+
+- Create workspace-governed courses with semester, instructor, description, and learning objectives.
+- Organize modules and lessons without duplicating source content.
+- Enroll course members as student, teacher, advisor, or administrator.
+- Attach existing workspace documents, audio transcripts, and processed videos to a course.
+- Ask grounded questions through persistent chat sessions with source citations and video timestamps.
+- Generate and save summaries, study guides, key concepts, flashcards, and practice questions.
+- Escalate questions to a teacher or advisor with course and source context, then retain reviewed answers.
+- Keep ingestion, chunking, embedding, retrieval, access control, tracing, and audit behavior on the shared DocIntel platform.
+
+The MVP intentionally excludes gradebooks, attendance, payments, proctoring, and certificate issuance. It complements an LMS by making learning content understandable and interactive rather than replacing academic systems of record.
 
 ### Lease Intelligence
 
@@ -440,6 +458,7 @@ flowchart TB
 | `HealthcarePanel.jsx` | Healthcare clinical, scribe, prior auth, AVS workflows |
 | `RestaurantPanel.jsx` | Restaurant scribe, menu editing, compare menus, carryout orders |
 | `FinanceTaxPanel.jsx` | Tax and financial planning readiness workflow |
+| `LearningPanel.jsx` | Course setup, content, grounded tutor, study tools, and human escalation |
 | `VideoPanel.jsx` | Video Intelligence upload, processing, timeline, frames, and Q&A workflow |
 | `WorkspacesTab.jsx` | Workspace membership and switching |
 | `UsagePanel.jsx` | Tier and usage visibility |
@@ -530,6 +549,7 @@ Authorization: Bearer <jwt_token>
 | Healthcare | `/api/healthcare` | Healthcare workflows |
 | Restaurant | `/api/restaurant` | Restaurant scribe, menu, compare, recommendations, carryout orders, customer feedback |
 | Finance Tax | `/api/finance-tax` | Tax and financial planning readiness workflows |
+| Learning | `/api/learning` | Courses, enrollment, curriculum, content, study artifacts, and escalations |
 | Admin | `/api/admin` | Admin-only users/documents/platform views |
 
 ## Local Development

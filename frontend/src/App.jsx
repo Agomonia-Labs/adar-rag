@@ -17,6 +17,7 @@ import VideoPanel      from './components/VideoPanel.jsx';
 import ConversationPanel from './components/ConversationPanel.jsx';
 import FinanceTaxPanel from './components/FinanceTaxPanel.jsx';
 import TalentPanel     from './components/TalentPanel.jsx';
+import LearningPanel   from './components/LearningPanel.jsx';
 import McpPlayground   from './components/mcp-playground/McpPlayground.jsx';
 import DeveloperApplications from './components/developer-apps/DeveloperApplications.jsx';
 import { ToastContainer } from './components/Toast.jsx';
@@ -42,6 +43,7 @@ export default function App() {
   const [showConversationPanel, setShowConversationPanel] = useState(false);
   const [showFinanceTaxPanel, setShowFinanceTaxPanel] = useState(false);
   const [showTalentPanel, setShowTalentPanel] = useState(false);
+  const [showLearningPanel, setShowLearningPanel] = useState(false);
   const [showMcpPlayground, setShowMcpPlayground] = useState(false);
   const [showDeveloperApplications, setShowDeveloperApplications] = useState(false);
   const [openLeasePickerKey, setOpenLeasePickerKey] = useState(0);
@@ -236,6 +238,11 @@ export default function App() {
     setShowTalentPanel(true);
   };
 
+  const openLearningWorkflow = () => {
+    closeMenus();
+    setShowLearningPanel(true);
+  };
+
   const openMcpPlayground = () => {
     closeMenus();
     setShowMcpPlayground(true);
@@ -290,6 +297,9 @@ export default function App() {
       {showDeveloperApplications && <DeveloperApplications activeWorkspace={activeWorkspace} onClose={() => setShowDeveloperApplications(false)} />}
       {showTalentPanel && (
         <TalentPanel activeWorkspace={activeWorkspace} onClose={() => setShowTalentPanel(false)} />
+      )}
+      {showLearningPanel && (
+        <LearningPanel activeWorkspace={activeWorkspace} onClose={() => setShowLearningPanel(false)} />
       )}
       <div style={s.shell}>
         <header style={{...s.header, ...(isMobile ? s.headerMobile : {})}}>
@@ -423,6 +433,13 @@ export default function App() {
                       <span>Talent Management Readiness</span>
                     </button>
                   </div>
+                  <div style={s.verticalGroup}>
+                    <div style={s.verticalGroupTitle}>Learning</div>
+                    <button style={s.verticalItem} onClick={openLearningWorkflow}>
+                      <span>🎓</span>
+                      <span>Learning Intelligence</span>
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -527,6 +544,14 @@ export default function App() {
                 <button type="button" style={s.menuItem} onClick={openFinanceTaxWorkflow}>
                   <span>💼</span>
                   <span>Tax & Financial Planning Readiness</span>
+                </button>
+                <button type="button" style={s.menuItem} onClick={openTalentWorkflow}>
+                  <span>👥</span>
+                  <span>Talent Management Readiness</span>
+                </button>
+                <button type="button" style={s.menuItem} onClick={openLearningWorkflow}>
+                  <span>🎓</span>
+                  <span>Learning Intelligence</span>
                 </button>
               </section>
 

@@ -4,7 +4,7 @@ import json, asyncio, logging, re
 from contextlib import suppress
 from difflib import SequenceMatcher
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Depends, Request
@@ -34,6 +34,7 @@ class ChatRequest(BaseModel):
     workspace_id: str | None = None
     redact_pii:   bool = False
     agent_mode:   str = "auto"  # auto | off | force
+    response_language: Literal["en", "es", "bn", "hi", "ar"] | None = None
 
 
 @router.post("/stream")
@@ -68,7 +69,7 @@ async def chat_stream_endpoint(
     found_ids    = {str(r["id"]) for r in rows}
     not_found    = set(req.document_ids) - found_ids
     not_embedded = {str(r["id"]) for r in rows if r["status"] != "embedded"}
-    response_lang = primary_language([r["doc_language"] for r in rows])
+    response_lang = req.response_language or primary_language([r["doc_language"] for r in rows])
 
     if not_found:
         raise HTTPException(403, f"Documents not found or not accessible: {not_found}")

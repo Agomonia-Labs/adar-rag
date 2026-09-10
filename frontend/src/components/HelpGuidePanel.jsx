@@ -134,6 +134,24 @@ const GUIDE_SECTIONS = [
     ],
   },
   {
+    key: 'learning',
+    icon: '🎓',
+    title: 'Learning Intelligence',
+    summary: 'Build grounded courses from documents, speech, and video.',
+    steps: [
+      'Select a shared workspace, open Learning Intelligence, and create a course.',
+      'Complete the course profile, organize modules and lessons, and enroll students, teachers, or advisors.',
+      'Attach processed workspace documents, audio transcripts, and videos as governed course content.',
+      'Use AI Tutor for persistent, evidence-backed Q&A with document citations and video timestamps.',
+      'Generate and save summaries, study guides, key concepts, flashcards, and practice questions.',
+      'Escalate questions that require human judgment to a teacher or advisor and retain the reviewed response.',
+    ],
+    tips: [
+      'Only embedded course assets are available to AI Tutor and Study Tools.',
+      'AI-generated learning material should be checked by the learner or instructor against cited course evidence.',
+    ],
+  },
+  {
     key: 'workspaces',
     icon: '👥',
     title: 'Workspaces and Roles',

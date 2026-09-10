@@ -216,10 +216,15 @@ function parseBlocks(text) {
       continue;
     }
 
-    // Headings
-    if (line.startsWith('### ')) { blocks.push({ type:'h3', text: line.slice(4) }); i++; continue; }
-    if (line.startsWith('## '))  { blocks.push({ type:'h2', text: line.slice(3) }); i++; continue; }
-    if (line.startsWith('# '))   { blocks.push({ type:'h1', text: line.slice(2) }); i++; continue; }
+    // Markdown supports six heading levels. Collapse levels 3-6 into the
+    // compact heading treatment used by chat while always advancing the parser.
+    const heading = line.match(/^\s*(#{1,6})\s+(.+)$/);
+    if (heading) {
+      const level = heading[1].length;
+      blocks.push({ type: level === 1 ? 'h1' : level === 2 ? 'h2' : 'h3', text: heading[2] });
+      i++;
+      continue;
+    }
 
     // Horizontal rule
     if (/^[-*_]{3,}$/.test(trim)) { blocks.push({ type:'hr' }); i++; continue; }
@@ -277,7 +282,7 @@ function parseBlocks(text) {
       i < lines.length &&
       lines[i].trim() !== '' &&
       !lines[i].trim().startsWith('|') &&
-      !lines[i].startsWith('#') &&
+      !/^\s*#{1,6}\s+/.test(lines[i]) &&
       !lines[i].startsWith('```') &&
       !/^[\-\*\•\+]\s/.test(lines[i].trim()) &&
       !/^\d+[\.\)]\s/.test(lines[i].trim()) &&
@@ -288,6 +293,11 @@ function parseBlocks(text) {
     }
     if (paraLines.length > 0) {
       blocks.push({ type: 'paragraph', text: paraLines.join('\n') });
+    } else {
+      // Defensive progress guarantee for malformed or future Markdown syntax.
+      // A renderer must never leave the cursor on the same unrecognized line.
+      blocks.push({ type: 'paragraph', text: lines[i] });
+      i++;
     }
   }
 

@@ -134,6 +134,32 @@ async def send_call_processing_notification(
         return False
 
 
+async def send_learning_question_notification(
+    user_email: str,
+    *,
+    course_title: str,
+    question: str,
+    action: str = "assigned",
+) -> bool:
+    """Notify a course participant when a human-review question needs attention or receives an answer."""
+    if not user_email:
+        return False
+    answered = action == "answered"
+    subject = f"Learning question {'answered' if answered else 'needs your review'} - {course_title}"
+    body = (
+        f"A reviewed response is available for a question in {course_title}.\n\n"
+        if answered else
+        f"A learner has routed a question to you in {course_title}.\n\n"
+    )
+    body += f"Question: {question}\n\nOpen DocIntel Learning Intelligence to {'review the answer' if answered else 'respond with human guidance'}.\n\n- ADAR DocIntel\n"
+    try:
+        await send_email(to=user_email, subject=subject, body=body)
+        return True
+    except Exception as exc:
+        log.warning("Learning question notification failed for %s: %s", user_email, exc)
+        return False
+
+
 async def send_verification_email(user_email: str, token: str, app_url: str) -> None:
     """Send email address verification link."""
     link = f"{app_url.rstrip('/')}/verify-email?token={token}"

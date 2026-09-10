@@ -866,6 +866,102 @@ CREATE INDEX IF NOT EXISTS idx_talent_runs_workspace ON talent_runs(workspace_id
 CREATE INDEX IF NOT EXISTS idx_talent_runs_job ON talent_runs(job_description_id);
 CREATE INDEX IF NOT EXISTS idx_talent_runs_status ON talent_runs(status);
 
+-- Learning Intelligence keeps course structure and review state separate from
+-- the existing document/RAG pipeline. Course assets point at normal DocIntel
+-- documents, so text, audio, and video retain one ingestion and retrieval path.
+CREATE TABLE IF NOT EXISTS learning_courses (
+    id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id    UUID        NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    created_by      UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title           TEXT        NOT NULL,
+    course_code     TEXT        NOT NULL DEFAULT '',
+    semester        TEXT        NOT NULL DEFAULT '',
+    description     TEXT        NOT NULL DEFAULT '',
+    instructor_name TEXT        NOT NULL DEFAULT '',
+    objectives      JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    status          TEXT        NOT NULL DEFAULT 'active' CHECK (status IN ('active','archived')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_learning_courses_workspace ON learning_courses(workspace_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS learning_course_members (
+    id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    course_id   UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+    user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    persona     TEXT        NOT NULL CHECK (persona IN ('admin','teacher','student','advisor')),
+    added_by    UUID        REFERENCES users(id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(course_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_learning_members_user ON learning_course_members(user_id, course_id);
+
+CREATE TABLE IF NOT EXISTS learning_modules (
+    id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    course_id   UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+    title       TEXT        NOT NULL,
+    description TEXT        NOT NULL DEFAULT '',
+    position    INTEGER     NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_learning_modules_course ON learning_modules(course_id, position);
+
+CREATE TABLE IF NOT EXISTS learning_lessons (
+    id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    module_id   UUID        NOT NULL REFERENCES learning_modules(id) ON DELETE CASCADE,
+    title       TEXT        NOT NULL,
+    description TEXT        NOT NULL DEFAULT '',
+    position    INTEGER     NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_learning_lessons_module ON learning_lessons(module_id, position);
+
+CREATE TABLE IF NOT EXISTS learning_assets (
+    id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    course_id   UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+    module_id   UUID        REFERENCES learning_modules(id) ON DELETE SET NULL,
+    lesson_id   UUID        REFERENCES learning_lessons(id) ON DELETE SET NULL,
+    document_id UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    title       TEXT        NOT NULL DEFAULT '',
+    added_by    UUID        REFERENCES users(id) ON DELETE SET NULL,
+    position    INTEGER     NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(course_id, document_id)
+);
+CREATE INDEX IF NOT EXISTS idx_learning_assets_course ON learning_assets(course_id, position);
+
+CREATE TABLE IF NOT EXISTS learning_artifacts (
+    id                  UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    course_id           UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+    user_id             UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    artifact_type       TEXT        NOT NULL CHECK (artifact_type IN ('summary','study_guide','key_concepts','flashcards','practice_questions')),
+    title               TEXT        NOT NULL DEFAULT '',
+    content             TEXT        NOT NULL,
+    source_document_ids JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_learning_artifacts_course ON learning_artifacts(course_id, user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS learning_questions (
+    id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    course_id   UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+    asked_by    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    assigned_to UUID        REFERENCES users(id) ON DELETE SET NULL,
+    target_role TEXT        NOT NULL CHECK (target_role IN ('teacher','advisor')),
+    question    TEXT        NOT NULL,
+    context     JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    status      TEXT        NOT NULL DEFAULT 'open' CHECK (status IN ('open','answered','closed')),
+    answer      TEXT        NOT NULL DEFAULT '',
+    answered_by UUID        REFERENCES users(id) ON DELETE SET NULL,
+    answered_at TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_learning_questions_course ON learning_questions(course_id, status, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS mcp_playground_sessions (
     session_hash             TEXT        PRIMARY KEY,
     user_id                  UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,

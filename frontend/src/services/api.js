@@ -602,14 +602,14 @@ export async function approveConversationTranscript(sessionId, transcript) {
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
-export async function streamChat({ question, documentIds, document_ids, history, workspaceId = null, traceId = null, redactPii = false }, { onToken, onDone, onError }) {
+export async function streamChat({ question, documentIds, document_ids, history, workspaceId = null, traceId = null, redactPii = false, responseLanguage = null }, { onToken, onDone, onError }) {
   const docIds = documentIds || document_ids;  // accept both forms
   const headers = {'Content-Type':'application/json', ...authHdr()};
   if (traceId) headers['X-Trace-Id'] = traceId;
   const res = await fetch(`${STREAM_BASE}/chat/stream`, {
     method:'POST',
     headers,
-    body: JSON.stringify({ question, document_ids: docIds, history, workspace_id: workspaceId, redact_pii: redactPii }),
+    body: JSON.stringify({ question, document_ids: docIds, history, workspace_id: workspaceId, redact_pii: redactPii, response_language: responseLanguage }),
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
@@ -1202,6 +1202,83 @@ export async function downloadTalentPacket(runId) {
 export async function ingestTalentPacket(runId) {
   return handleRes(await fetch(`${LONG_BASE}/talent/runs/${runId}/packet/ingest`, {
     method:'POST', headers:authHdr(),
+  }));
+}
+
+// ── Learning Intelligence ────────────────────────────────────────────────────
+export async function listLearningCourses(workspaceId) {
+  return handleRes(await fetch(`${BASE}/learning/courses?workspace_id=${encodeURIComponent(workspaceId)}`, { headers:authHdr() }));
+}
+
+export async function createLearningCourse(payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function getLearningCourse(courseId) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}`, { headers:authHdr() }));
+}
+
+export async function updateLearningCourse(courseId, payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}`, {
+    method:'PATCH', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function deleteLearningCourse(courseId) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}`, { method:'DELETE', headers:authHdr() }));
+}
+
+export async function listLearningDocuments(workspaceId) {
+  return handleRes(await fetch(`${BASE}/learning/documents?workspace_id=${encodeURIComponent(workspaceId)}`, { headers:authHdr() }));
+}
+
+export async function addLearningMember(courseId, payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/members`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function removeLearningMember(courseId, userId) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/members/${userId}`, { method:'DELETE', headers:authHdr() }));
+}
+
+export async function saveLearningCurriculum(courseId, modules) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/curriculum`, {
+    method:'PUT', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify({modules}),
+  }));
+}
+
+export async function addLearningAsset(courseId, payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/assets`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function removeLearningAsset(courseId, assetId) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/assets/${assetId}`, { method:'DELETE', headers:authHdr() }));
+}
+
+export async function saveLearningArtifact(courseId, payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/artifacts`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function deleteLearningArtifact(courseId, artifactId) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/artifacts/${artifactId}`, { method:'DELETE', headers:authHdr() }));
+}
+
+export async function createLearningQuestion(courseId, payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/questions`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function updateLearningQuestion(courseId, questionId, payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/questions/${questionId}`, {
+    method:'PATCH', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
   }));
 }
 
