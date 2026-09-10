@@ -1266,6 +1266,23 @@ export async function saveLearningArtifact(courseId, payload) {
   }));
 }
 
+export async function resolveLearningScope(courseId, moduleId = null, lessonId = null) {
+  const params = new URLSearchParams();
+  if (moduleId) params.set('module_id', moduleId);
+  if (lessonId) params.set('lesson_id', lessonId);
+  const suffix = params.toString() ? `?${params}` : '';
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/scope${suffix}`, {
+    headers:authHdr(),
+  }));
+}
+
+export async function saveLearningQuizAttempt(courseId, artifactId, answers, replace = false) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/artifacts/${artifactId}/attempts`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({ answers, replace }),
+  }));
+}
+
 export async function deleteLearningArtifact(courseId, artifactId) {
   return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/artifacts/${artifactId}`, { method:'DELETE', headers:authHdr() }));
 }

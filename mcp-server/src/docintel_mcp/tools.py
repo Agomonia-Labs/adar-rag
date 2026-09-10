@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -854,6 +855,163 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
             async with api_client(ctx, settings, "events:read") as client: return await client.get_my_trace(trace_id)
         except DocIntelMcpError as exc: return exc.as_dict()
 
+    @mcp.tool()
+    async def list_learning_courses(ctx: Context, workspace_id: str) -> dict:
+        """List Knowledge Academy courses visible to the caller in one workspace."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client:
+                courses = await client.list_learning_courses(workspace_id)
+            return {"count": len(courses), "courses": courses}
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def get_learning_course(ctx: Context, course_id: str) -> dict:
+        """Read course overview, curriculum, content, artifacts, questions, and learner attempts."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client: return await client.get_learning_course(course_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def create_learning_course(ctx: Context, workspace_id: str, title: str, course_code: str = "", semester: str = "", description: str = "", instructor_name: str = "", objectives: list[str] | None = None) -> dict:
+        """Create a governed Knowledge Academy course in a workspace."""
+        try:
+            async with api_client(ctx, settings, "learning:manage") as client:
+                return await client.create_learning_course({"workspace_id": workspace_id, "title": title, "course_code": course_code, "semester": semester, "description": description, "instructor_name": instructor_name, "objectives": objectives or []})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def update_learning_course(ctx: Context, course_id: str, changes: dict[str, Any]) -> dict:
+        """Update course metadata or lifecycle status; teacher/admin access is required."""
+        try:
+            async with api_client(ctx, settings, "learning:manage") as client: return await client.update_learning_course(course_id, changes)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def delete_learning_course(ctx: Context, course_id: str, confirm: bool = False) -> dict:
+        """Permanently delete a course and its owned learning records."""
+        if not confirm: return {"ok": False, "error": {"code": "confirmation_required", "message": "Set confirm=true to delete the course"}}
+        try:
+            async with api_client(ctx, settings, "learning:manage") as client: return await client.delete_learning_course(course_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def save_learning_curriculum(ctx: Context, course_id: str, modules: list[dict[str, Any]]) -> dict:
+        """Replace the ordered module and lesson curriculum for a course."""
+        try:
+            async with api_client(ctx, settings, "learning:manage") as client: return await client.save_learning_curriculum(course_id, modules)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def enroll_learning_member(ctx: Context, course_id: str, email: str, persona: str = "student") -> dict:
+        """Enroll an existing workspace user as student, teacher, advisor, or admin."""
+        try:
+            async with api_client(ctx, settings, "learning:manage") as client: return await client.add_learning_member(course_id, email, persona)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def remove_learning_member(ctx: Context, course_id: str, user_id: str, confirm: bool = False) -> dict:
+        """Remove a member from a course without deleting the DocIntel user."""
+        if not confirm: return {"ok": False, "error": {"code": "confirmation_required", "message": "Set confirm=true to remove the member"}}
+        try:
+            async with api_client(ctx, settings, "learning:manage") as client: return await client.remove_learning_member(course_id, user_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def attach_learning_content(ctx: Context, course_id: str, document_id: str, module_id: str | None = None, lesson_id: str | None = None, title: str = "") -> dict:
+        """Attach an existing workspace document, recording, or video to a course scope."""
+        try:
+            async with api_client(ctx, settings, "learning:manage") as client:
+                return await client.attach_learning_content(course_id, {"document_id": document_id, "module_id": module_id, "lesson_id": lesson_id, "title": title})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def remove_learning_content(ctx: Context, course_id: str, asset_id: str, confirm: bool = False) -> dict:
+        """Detach course content while preserving the original DocIntel document."""
+        if not confirm: return {"ok": False, "error": {"code": "confirmation_required", "message": "Set confirm=true to detach the content"}}
+        try:
+            async with api_client(ctx, settings, "learning:manage") as client: return await client.remove_learning_content(course_id, asset_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def ask_learning_tutor(ctx: Context, course_id: str, question: str, module_id: str | None = None, lesson_id: str | None = None, history: list[dict] | None = None, response_language: str | None = None) -> dict:
+        """Ask an evidence-grounded AI Tutor question within a course, module, or lesson."""
+        try:
+            async with api_client(ctx, settings, "learning:participate") as client:
+                scope = await client.resolve_learning_scope(course_id, module_id, lesson_id)
+                if not scope["document_ids"]: raise DocIntelMcpError("content_not_ready", "No embedded content is available in this learning scope", status_code=409)
+                result = await client.ask(f"{scope['instruction']}\n\nSTUDENT QUESTION:\n{question}", scope["document_ids"], scope["workspace_id"], history or [], response_language=response_language)
+                return {**result, "learning_scope": scope}
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def generate_learning_artifact(ctx: Context, course_id: str, artifact_type: str, module_id: str | None = None, lesson_id: str | None = None, title: str = "", custom_instruction: str = "") -> dict:
+        """Generate and save a grounded summary, study guide, key concepts, flashcards, or practice quiz."""
+        prompts = {
+            "summary": "Produce a concise evidence-grounded learning summary with citations.",
+            "study_guide": "Create a structured study guide with key ideas, examples, risks, and review questions.",
+            "key_concepts": "Explain the key concepts as clearly formatted terms, definitions, and evidence-backed examples.",
+            "flashcards": "Create question-and-answer flashcards in readable Markdown.",
+            "practice_questions": "Return JSON only with schema_version 1, instructions, and questions. Each question needs id, question, exactly four options A-D with text and correct boolean, plus explanation. At least one option must be correct.",
+        }
+        if artifact_type not in prompts: return {"ok": False, "error": {"code": "invalid_request", "message": "Unsupported learning artifact type"}}
+        try:
+            async with api_client(ctx, settings, "learning:participate") as client:
+                scope = await client.resolve_learning_scope(course_id, module_id, lesson_id)
+                if not scope["document_ids"]: raise DocIntelMcpError("content_not_ready", "No embedded content is available in this learning scope", status_code=409)
+                instruction = custom_instruction.strip() or prompts[artifact_type]
+                generated = await client.ask(f"{scope['instruction']}\n\nTASK:\n{instruction}", scope["document_ids"], scope["workspace_id"])
+                content = _practice_quiz_json(generated["answer"]) if artifact_type == "practice_questions" else generated["answer"]
+                artifact = await client.save_learning_artifact(course_id, {"artifact_type": artifact_type, "title": title or f"{artifact_type.replace('_', ' ').title()} - {scope['label']}", "content": content, "source_document_ids": scope["document_ids"], "module_id": scope["module_id"], "lesson_id": scope["lesson_id"]})
+                return {"artifact": artifact, "sources": generated["sources"], "trace_id": generated["trace_id"], "learning_scope": scope}
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def list_learning_artifacts(ctx: Context, course_id: str) -> dict:
+        """List the caller's saved study artifacts for a course."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client: course = await client.get_learning_course(course_id)
+            artifacts = course.get("artifacts") or []
+            return {"count": len(artifacts), "artifacts": artifacts}
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def delete_learning_artifact(ctx: Context, course_id: str, artifact_id: str, confirm: bool = False) -> dict:
+        """Delete one caller-owned saved learning artifact."""
+        if not confirm: return {"ok": False, "error": {"code": "confirmation_required", "message": "Set confirm=true to delete the artifact"}}
+        try:
+            async with api_client(ctx, settings, "learning:participate") as client: return await client.delete_learning_artifact(course_id, artifact_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def submit_learning_quiz(ctx: Context, course_id: str, artifact_id: str, answers: dict[str, list[str]], replace: bool = False) -> dict:
+        """Grade and persist selected answers for an interactive practice quiz."""
+        try:
+            async with api_client(ctx, settings, "learning:participate") as client: return await client.submit_learning_quiz(course_id, artifact_id, answers, replace)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def get_learning_progress(ctx: Context, course_id: str) -> dict:
+        """Read learner quiz progress; teachers and advisors may receive course-level progress."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client:
+                attempts = await client.get_learning_progress(course_id)
+            return {"count": len(attempts), "attempts": attempts}
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def ask_learning_person(ctx: Context, course_id: str, question: str, target_role: str = "teacher", context: dict[str, Any] | None = None) -> dict:
+        """Escalate a learning question to a course teacher or advisor."""
+        try:
+            async with api_client(ctx, settings, "learning:participate") as client: return await client.ask_learning_question(course_id, {"question": question, "target_role": target_role, "context": context or {}})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def answer_learning_question(ctx: Context, course_id: str, question_id: str, answer: str, status: str = "answered") -> dict:
+        """Let an authorized teacher or advisor answer a learner's question."""
+        try:
+            async with api_client(ctx, settings, "learning:participate") as client: return await client.answer_learning_question(course_id, question_id, {"answer": answer, "status": status})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
 
 def _normalized_sources(sources: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     result = []
@@ -872,3 +1030,32 @@ def _normalized_sources(sources: list[dict[str, Any]] | None) -> list[dict[str, 
             "excerpt": str(source.get("excerpt") or source.get("text") or source.get("content") or "")[:600],
         })
     return result
+
+
+def _practice_quiz_json(content: str) -> str:
+    """Normalize common fenced LLM output before backend schema validation."""
+    cleaned = str(content or "").strip()
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start < 0 or end <= start:
+        raise DocIntelMcpError("invalid_generation", "AI did not return a valid practice-quiz JSON object", status_code=422)
+    try:
+        quiz = json.loads(cleaned[start:end + 1])
+    except json.JSONDecodeError as exc:
+        raise DocIntelMcpError("invalid_generation", "AI returned malformed practice-quiz JSON; generate it again", status_code=422) from exc
+
+    # Models occasionally honor the option text/correctness contract while
+    # omitting identifiers. IDs are presentation metadata, so assign them
+    # deterministically and leave substantive validation to the backend.
+    questions = quiz.get("questions") if isinstance(quiz, dict) else None
+    if isinstance(questions, list):
+        for question_index, question in enumerate(questions, start=1):
+            if not isinstance(question, dict):
+                continue
+            question.setdefault("id", f"q{question_index}")
+            options = question.get("options")
+            if isinstance(options, list) and len(options) == 4:
+                for option_id, option in zip(("A", "B", "C", "D"), options):
+                    if isinstance(option, dict):
+                        option["id"] = option_id
+
+    return json.dumps(quiz, ensure_ascii=False)

@@ -59,6 +59,9 @@ ALLOWED_SCOPES = {
     "versions:write",
     "evaluations:run",
     "service:manage",
+    "learning:read",
+    "learning:participate",
+    "learning:manage",
 }
 
 SCOPE_CATALOG = {
@@ -86,6 +89,9 @@ SCOPE_CATALOG = {
     "versions:write": ("Register document versions and changes", "high"),
     "evaluations:run": ("Run quality evaluations against owned traces", "high"),
     "service:manage": ("Create unattended service clients", "critical"),
+    "learning:read": ("View enrolled courses, curriculum, content, and progress", "medium"),
+    "learning:participate": ("Use AI Tutor, study tools, quizzes, and human questions", "medium"),
+    "learning:manage": ("Administer courses, enrollment, curriculum, and content", "high"),
 }
 _OAUTH_TABLES_READY = False
 

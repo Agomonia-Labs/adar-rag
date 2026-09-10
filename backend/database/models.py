@@ -943,7 +943,26 @@ CREATE TABLE IF NOT EXISTS learning_artifacts (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE learning_artifacts ADD COLUMN IF NOT EXISTS module_id UUID REFERENCES learning_modules(id) ON DELETE SET NULL;
+ALTER TABLE learning_artifacts ADD COLUMN IF NOT EXISTS lesson_id UUID REFERENCES learning_lessons(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_learning_artifacts_course ON learning_artifacts(course_id, user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS learning_quiz_attempts (
+    id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    course_id      UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+    artifact_id    UUID        NOT NULL REFERENCES learning_artifacts(id) ON DELETE CASCADE,
+    user_id        UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    answers        JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    result         JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    correct_count  INTEGER     NOT NULL DEFAULT 0,
+    question_count INTEGER     NOT NULL DEFAULT 0,
+    completed      BOOLEAN     NOT NULL DEFAULT FALSE,
+    submitted_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(artifact_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_learning_quiz_attempts_course
+    ON learning_quiz_attempts(course_id, user_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS learning_questions (
     id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),

@@ -108,9 +108,20 @@ def test_catalog_covers_registered_tools_and_resources():
         "create_batch_upload", "complete_batch_upload", "start_batch_embedding", "start_batch_classification",
         "start_workspace_summary", "list_batch_jobs", "get_batch_status", "get_batch_results",
         "retry_batch_failures", "cancel_batch_job",
+        "list_learning_courses", "get_learning_course", "create_learning_course", "update_learning_course",
+        "delete_learning_course", "save_learning_curriculum", "enroll_learning_member", "remove_learning_member",
+        "attach_learning_content", "remove_learning_content", "ask_learning_tutor", "generate_learning_artifact",
+        "list_learning_artifacts", "delete_learning_artifact", "submit_learning_quiz", "get_learning_progress",
+        "ask_learning_person", "answer_learning_question",
+        "search_federated_knowledgebase", "get_enterprise_capabilities", "get_workflow_schema",
+        "validate_workflow_inputs", "list_operation_events", "create_event_subscription",
+        "list_event_subscriptions", "delete_event_subscription", "resume_batch_job", "create_review_task",
+        "list_review_tasks", "assign_review_task", "submit_review_decision", "save_knowledge_artifact",
+        "list_knowledge_artifacts", "register_document_version", "list_document_versions",
+        "evaluate_trace_quality", "list_my_traces", "get_my_trace",
     }
     assert tools == expected
-    assert sum(item["category"] == "Resources" for item in catalog) == 14
+    assert sum(item["category"] == "Resources" for item in catalog) == 27
 
 
 def test_formats_json_resource_text_as_structured_data():

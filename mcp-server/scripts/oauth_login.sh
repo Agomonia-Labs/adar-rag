@@ -10,14 +10,14 @@ docintel_oauth_login() {
   case "$target" in
     mcp)
       default_resource="https://mcp.docintel.adar.agomoniai.com/mcp"
-      default_scopes="workspaces:read documents:read documents:write knowledge:query knowledge:generate sessions:write video:read video:process workflows:read workflows:write reviews:write reviews:approve packets:write batches:read batches:write events:read events:write artifacts:read artifacts:write versions:read versions:write evaluations:run"
+      default_scopes="workspaces:read documents:read documents:write knowledge:query knowledge:generate sessions:write video:read video:process workflows:read workflows:write reviews:write reviews:approve packets:write batches:read batches:write events:read events:write artifacts:read artifacts:write versions:read versions:write evaluations:run learning:read learning:participate learning:manage"
       token_prefix="MCP"
       client_label="MCP"
       ;;
     api|rest)
       target="api"
       default_resource="https://docintel.adar.agomoniai.com/api/v1"
-      default_scopes="workspaces:read workspaces:write documents:read documents:write knowledge:query knowledge:generate workflows:read batches:read batches:write events:read events:write reviews:write reviews:approve artifacts:read artifacts:write versions:read versions:write evaluations:run"
+      default_scopes="workspaces:read workspaces:write documents:read documents:write knowledge:query knowledge:generate workflows:read batches:read batches:write events:read events:write reviews:write reviews:approve artifacts:read artifacts:write versions:read versions:write evaluations:run learning:read learning:participate learning:manage"
       token_prefix="API"
       client_label="REST API"
       ;;

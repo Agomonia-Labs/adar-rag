@@ -8,6 +8,8 @@ DESTRUCTIVE_TOOLS = {
     "delete_document", "delete_chat_session", "approve_vertical_run",
     "approve_conversation_transcript", "delete_conversation_recording",
     "generate_vertical_packet", "cancel_batch_job",
+    "delete_learning_course", "remove_learning_member", "remove_learning_content",
+    "delete_learning_artifact",
 }
 MAX_ARGUMENT_BYTES = 16_000
 

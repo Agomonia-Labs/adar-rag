@@ -622,6 +622,84 @@ class DocIntelApiClient:
             await self.get_conversation_recording(session_id)
         return await self.request("DELETE", f"/api/telephony/calls/{session_id}")
 
+    async def list_learning_courses(self, workspace_id: str) -> list[dict]:
+        self.require_workspace(workspace_id)
+        return await self.request("GET", "/api/learning/courses", params={"workspace_id": workspace_id})
+
+    async def get_learning_course(self, course_id: str) -> dict:
+        course = await self.request("GET", f"/api/learning/courses/{course_id}")
+        if self.is_organization_service:
+            self.require_workspace(str(course.get("workspace_id") or ""))
+        return course
+
+    async def create_learning_course(self, payload: dict[str, Any]) -> dict:
+        self.require_workspace(str(payload.get("workspace_id") or ""))
+        return await self.request("POST", "/api/learning/courses", json=payload)
+
+    async def update_learning_course(self, course_id: str, payload: dict[str, Any]) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("PATCH", f"/api/learning/courses/{course_id}", json=payload)
+
+    async def delete_learning_course(self, course_id: str) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("DELETE", f"/api/learning/courses/{course_id}")
+
+    async def save_learning_curriculum(self, course_id: str, modules: list[dict]) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("PUT", f"/api/learning/courses/{course_id}/curriculum", json={"modules": modules})
+
+    async def add_learning_member(self, course_id: str, email: str, persona: str) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("POST", f"/api/learning/courses/{course_id}/members", json={"email": email, "persona": persona})
+
+    async def remove_learning_member(self, course_id: str, user_id: str) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("DELETE", f"/api/learning/courses/{course_id}/members/{user_id}")
+
+    async def attach_learning_content(self, course_id: str, payload: dict[str, Any]) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("POST", f"/api/learning/courses/{course_id}/assets", json=payload)
+
+    async def remove_learning_content(self, course_id: str, asset_id: str) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("DELETE", f"/api/learning/courses/{course_id}/assets/{asset_id}")
+
+    async def resolve_learning_scope(
+        self, course_id: str, module_id: str | None = None, lesson_id: str | None = None,
+    ) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request(
+            "GET", f"/api/learning/courses/{course_id}/scope",
+            params={"module_id": module_id, "lesson_id": lesson_id},
+        )
+
+    async def save_learning_artifact(self, course_id: str, payload: dict[str, Any]) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("POST", f"/api/learning/courses/{course_id}/artifacts", json=payload)
+
+    async def delete_learning_artifact(self, course_id: str, artifact_id: str) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("DELETE", f"/api/learning/courses/{course_id}/artifacts/{artifact_id}")
+
+    async def submit_learning_quiz(self, course_id: str, artifact_id: str, answers: dict[str, list[str]], replace: bool = False) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request(
+            "POST", f"/api/learning/courses/{course_id}/artifacts/{artifact_id}/attempts",
+            json={"answers": answers, "replace": replace},
+        )
+
+    async def get_learning_progress(self, course_id: str) -> list[dict]:
+        await self.get_learning_course(course_id)
+        return await self.request("GET", f"/api/learning/courses/{course_id}/progress")
+
+    async def ask_learning_question(self, course_id: str, payload: dict[str, Any]) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("POST", f"/api/learning/courses/{course_id}/questions", json=payload)
+
+    async def answer_learning_question(self, course_id: str, question_id: str, payload: dict[str, Any]) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("PATCH", f"/api/learning/courses/{course_id}/questions/{question_id}", json=payload)
+
     async def ask(
         self,
         question: str,
@@ -629,6 +707,7 @@ class DocIntelApiClient:
         workspace_id: str | None,
         history: list[dict] | None = None,
         redact_pii: bool = False,
+        response_language: str | None = None,
     ) -> dict:
         await self._require_documents_access(document_ids)
         if self.is_organization_service:
@@ -644,6 +723,7 @@ class DocIntelApiClient:
             "workspace_id": workspace_id,
             "history": history or [],
             "redact_pii": redact_pii,
+            "response_language": response_language,
         }
         async for event, response_trace_id in self._stream_sse("/api/chat/stream", payload):
             trace_id = response_trace_id or trace_id

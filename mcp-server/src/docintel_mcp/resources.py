@@ -219,3 +219,61 @@ def register_resources(mcp: FastMCP, settings: Settings) -> None:
                 result = await client.get_my_trace(trace_id)
             return json.dumps(result, ensure_ascii=True, default=str)
         except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://learning/workspaces/{workspace_id}/courses")
+    async def learning_courses(workspace_id: str, ctx: Context) -> str:
+        """Knowledge Academy courses accessible in a workspace."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client:
+                result = await client.list_learning_courses(workspace_id)
+            return json.dumps({"workspace_id": workspace_id, "courses": result}, ensure_ascii=False, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://learning/courses/{course_id}")
+    async def learning_course(course_id: str, ctx: Context) -> str:
+        """Complete governed course workspace for the authenticated learner or educator."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client: result = await client.get_learning_course(course_id)
+            return json.dumps(result, ensure_ascii=False, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://learning/courses/{course_id}/curriculum")
+    async def learning_curriculum(course_id: str, ctx: Context) -> str:
+        """Ordered modules, lessons, objectives, and course metadata."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client: course = await client.get_learning_course(course_id)
+            fields = ("id", "title", "course_code", "semester", "description", "objectives", "modules")
+            return json.dumps({key: course.get(key) for key in fields}, ensure_ascii=False, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://learning/courses/{course_id}/content")
+    async def learning_content(course_id: str, ctx: Context) -> str:
+        """Documents, recordings, and videos mapped to course, module, and lesson scopes."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client: course = await client.get_learning_course(course_id)
+            return json.dumps({"course_id": course_id, "assets": course.get("assets") or []}, ensure_ascii=False, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://learning/courses/{course_id}/artifacts")
+    async def learning_artifacts(course_id: str, ctx: Context) -> str:
+        """Caller-owned summaries, study guides, concepts, flashcards, and quizzes."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client: course = await client.get_learning_course(course_id)
+            return json.dumps({"course_id": course_id, "artifacts": course.get("artifacts") or []}, ensure_ascii=False, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://learning/courses/{course_id}/questions")
+    async def learning_questions(course_id: str, ctx: Context) -> str:
+        """Human questions visible to the learner, assigned teacher, advisor, or course manager."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client: course = await client.get_learning_course(course_id)
+            return json.dumps({"course_id": course_id, "questions": course.get("questions") or []}, ensure_ascii=False, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://learning/courses/{course_id}/progress")
+    async def learning_progress(course_id: str, ctx: Context) -> str:
+        """Persisted quiz progress scoped by learner or educator visibility."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client: attempts = await client.get_learning_progress(course_id)
+            return json.dumps({"course_id": course_id, "attempts": attempts}, ensure_ascii=False, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())

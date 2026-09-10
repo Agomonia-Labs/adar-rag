@@ -14,6 +14,7 @@ from database.connection import get_db
 from routes.workspaces import ROLE_ORDER, _require_role
 from services.audit import audit, ip_from, ua_from
 from services.notifications import send_learning_question_notification
+from services.mcp_enterprise import emit_event
 
 router = APIRouter()
 
@@ -63,6 +64,13 @@ class ArtifactCreate(BaseModel):
     title: str = ""
     content: str = Field(min_length=1)
     source_document_ids: list[str] = []
+    module_id: str | None = None
+    lesson_id: str | None = None
+
+
+class QuizAttemptCreate(BaseModel):
+    answers: dict[str, list[str]] = {}
+    replace: bool = False
 
 
 class PracticeOption(BaseModel):
@@ -145,6 +153,114 @@ async def _course_access(db, course_id: str, user_id: str, manage: bool = False)
     return data
 
 
+async def _resolve_learning_scope(
+    db, course_id: str, user_id: str, module_id: str | None = None, lesson_id: str | None = None,
+) -> dict:
+    course = await _course_access(db, course_id, user_id)
+    module = None
+    lesson = None
+    if lesson_id:
+        lesson = await db.fetchrow(
+            """SELECT l.id,l.title,l.description,l.module_id,m.title AS module_title
+               FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id
+               WHERE l.id=$1::uuid AND m.course_id=$2::uuid""",
+            lesson_id, course_id,
+        )
+        if not lesson:
+            raise HTTPException(400, "Lesson does not belong to this course")
+        if module_id and str(lesson["module_id"]) != module_id:
+            raise HTTPException(400, "Lesson does not belong to the selected module")
+        module_id = str(lesson["module_id"])
+    if module_id:
+        module = await db.fetchrow(
+            "SELECT id,title,description FROM learning_modules WHERE id=$1::uuid AND course_id=$2::uuid",
+            module_id, course_id,
+        )
+        if not module:
+            raise HTTPException(400, "Module does not belong to this course")
+
+    rows = await db.fetch(
+        """SELECT a.*,d.original_name,d.file_type,d.doc_type,d.status,d.chunk_count
+           FROM learning_assets a JOIN documents d ON d.id=a.document_id
+           WHERE a.course_id=$1::uuid AND d.status='embedded'
+             AND CASE
+                   WHEN $3::uuid IS NOT NULL THEN
+                     a.module_id IS NULL OR (
+                       a.module_id=$2::uuid AND (a.lesson_id IS NULL OR a.lesson_id=$3::uuid)
+                     )
+                   WHEN $2::uuid IS NOT NULL THEN
+                     a.module_id IS NULL OR a.module_id=$2::uuid
+                   ELSE TRUE
+                 END
+           ORDER BY a.position,a.created_at""",
+        course_id, module_id, lesson_id,
+    )
+    scope_type = "lesson" if lesson else "module" if module else "course"
+    label = str(course["title"])
+    if module:
+        label += f" / {module['title']}"
+    if lesson:
+        label += f" / {lesson['title']}"
+    boundary = {
+        "course": "Use all embedded content attached to this course.",
+        "module": "Use course-wide content and content attached to this module; exclude other modules.",
+        "lesson": "Use course-wide context, selected-module content, and content explicitly attached to this lesson; exclude content attached to other lessons and modules.",
+    }[scope_type]
+    focus = ""
+    if lesson:
+        focus = (
+            f" Selected lesson title: {lesson['title']}."
+            f" Selected lesson description: {lesson['description'] or 'Not provided'}."
+            " Retrieve and answer only evidence semantically relevant to this lesson, even when an attached file also contains broader module content."
+            " Do not summarize the entire module."
+        )
+    elif module:
+        focus = (
+            f" Selected module title: {module['title']}."
+            f" Selected module description: {module['description'] or 'Not provided'}."
+        )
+    return {
+        "course_id": course_id,
+        "workspace_id": str(course["workspace_id"]),
+        "module_id": module_id,
+        "lesson_id": lesson_id,
+        "scope_type": scope_type,
+        "label": label,
+        "instruction": f"Learning scope: {label}. {boundary}{focus} Ground every claim in the selected course evidence.",
+        "document_ids": [str(row["document_id"]) for row in rows],
+        "assets": [_jsonable(dict(row)) for row in rows],
+    }
+
+
+def _grade_practice_quiz(quiz: PracticeQuiz, answers: dict[str, list[str]]) -> dict:
+    results: dict[str, dict] = {}
+    correct_count = 0
+    valid_questions = {question.id: question for question in quiz.questions}
+    for question_id, selected in answers.items():
+        question = valid_questions.get(question_id)
+        if not question:
+            raise HTTPException(400, f"Unknown practice question: {question_id}")
+        selected_ids = sorted(set(selected))
+        valid_options = {option.id for option in question.options}
+        if not set(selected_ids) <= valid_options:
+            raise HTTPException(400, f"Invalid option for practice question: {question_id}")
+        correct_ids = sorted(option.id for option in question.options if option.correct)
+        is_correct = selected_ids == correct_ids
+        correct_count += int(is_correct)
+        results[question_id] = {
+            "selected": selected_ids,
+            "correct": correct_ids,
+            "is_correct": is_correct,
+            "explanation": question.explanation,
+        }
+    return {
+        "result": results,
+        "correct_count": correct_count,
+        "question_count": len(quiz.questions),
+        "completed": len(results) == len(quiz.questions),
+    }
+
+
 @router.get("/courses")
 async def list_courses(workspace_id: str, current_user: CurrentUser, db=Depends(get_db)):
     await _require_role(db, workspace_id, str(current_user["id"]), "viewer")
@@ -189,6 +305,11 @@ async def create_course(body: CourseCreate, request: Request, current_user: Curr
                 ip_address=ip_from(request), user_agent=ua_from(request))
     result = _course_response(row)
     result["persona"] = "teacher"
+    await emit_event(
+        db, user_id=user_id, workspace_id=body.workspace_id,
+        event_type="learning.course.created", resource_type="learning_course",
+        resource_id=str(row["id"]), payload={"title": result["title"], "course_code": result.get("course_code", "")},
+    )
     return result
 
 
@@ -196,6 +317,16 @@ async def create_course(body: CourseCreate, request: Request, current_user: Curr
 async def get_course(course_id: str, current_user: CurrentUser, db=Depends(get_db)):
     await _course_access(db, course_id, str(current_user["id"]))
     return await _course_workspace(db, course_id, str(current_user["id"]))
+
+
+@router.get("/courses/{course_id}/scope")
+async def resolve_learning_scope(
+    course_id: str, current_user: CurrentUser, module_id: str | None = None,
+    lesson_id: str | None = None, db=Depends(get_db),
+):
+    return await _resolve_learning_scope(
+        db, course_id, str(current_user["id"]), module_id=module_id, lesson_id=lesson_id,
+    )
 
 
 @router.patch("/courses/{course_id}")
@@ -367,6 +498,11 @@ async def add_asset(course_id: str, body: AssetCreate, current_user: CurrentUser
            DO UPDATE SET module_id=EXCLUDED.module_id,lesson_id=EXCLUDED.lesson_id,title=EXCLUDED.title""",
         course_id, module_id, lesson_id, body.document_id, body.title.strip() or doc["original_name"], user_id,
     )
+    await emit_event(
+        db, user_id=user_id, workspace_id=str(course["workspace_id"]),
+        event_type="learning.content.attached", resource_type="learning_course",
+        resource_id=course_id, payload={"document_id": body.document_id, "module_id": module_id, "lesson_id": lesson_id},
+    )
     return await _course_workspace(db, course_id, user_id)
 
 
@@ -380,19 +516,85 @@ async def remove_asset(course_id: str, asset_id: str, current_user: CurrentUser,
 @router.post("/courses/{course_id}/artifacts")
 async def save_artifact(course_id: str, body: ArtifactCreate, current_user: CurrentUser, db=Depends(get_db)):
     user_id = str(current_user["id"])
-    await _course_access(db, course_id, user_id)
-    course_docs = await db.fetch("SELECT document_id FROM learning_assets WHERE course_id=$1", course_id)
-    allowed_ids = {str(row["document_id"]) for row in course_docs}
+    scope = await _resolve_learning_scope(db, course_id, user_id, body.module_id, body.lesson_id)
+    allowed_ids = set(scope["document_ids"])
     invalid = set(body.source_document_ids) - allowed_ids
     if invalid:
-        raise HTTPException(400, "Study artifact references content outside this course")
+        raise HTTPException(400, "Study artifact references content outside the selected learning scope")
     content = _normalize_artifact_content(body.artifact_type, body.content)
     row = await db.fetchrow(
-        """INSERT INTO learning_artifacts (course_id,user_id,artifact_type,title,content,source_document_ids)
-           VALUES ($1,$2,$3,$4,$5,$6::jsonb) RETURNING *""",
-        course_id, user_id, body.artifact_type, body.title.strip(), content, json.dumps(body.source_document_ids),
+        """INSERT INTO learning_artifacts
+           (course_id,user_id,artifact_type,title,content,source_document_ids,module_id,lesson_id)
+           VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8) RETURNING *""",
+        course_id, user_id, body.artifact_type, body.title.strip(), content,
+        json.dumps(body.source_document_ids), scope["module_id"], scope["lesson_id"],
     )
     return _jsonable(dict(row))
+
+
+@router.post("/courses/{course_id}/artifacts/{artifact_id}/attempts")
+async def submit_quiz_attempt(
+    course_id: str, artifact_id: str, body: QuizAttemptCreate,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    await _course_access(db, course_id, user_id)
+    artifact = await db.fetchrow(
+        """SELECT id,content FROM learning_artifacts
+           WHERE id=$1::uuid AND course_id=$2::uuid AND artifact_type='practice_questions'""",
+        artifact_id, course_id,
+    )
+    if not artifact:
+        raise HTTPException(404, "Practice-question artifact not found")
+    quiz = PracticeQuiz.model_validate_json(str(artifact["content"]))
+    existing = await db.fetchrow(
+        "SELECT answers FROM learning_quiz_attempts WHERE artifact_id=$1::uuid AND user_id=$2::uuid",
+        artifact_id, user_id,
+    )
+    answers = {} if body.replace else (_decode_json(existing["answers"], {}) if existing else {})
+    answers.update(body.answers)
+    graded = _grade_practice_quiz(quiz, answers)
+    row = await db.fetchrow(
+        """INSERT INTO learning_quiz_attempts
+           (course_id,artifact_id,user_id,answers,result,correct_count,question_count,completed)
+           VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8)
+           ON CONFLICT (artifact_id,user_id) DO UPDATE SET
+             answers=EXCLUDED.answers,result=EXCLUDED.result,correct_count=EXCLUDED.correct_count,
+             question_count=EXCLUDED.question_count,completed=EXCLUDED.completed,
+             submitted_at=NOW(),updated_at=NOW()
+           RETURNING *""",
+        course_id, artifact_id, user_id, json.dumps(answers), json.dumps(graded["result"]),
+        graded["correct_count"], graded["question_count"], graded["completed"],
+    )
+    result = _jsonable(dict(row))
+    result["answers"] = _decode_json(result.get("answers"), {})
+    result["result"] = _decode_json(result.get("result"), {})
+    course_workspace_id = await db.fetchval("SELECT workspace_id FROM learning_courses WHERE id=$1::uuid", course_id)
+    await emit_event(
+        db, user_id=user_id, workspace_id=str(course_workspace_id),
+        event_type="learning.quiz.submitted", resource_type="learning_quiz_attempt",
+        resource_id=str(row["id"]), payload={"course_id": course_id, "artifact_id": artifact_id, "correct_count": graded["correct_count"], "question_count": graded["question_count"], "completed": graded["completed"]},
+    )
+    return result
+
+
+@router.get("/courses/{course_id}/progress")
+async def get_learning_progress(course_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id)
+    can_review = bool(
+        course.get("workspace_role") in ("owner", "editor")
+        or course.get("persona") in MANAGER_PERSONAS | {"advisor"}
+    )
+    rows = await db.fetch(
+        """SELECT qa.*,u.email,u.full_name,a.title AS artifact_title
+           FROM learning_quiz_attempts qa
+           JOIN users u ON u.id=qa.user_id JOIN learning_artifacts a ON a.id=qa.artifact_id
+           WHERE qa.course_id=$1::uuid AND ($2::boolean OR qa.user_id=$3::uuid)
+           ORDER BY qa.updated_at DESC""",
+        course_id, can_review, user_id,
+    )
+    return [_quiz_attempt_response(row) for row in rows]
 
 
 @router.delete("/courses/{course_id}/artifacts/{artifact_id}")
@@ -468,6 +670,11 @@ async def answer_human(course_id: str, question_id: str, body: QuestionUpdate, r
         await send_learning_question_notification(
             asker_email, course_title=str(course.get("title") or "Course"), question=str(question["question"]), action="answered",
         )
+        await emit_event(
+            db, user_id=user_id, workspace_id=str(course["workspace_id"]),
+            event_type="learning.question.answered", resource_type="learning_question",
+            resource_id=question_id, payload={"course_id": course_id, "status": status},
+        )
     return _question_response(row)
 
 
@@ -500,6 +707,10 @@ async def _course_workspace(db, course_id: str, user_id: str) -> dict:
     artifacts = await db.fetch(
         "SELECT * FROM learning_artifacts WHERE course_id=$1 AND user_id=$2 ORDER BY created_at DESC", course_id, user_id,
     )
+    quiz_attempts = await db.fetch(
+        "SELECT * FROM learning_quiz_attempts WHERE course_id=$1 AND user_id=$2 ORDER BY updated_at DESC",
+        course_id, user_id,
+    )
     effective_persona = course.get("persona") or ("admin" if course.get("workspace_role") in ("owner", "editor") else "student")
     questions = await db.fetch(
         """SELECT q.*,asker.full_name AS asker_name,asker.email AS asker_email,
@@ -517,6 +728,7 @@ async def _course_workspace(db, course_id: str, user_id: str) -> dict:
         "modules": modules,
         "assets": [_jsonable(dict(row)) for row in assets],
         "artifacts": [_jsonable(dict(row)) for row in artifacts],
+        "quiz_attempts": [_quiz_attempt_response(row) for row in quiz_attempts],
         "questions": [_question_response(row) for row in questions],
     })
     return result
@@ -531,6 +743,13 @@ def _course_response(row) -> dict:
 def _question_response(row) -> dict:
     result = _jsonable(dict(row))
     result["context"] = _decode_json(result.get("context"), {})
+    return result
+
+
+def _quiz_attempt_response(row) -> dict:
+    result = _jsonable(dict(row))
+    result["answers"] = _decode_json(result.get("answers"), {})
+    result["result"] = _decode_json(result.get("result"), {})
     return result
 
 

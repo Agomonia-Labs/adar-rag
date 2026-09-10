@@ -9,10 +9,13 @@ from routes.learning import (
     AssetCreate,
     ArtifactCreate,
     CourseCreate,
+    PracticeQuiz,
+    _grade_practice_quiz,
     _normalize_artifact_content,
     _clean_list,
     _course_access,
     _course_response,
+    _resolve_learning_scope,
 )
 
 
@@ -24,6 +27,38 @@ class FakeDb:
     async def fetchrow(self, query, *args):
         self.calls.append((query, args))
         return self.row
+
+
+class ScopeDb:
+    def __init__(self):
+        self.fetch_query = ""
+        self.fetch_args = ()
+
+    async def fetchrow(self, query, *args):
+        if "FROM learning_courses" in query:
+            return {
+                "id": "course-1",
+                "title": "AI Systems",
+                "workspace_id": "workspace-1",
+                "workspace_role": "viewer",
+                "persona": "student",
+            }
+        if "FROM learning_lessons" in query:
+            return {
+                "id": "lesson-1",
+                "title": "Hybrid Retrieval",
+                "description": "Combining keyword and vector evidence",
+                "module_id": "module-1",
+                "module_title": "RAG",
+            }
+        if "FROM learning_modules" in query:
+            return {"id": "module-1", "title": "RAG", "description": "Retrieval and grounding"}
+        return None
+
+    async def fetch(self, query, *args):
+        self.fetch_query = query
+        self.fetch_args = args
+        return [{"document_id": "document-1", "status": "embedded"}]
 
 
 @pytest.mark.asyncio
@@ -85,6 +120,39 @@ def test_learning_asset_contract_supports_curriculum_mapping():
     assert asset.lesson_id == "lesson-1"
 
 
+@pytest.mark.asyncio
+async def test_lesson_scope_inherits_parent_content_but_excludes_sibling_lessons():
+    db = ScopeDb()
+
+    scope = await _resolve_learning_scope(
+        db, "course-1", "user-1", module_id="module-1", lesson_id="lesson-1",
+    )
+
+    assert "WHEN $3::uuid IS NOT NULL" in db.fetch_query
+    assert "WHEN $2::uuid IS NOT NULL" in db.fetch_query
+    assert "a.module_id IS NULL" in db.fetch_query
+    assert "a.module_id=$2::uuid" in db.fetch_query
+    assert "a.lesson_id IS NULL OR a.lesson_id=$3::uuid" in db.fetch_query
+    assert scope["scope_type"] == "lesson"
+    assert scope["document_ids"] == ["document-1"]
+    assert "exclude content attached to other lessons and modules" in scope["instruction"]
+    assert "Combining keyword and vector evidence" in scope["instruction"]
+    assert "Do not summarize the entire module" in scope["instruction"]
+
+
+@pytest.mark.asyncio
+async def test_course_scope_keeps_stable_three_argument_query_signature():
+    db = ScopeDb()
+
+    scope = await _resolve_learning_scope(db, "course-1", "user-1")
+
+    assert db.fetch_args == ("course-1", None, None)
+    assert "$1::uuid" in db.fetch_query
+    assert "$2::uuid" in db.fetch_query
+    assert "$3::uuid" in db.fetch_query
+    assert scope["scope_type"] == "course"
+
+
 def _practice_quiz(*, option_count=4, correct_ids=("A", "C")):
     option_ids = ("A", "B", "C", "D")[:option_count]
     return json.dumps({
@@ -122,3 +190,23 @@ def test_practice_quiz_rejects_ungradable_questions(content):
 
 def test_non_quiz_artifact_content_remains_plain_text():
     assert _normalize_artifact_content("study_guide", "  Grounded guide  ") == "Grounded guide"
+
+
+def test_practice_quiz_grading_requires_exact_multi_select_answer():
+    quiz = PracticeQuiz.model_validate_json(_practice_quiz())
+
+    correct = _grade_practice_quiz(quiz, {"q1": ["C", "A"]})
+    partial = _grade_practice_quiz(quiz, {"q1": ["A"]})
+
+    assert correct["correct_count"] == 1
+    assert correct["completed"] is True
+    assert correct["result"]["q1"]["correct"] == ["A", "C"]
+    assert partial["correct_count"] == 0
+    assert partial["result"]["q1"]["is_correct"] is False
+
+
+def test_practice_quiz_grading_rejects_unknown_question():
+    quiz = PracticeQuiz.model_validate_json(_practice_quiz())
+    with pytest.raises(HTTPException) as exc:
+        _grade_practice_quiz(quiz, {"q99": ["A"]})
+    assert exc.value.status_code == 400

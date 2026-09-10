@@ -140,6 +140,32 @@ async def test_grounded_answer_collects_sse_tokens_sources_and_trace_id():
 
 
 @pytest.mark.asyncio
+async def test_learning_scope_and_quiz_use_authoritative_learning_endpoints():
+    requests: list[tuple[str, str, dict]] = []
+
+    async def handler(request: httpx.Request):
+        payload = json.loads(request.content) if request.content else {}
+        requests.append((request.method, request.url.path, payload))
+        if request.url.path == "/api/learning/courses/course-1":
+            return httpx.Response(200, json={"id": "course-1", "workspace_id": "workspace-1"})
+        if request.url.path.endswith("/scope"):
+            assert request.url.params["module_id"] == "module-1"
+            assert request.url.params["lesson_id"] == "lesson-1"
+            return httpx.Response(200, json={"course_id": "course-1", "workspace_id": "workspace-1", "document_ids": ["doc-1"]})
+        if request.url.path.endswith("/attempts"):
+            return httpx.Response(200, json={"artifact_id": "artifact-1", "answers": payload["answers"], "correct_count": 1})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        scope = await client.resolve_learning_scope("course-1", "module-1", "lesson-1")
+        attempt = await client.submit_learning_quiz("course-1", "artifact-1", {"q1": ["A", "C"]})
+
+    assert scope["document_ids"] == ["doc-1"]
+    assert attempt["correct_count"] == 1
+    assert requests[-1][2] == {"answers": {"q1": ["A", "C"]}, "replace": False}
+
+
+@pytest.mark.asyncio
 async def test_backend_forbidden_is_preserved_as_safe_error():
     async def handler(_request: httpx.Request):
         return httpx.Response(403, json={"detail": "Document is not accessible"})

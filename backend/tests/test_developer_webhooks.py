@@ -16,6 +16,8 @@ def test_webhook_event_catalog_covers_public_lifecycle():
         "document.uploaded", "document.chunked", "document.embedded", "document.failed",
         "batch.completed", "video.processing.completed", "workflow.completed",
         "review.approved", "packet.generated",
+        "learning.course.created", "learning.content.attached", "learning.quiz.submitted",
+        "learning.question.answered",
     }
 
 

@@ -1058,6 +1058,15 @@ OAuth connection
   -> inspect trace and evaluate quality
 ```
 
+## Knowledge Academy
+
+Knowledge Academy adds course, curriculum, enrollment, multimodal content,
+evidence-scoped AI Tutor, saved study materials, persistent quizzes, progress,
+and teacher/advisor escalation. It exposes 18 learning tools and seven learning
+resource templates under the `learning:read`, `learning:participate`, and
+`learning:manage` OAuth scopes. See [learning_academy.md](learning_academy.md)
+for the complete manual workflow and copy-ready commands.
+
 ## Security and operational notes
 
 - Request only the OAuth scopes needed by the integration.
