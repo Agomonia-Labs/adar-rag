@@ -110,6 +110,13 @@ def _scope_for_request(principal: ApiPrincipal, method: str, path: str) -> str |
     candidates = []
     if "/knowledge/" in path:
         candidates = ["knowledge:query"]
+    elif "/learning/" in path:
+        if method.upper() in {"GET", "HEAD", "OPTIONS"}:
+            candidates = ["learning:read"]
+        elif "/tutor/" in path or "/artifacts" in path or "/questions" in path:
+            candidates = ["learning:participate"]
+        else:
+            candidates = ["learning:manage"]
     elif "/summaries/" in path:
         candidates = ["knowledge:generate"]
     elif "/documents" in path or "/uploads" in path:

@@ -175,6 +175,7 @@ _ROUTERS = [
     ("routes.public_api",     "router",                "/api/v1",             ["public-api"]),
     ("routes.public_workspaces_api", "router",         "/api/v1",             ["public-api-workspaces"]),
     ("routes.public_operations_api", "router",         "/api/v1",             ["public-api-operations"]),
+    ("routes.public_learning_api", "router",           "/api/v1",             ["Knowledge Academy"]),
     ("routes.developer_api",  "router",                "/api/v1/developer",   ["developer-api"]),
     ("routes.webhook_worker", "router",                "/api/internal/webhooks", ["webhook-worker"]),
 ]

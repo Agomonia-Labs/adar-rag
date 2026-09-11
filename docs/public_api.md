@@ -2,6 +2,8 @@
 
 For a complete runnable verification sequence, see
 [REST API End-to-End Testing](rest_api_end_to_end_testing.md).
+For the Knowledge Academy course, Tutor, study, quiz, and guidance lifecycle,
+see [Knowledge Academy Public REST API End-to-End Test](knowledge_academy_public_api_end_to_end.md).
 For organization-owned machine identities, explicit workspace grants, secret
 rotation, and audit, see
 [Enterprise OAuth Applications](enterprise_oauth_applications.md).
@@ -40,6 +42,14 @@ tokens are audience-bound and cannot be exchanged between the two resources.
 | Delete document | `DELETE /api/v1/documents/{id}` | `documents:write` |
 | Grounded streaming query | `POST /api/v1/knowledge/query/stream` | `knowledge:query` |
 | Streaming summary | `POST /api/v1/summaries/documents/{id}/stream` | `knowledge:generate` |
+| List and inspect Knowledge Academy courses | `GET /api/v1/learning/courses[/{id}]` | `learning:read` |
+| Create, update, or delete courses | `/api/v1/learning/courses[/{id}]` | `learning:manage` |
+| Resolve course, module, or lesson evidence | `GET /api/v1/learning/courses/{id}/scope` | `learning:read` |
+| Manage curriculum, enrollment, and content mapping | `/api/v1/learning/courses/{id}/{curriculum,members,assets}` | `learning:manage` |
+| Ask the scoped AI Tutor | `POST /api/v1/learning/courses/{id}/tutor/query/stream` | `learning:participate` |
+| Save study materials and submit quiz attempts | `/api/v1/learning/courses/{id}/artifacts` | `learning:participate` |
+| Read learner progress | `GET /api/v1/learning/courses/{id}/progress` | `learning:read` |
+| Ask or answer teacher/advisor questions | `/api/v1/learning/courses/{id}/questions` | `learning:participate` |
 | Operations catalog | `GET /api/v1/operations/catalog` | `workflows:read` |
 | Workflow schema | `GET /api/v1/workflows/{workflow}/schema` | `workflows:read` |
 | Validate workflow inputs | `POST /api/v1/workflows/{workflow}/validate` | `workflows:read` |

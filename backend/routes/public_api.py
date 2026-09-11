@@ -59,6 +59,7 @@ async def api_catalog(principal: DocumentReader):
             "reviews": "/api/v1/reviews",
             "artifacts": "/api/v1/artifacts",
             "evaluations": "/api/v1/evaluations",
+            "learning": "/api/v1/learning/courses",
         },
     }
 
