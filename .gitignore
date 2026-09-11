@@ -23,3 +23,5 @@ build/
 ui/.firebase/
 .firebase/
 .deploy-config
+Claude outputs/
+Claude outputs*
