@@ -38,9 +38,21 @@ backend does not yet contain the new route.
 
 ## 3. Obtain a REST-Audience OAuth Token
 
+Clear tokens and resource settings from earlier MCP or REST sessions. In
+particular, a stale `DOCINTEL_OAUTH_RESOURCE` can cause an API login to request
+an MCP-audience token, which the REST API correctly rejects with `HTTP 401`.
+
 ```bash
-DOCINTEL_OAUTH_TARGET=api \
-DOCINTEL_OAUTH_SCOPES="workspaces:read documents:read learning:read learning:participate learning:manage" \
+unset ACCESS_TOKEN API_ACCESS_TOKEN API_REFRESH_TOKEN
+unset MCP_ACCESS_TOKEN MCP_REFRESH_TOKEN
+unset DOCINTEL_ACCESS_TOKEN DOCINTEL_REFRESH_TOKEN
+unset DOCINTEL_OAUTH_RESOURCE DOCINTEL_MCP_URL
+
+export API="https://docintel.adar.agomoniai.com/api/v1"
+export DOCINTEL_OAUTH_TARGET="api"
+export DOCINTEL_OAUTH_RESOURCE="$API"
+export DOCINTEL_OAUTH_SCOPES="workspaces:read documents:read learning:read learning:participate learning:manage"
+
 source mcp-server/scripts/oauth_login.sh
 
 export ACCESS_TOKEN="$API_ACCESS_TOKEN"
@@ -48,11 +60,30 @@ export AUTH="Authorization: Bearer $ACCESS_TOKEN"
 export JSON="Content-Type: application/json"
 
 test -n "$ACCESS_TOKEN" || { echo "REST access token is missing"; exit 1; }
+echo "Token length: ${#ACCESS_TOKEN}"
 echo "Granted scopes: $API_TOKEN_SCOPE"
 ```
 
 Run OAuth login again after an administrator changes a scope grant. Existing
-access tokens do not acquire newly approved scopes.
+access tokens do not acquire newly approved scopes. Authorization codes are
+single-use, so complete the fresh browser flow rather than reusing an old
+callback URL.
+
+Validate the token against `/me` before continuing:
+
+```bash
+curl -sS \
+  -o /tmp/docintel-me.json \
+  -w "HTTP %{http_code}\n" \
+  "$API/me" \
+  -H "$AUTH" \
+  -H "Accept: application/json"
+
+jq . /tmp/docintel-me.json
+```
+
+Expected: `HTTP 200`. Do not continue to workspace or learning calls while
+this request returns `HTTP 401`.
 
 ## 4. Select an Editable Team Workspace
 
@@ -350,7 +381,69 @@ npm run build
 Current expected baseline: 216 backend tests and 31 MCP tests pass, followed by
 a successful Vite production build.
 
-## 17. Diagnose a `404`
+## 17. Diagnose OAuth `401`
+
+`{"detail":"Invalid or expired API access token"}` means the REST validator
+rejected the token before workspace authorization. The most common causes are
+an expired token, an MCP token used against REST, or a mismatch between the
+token's `iss` or `aud` claim and the deployed backend configuration.
+
+Inspect the claims locally without printing the token:
+
+```bash
+python3 - <<'PY'
+import base64
+import json
+import os
+from datetime import datetime, timezone
+
+token = os.environ["ACCESS_TOKEN"]
+part = token.split(".")[1]
+part += "=" * (-len(part) % 4)
+claims = json.loads(base64.urlsafe_b64decode(part))
+
+print("issuer:   ", claims.get("iss"))
+print("audience: ", claims.get("aud"))
+print("scopes:   ", claims.get("scope"))
+print("expires:  ", datetime.fromtimestamp(claims["exp"], timezone.utc))
+print("now:      ", datetime.now(timezone.utc))
+PY
+```
+
+Expected claims:
+
+```text
+issuer:    https://auth.docintel.adar.agomoniai.com
+audience:  https://docintel.adar.agomoniai.com/api/v1
+```
+
+If these claims are correct and `/me` still returns `401`, inspect the Cloud
+Run configuration used by the API validator:
+
+```bash
+gcloud run services describe docintel-backend \
+  --project=bdas-493785 \
+  --region=us-central1 \
+  --format=json \
+  | jq -r '
+      .spec.template.spec.containers[0].env[]
+      | select(.name=="OAUTH_API_RESOURCE" or .name=="OAUTH_ISSUER_URL")
+      | "\(.name)=\(.value)"
+    '
+```
+
+Expected deployment values:
+
+```text
+OAUTH_API_RESOURCE=https://docintel.adar.agomoniai.com/api/v1
+OAUTH_ISSUER_URL=https://auth.docintel.adar.agomoniai.com
+```
+
+The default API access-token lifetime is 15 minutes. Run `/me` immediately
+after login. Use `API_ACCESS_TOKEN` for REST calls and `MCP_ACCESS_TOKEN` only
+for the MCP endpoint.
+
+## 18. Diagnose a `404`
 
 - `{"detail":"Not Found"}`: the deployed backend does not contain the route.
 - `{"detail":"Lesson not found in this course"}`: `LESSON_ID` belongs to a
@@ -371,7 +464,7 @@ curl -sS "$API/learning/courses/$COURSE_ID" \
   | jq '{id,title,workspace_id,modules}'
 ```
 
-## 18. Optional Cleanup
+## 19. Optional Cleanup
 
 Delete the disposable course after testing. Attached content mappings and
 learning records are removed, but the original DocIntel document is retained.
