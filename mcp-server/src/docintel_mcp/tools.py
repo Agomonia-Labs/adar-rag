@@ -856,6 +856,15 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
         except DocIntelMcpError as exc: return exc.as_dict()
 
     @mcp.tool()
+    async def list_learning_domain_packs(ctx: Context) -> dict:
+        """List configurable industry packs available to Knowledge Academy courses."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client:
+                packs = await client.list_learning_domain_packs()
+                return {"count": len(packs), "domain_packs": packs}
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
     async def list_learning_courses(ctx: Context, workspace_id: str) -> dict:
         """List Knowledge Academy courses visible to the caller in one workspace."""
         try:
@@ -872,11 +881,11 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
         except DocIntelMcpError as exc: return exc.as_dict()
 
     @mcp.tool()
-    async def create_learning_course(ctx: Context, workspace_id: str, title: str, course_code: str = "", semester: str = "", description: str = "", instructor_name: str = "", objectives: list[str] | None = None) -> dict:
+    async def create_learning_course(ctx: Context, workspace_id: str, title: str, course_code: str = "", semester: str = "", description: str = "", instructor_name: str = "", objectives: list[str] | None = None, domain: str = "general", domain_config: dict[str, Any] | None = None, publication_status: str = "draft") -> dict:
         """Create a governed Knowledge Academy course in a workspace."""
         try:
             async with api_client(ctx, settings, "learning:manage") as client:
-                return await client.create_learning_course({"workspace_id": workspace_id, "title": title, "course_code": course_code, "semester": semester, "description": description, "instructor_name": instructor_name, "objectives": objectives or []})
+                return await client.create_learning_course({"workspace_id": workspace_id, "title": title, "course_code": course_code, "semester": semester, "description": description, "instructor_name": instructor_name, "objectives": objectives or [], "domain": domain, "domain_config": domain_config or {}, "publication_status": publication_status})
         except DocIntelMcpError as exc: return exc.as_dict()
 
     @mcp.tool()
@@ -917,11 +926,19 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
         except DocIntelMcpError as exc: return exc.as_dict()
 
     @mcp.tool()
-    async def attach_learning_content(ctx: Context, course_id: str, document_id: str, module_id: str | None = None, lesson_id: str | None = None, title: str = "") -> dict:
+    async def attach_learning_content(ctx: Context, course_id: str, document_id: str, module_id: str | None = None, lesson_id: str | None = None, title: str = "", start_seconds: float | None = None, end_seconds: float | None = None, asset_id: str | None = None) -> dict:
         """Attach an existing workspace document, recording, or video to a course scope."""
         try:
             async with api_client(ctx, settings, "learning:manage") as client:
-                return await client.attach_learning_content(course_id, {"document_id": document_id, "module_id": module_id, "lesson_id": lesson_id, "title": title})
+                return await client.attach_learning_content(course_id, {"asset_id": asset_id, "document_id": document_id, "module_id": module_id, "lesson_id": lesson_id, "title": title, "start_seconds": start_seconds, "end_seconds": end_seconds})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def update_learning_content_mapping(ctx: Context, course_id: str, asset_id: str, module_id: str | None = None, lesson_id: str | None = None, title: str = "", start_seconds: float | None = None, end_seconds: float | None = None) -> dict:
+        """Replace one existing course content mapping without creating a second mapping."""
+        try:
+            async with api_client(ctx, settings, "learning:manage") as client:
+                return await client.update_learning_content_mapping(course_id, asset_id, {"module_id": module_id, "lesson_id": lesson_id, "title": title, "start_seconds": start_seconds, "end_seconds": end_seconds})
         except DocIntelMcpError as exc: return exc.as_dict()
 
     @mcp.tool()
@@ -938,8 +955,9 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
         try:
             async with api_client(ctx, settings, "learning:participate") as client:
                 scope = await client.resolve_learning_scope(course_id, module_id, lesson_id)
+                if str(scope.get("course_id")) != str(course_id): raise DocIntelMcpError("scope_conflict", "Resolved learning scope does not match the selected course", status_code=409)
                 if not scope["document_ids"]: raise DocIntelMcpError("content_not_ready", "No embedded content is available in this learning scope", status_code=409)
-                result = await client.ask(f"{scope['instruction']}\n\nSTUDENT QUESTION:\n{question}", scope["document_ids"], scope["workspace_id"], history or [], response_language=response_language)
+                result = await client.ask(f"{scope['instruction']}\n\nSTUDENT QUESTION:\n{question}", scope["document_ids"], scope["workspace_id"], history or [], response_language=response_language, evidence_ranges=scope.get("evidence_ranges") or [])
                 return {**result, "learning_scope": scope}
         except DocIntelMcpError as exc: return exc.as_dict()
 
@@ -957,9 +975,10 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
         try:
             async with api_client(ctx, settings, "learning:participate") as client:
                 scope = await client.resolve_learning_scope(course_id, module_id, lesson_id)
+                if str(scope.get("course_id")) != str(course_id): raise DocIntelMcpError("scope_conflict", "Resolved learning scope does not match the selected course", status_code=409)
                 if not scope["document_ids"]: raise DocIntelMcpError("content_not_ready", "No embedded content is available in this learning scope", status_code=409)
                 instruction = custom_instruction.strip() or prompts[artifact_type]
-                generated = await client.ask(f"{scope['instruction']}\n\nTASK:\n{instruction}", scope["document_ids"], scope["workspace_id"])
+                generated = await client.ask(f"{scope['instruction']}\n\nTASK:\n{instruction}", scope["document_ids"], scope["workspace_id"], evidence_ranges=scope.get("evidence_ranges") or [])
                 content = _practice_quiz_json(generated["answer"]) if artifact_type == "practice_questions" else generated["answer"]
                 artifact = await client.save_learning_artifact(course_id, {"artifact_type": artifact_type, "title": title or f"{artifact_type.replace('_', ' ').title()} - {scope['label']}", "content": content, "source_document_ids": scope["document_ids"], "module_id": scope["module_id"], "lesson_id": scope["lesson_id"]})
                 return {"artifact": artifact, "sources": generated["sources"], "trace_id": generated["trace_id"], "learning_scope": scope}

@@ -45,6 +45,11 @@ async def _require_course_workspace(request: Request, db, course_id: str) -> str
     return str(workspace_id)
 
 
+@router.get("/learning/domain-packs", summary="List Knowledge Academy domain packs")
+async def api_list_learning_domain_packs(principal: LearningReader):
+    return await learning.list_domain_packs(current_user=principal.user)
+
+
 @router.get("/learning/courses", summary="List accessible Knowledge Academy courses")
 async def api_list_learning_courses(request: Request, principal: LearningReader, workspace_id: str = Query(...), db=Depends(get_db)):
     await _require_workspace(request, workspace_id)
@@ -111,6 +116,17 @@ async def api_attach_learning_content(request: Request, course_id: str, body: le
     return await learning.add_asset(course_id, body, current_user=principal.user, db=db)
 
 
+@router.patch("/learning/courses/{course_id}/assets/{asset_id}", summary="Replace a course content mapping")
+async def api_update_learning_content_mapping(
+    request: Request, course_id: str, asset_id: str, body: learning.AssetMappingUpdate,
+    principal: LearningManager, db=Depends(get_db),
+):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.update_asset_mapping(
+        course_id, asset_id, body, current_user=principal.user, db=db,
+    )
+
+
 @router.delete("/learning/courses/{course_id}/assets/{asset_id}", summary="Detach content without deleting its source document")
 async def api_remove_learning_content(request: Request, course_id: str, asset_id: str, principal: LearningManager, db=Depends(get_db)):
     await _require_course_workspace(request, db, course_id)
@@ -121,12 +137,15 @@ async def api_remove_learning_content(request: Request, course_id: str, asset_id
 async def api_ask_learning_tutor(request: Request, course_id: str, body: LearningTutorRequest, principal: LearningParticipant, db=Depends(get_db)):
     workspace_id = await _require_course_workspace(request, db, course_id)
     scope = await learning.resolve_learning_scope(course_id, current_user=principal.user, module_id=body.module_id, lesson_id=body.lesson_id, db=db)
+    if str(scope.get("course_id")) != str(course_id):
+        raise HTTPException(409, "Resolved learning scope does not match the selected course")
     if not scope["document_ids"]:
         raise HTTPException(409, "No embedded content is available in this learning scope")
     chat_request = ChatRequest(
         question=f"{scope['instruction']}\n\nSTUDENT QUESTION:\n{body.question}",
         document_ids=scope["document_ids"], history=body.history, workspace_id=workspace_id,
         redact_pii=body.redact_pii, response_language=body.response_language,
+        evidence_ranges=scope.get("evidence_ranges") or [],
     )
     return await chat_stream_endpoint(request, chat_request, current_user=principal.user, db=db)
 

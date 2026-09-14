@@ -21,6 +21,23 @@ router = APIRouter()
 PERSONAS = {"admin", "teacher", "student", "advisor"}
 MANAGER_PERSONAS = {"admin", "teacher"}
 ARTIFACT_TYPES = {"summary", "study_guide", "key_concepts", "flashcards", "practice_questions"}
+DOMAIN_PACKS = {
+    "general": {"label": "General learning", "reviewer_persona": "teacher", "tutor_focus": "Explain the approved course evidence clearly."},
+    "healthcare": {"label": "Healthcare education", "reviewer_persona": "teacher", "tutor_focus": "Use clinical terminology carefully and distinguish education from medical advice."},
+    "financial_services": {"label": "Financial services", "reviewer_persona": "advisor", "tutor_focus": "Explain financial and compliance concepts without presenting personalized financial advice."},
+    "manufacturing": {"label": "Manufacturing and safety", "reviewer_persona": "teacher", "tutor_focus": "Emphasize procedures, controls, hazards, and evidence-backed safety steps."},
+    "construction": {"label": "Construction and field service", "reviewer_persona": "teacher", "tutor_focus": "Emphasize site procedures, inspections, safety, and corrective actions."},
+    "sports": {"label": "Sports and coaching", "reviewer_persona": "teacher", "tutor_focus": "Connect instruction to timestamped plays, technique, and coaching evidence."},
+    "legal_compliance": {"label": "Legal and compliance", "reviewer_persona": "advisor", "tutor_focus": "Preserve policy language, effective context, and evidence citations; do not provide legal advice."},
+    "enterprise_training": {"label": "Enterprise training", "reviewer_persona": "teacher", "tutor_focus": "Focus on role readiness, procedures, decisions, and operational examples."},
+    "customer_education": {"label": "Customer education", "reviewer_persona": "advisor", "tutor_focus": "Use accessible product language and approved customer-facing evidence."},
+    "government": {"label": "Government and public sector", "reviewer_persona": "advisor", "tutor_focus": "Preserve policy, accessibility, accountability, and public-sector context."},
+    "cultural_arts": {"label": "Cultural arts", "reviewer_persona": "teacher", "tutor_focus": "Explain performance, history, narration, movement, and timestamped visual evidence respectfully."},
+}
+LearningDomain = Literal[
+    "general", "healthcare", "financial_services", "manufacturing", "construction", "sports",
+    "legal_compliance", "enterprise_training", "customer_education", "government", "cultural_arts",
+]
 
 
 class CourseCreate(BaseModel):
@@ -30,7 +47,10 @@ class CourseCreate(BaseModel):
     semester: str = Field(default="", max_length=80)
     description: str = Field(default="", max_length=4000)
     instructor_name: str = Field(default="", max_length=180)
-    objectives: list[str] = []
+    objectives: list[str] = Field(default_factory=list)
+    domain: LearningDomain = "general"
+    domain_config: dict[str, Any] = Field(default_factory=dict)
+    publication_status: Literal["draft", "published"] = "draft"
 
 
 class CourseUpdate(BaseModel):
@@ -41,6 +61,9 @@ class CourseUpdate(BaseModel):
     instructor_name: str | None = Field(default=None, max_length=180)
     objectives: list[str] | None = None
     status: Literal["active", "archived"] | None = None
+    domain: LearningDomain | None = None
+    domain_config: dict[str, Any] | None = None
+    publication_status: Literal["draft", "published"] | None = None
 
 
 class MemberCreate(BaseModel):
@@ -49,27 +72,54 @@ class MemberCreate(BaseModel):
 
 
 class CurriculumSave(BaseModel):
-    modules: list[dict] = []
+    modules: list[dict] = Field(default_factory=list)
 
 
 class AssetCreate(BaseModel):
+    asset_id: str | None = None
     document_id: str
     module_id: str | None = None
     lesson_id: str | None = None
     title: str = ""
+    start_seconds: float | None = Field(default=None, ge=0)
+    end_seconds: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_time_range(self):
+        if (self.start_seconds is None) != (self.end_seconds is None):
+            raise ValueError("Both start_seconds and end_seconds are required for a time-bounded mapping")
+        if self.start_seconds is not None and self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
+        return self
+
+
+class AssetMappingUpdate(BaseModel):
+    module_id: str | None = None
+    lesson_id: str | None = None
+    title: str = ""
+    start_seconds: float | None = Field(default=None, ge=0)
+    end_seconds: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_time_range(self):
+        if (self.start_seconds is None) != (self.end_seconds is None):
+            raise ValueError("Both start_seconds and end_seconds are required for a time-bounded mapping")
+        if self.start_seconds is not None and self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
+        return self
 
 
 class ArtifactCreate(BaseModel):
     artifact_type: Literal["summary", "study_guide", "key_concepts", "flashcards", "practice_questions"]
     title: str = ""
     content: str = Field(min_length=1)
-    source_document_ids: list[str] = []
+    source_document_ids: list[str] = Field(default_factory=list)
     module_id: str | None = None
     lesson_id: str | None = None
 
 
 class QuizAttemptCreate(BaseModel):
-    answers: dict[str, list[str]] = {}
+    answers: dict[str, list[str]] = Field(default_factory=dict)
     replace: bool = False
 
 
@@ -122,7 +172,7 @@ def _normalize_artifact_content(artifact_type: str, content: str) -> str:
 class QuestionCreate(BaseModel):
     target_role: Literal["teacher", "advisor"] = "teacher"
     question: str = Field(min_length=1, max_length=8000)
-    context: dict = {}
+    context: dict = Field(default_factory=dict)
 
 
 class QuestionUpdate(BaseModel):
@@ -161,7 +211,7 @@ async def _resolve_learning_scope(
     lesson = None
     if lesson_id:
         lesson = await db.fetchrow(
-            """SELECT l.id,l.title,l.description,l.module_id,m.title AS module_title
+            """SELECT l.id,l.title,l.description,l.objectives,l.competencies,l.module_id,m.title AS module_title
                FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id
                WHERE l.id=$1::uuid AND m.course_id=$2::uuid""",
             lesson_id, course_id,
@@ -208,9 +258,12 @@ async def _resolve_learning_scope(
     }[scope_type]
     focus = ""
     if lesson:
+        objectives = ", ".join(_decode_json(lesson.get("objectives"), [])) or "Not specified"
+        competencies = ", ".join(_decode_json(lesson.get("competencies"), [])) or "Not specified"
         focus = (
             f" Selected lesson title: {lesson['title']}."
             f" Selected lesson description: {lesson['description'] or 'Not provided'}."
+            f" Learning objectives: {objectives}. Competencies: {competencies}."
             " Retrieve and answer only evidence semantically relevant to this lesson, even when an attached file also contains broader module content."
             " Do not summarize the entire module."
         )
@@ -219,6 +272,12 @@ async def _resolve_learning_scope(
             f" Selected module title: {module['title']}."
             f" Selected module description: {module['description'] or 'Not provided'}."
         )
+    evidence_ranges = _scope_evidence_ranges(rows)
+    range_instruction = _range_instruction(evidence_ranges)
+    domain = str(course.get("domain") or "general")
+    domain_config = _decode_json(course.get("domain_config"), {})
+    domain_pack = DOMAIN_PACKS.get(domain, DOMAIN_PACKS["general"])
+    tutor_focus = str(domain_config.get("tutor_focus") or domain_pack["tutor_focus"])
     return {
         "course_id": course_id,
         "workspace_id": str(course["workspace_id"]),
@@ -226,10 +285,53 @@ async def _resolve_learning_scope(
         "lesson_id": lesson_id,
         "scope_type": scope_type,
         "label": label,
-        "instruction": f"Learning scope: {label}. {boundary}{focus} Ground every claim in the selected course evidence.",
-        "document_ids": [str(row["document_id"]) for row in rows],
+        "domain": domain,
+        "domain_pack": {**domain_pack, **domain_config},
+        "instruction": (
+            f"Learning scope: {label}. Domain: {domain_pack['label']}. {boundary}{focus}"
+            f" {range_instruction} Domain guidance: {tutor_focus}"
+            " Ground every claim in the selected course evidence."
+        ),
+        "document_ids": list(dict.fromkeys(str(row["document_id"]) for row in rows)),
+        "evidence_ranges": evidence_ranges,
         "assets": [_jsonable(dict(row)) for row in rows],
     }
+
+
+def _scope_evidence_ranges(rows) -> list[dict]:
+    by_document: dict[str, list[dict] | None] = {}
+    for row in rows:
+        document_id = str(row["document_id"])
+        start = row.get("start_seconds") if hasattr(row, "get") else row["start_seconds"]
+        end = row.get("end_seconds") if hasattr(row, "get") else row["end_seconds"]
+        if start is None or end is None:
+            by_document[document_id] = None
+        elif document_id not in by_document or by_document[document_id] is not None:
+            by_document.setdefault(document_id, []).append({
+                "start_seconds": float(start), "end_seconds": float(end),
+            })
+    return [
+        {"document_id": document_id, "ranges": ranges}
+        for document_id, ranges in by_document.items() if ranges is not None
+    ]
+
+
+def _range_instruction(evidence_ranges: list[dict]) -> str:
+    if not evidence_ranges:
+        return "Use the complete attached assets."
+    parts = []
+    for item in evidence_ranges:
+        windows = ", ".join(
+            f"{window['start_seconds']:.2f}-{window['end_seconds']:.2f} seconds"
+            for window in item["ranges"]
+        )
+        parts.append(f"document {item['document_id']}: {windows}")
+    return "Use only these approved media ranges: " + "; ".join(parts) + "."
+
+
+@router.get("/domain-packs")
+async def list_domain_packs(current_user: CurrentUser):
+    return [{"id": key, **value} for key, value in DOMAIN_PACKS.items()]
 
 
 def _grade_practice_quiz(quiz: PracticeQuiz, answers: dict[str, list[str]]) -> dict:
@@ -290,10 +392,12 @@ async def create_course(body: CourseCreate, request: Request, current_user: Curr
     async with db.transaction():
         row = await db.fetchrow(
             """INSERT INTO learning_courses
-               (workspace_id,created_by,title,course_code,semester,description,instructor_name,objectives)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING *""",
+               (workspace_id,created_by,title,course_code,semester,description,instructor_name,objectives,
+                domain,domain_config,publication_status)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::jsonb,$11) RETURNING *""",
             body.workspace_id, user_id, body.title.strip(), body.course_code.strip(), body.semester.strip(),
             body.description.strip(), body.instructor_name.strip(), json.dumps(_clean_list(body.objectives)),
+            body.domain, json.dumps(body.domain_config), body.publication_status,
         )
         await db.execute(
             """INSERT INTO learning_course_members (course_id,user_id,persona,added_by)
@@ -336,13 +440,13 @@ async def update_course(course_id: str, body: CourseUpdate, request: Request, cu
     values = body.model_dump(exclude_unset=True)
     if not values:
         return await _course_workspace(db, course_id, user_id)
-    allowed = {"title", "course_code", "semester", "description", "instructor_name", "objectives", "status"}
+    allowed = {"title", "course_code", "semester", "description", "instructor_name", "objectives", "status", "domain", "domain_config", "publication_status"}
     sets, params = [], [course_id]
     for key, value in values.items():
         if key not in allowed:
             continue
-        params.append(json.dumps(_clean_list(value)) if key == "objectives" else value)
-        cast = "::jsonb" if key == "objectives" else ""
+        params.append(json.dumps(_clean_list(value)) if key == "objectives" else json.dumps(value) if key == "domain_config" else value)
+        cast = "::jsonb" if key in {"objectives", "domain_config"} else ""
         sets.append(f"{key}=${len(params)}{cast}")
     await db.execute(f"UPDATE learning_courses SET {','.join(sets)},updated_at=NOW() WHERE id=$1::uuid", *params)
     await audit(db, user_id=user_id, action="learning_course_update", resource_type="learning_course",
@@ -425,19 +529,25 @@ async def save_curriculum(course_id: str, body: CurriculumSave, current_user: Cu
                     lesson_id = str(lesson.get("id") or "").strip()
                     if lesson_id:
                         lesson_row = await db.fetchrow(
-                            """UPDATE learning_lessons SET title=$3,description=$4,position=$5,updated_at=NOW()
+                            """UPDATE learning_lessons SET title=$3,description=$4,position=$5,
+                               objectives=$6::jsonb,competencies=$7::jsonb,updated_at=NOW()
                                WHERE id=$1::uuid AND module_id=$2::uuid RETURNING id""",
                             lesson_id, saved_module_id, lesson_title,
                             str(lesson.get("description") or "").strip(), lesson_position,
+                            json.dumps(_clean_list(lesson.get("objectives"))),
+                            json.dumps(_clean_list(lesson.get("competencies"))),
                         )
                         if not lesson_row:
                             raise HTTPException(400, "Lesson does not belong to its selected module")
                     else:
                         lesson_row = await db.fetchrow(
-                            """INSERT INTO learning_lessons (module_id,title,description,position)
-                               VALUES ($1,$2,$3,$4) RETURNING id""",
+                            """INSERT INTO learning_lessons
+                               (module_id,title,description,position,objectives,competencies)
+                               VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb) RETURNING id""",
                             saved_module_id, lesson_title,
                             str(lesson.get("description") or "").strip(), lesson_position,
+                            json.dumps(_clean_list(lesson.get("objectives"))),
+                            json.dumps(_clean_list(lesson.get("competencies"))),
                         )
                     saved_lesson_ids.append(str(lesson_row["id"]))
         await db.execute(
@@ -492,16 +602,101 @@ async def add_asset(course_id: str, body: AssetCreate, current_user: CurrentUser
         if module_id and str(lesson_module_id) != str(module_id):
             raise HTTPException(400, "Lesson does not belong to the selected module")
         module_id = str(lesson_module_id)
-    await db.execute(
-        """INSERT INTO learning_assets (course_id,module_id,lesson_id,document_id,title,added_by)
-           VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (course_id,document_id)
-           DO UPDATE SET module_id=EXCLUDED.module_id,lesson_id=EXCLUDED.lesson_id,title=EXCLUDED.title""",
-        course_id, module_id, lesson_id, body.document_id, body.title.strip() or doc["original_name"], user_id,
-    )
+    if body.asset_id:
+        updated = await db.fetchval(
+            """UPDATE learning_assets SET module_id=$3,lesson_id=$4,title=$5,start_seconds=$6,end_seconds=$7
+               WHERE id=$1::uuid AND course_id=$2::uuid AND document_id=$8::uuid RETURNING id""",
+            body.asset_id, course_id, module_id, lesson_id, body.title.strip() or doc["original_name"],
+            body.start_seconds, body.end_seconds, body.document_id,
+        )
+        if not updated:
+            raise HTTPException(404, "Course content mapping not found")
+    else:
+        duplicate = await db.fetchval(
+            """SELECT id FROM learning_assets WHERE course_id=$1::uuid AND document_id=$2::uuid
+               AND module_id IS NOT DISTINCT FROM $3::uuid AND lesson_id IS NOT DISTINCT FROM $4::uuid
+               AND start_seconds IS NOT DISTINCT FROM $5 AND end_seconds IS NOT DISTINCT FROM $6""",
+            course_id, body.document_id, module_id, lesson_id, body.start_seconds, body.end_seconds,
+        )
+        if duplicate:
+            raise HTTPException(409, "This content mapping already exists")
+        await db.execute(
+            """INSERT INTO learning_assets
+               (course_id,module_id,lesson_id,document_id,title,added_by,start_seconds,end_seconds)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
+            course_id, module_id, lesson_id, body.document_id, body.title.strip() or doc["original_name"],
+            user_id, body.start_seconds, body.end_seconds,
+        )
     await emit_event(
         db, user_id=user_id, workspace_id=str(course["workspace_id"]),
         event_type="learning.content.attached", resource_type="learning_course",
-        resource_id=course_id, payload={"document_id": body.document_id, "module_id": module_id, "lesson_id": lesson_id},
+        resource_id=course_id, payload={
+            "document_id": body.document_id, "module_id": module_id, "lesson_id": lesson_id,
+            "start_seconds": body.start_seconds, "end_seconds": body.end_seconds,
+        },
+    )
+    return await _course_workspace(db, course_id, user_id)
+
+
+@router.patch("/courses/{course_id}/assets/{asset_id}")
+async def update_asset_mapping(
+    course_id: str, asset_id: str, body: AssetMappingUpdate,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id, manage=True)
+    asset = await db.fetchrow(
+        """SELECT a.id,a.document_id,d.original_name FROM learning_assets a
+           JOIN documents d ON d.id=a.document_id
+           WHERE a.id=$1::uuid AND a.course_id=$2::uuid""",
+        asset_id, course_id,
+    )
+    if not asset:
+        raise HTTPException(404, "Course content mapping not found")
+    module_id = body.module_id
+    lesson_id = body.lesson_id
+    if module_id:
+        valid_module = await db.fetchval(
+            "SELECT 1 FROM learning_modules WHERE id=$1::uuid AND course_id=$2::uuid",
+            module_id, course_id,
+        )
+        if not valid_module:
+            raise HTTPException(400, "Module does not belong to this course")
+    if lesson_id:
+        lesson_module_id = await db.fetchval(
+            """SELECT l.module_id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id
+               WHERE l.id=$1::uuid AND m.course_id=$2::uuid""",
+            lesson_id, course_id,
+        )
+        if not lesson_module_id:
+            raise HTTPException(400, "Lesson does not belong to this course")
+        if module_id and str(lesson_module_id) != str(module_id):
+            raise HTTPException(400, "Lesson does not belong to the selected module")
+        module_id = str(lesson_module_id)
+    duplicate = await db.fetchval(
+        """SELECT id FROM learning_assets WHERE course_id=$1::uuid AND document_id=$2::uuid
+           AND id<>$3::uuid AND module_id IS NOT DISTINCT FROM $4::uuid
+           AND lesson_id IS NOT DISTINCT FROM $5::uuid
+           AND start_seconds IS NOT DISTINCT FROM $6 AND end_seconds IS NOT DISTINCT FROM $7""",
+        course_id, str(asset["document_id"]), asset_id, module_id, lesson_id,
+        body.start_seconds, body.end_seconds,
+    )
+    if duplicate:
+        raise HTTPException(409, "This content mapping already exists")
+    await db.execute(
+        """UPDATE learning_assets SET module_id=$3::uuid,lesson_id=$4::uuid,title=$5,
+           start_seconds=$6,end_seconds=$7 WHERE id=$1::uuid AND course_id=$2::uuid""",
+        asset_id, course_id, module_id, lesson_id,
+        body.title.strip() or asset["original_name"], body.start_seconds, body.end_seconds,
+    )
+    await emit_event(
+        db, user_id=user_id, workspace_id=str(course["workspace_id"]),
+        event_type="learning.content.mapping_updated", resource_type="learning_course",
+        resource_id=course_id, payload={
+            "asset_id": asset_id, "document_id": str(asset["document_id"]),
+            "module_id": module_id, "lesson_id": lesson_id,
+            "start_seconds": body.start_seconds, "end_seconds": body.end_seconds,
+        },
     )
     return await _course_workspace(db, course_id, user_id)
 
@@ -692,7 +887,10 @@ async def _course_workspace(db, course_id: str, user_id: str) -> dict:
     )
     lessons_by_module: dict[str, list] = {}
     for lesson in lesson_rows:
-        lessons_by_module.setdefault(str(lesson["module_id"]), []).append(_jsonable(dict(lesson)))
+        item = _jsonable(dict(lesson))
+        item["objectives"] = _decode_json(item.get("objectives"), [])
+        item["competencies"] = _decode_json(item.get("competencies"), [])
+        lessons_by_module.setdefault(str(lesson["module_id"]), []).append(item)
     modules = []
     for module in module_rows:
         item = _jsonable(dict(module))
@@ -737,6 +935,10 @@ async def _course_workspace(db, course_id: str, user_id: str) -> dict:
 def _course_response(row) -> dict:
     result = _jsonable(dict(row))
     result["objectives"] = _decode_json(result.get("objectives"), [])
+    result["domain_config"] = _decode_json(result.get("domain_config"), {})
+    domain = result.get("domain") or "general"
+    result["domain"] = domain
+    result["domain_pack"] = {**DOMAIN_PACKS.get(domain, DOMAIN_PACKS["general"]), **result["domain_config"]}
     return result
 
 

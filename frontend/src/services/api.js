@@ -602,14 +602,14 @@ export async function approveConversationTranscript(sessionId, transcript) {
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
-export async function streamChat({ question, documentIds, document_ids, history, workspaceId = null, traceId = null, redactPii = false, responseLanguage = null }, { onToken, onDone, onError }) {
+export async function streamChat({ question, documentIds, document_ids, history, workspaceId = null, traceId = null, redactPii = false, responseLanguage = null, evidenceRanges = [] }, { onToken, onDone, onError }) {
   const docIds = documentIds || document_ids;  // accept both forms
   const headers = {'Content-Type':'application/json', ...authHdr()};
   if (traceId) headers['X-Trace-Id'] = traceId;
   const res = await fetch(`${STREAM_BASE}/chat/stream`, {
     method:'POST',
     headers,
-    body: JSON.stringify({ question, document_ids: docIds, history, workspace_id: workspaceId, redact_pii: redactPii, response_language: responseLanguage }),
+    body: JSON.stringify({ question, document_ids: docIds, history, workspace_id: workspaceId, redact_pii: redactPii, response_language: responseLanguage, evidence_ranges: evidenceRanges }),
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
@@ -1253,6 +1253,12 @@ export async function saveLearningCurriculum(courseId, modules) {
 export async function addLearningAsset(courseId, payload) {
   return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/assets`, {
     method:'POST', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function updateLearningAsset(courseId, assetId, payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/assets/${assetId}`, {
+    method:'PATCH', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
   }));
 }
 

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
 
 from routes.learning import (
     AssetCreate,
+    AssetMappingUpdate,
     ArtifactCreate,
     CourseCreate,
     PracticeQuiz,
@@ -16,6 +18,8 @@ from routes.learning import (
     _course_access,
     _course_response,
     _resolve_learning_scope,
+    _scope_evidence_ranges,
+    update_asset_mapping,
 )
 
 
@@ -98,8 +102,10 @@ async def test_non_member_cannot_discover_course():
 
 
 def test_course_contract_normalizes_objectives():
-    course = _course_response({"id": "course-1", "objectives": '["Explain RAG", "Cite evidence"]'})
+    course = _course_response({"id": "course-1", "objectives": '["Explain RAG", "Cite evidence"]', "domain": "sports", "domain_config": '{"passing_score": 85}'})
     assert course["objectives"] == ["Explain RAG", "Cite evidence"]
+    assert course["domain_pack"]["label"] == "Sports and coaching"
+    assert course["domain_pack"]["passing_score"] == 85
     assert _clean_list(["  First  ", "", "Second"]) == ["First", "Second"]
 
 
@@ -115,9 +121,73 @@ def test_learning_request_contracts_cover_course_and_saved_study_material():
 
 
 def test_learning_asset_contract_supports_curriculum_mapping():
-    asset = AssetCreate(document_id="document-1", module_id="module-1", lesson_id="lesson-1")
+    asset = AssetCreate(document_id="document-1", module_id="module-1", lesson_id="lesson-1", start_seconds=60, end_seconds=180)
     assert asset.module_id == "module-1"
     assert asset.lesson_id == "lesson-1"
+    assert asset.end_seconds == 180
+
+
+def test_learning_asset_update_contract_supports_replacement_mapping():
+    mapping = AssetMappingUpdate(
+        module_id="module-2", lesson_id="lesson-3", start_seconds=180, end_seconds=300,
+    )
+    assert mapping.module_id == "module-2"
+    assert mapping.lesson_id == "lesson-3"
+    assert mapping.start_seconds == 180
+    assert mapping.end_seconds == 300
+
+
+@pytest.mark.asyncio
+async def test_update_asset_mapping_replaces_existing_row(monkeypatch):
+    db = AsyncMock()
+    db.fetchrow.return_value = {
+        "id": "asset-1", "document_id": "document-1", "original_name": "lesson.mp4",
+    }
+    db.fetchval.return_value = None
+    monkeypatch.setattr(
+        "routes.learning._course_access",
+        AsyncMock(return_value={"workspace_id": "workspace-1"}),
+    )
+    monkeypatch.setattr("routes.learning.emit_event", AsyncMock())
+    monkeypatch.setattr(
+        "routes.learning._course_workspace",
+        AsyncMock(return_value={"id": "course-1", "assets": []}),
+    )
+
+    result = await update_asset_mapping(
+        "course-1", "asset-1",
+        AssetMappingUpdate(start_seconds=180, end_seconds=300),
+        {"id": "user-1"}, db,
+    )
+
+    assert result["id"] == "course-1"
+    update_call = next(call for call in db.execute.await_args_list if "UPDATE learning_assets" in call.args[0])
+    assert update_call.args[1:3] == ("asset-1", "course-1")
+    assert update_call.args[-2:] == (180.0, 300.0)
+
+
+def test_learning_asset_requires_complete_valid_time_range():
+    with pytest.raises(ValueError):
+        AssetCreate(document_id="document-1", start_seconds=60)
+    with pytest.raises(ValueError):
+        AssetCreate(document_id="document-1", start_seconds=60, end_seconds=30)
+    with pytest.raises(ValueError):
+        AssetMappingUpdate(start_seconds=60)
+
+
+def test_scope_ranges_preserve_full_assets_and_group_reused_media():
+    rows = [
+        {"document_id": "video-1", "start_seconds": 60, "end_seconds": 120},
+        {"document_id": "video-1", "start_seconds": 180, "end_seconds": 240},
+        {"document_id": "document-1", "start_seconds": None, "end_seconds": None},
+    ]
+    assert _scope_evidence_ranges(rows) == [{
+        "document_id": "video-1",
+        "ranges": [
+            {"start_seconds": 60.0, "end_seconds": 120.0},
+            {"start_seconds": 180.0, "end_seconds": 240.0},
+        ],
+    }]
 
 
 @pytest.mark.asyncio

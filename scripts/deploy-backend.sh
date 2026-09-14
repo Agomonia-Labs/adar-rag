@@ -226,6 +226,46 @@ else
   echo "  OTEL endpoint: not found; telemetry export remains disabled"
 fi
 
+current_service_env() {
+  local variable_name="$1"
+  gcloud run services describe "$SERVICE_NAME" \
+    --project="$PROJECT_ID" \
+    --region="$REGION" \
+    --format=json 2>/dev/null \
+    | python3 -c '
+import json, sys
+name = sys.argv[1]
+try:
+    service = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)
+containers = service.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+for item in (containers[0].get("env", []) if containers else []):
+    if item.get("name") == name and "value" in item:
+        print(item["value"])
+        break
+' "$variable_name" || true
+}
+
+WEBSITE_ASSISTANT_FLAGS=()
+WEBSITE_ASSISTANT_WORKSPACE_ID="${WEBSITE_ASSISTANT_WORKSPACE_ID:-$(current_service_env WEBSITE_ASSISTANT_WORKSPACE_ID)}"
+WEBSITE_ASSISTANT_BASE_URL="${WEBSITE_ASSISTANT_BASE_URL:-$(current_service_env WEBSITE_ASSISTANT_BASE_URL)}"
+WEBSITE_ASSISTANT_MAX_DOCUMENTS="${WEBSITE_ASSISTANT_MAX_DOCUMENTS:-$(current_service_env WEBSITE_ASSISTANT_MAX_DOCUMENTS)}"
+WEBSITE_ASSISTANT_DOCUMENT_IDS="${WEBSITE_ASSISTANT_DOCUMENT_IDS:-$(current_service_env WEBSITE_ASSISTANT_DOCUMENT_IDS)}"
+if [[ -n "$WEBSITE_ASSISTANT_WORKSPACE_ID" ]]; then
+  WEBSITE_ASSISTANT_FLAGS+=(
+    "--set-env-vars=WEBSITE_ASSISTANT_WORKSPACE_ID=${WEBSITE_ASSISTANT_WORKSPACE_ID}"
+    "--set-env-vars=WEBSITE_ASSISTANT_BASE_URL=${WEBSITE_ASSISTANT_BASE_URL:-https://labs.agomoniai.com}"
+    "--set-env-vars=WEBSITE_ASSISTANT_MAX_DOCUMENTS=${WEBSITE_ASSISTANT_MAX_DOCUMENTS:-250}"
+  )
+  if [[ -n "${WEBSITE_ASSISTANT_DOCUMENT_IDS:-}" ]]; then
+    WEBSITE_ASSISTANT_FLAGS+=("--set-env-vars=^@^WEBSITE_ASSISTANT_DOCUMENT_IDS=${WEBSITE_ASSISTANT_DOCUMENT_IDS}")
+  fi
+  echo "  Website assistant: configured for workspace $WEBSITE_ASSISTANT_WORKSPACE_ID"
+else
+  echo "  Website assistant: disabled until WEBSITE_ASSISTANT_WORKSPACE_ID is supplied"
+fi
+
 gcloud run deploy "$SERVICE_NAME" \
   --image="$IMAGE" \
   --region="$REGION" \
@@ -310,6 +350,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="OBSERVABILITY_ALERT_EMAIL_ENABLED=true" \
   --set-env-vars="OBSERVABILITY_ROLLUP_RETENTION_DAYS=90" \
   --set-env-vars="OBSERVABILITY_RESULT_RETENTION_DAYS=180" \
+  "${WEBSITE_ASSISTANT_FLAGS[@]}" \
   "${OTEL_FLAGS[@]}" \
   $SECRETS_FLAGS \
   --quiet

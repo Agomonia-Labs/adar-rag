@@ -44,3 +44,4 @@ ip_10_per_min  = _make_limiter(10, 60)              # login, reset-password
 usr_20_per_min = _make_limiter(20, 60, by_user=True) # upload
 usr_30_per_min = _make_limiter(30, 60, by_user=True) # chat
 usr_15_per_min = _make_limiter(15, 60, by_user=True) # summarize
+ip_12_per_min  = _make_limiter(12, 60)               # public website assistant

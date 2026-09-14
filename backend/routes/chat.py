@@ -6,7 +6,7 @@ from difflib import SequenceMatcher
 from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 
@@ -27,14 +27,31 @@ log = logging.getLogger("docintel.chat.route")
 _FETCH_K = RERANK_FETCH_K if RERANK_ENABLED else TOP_K
 
 
+class EvidenceWindow(BaseModel):
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_window(self):
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
+        return self
+
+
+class DocumentEvidenceRange(BaseModel):
+    document_id: str
+    ranges: list[EvidenceWindow] = Field(min_length=1)
+
+
 class ChatRequest(BaseModel):
     question:     str
     document_ids: list[str]
-    history:      list[dict] = []
+    history:      list[dict] = Field(default_factory=list)
     workspace_id: str | None = None
     redact_pii:   bool = False
     agent_mode:   str = "auto"  # auto | off | force
     response_language: Literal["en", "es", "bn", "hi", "ar"] | None = None
+    evidence_ranges: list[DocumentEvidenceRange] = Field(default_factory=list)
 
 
 @router.post("/stream")
@@ -140,8 +157,9 @@ async def chat_stream_endpoint(
                         query_text=question_for_model,   # enables BM25 + RRF fusion
                         user_id=user_id,
                         document_ids=req.document_ids,
-                        limit=_FETCH_K,
+                        limit=_FETCH_K * 3 if req.evidence_ranges else _FETCH_K,
                     )
+                    candidates = _filter_candidates_by_evidence_ranges(candidates, req.evidence_ranges)
                     await record_llm_event(
                         trace_id=trace_id,
                         span_id=sp,
@@ -1351,6 +1369,28 @@ def _chunk_meta(chunk: dict) -> dict:
         except json.JSONDecodeError:
             meta = {}
     return meta if isinstance(meta, dict) else {}
+
+
+def _filter_candidates_by_evidence_ranges(
+    candidates: list[dict], evidence_ranges: list[DocumentEvidenceRange],
+) -> list[dict]:
+    if not evidence_ranges:
+        return candidates
+    configured = {item.document_id: item.ranges for item in evidence_ranges}
+    filtered = []
+    for candidate in candidates:
+        windows = configured.get(str(candidate.get("document_id")))
+        if not windows:
+            filtered.append(candidate)
+            continue
+        metadata = _chunk_meta(candidate)
+        start = metadata.get("start_seconds")
+        end = metadata.get("end_seconds")
+        if start is None or end is None:
+            continue
+        if any(float(start) <= window.end_seconds and float(end) >= window.start_seconds for window in windows):
+            filtered.append(candidate)
+    return filtered
 
 
 def _video_source_fields(chunk: dict) -> dict:

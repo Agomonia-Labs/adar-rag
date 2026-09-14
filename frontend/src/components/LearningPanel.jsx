@@ -9,7 +9,7 @@ import {
   listLearningCourses, listLearningDocuments, removeLearningAsset, removeLearningMember,
   resolveLearningScope, saveLearningArtifact, saveLearningCurriculum, saveLearningQuizAttempt,
   saveSessionMessages, streamChat, transcribeVoice,
-  updateLearningCourse, updateLearningQuestion,
+  updateLearningAsset, updateLearningCourse, updateLearningQuestion,
 } from '../services/api.js';
 import MarkdownRenderer from './MarkdownRenderer.jsx';
 
@@ -21,8 +21,23 @@ const TUTOR_LANGUAGES = [
   ['auto', 'Auto'], ['en-US', 'English'], ['bn-BD', 'Bangla'],
   ['hi-IN', 'Hindi'], ['es-ES', 'Spanish'], ['ar-SA', 'Arabic'],
 ];
-const LEARNING_SESSION_SCOPE_VERSION = 'v2';
+const DOMAIN_PACKS = [
+  ['general','General learning'], ['healthcare','Healthcare education'],
+  ['financial_services','Financial services'], ['manufacturing','Manufacturing and safety'],
+  ['construction','Construction and field service'], ['sports','Sports and coaching'],
+  ['legal_compliance','Legal and compliance'], ['enterprise_training','Enterprise training'],
+  ['customer_education','Customer education'], ['government','Government and public sector'],
+  ['cultural_arts','Cultural arts'],
+];
+const LEARNING_SESSION_SCOPE_VERSION = 'v3';
+const TIMED_MEDIA_EXTENSION = /\.(mp4|mov|m4v|avi|mkv|webm|mp3|m4a|wav|ogg|aac|flac)$/i;
 const tutorLanguageName=code=>TUTOR_LANGUAGES.find(([value])=>value===code)?.[1]||'selected language';
+const isTimedLearningContent=item=>{
+  if(!item)return false;
+  const type=`${item.file_type||''} ${item.doc_type||''} ${item.content_type||''}`.toLowerCase();
+  const name=item.original_name||item.filename||item.title||'';
+  return /(^|[\s/])(video|audio)([\s/]|$)/.test(type)||TIMED_MEDIA_EXTENSION.test(name);
+};
 const supportedRecordingType=()=>{
   if(typeof window==='undefined'||!window.MediaRecorder?.isTypeSupported)return '';
   return ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus'].find(type=>window.MediaRecorder.isTypeSupported(type))||'';
@@ -54,35 +69,46 @@ export default function LearningPanel({ activeWorkspace = null, onClose }) {
   const workspaceId = activeWorkspace?.id || '';
   const [courses, setCourses] = useState([]);
   const [course, setCourse] = useState(null);
+  const [selectedCourseId, setSelectedCourseId] = useState('');
   const [documents, setDocuments] = useState([]);
   const [tab, setTab] = useState('overview');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const courseRequestRef = useRef(0);
 
   const load = async (preferredId = '') => {
     if (!workspaceId) return;
+    const requestId = ++courseRequestRef.current;
     setBusy(true); setError('');
     try {
       const [courseRows, docRows] = await Promise.all([listLearningCourses(workspaceId), listLearningDocuments(workspaceId)]);
+      if(requestId!==courseRequestRef.current)return;
       setCourses(courseRows || []); setDocuments(docRows || []);
       const id = preferredId === null ? courseRows?.[0]?.id : (preferredId || course?.id || courseRows?.[0]?.id);
-      setCourse(id ? await getLearningCourse(id) : null);
-    } catch (e) { setError(e.message || String(e)); }
-    finally { setBusy(false); }
+      setSelectedCourseId(id||'');
+      const loadedCourse=id ? await getLearningCourse(id) : null;
+      if(requestId===courseRequestRef.current)setCourse(loadedCourse);
+    } catch (e) { if(requestId===courseRequestRef.current)setError(e.message || String(e)); }
+    finally { if(requestId===courseRequestRef.current)setBusy(false); }
   };
-  useEffect(() => { setCourse(null); setCourses([]); load(null); }, [workspaceId]);
+  useEffect(() => { courseRequestRef.current+=1;setCourse(null);setSelectedCourseId('');setCourses([]);load(null); }, [workspaceId]);
 
   const selectCourse = async id => {
+    const requestId=++courseRequestRef.current;
+    setSelectedCourseId(id);setCourse(null);
+    if(!id){setBusy(false);return}
     setBusy(true); setError('');
-    try { setCourse(await getLearningCourse(id)); }
+    try { const loadedCourse=await getLearningCourse(id);if(requestId===courseRequestRef.current)setCourse(loadedCourse); }
     catch (e) { setError(e.message || String(e)); }
-    finally { setBusy(false); }
+    finally { if(requestId===courseRequestRef.current)setBusy(false); }
   };
   const mutate = async operation => {
+    const requestId=courseRequestRef.current;
+    const targetCourseId=course?.id;
     setBusy(true); setError('');
-    try { const result = await operation(); if (course?.id) setCourse(await getLearningCourse(course.id)); return result; }
+    try { const result = await operation(); if (targetCourseId&&requestId===courseRequestRef.current) setCourse(await getLearningCourse(targetCourseId)); return result; }
     catch (e) { setError(e.message || String(e)); throw e; }
-    finally { setBusy(false); }
+    finally { if(requestId===courseRequestRef.current)setBusy(false); }
   };
 
   return <div style={s.overlay} role="dialog" aria-modal="true" aria-label="Learning Intelligence">
@@ -96,7 +122,7 @@ export default function LearningPanel({ activeWorkspace = null, onClose }) {
       </header>
       {!workspaceId ? <Empty title="Select a workspace" text="Learning courses are governed by a DocIntel workspace. Select or create one first."/> : <>
         <div style={s.courseBar}>
-          <label style={s.inlineField}><span>Course</span><select value={course?.id || ''} onChange={e=>selectCourse(e.target.value)}><option value="">Create or select a course</option>{courses.map(item=><option key={item.id} value={item.id}>{item.course_code ? `${item.course_code} · ` : ''}{item.title}</option>)}</select></label>
+          <label style={s.inlineField}><span>Course</span><select value={selectedCourseId} onChange={e=>selectCourse(e.target.value)}><option value="">Create or select a course</option>{courses.map(item=><option key={item.id} value={item.id}>{item.course_code ? `${item.course_code} · ` : ''}{item.title}</option>)}</select></label>
           <CreateCourse workspaceId={workspaceId} busy={busy} onCreate={payload=>mutate(async()=>{const created=await createLearningCourse(payload); await load(created.id); return created;})}/>
           {course && <span style={s.persona}>{course.my_persona || 'member'}</span>}
         </div>
@@ -108,8 +134,8 @@ export default function LearningPanel({ activeWorkspace = null, onClose }) {
             {tab==='overview' && <Overview course={course} setCourse={setCourse} mutate={mutate} onDeleted={async()=>{await deleteLearningCourse(course.id);setCourse(null);await load();}}/>} 
             {tab==='curriculum' && <Curriculum course={course} mutate={mutate}/>} 
             {tab==='content' && <CourseContent course={course} documents={documents} mutate={mutate}/>} 
-            {tab==='tutor' && <Tutor course={course} workspaceId={workspaceId}/>} 
-            {tab==='study' && <StudyTools course={course} workspaceId={workspaceId} mutate={mutate}/>} 
+            {tab==='tutor' && <Tutor key={`tutor-${course.id}`} course={course} workspaceId={workspaceId}/>}
+            {tab==='study' && <StudyTools key={`study-${course.id}`} course={course} workspaceId={workspaceId} mutate={mutate}/>}
             {tab==='questions' && <Questions course={course} mutate={mutate}/>} 
           </main>
         </>}
@@ -126,14 +152,21 @@ function CreateCourse({workspaceId,busy,onCreate}) {
 
 function Overview({course,setCourse,mutate,onDeleted}) {
   const [member,setMember]=useState({email:'',persona:'student'});
-  const save=()=>mutate(()=>updateLearningCourse(course.id,{title:course.title,course_code:course.course_code||'',semester:course.semester||'',description:course.description||'',instructor_name:course.instructor_name||'',objectives:String((course.objectives||[]).join('\n')).split('\n').filter(Boolean)}));
+  const config=course.domain_config||{};
+  const save=()=>mutate(()=>updateLearningCourse(course.id,{title:course.title,course_code:course.course_code||'',semester:course.semester||'',description:course.description||'',instructor_name:course.instructor_name||'',objectives:String((course.objectives||[]).join('\n')).split('\n').filter(Boolean),domain:course.domain||'general',publication_status:course.publication_status||'draft',domain_config:config}));
   return <div style={s.scroll}><Section title="Course profile" icon={<BookOpen size={16}/>}><div style={s.grid}>
     <Field label="Course title"><input value={course.title||''} onChange={e=>setCourse({...course,title:e.target.value})}/></Field>
     <Field label="Course code"><input value={course.course_code||''} onChange={e=>setCourse({...course,course_code:e.target.value})}/></Field>
     <Field label="Semester"><input value={course.semester||''} onChange={e=>setCourse({...course,semester:e.target.value})}/></Field>
     <Field label="Instructor"><input value={course.instructor_name||''} onChange={e=>setCourse({...course,instructor_name:e.target.value})}/></Field>
+    <Field label="Domain pack"><select value={course.domain||'general'} onChange={e=>setCourse({...course,domain:e.target.value})}>{DOMAIN_PACKS.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></Field>
+    <Field label="Publication"><select value={course.publication_status||'draft'} onChange={e=>setCourse({...course,publication_status:e.target.value})}><option value="draft">Draft</option><option value="published">Published</option></select></Field>
+    <Field label="Passing score (%)"><input type="number" min="0" max="100" value={config.passing_score??80} onChange={e=>setCourse({...course,domain_config:{...config,passing_score:Number(e.target.value)}})}/></Field>
+    <Field label="Human reviewer"><select value={config.reviewer_persona||course.domain_pack?.reviewer_persona||'teacher'} onChange={e=>setCourse({...course,domain_config:{...config,reviewer_persona:e.target.value}})}><option value="teacher">Teacher</option><option value="advisor">Advisor</option></select></Field>
     <Field label="Description" wide><ExpandableEditor title="Course description" value={course.description||''} onChange={value=>setCourse({...course,description:value})}/></Field>
     <Field label="Learning objectives (one per line)" wide><ExpandableEditor title="Learning objectives" value={(course.objectives||[]).join('\n')} onChange={value=>setCourse({...course,objectives:value.split('\n')})}/></Field>
+    <Field label="Domain Tutor guidance" wide><ExpandableEditor title="Domain Tutor guidance" value={config.tutor_focus||course.domain_pack?.tutor_focus||''} onChange={value=>setCourse({...course,domain_config:{...config,tutor_focus:value}})}/></Field>
+    <Field label="Learning controls" wide><div style={s.checkRow}><label><input type="checkbox" checked={Boolean(config.certificate_enabled)} onChange={e=>setCourse({...course,domain_config:{...config,certificate_enabled:e.target.checked}})}/> Certificate enabled</label><label><input type="checkbox" checked={Boolean(config.acknowledgement_required)} onChange={e=>setCourse({...course,domain_config:{...config,acknowledgement_required:e.target.checked}})}/> Acknowledgment required</label></div></Field>
   </div>{course.can_manage&&<button style={s.primary} onClick={save}><Save size={15}/>Save course</button>}</Section>
   <Section title="Course members" icon={<UserPlus size={16}/>}><div style={s.addRow}><input placeholder="Member email" value={member.email} onChange={e=>setMember({...member,email:e.target.value})}/><select value={member.persona} onChange={e=>setMember({...member,persona:e.target.value})}>{['student','teacher','advisor','admin'].map(x=><option key={x}>{x}</option>)}</select><button style={s.secondary} disabled={!course.can_manage||!member.email} onClick={async()=>{await mutate(()=>addLearningMember(course.id,member));setMember({...member,email:''})}}><Plus size={15}/>Enroll</button></div>
   <div style={s.cards}>{(course.members||[]).map(item=><article style={s.card} key={item.user_id}><div style={s.metaStack}><strong>{item.full_name||item.email}</strong><small>{item.email} · {item.persona}</small></div>{course.can_manage&&item.user_id!==course.created_by&&<button style={s.dangerIcon} onClick={()=>mutate(()=>removeLearningMember(course.id,item.user_id))} title="Remove"><Trash2 size={15}/></button>}</article>)}</div></Section>
@@ -146,43 +179,71 @@ function Curriculum({course,mutate}) {
   const lesson=(mi,li,key,value)=>setModules(rows=>rows.map((row,i)=>i===mi?{...row,lessons:(row.lessons||[]).map((x,j)=>j===li?{...x,[key]:value}:x)}:row));
   return <div style={s.scroll}><div style={s.toolbar}><p>Organize a semester into modules and lessons. Course content remains reusable across the curriculum.</p>{course.can_manage&&<><button style={s.secondary} onClick={()=>setModules([...modules,{title:'',description:'',lessons:[]}])}><Plus size={15}/>Module</button><button style={s.primary} onClick={()=>mutate(()=>saveLearningCurriculum(course.id,modules))}><Save size={15}/>Save</button></>}</div>
   {modules.map((module,mi)=><Section key={mi} title={`Module ${mi+1}`}><div style={s.grid}><Field label="Title"><ExpandableEditor compact title={`Module ${mi+1} title`} placeholder="Module title" value={module.title||''} disabled={!course.can_manage} onChange={value=>update(mi,'title',value)}/></Field><Field label="Description" wide><ExpandableEditor title={`Module ${mi+1} description`} value={module.description||''} disabled={!course.can_manage} onChange={value=>update(mi,'description',value)}/></Field></div>
-  {(module.lessons||[]).map((item,li)=><div style={s.lesson} key={li}><span style={s.lessonNumber}>{li+1}</span><div style={s.lessonFields}><Field label="Lesson title"><ExpandableEditor compact title={`Module ${mi+1}, lesson ${li+1} title`} placeholder="Lesson title" value={item.title||''} disabled={!course.can_manage} onChange={value=>lesson(mi,li,'title',value)}/></Field><Field label="Lesson description"><ExpandableEditor compact title={`Module ${mi+1}, lesson ${li+1} description`} placeholder="Lesson description" value={item.description||''} disabled={!course.can_manage} onChange={value=>lesson(mi,li,'description',value)}/></Field></div>{course.can_manage&&<button style={s.dangerIcon} onClick={()=>update(mi,'lessons',module.lessons.filter((_,j)=>j!==li))}><Trash2 size={14}/></button>}</div>)}
+  {(module.lessons||[]).map((item,li)=><div style={s.lesson} key={li}><span style={s.lessonNumber}>{li+1}</span><div style={s.lessonFields}><Field label="Lesson title"><ExpandableEditor compact title={`Module ${mi+1}, lesson ${li+1} title`} placeholder="Lesson title" value={item.title||''} disabled={!course.can_manage} onChange={value=>lesson(mi,li,'title',value)}/></Field><Field label="Lesson description"><ExpandableEditor compact title={`Module ${mi+1}, lesson ${li+1} description`} placeholder="Lesson description" value={item.description||''} disabled={!course.can_manage} onChange={value=>lesson(mi,li,'description',value)}/></Field><Field label="Objectives"><ExpandableEditor compact title={`Module ${mi+1}, lesson ${li+1} objectives`} placeholder="One objective per line" value={(item.objectives||[]).join('\n')} disabled={!course.can_manage} onChange={value=>lesson(mi,li,'objectives',value.split('\n'))}/></Field><Field label="Competencies"><ExpandableEditor compact title={`Module ${mi+1}, lesson ${li+1} competencies`} placeholder="One competency per line" value={(item.competencies||[]).join('\n')} disabled={!course.can_manage} onChange={value=>lesson(mi,li,'competencies',value.split('\n'))}/></Field></div>{course.can_manage&&<button style={s.dangerIcon} onClick={()=>update(mi,'lessons',module.lessons.filter((_,j)=>j!==li))}><Trash2 size={14}/></button>}</div>)}
   {course.can_manage&&<div style={s.inlineActions}><button style={s.secondary} onClick={()=>update(mi,'lessons',[...(module.lessons||[]),{title:'',description:''}])}><Plus size={14}/>Lesson</button><button style={s.dangerIcon} onClick={()=>setModules(modules.filter((_,i)=>i!==mi))}><Trash2 size={14}/></button></div>}</Section>)}
   {!modules.length&&<Empty title="No curriculum yet" text="Add the first module to create the learning path."/>}</div>;
 }
 
 function CourseContent({course,documents,mutate}) {
   const [documentId,setDocumentId]=useState('');
-  const [mapping,setMapping]=useState({module_id:'',lesson_id:''});
-  useEffect(()=>{setDocumentId('');setMapping({module_id:'',lesson_id:''})},[course.id]);
-  const attached=new Set((course.assets||[]).map(x=>x.document_id));
-  const available=documents.filter(x=>!attached.has(x.id));
+  const [mapping,setMapping]=useState({module_id:'',lesson_id:'',start_seconds:'',end_seconds:''});
+  useEffect(()=>{setDocumentId('');setMapping({module_id:'',lesson_id:'',start_seconds:'',end_seconds:''})},[course.id]);
+  const available=documents;
+  const selectedDocument=documents.find(item=>item.id===documentId);
+  const isTimed=isTimedLearningContent(selectedDocument);
   const attach=async()=>{
-    await mutate(()=>addLearningAsset(course.id,{document_id:documentId,module_id:mapping.module_id||null,lesson_id:mapping.lesson_id||null}));
+    await mutate(()=>addLearningAsset(course.id,{document_id:documentId,module_id:mapping.module_id||null,lesson_id:mapping.lesson_id||null,start_seconds:isTimed&&mapping.start_seconds!==''?Number(mapping.start_seconds):null,end_seconds:isTimed&&mapping.end_seconds!==''?Number(mapping.end_seconds):null}));
     setDocumentId('');
   };
-  return <div style={s.scroll}><Section title="Attach workspace content" icon={<FileText size={16}/>}><div style={s.mappingRow}><Field label="Content"><select value={documentId} onChange={e=>setDocumentId(e.target.value)}><option value="">Choose a document, audio file, or video</option>{available.map(doc=><option key={doc.id} value={doc.id}>{doc.original_name} · {doc.status}</option>)}</select></Field><MappingSelectors course={course} value={mapping} onChange={setMapping}/><button style={s.primary} disabled={!course.can_manage||!documentId} onClick={attach}><Plus size={15}/>Attach</button></div></Section>
+  const invalidRange=isTimed&&((mapping.start_seconds==='')!==(mapping.end_seconds==='')||(mapping.start_seconds!==''&&Number(mapping.end_seconds)<=Number(mapping.start_seconds)));
+  return <div style={s.scroll}><Section title="Attach workspace content" icon={<FileText size={16}/>}><div style={s.mappingRow}><Field label="Content"><select value={documentId} onChange={e=>setDocumentId(e.target.value)}><option value="">Choose a document, audio file, or video</option>{available.map(doc=><option key={doc.id} value={doc.id}>{doc.original_name} · {doc.status}</option>)}</select></Field><MappingSelectors course={course} value={mapping} onChange={setMapping}/>{isTimed&&<TimeRangeFields value={mapping} onChange={setMapping}/>}<button style={s.primary} disabled={!course.can_manage||!documentId||invalidRange} onClick={attach}><Plus size={15}/>Attach</button></div>{isTimed&&<div style={s.rangeHint}>Optional lesson range: leave both boundaries empty to attach the complete recording.</div>}</Section>
   <div style={s.assetGrid}>{(course.assets||[]).map(asset=><AssetMappingCard key={asset.id} asset={asset} course={course} mutate={mutate}/>)}</div>
   {!course.assets?.length&&<Empty title="No course content" text="Attach processed workspace files. Embedded assets become available to the tutor and study tools."/>}</div>;
 }
 
 function AssetMappingCard({asset,course,mutate}) {
-  const [mapping,setMapping]=useState({module_id:asset.module_id||'',lesson_id:asset.lesson_id||''});
-  useEffect(()=>setMapping({module_id:asset.module_id||'',lesson_id:asset.lesson_id||''}),[asset.module_id,asset.lesson_id]);
-  const changed=mapping.module_id!==(asset.module_id||'')||mapping.lesson_id!==(asset.lesson_id||'');
-  const save=()=>mutate(()=>addLearningAsset(course.id,{document_id:asset.document_id,module_id:mapping.module_id||null,lesson_id:mapping.lesson_id||null,title:asset.title||asset.original_name}));
+  const [mapping,setMapping]=useState({module_id:asset.module_id||'',lesson_id:asset.lesson_id||'',start_seconds:asset.start_seconds??'',end_seconds:asset.end_seconds??''});
+  const [action,setAction]=useState('');
+  const [feedback,setFeedback]=useState('');
+  useEffect(()=>setMapping({module_id:asset.module_id||'',lesson_id:asset.lesson_id||'',start_seconds:asset.start_seconds??'',end_seconds:asset.end_seconds??''}),[asset.module_id,asset.lesson_id,asset.start_seconds,asset.end_seconds]);
+  const changed=mapping.module_id!==(asset.module_id||'')||mapping.lesson_id!==(asset.lesson_id||'')||String(mapping.start_seconds)!==String(asset.start_seconds??'')||String(mapping.end_seconds)!==String(asset.end_seconds??'');
+  const isTimed=isTimedLearningContent(asset);
+  const invalidRange=isTimed&&((mapping.start_seconds==='')!==(mapping.end_seconds==='')||(mapping.start_seconds!==''&&Number(mapping.end_seconds)<=Number(mapping.start_seconds)));
+  const payload={document_id:asset.document_id,module_id:mapping.module_id||null,lesson_id:mapping.lesson_id||null,title:asset.title||asset.original_name,start_seconds:isTimed&&mapping.start_seconds!==''?Number(mapping.start_seconds):null,end_seconds:isTimed&&mapping.end_seconds!==''?Number(mapping.end_seconds):null};
+  const updateMapping=value=>{setMapping(value);setFeedback('')};
+  const runAction=async mode=>{
+    setFeedback('');
+    if(invalidRange){setFeedback('Enter both media boundaries, and make the end greater than the start.');return}
+    if(!changed){
+      setFeedback(mode==='replace'?'Change the module, lesson, or media range before replacing.':'Choose a different module, lesson, or media range for the new mapping.');
+      return;
+    }
+    setAction(mode);
+    try{
+      if(mode==='replace')await mutate(()=>updateLearningAsset(course.id,asset.id,payload));
+      else await mutate(()=>addLearningAsset(course.id,payload));
+      setFeedback(mode==='replace'?'Mapping replaced.':'New mapping added.');
+    }catch(error){setFeedback(error?.message||'The mapping could not be saved.')}
+    finally{setAction('')}
+  };
   return <article style={s.assetMapping}>
     <header style={s.assetHeader}><div style={s.assetIcon}>{asset.file_type==='video'?'▶':'▤'}</div><div style={{...s.metaStack,flex:1}}><strong style={s.ellipsis}>{asset.title||asset.original_name}</strong><small>{asset.doc_type||asset.file_type} · {asset.status} · {asset.chunk_count||0} chunks{asset.duration_seconds?` · ${formatTime(asset.duration_seconds)}`:''}</small></div>{course.can_manage&&<button style={s.dangerIcon} onClick={()=>mutate(()=>removeLearningAsset(course.id,asset.id))} title="Remove from course"><Trash2 size={15}/></button>}</header>
-    <div style={s.assetScope}><span>Current placement: <strong>{scopeLabel(course,mapping)}</strong></span></div>
-    <div style={s.assetMappingControls}><MappingSelectors course={course} value={mapping} onChange={setMapping} disabled={!course.can_manage}/>{course.can_manage&&<button style={s.secondary} disabled={!changed} onClick={save}><Save size={14}/>Save mapping</button>}</div>
+    <div style={s.assetScope}><span>Current placement: <strong>{scopeLabel(course,mapping)}</strong>{asset.start_seconds!=null?` · ${formatTime(asset.start_seconds)}-${formatTime(asset.end_seconds)}`:' · complete asset'}</span></div>
+    <div style={s.assetMappingControls}><MappingSelectors course={course} value={mapping} onChange={updateMapping} disabled={!course.can_manage}/>{isTimed&&<TimeRangeFields value={mapping} onChange={updateMapping} disabled={!course.can_manage}/>} {course.can_manage&&<><button type="button" style={s.secondary} disabled={Boolean(action)} onClick={()=>runAction('replace')}>{action==='replace'?<LoaderCircle size={14}/>:<Save size={14}/>} {action==='replace'?'Replacing...':'Replace Mapping'}</button><button type="button" style={s.primary} disabled={Boolean(action)} onClick={()=>runAction('add')}>{action==='add'?<LoaderCircle size={14}/>:<Plus size={14}/>} {action==='add'?'Adding...':'Add as New Mapping'}</button></>}</div>
+    {course.can_manage&&<div style={feedback?s.mappingFeedback:s.rangeHint} role="status">{feedback||'Change the lesson or media range, then replace this mapping or preserve it and add another.'}</div>}
   </article>;
 }
+
+function TimeRangeFields({value,onChange,disabled=false}) { return <>
+  <Field label="Media start (seconds)"><input type="number" min="0" step="0.1" disabled={disabled} placeholder="Beginning" value={value.start_seconds??''} onChange={e=>onChange({...value,start_seconds:e.target.value})}/></Field>
+  <Field label="Media end (seconds)"><input type="number" min="0" step="0.1" disabled={disabled} placeholder="End" value={value.end_seconds??''} onChange={e=>onChange({...value,end_seconds:e.target.value})}/></Field>
+</> }
 
 function MappingSelectors({course,value,onChange,disabled=false}) {
   const modules=course.modules||[];
   const selectedModule=modules.find(item=>String(item.id)===String(value.module_id));
   const lessons=selectedModule?.lessons||[];
-  const setModule=module_id=>onChange({module_id,lesson_id:''});
+  const setModule=module_id=>onChange({...value,module_id,lesson_id:''});
   return <>
     <Field label="Module"><select disabled={disabled} value={value.module_id||''} onChange={e=>setModule(e.target.value)}><option value="">Entire course</option>{modules.map((module,index)=><option key={module.id} value={module.id}>Module {index+1}: {module.title}</option>)}</select></Field>
     <Field label="Lesson"><select disabled={disabled||!value.module_id} value={value.lesson_id||''} onChange={e=>onChange({...value,lesson_id:e.target.value})}><option value="">All lessons in module</option>{lessons.map((lesson,index)=><option key={lesson.id} value={lesson.id}>Lesson {index+1}: {lesson.title}</option>)}</select></Field>
@@ -190,7 +251,7 @@ function MappingSelectors({course,value,onChange,disabled=false}) {
 }
 
 function ScopeBar({course,scope,setScope,count}) {
-  return <div style={s.scopeBar}><div style={s.metaStack}><strong>Learning scope</strong><small>{count} embedded {count===1?'asset':'assets'} available</small></div><div style={s.scopeSelectors}><MappingSelectors course={course} value={scope} onChange={setScope}/></div></div>;
+  return <div style={s.scopeBar}><div style={s.metaStack}><strong>{course.course_code?`${course.course_code} · `:''}{course.title}</strong><small>Learning scope · {count} embedded {count===1?'asset':'assets'} available</small></div><div style={s.scopeSelectors}><MappingSelectors course={course} value={scope} onChange={setScope}/></div></div>;
 }
 
 function scopedDocumentIds(course,scope) {
@@ -225,8 +286,9 @@ function Tutor({course,workspaceId}) {
   const recognitionRef=useRef(null); const recorderRef=useRef(null); const streamRef=useRef(null); const audioChunksRef=useRef([]); const spokenRef=useRef('');
   useEffect(()=>setScope({module_id:'',lesson_id:''}),[course.id]);
   const documentIds=useMemo(()=>scopedDocumentIds(course,scope),[course.assets,scope.module_id,scope.lesson_id]);
+  const documentSignature=useMemo(()=>[...documentIds].sort().join(','),[documentIds]);
   const sessionKey=`learning_session_${LEARNING_SESSION_SCOPE_VERSION}_${course.id}_${scope.module_id||'course'}_${scope.lesson_id||'all'}`;
-  useEffect(()=>{let active=true;setMessages([]);setSessionId('');setComposerError('');const id=localStorage.getItem(sessionKey);if(id)getSession(id).then(session=>{if(active){setSessionId(id);setMessages(session.messages||[])}}).catch(()=>localStorage.removeItem(sessionKey));return()=>{active=false}},[course.id,scope.module_id,scope.lesson_id]);
+  useEffect(()=>{let active=true;setMessages([]);setSessionId('');setComposerError('');const id=localStorage.getItem(sessionKey);if(id)getSession(id).then(session=>{if(!active)return;const sessionSignature=[...(session.document_ids||[])].sort().join(',');if(sessionSignature!==documentSignature){localStorage.removeItem(sessionKey);return}setSessionId(id);setMessages(session.messages||[])}).catch(()=>localStorage.removeItem(sessionKey));return()=>{active=false}},[sessionKey,documentSignature]);
   useEffect(()=>()=>{
     recognitionRef.current?.abort?.();
     if(recorderRef.current?.state==='recording')recorderRef.current.stop();
@@ -241,10 +303,11 @@ function Tutor({course,workspaceId}) {
     setMessages([...base,assistant]);setInput('');let sid=sessionId;
     try{
       const resolved=await resolveLearningScope(course.id,scope.module_id||null,scope.lesson_id||null);
+      if(String(resolved.course_id)!==String(course.id))throw new Error('The Tutor received a stale course scope. Select the course again and retry.');
       if(!resolved.document_ids?.length)throw new Error('No embedded content is available in this learning scope.');
       if(!sid){const created=await createSession(`${course.title} · ${scopeLabel(course,scope)} · Learning`,resolved.document_ids,resolved.workspace_id||workspaceId);sid=created.id;setSessionId(sid);localStorage.setItem(sessionKey,sid)}
       let answer='';
-      await streamChat({question:`${resolved.instruction}\n\nSTUDENT QUESTION:\n${user.content}`,documentIds:resolved.document_ids,history:messages.slice(-10).map(({role,content:messageContent})=>({role,content:messageContent})),workspaceId:resolved.workspace_id||workspaceId,responseLanguage:language==='auto'?null:language.split('-')[0]},{
+      await streamChat({question:`${resolved.instruction}\n\nSTUDENT QUESTION:\n${user.content}`,documentIds:resolved.document_ids,history:messages.slice(-10).map(({role,content:messageContent})=>({role,content:messageContent})),workspaceId:resolved.workspace_id||workspaceId,responseLanguage:language==='auto'?null:language.split('-')[0],evidenceRanges:resolved.evidence_ranges||[]},{
         onToken:t=>{answer+=t;setMessages([...base,{...assistant,content:answer}])},
         onDone:async sources=>{const done=[...base,{...assistant,content:answer,sources:sources||null}];setMessages(done);await saveSessionMessages(sid,done);setThinking(false)},
         onError:e=>{setMessages([...base,{...assistant,content:`Unable to answer: ${e}`}]);setThinking(false)},
@@ -297,7 +360,7 @@ function StudyTools({course,workspaceId,mutate}) {
   useEffect(()=>setScope({module_id:'',lesson_id:''}),[course.id]);
   const ids=useMemo(()=>scopedDocumentIds(course,scope),[course.assets,scope.module_id,scope.lesson_id]);
   const selectedScope=scopeLabel(course,scope);
-  const generateContent=(prompt,resolved)=>new Promise((resolve,reject)=>{let content='';const scopedPrompt=`${resolved.instruction}\n\nTASK:\n${prompt}`;streamChat({question:scopedPrompt,documentIds:resolved.document_ids,history:[],workspaceId:resolved.workspace_id||workspaceId},{onToken:t=>content+=t,onDone:()=>resolve(content),onError:reject})});
+  const generateContent=(prompt,resolved)=>new Promise((resolve,reject)=>{let content='';const scopedPrompt=`${resolved.instruction}\n\nTASK:\n${prompt}`;streamChat({question:scopedPrompt,documentIds:resolved.document_ids,history:[],workspaceId:resolved.workspace_id||workspaceId,evidenceRanges:resolved.evidence_ranges||[]},{onToken:t=>content+=t,onDone:()=>resolve(content),onError:reject})});
   const generate=async()=>{
     if(!ids.length)return;
     setGenerating(true);setToolError('');
@@ -455,8 +518,8 @@ const s={
   tabs:{display:'flex',gap:3,padding:'0 10px',borderBottom:'1px solid var(--b1)',overflowX:'auto',flexShrink:0},tab:{padding:'9px 10px',border:0,borderBottom:'2px solid transparent',background:'transparent',color:'var(--muted2)',whiteSpace:'nowrap',cursor:'pointer'},tabOn:{color:'#4ade80',borderBottomColor:'#4ade80'},mobileTabs:{margin:8,width:'calc(100% - 16px)',padding:9,border:'1px solid var(--b2)',borderRadius:6,background:'var(--s2)',color:'var(--tx)'},
   body:{flex:1,minHeight:0,overflow:'hidden'},scroll:{height:'100%',overflowY:'auto',padding:'10px 12px 28px',boxSizing:'border-box'},section:{marginBottom:12,padding:12,border:'1px solid var(--b1)',borderRadius:7,background:'var(--s1)'},grid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:9,marginBottom:10},field:{display:'flex',flexDirection:'column',gap:4,minWidth:0,fontSize:11,color:'var(--muted2)'},wide:{gridColumn:'1/-1'},
   primary:{display:'inline-flex',alignItems:'center',justifyContent:'center',gap:6,minHeight:34,padding:'7px 11px',border:0,borderRadius:6,background:'#15803d',color:'#fff',fontWeight:800,cursor:'pointer',whiteSpace:'nowrap'},secondary:{display:'inline-flex',alignItems:'center',justifyContent:'center',gap:5,minHeight:34,padding:'7px 10px',border:'1px solid var(--b2)',borderRadius:6,background:'var(--s2)',color:'var(--tx)',cursor:'pointer',whiteSpace:'nowrap'},danger:{display:'inline-flex',alignItems:'center',gap:6,padding:8,border:'1px solid rgba(248,113,113,.3)',borderRadius:6,background:'rgba(248,113,113,.08)',color:'#fca5a5',cursor:'pointer'},dangerIcon:{display:'grid',placeItems:'center',width:30,height:30,padding:0,border:'1px solid rgba(248,113,113,.22)',borderRadius:5,background:'rgba(248,113,113,.07)',color:'#fca5a5',cursor:'pointer',flexShrink:0},
-  addRow:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,190px),1fr))',gap:7,alignItems:'end'},cards:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,280px),1fr))',gap:8},card:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,padding:9,border:'1px solid var(--b1)',borderRadius:6,background:'var(--s2)'},metaStack:{display:'flex',flexDirection:'column',gap:4,minWidth:0,lineHeight:1.35},lesson:{display:'grid',gridTemplateColumns:'30px minmax(0,1fr) 30px',gap:8,alignItems:'center',marginBottom:9,padding:'8px 0',borderBottom:'1px solid var(--b1)'},lessonNumber:{alignSelf:'start',display:'grid',placeItems:'center',width:25,height:25,borderRadius:5,background:'rgba(74,222,128,.1)',color:'#86efac',fontSize:11,fontWeight:800},lessonFields:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,220px),1fr))',gap:8,minWidth:0},inlineActions:{display:'flex',justifyContent:'flex-end',gap:6,marginTop:7},toolbar:{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:10},mappingRow:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,190px),1fr))',gap:8,alignItems:'end'},
-  assetGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,430px),1fr))',gap:8},asset:{display:'grid',gridTemplateColumns:'38px minmax(0,1fr) 30px',gap:9,alignItems:'center',padding:10,border:'1px solid var(--b1)',borderRadius:7,background:'var(--s1)'},assetIcon:{display:'grid',placeItems:'center',width:36,height:36,borderRadius:6,background:'rgba(74,222,128,.1)',color:'#4ade80'},assetMapping:{minWidth:0,padding:10,border:'1px solid var(--b1)',borderRadius:7,background:'var(--s1)'},assetHeader:{display:'flex',alignItems:'center',gap:9,minWidth:0},assetScope:{margin:'8px 0',padding:'6px 8px',borderRadius:5,background:'rgba(74,222,128,.06)',color:'var(--muted2)',fontSize:10.5},assetMappingControls:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,170px),1fr))',gap:7,alignItems:'end'},ellipsis:{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},scopeBar:{display:'flex',alignItems:'end',justifyContent:'space-between',gap:10,padding:'8px 12px',borderBottom:'1px solid var(--b1)',background:'var(--s1)',flexWrap:'wrap'},scopeSelectors:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,180px),1fr))',gap:7,flex:'1 1 390px',maxWidth:520},studyTarget:{display:'flex',alignItems:'center',gap:7,margin:'8px 0',padding:'7px 9px',border:'1px solid rgba(74,222,128,.2)',borderRadius:6,background:'rgba(74,222,128,.06)',color:'var(--muted2)',fontSize:11},
+  addRow:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,190px),1fr))',gap:7,alignItems:'end'},checkRow:{display:'flex',alignItems:'center',gap:16,minHeight:36,flexWrap:'wrap'},cards:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,280px),1fr))',gap:8},card:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,padding:9,border:'1px solid var(--b1)',borderRadius:6,background:'var(--s2)'},metaStack:{display:'flex',flexDirection:'column',gap:4,minWidth:0,lineHeight:1.35},lesson:{display:'grid',gridTemplateColumns:'30px minmax(0,1fr) 30px',gap:8,alignItems:'center',marginBottom:9,padding:'8px 0',borderBottom:'1px solid var(--b1)'},lessonNumber:{alignSelf:'start',display:'grid',placeItems:'center',width:25,height:25,borderRadius:5,background:'rgba(74,222,128,.1)',color:'#86efac',fontSize:11,fontWeight:800},lessonFields:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,220px),1fr))',gap:8,minWidth:0},inlineActions:{display:'flex',justifyContent:'flex-end',gap:6,marginTop:7},toolbar:{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:10},mappingRow:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,170px),1fr))',gap:8,alignItems:'end'},
+  rangeHint:{marginTop:8,color:'#86efac',fontSize:10.5},mappingFeedback:{marginTop:8,padding:'6px 8px',border:'1px solid rgba(250,204,21,.3)',borderRadius:5,background:'rgba(250,204,21,.08)',color:'#fde68a',fontSize:10.5},assetGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,430px),1fr))',gap:8},asset:{display:'grid',gridTemplateColumns:'38px minmax(0,1fr) 30px',gap:9,alignItems:'center',padding:10,border:'1px solid var(--b1)',borderRadius:7,background:'var(--s1)'},assetIcon:{display:'grid',placeItems:'center',width:36,height:36,borderRadius:6,background:'rgba(74,222,128,.1)',color:'#4ade80'},assetMapping:{minWidth:0,padding:10,border:'1px solid var(--b1)',borderRadius:7,background:'var(--s1)'},assetHeader:{display:'flex',alignItems:'center',gap:9,minWidth:0},assetScope:{margin:'8px 0',padding:'6px 8px',borderRadius:5,background:'rgba(74,222,128,.06)',color:'var(--muted2)',fontSize:10.5},assetMappingControls:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,170px),1fr))',gap:7,alignItems:'end'},ellipsis:{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},scopeBar:{display:'flex',alignItems:'end',justifyContent:'space-between',gap:10,padding:'8px 12px',borderBottom:'1px solid var(--b1)',background:'var(--s1)',flexWrap:'wrap'},scopeSelectors:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,180px),1fr))',gap:7,flex:'1 1 390px',maxWidth:520},studyTarget:{display:'flex',alignItems:'center',gap:7,margin:'8px 0',padding:'7px 9px',border:'1px solid rgba(74,222,128,.2)',borderRadius:6,background:'rgba(74,222,128,.06)',color:'var(--muted2)',fontSize:11},
   tutor:{height:'100%',display:'flex',flexDirection:'column'},messages:{flex:1,minHeight:0,overflowY:'auto',padding:12},message:{maxWidth:'min(820px,92%)',marginBottom:9,padding:'9px 11px',borderRadius:7},userMessage:{marginLeft:'auto',background:'#166534',color:'#fff'},aiMessage:{marginRight:'auto',border:'1px solid var(--b1)',background:'var(--s1)'},messageText:{marginTop:5,whiteSpace:'pre-wrap',lineHeight:1.55,fontSize:13},tutorAnswer:{marginTop:5,fontSize:13,lineHeight:1.65,color:'var(--tx2)',overflowWrap:'anywhere'},sources:{marginTop:8,paddingTop:6,borderTop:'1px solid var(--b1)',fontSize:10.5,color:'var(--muted2)'},composer:{display:'grid',gridTemplateColumns:'minmax(78px,108px) minmax(0,1fr) 40px 40px',gap:7,padding:10,borderTop:'1px solid var(--b1)',background:'var(--s1)'},tutorLanguage:{minWidth:0,width:'100%',padding:'0 7px',border:'1px solid var(--b2)',borderRadius:6,background:'var(--s2)',color:'var(--tx)',fontSize:11},voiceButton:{display:'grid',placeItems:'center',padding:0,border:'1px solid var(--b2)',borderRadius:6,background:'var(--s2)',color:'#86efac',cursor:'pointer'},voiceButtonOn:{borderColor:'rgba(248,113,113,.55)',background:'rgba(248,113,113,.12)',color:'#fca5a5'},voiceStatus:{gridColumn:'1/-1',fontSize:10.5,color:'var(--muted2)'},send:{display:'grid',placeItems:'center',border:0,borderRadius:6,background:'#15803d',color:'#fff',cursor:'pointer'},
   artifactGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,360px),1fr))',gap:9},artifact:{padding:11,border:'1px solid var(--b1)',borderRadius:7,background:'var(--s1)'},artifactHeader:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8},quizArtifact:{gridColumn:'1/-1'},flashcardDeck:{display:'flex',flexDirection:'column',gap:12,marginTop:10},flashcardExchange:{display:'flex',flexDirection:'column',gap:7,padding:'10px 0',borderTop:'1px solid var(--b1)'},flashcardLabel:{alignSelf:'center',padding:'3px 8px',borderRadius:12,background:'rgba(74,222,128,.08)',color:'var(--muted2)',fontSize:10},flashcardMessage:{width:'min(820px,92%)',boxSizing:'border-box',marginBottom:0},quiz:{display:'flex',flexDirection:'column',gap:12,marginTop:10},quizSummary:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,flexWrap:'wrap',padding:10,border:'1px solid rgba(74,222,128,.22)',borderRadius:6,background:'rgba(74,222,128,.06)'},quizScore:{display:'flex',gap:6,flexWrap:'wrap',color:'#bbf7d0',fontSize:11},quizQuestion:{padding:12,border:'1px solid var(--b1)',borderRadius:7,background:'var(--s2)'},quizQuestionHeader:{display:'flex',alignItems:'flex-start',gap:8,marginBottom:10},questionNumber:{display:'grid',placeItems:'center',width:25,height:25,flexShrink:0,borderRadius:5,background:'rgba(74,222,128,.12)',color:'#86efac',fontWeight:800},correctBadge:{display:'inline-flex',alignItems:'center',gap:4,marginLeft:'auto',padding:'3px 7px',borderRadius:12,background:'rgba(74,222,128,.12)',color:'#86efac',fontSize:10},incorrectBadge:{display:'inline-flex',alignItems:'center',gap:4,marginLeft:'auto',padding:'3px 7px',borderRadius:12,background:'rgba(248,113,113,.12)',color:'#fca5a5',fontSize:10},quizOptions:{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:7,marginBottom:10},quizOption:{display:'grid',gridTemplateColumns:'20px 24px minmax(0,1fr) 18px',alignItems:'center',gap:7,minHeight:48,padding:'8px 10px',border:'1px solid var(--b1)',borderRadius:6,background:'var(--s1)',color:'var(--tx2)',cursor:'pointer'},correctOption:{borderColor:'rgba(74,222,128,.55)',background:'rgba(74,222,128,.1)',color:'#dcfce7'},incorrectOption:{borderColor:'rgba(248,113,113,.55)',background:'rgba(248,113,113,.1)',color:'#fee2e2'},answerFeedback:{display:'flex',flexDirection:'column',gap:5,padding:10,borderRadius:6,lineHeight:1.45},correctFeedback:{border:'1px solid rgba(74,222,128,.35)',background:'rgba(74,222,128,.08)'},incorrectFeedback:{border:'1px solid rgba(248,113,113,.35)',background:'rgba(248,113,113,.08)'},clamped:{display:'-webkit-box',WebkitLineClamp:8,WebkitBoxOrient:'vertical',overflow:'hidden',marginTop:8,whiteSpace:'pre-wrap',fontSize:12,lineHeight:1.5,color:'var(--tx2)'},linkBtn:{marginTop:7,padding:0,border:0,background:'transparent',color:'#4ade80',cursor:'pointer'},questionForm:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,220px),1fr))',gap:7,alignItems:'end'},question:{display:'flex',flexDirection:'column',gap:9,padding:11,border:'1px solid var(--b1)',borderRadius:7,background:'var(--s1)'},questionHeader:{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'},status:{padding:'3px 7px',borderRadius:12,background:'rgba(74,222,128,.1)',color:'#86efac',fontSize:10,textTransform:'uppercase'},
   empty:{height:'100%',minHeight:150,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:7,padding:18,textAlign:'center',color:'var(--muted2)'},markdownPreview:{maxHeight:360,marginTop:8,overflow:'auto',padding:'2px 8px 2px 2px',borderTop:'1px solid var(--b1)'},artifactMarkdown:{fontSize:13,lineHeight:1.65,color:'var(--tx2)'},readerOverlay:{position:'fixed',inset:0,zIndex:3300,display:'grid',placeItems:'center',padding:'max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))',background:'rgba(0,0,0,.8)'},reader:{width:'min(900px,100%)',height:'min(86dvh,760px)',display:'flex',flexDirection:'column',overflow:'hidden',border:'1px solid var(--b2)',borderRadius:8,background:'#102010'},readerHeader:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,padding:10,borderBottom:'1px solid var(--b1)',background:'#142714',flexShrink:0},markdownReader:{flex:1,minHeight:0,overflow:'auto',padding:16},readerMarkdown:{fontSize:14,lineHeight:1.75,color:'var(--tx)'},

@@ -6,6 +6,20 @@ This guide validates the complete MCP path from deployment and OAuth through
 course administration, grounded tutoring, study tools, persistent quizzes,
 human escalation, resource access, authorization, UI verification, and cleanup.
 
+## Domain packs and multimodal lesson scope
+
+Courses can select a reusable pack for healthcare, financial services,
+manufacturing, construction, sports, legal/compliance, enterprise training,
+customer education, government, cultural arts, or general learning. Each course
+can override Tutor guidance, passing score, reviewer persona, certification,
+and acknowledgment settings without creating a separate vertical application.
+
+The same embedded document, recording, or video can be mapped into multiple
+lessons. Audio and video mappings may specify `start_seconds` and `end_seconds`.
+The resolved scope returns `evidence_ranges`; Tutor retrieval enforces those
+boundaries against timestamped chunks before reranking and generation. Leaving
+both values empty uses the complete asset.
+
 ## Test coverage
 
 The flow verifies:
@@ -229,11 +243,35 @@ mcp_tool get_learning_course "$(jq -cn \
 )" | tool_data | tee /tmp/learning-course-detail.json | jq
 ```
 
+To replace an existing mapping without removing or duplicating the source
+document, capture its mapping ID and call the dedicated update tool:
+
+```bash
+export ASSET_ID="$(jq -r '.assets[0].id' /tmp/learning-course-detail.json)"
+
+mcp_tool update_learning_content_mapping "$(jq -cn \
+  --arg course "$COURSE_ID" \
+  --arg asset "$ASSET_ID" \
+  --arg module "$MODULE_ID" \
+  --arg lesson "$LESSON_ID" \
+  '{
+    course_id:$course,
+    asset_id:$asset,
+    module_id:$module,
+    lesson_id:$lesson,
+    start_seconds:180,
+    end_seconds:300
+  }'
+)" | tool_data | jq
+```
+
 ## 8. Ask the grounded AI Tutor
 
 The backend resolves the selected course, module, or lesson into an authoritative
 set of embedded document IDs. Content assigned only to another module or lesson
-is excluded from a lesson-scoped request.
+is excluded from a lesson-scoped request. The call fails closed if the resolved
+scope does not match `course_id`, preventing stale AI-101 context from being used
+for an AI-201 request.
 
 ```bash
 mcp_tool ask_learning_tutor "$(jq -cn \

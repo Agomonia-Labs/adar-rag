@@ -626,6 +626,9 @@ class DocIntelApiClient:
         self.require_workspace(workspace_id)
         return await self.request("GET", "/api/learning/courses", params={"workspace_id": workspace_id})
 
+    async def list_learning_domain_packs(self) -> list[dict]:
+        return await self.request("GET", "/api/learning/domain-packs")
+
     async def get_learning_course(self, course_id: str) -> dict:
         course = await self.request("GET", f"/api/learning/courses/{course_id}")
         if self.is_organization_service:
@@ -659,6 +662,12 @@ class DocIntelApiClient:
     async def attach_learning_content(self, course_id: str, payload: dict[str, Any]) -> dict:
         await self.get_learning_course(course_id)
         return await self.request("POST", f"/api/learning/courses/{course_id}/assets", json=payload)
+
+    async def update_learning_content_mapping(self, course_id: str, asset_id: str, payload: dict[str, Any]) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request(
+            "PATCH", f"/api/learning/courses/{course_id}/assets/{asset_id}", json=payload,
+        )
 
     async def remove_learning_content(self, course_id: str, asset_id: str) -> dict:
         await self.get_learning_course(course_id)
@@ -708,6 +717,7 @@ class DocIntelApiClient:
         history: list[dict] | None = None,
         redact_pii: bool = False,
         response_language: str | None = None,
+        evidence_ranges: list[dict] | None = None,
     ) -> dict:
         await self._require_documents_access(document_ids)
         if self.is_organization_service:
@@ -724,6 +734,7 @@ class DocIntelApiClient:
             "history": history or [],
             "redact_pii": redact_pii,
             "response_language": response_language,
+            "evidence_ranges": evidence_ranges or [],
         }
         async for event, response_trace_id in self._stream_sse("/api/chat/stream", payload):
             trace_id = response_trace_id or trace_id

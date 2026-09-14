@@ -883,6 +883,9 @@ CREATE TABLE IF NOT EXISTS learning_courses (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE learning_courses ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT 'general';
+ALTER TABLE learning_courses ADD COLUMN IF NOT EXISTS domain_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE learning_courses ADD COLUMN IF NOT EXISTS publication_status TEXT NOT NULL DEFAULT 'draft';
 CREATE INDEX IF NOT EXISTS idx_learning_courses_workspace ON learning_courses(workspace_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS learning_course_members (
@@ -916,6 +919,8 @@ CREATE TABLE IF NOT EXISTS learning_lessons (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE learning_lessons ADD COLUMN IF NOT EXISTS objectives JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE learning_lessons ADD COLUMN IF NOT EXISTS competencies JSONB NOT NULL DEFAULT '[]'::jsonb;
 CREATE INDEX IF NOT EXISTS idx_learning_lessons_module ON learning_lessons(module_id, position);
 
 CREATE TABLE IF NOT EXISTS learning_assets (
@@ -927,10 +932,15 @@ CREATE TABLE IF NOT EXISTS learning_assets (
     title       TEXT        NOT NULL DEFAULT '',
     added_by    UUID        REFERENCES users(id) ON DELETE SET NULL,
     position    INTEGER     NOT NULL DEFAULT 0,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(course_id, document_id)
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Earlier releases allowed one course mapping per source document. Retain this
+-- migration for existing databases while fresh databases start without it.
+ALTER TABLE learning_assets DROP CONSTRAINT IF EXISTS learning_assets_course_id_document_id_key;
+ALTER TABLE learning_assets ADD COLUMN IF NOT EXISTS start_seconds DOUBLE PRECISION;
+ALTER TABLE learning_assets ADD COLUMN IF NOT EXISTS end_seconds DOUBLE PRECISION;
 CREATE INDEX IF NOT EXISTS idx_learning_assets_course ON learning_assets(course_id, position);
+CREATE INDEX IF NOT EXISTS idx_learning_assets_document ON learning_assets(course_id, document_id);
 
 CREATE TABLE IF NOT EXISTS learning_artifacts (
     id                  UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),

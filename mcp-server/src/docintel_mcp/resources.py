@@ -242,7 +242,7 @@ def register_resources(mcp: FastMCP, settings: Settings) -> None:
         """Ordered modules, lessons, objectives, and course metadata."""
         try:
             async with api_client(ctx, settings, "learning:read") as client: course = await client.get_learning_course(course_id)
-            fields = ("id", "title", "course_code", "semester", "description", "objectives", "modules")
+            fields = ("id", "title", "course_code", "semester", "description", "objectives", "domain", "domain_pack", "publication_status", "modules")
             return json.dumps({key: course.get(key) for key in fields}, ensure_ascii=False, default=str)
         except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
 

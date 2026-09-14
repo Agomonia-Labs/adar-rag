@@ -164,6 +164,23 @@ test -n "$ASSET_ID" || { echo "Lesson attachment failed"; exit 1; }
 
 Removing this asset later must not delete the source document.
 
+Replace its curriculum placement or media range through the dedicated mapping
+endpoint. This updates the selected mapping and does not create another row:
+
+```bash
+COURSE="$(curl -fsS -X PATCH \
+  "$API/learning/courses/$COURSE_ID/assets/$ASSET_ID" \
+  -H "$AUTH" -H "$WS" -H "$JSON" \
+  --data "$(jq -cn --arg module "$MODULE_ID" --arg lesson "$LESSON_ID" '{
+    module_id:$module,
+    lesson_id:$lesson,
+    title:"E2E lesson evidence",
+    start_seconds:null,
+    end_seconds:null
+  }')")"
+printf '%s\n' "$COURSE" | jq '.assets[] | select(.id == env.ASSET_ID)'
+```
+
 ## 8. Verify Exact Learning Scope
 
 ```bash
@@ -173,14 +190,15 @@ SCOPE="$(curl -fsS \
 printf '%s\n' "$SCOPE" | jq
 
 printf '%s\n' "$SCOPE" | jq -e \
+  --arg course "$COURSE_ID" \
   --arg document "$DOCUMENT_ID" \
   --arg module "$MODULE_ID" \
   --arg lesson "$LESSON_ID" \
-  '.module_id == $module and .lesson_id == $lesson and (.document_ids | index($document) != null)'
+  '.course_id == $course and .module_id == $module and .lesson_id == $lesson and (.document_ids | index($document) != null)'
 ```
 
-This check is what prevents a lesson question from silently searching the whole
-course or workspace.
+This check is what prevents a lesson question from silently searching another
+course or the wider workspace.
 
 ## 9. Ask the Lesson-Scoped AI Tutor
 

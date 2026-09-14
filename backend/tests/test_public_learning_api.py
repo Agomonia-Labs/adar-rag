@@ -52,6 +52,7 @@ def route_scope(path: str, method: str) -> str:
         ("/learning/courses/{course_id}/members", "POST", "learning:manage"),
         ("/learning/courses/{course_id}/members/{member_user_id}", "DELETE", "learning:manage"),
         ("/learning/courses/{course_id}/assets", "POST", "learning:manage"),
+        ("/learning/courses/{course_id}/assets/{asset_id}", "PATCH", "learning:manage"),
         ("/learning/courses/{course_id}/assets/{asset_id}", "DELETE", "learning:manage"),
         ("/learning/courses/{course_id}/tutor/query/stream", "POST", "learning:participate"),
         ("/learning/courses/{course_id}/artifacts", "GET", "learning:read"),
@@ -90,7 +91,7 @@ def test_public_learning_openapi_exposes_every_operation():
         for operation in path_item
         if operation in {"get", "post", "put", "patch", "delete"}
     ]
-    assert len(operations) == 20
+    assert len(operations) == 22
 
 
 @pytest.mark.anyio
@@ -129,6 +130,7 @@ async def test_tutor_resolves_lesson_scope_before_grounded_chat(monkeypatch):
             lesson_id=lesson_id, scope_db=db,
         )
         return {
+            "course_id": course_id,
             "instruction": "Learning scope: Module 1 / Lesson 2. Use only lesson evidence.",
             "document_ids": ["document-1"],
         }
@@ -161,7 +163,7 @@ async def test_tutor_rejects_scope_without_embedded_content(monkeypatch):
             return "workspace-1"
 
     async def empty_scope(*_args, **_kwargs):
-        return {"instruction": "Lesson scope", "document_ids": []}
+        return {"course_id": "course-1", "instruction": "Lesson scope", "document_ids": []}
 
     monkeypatch.setattr(learning, "resolve_learning_scope", empty_scope)
     with pytest.raises(HTTPException) as exc:
@@ -171,3 +173,26 @@ async def test_tutor_rejects_scope_without_embedded_content(monkeypatch):
             principal("learning:participate"), Db(),
         )
     assert exc.value.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_tutor_rejects_scope_resolved_for_another_course(monkeypatch):
+    class Db:
+        async def fetchval(self, _sql, _course_id):
+            return "workspace-1"
+
+    async def stale_scope(*_args, **_kwargs):
+        return {
+            "course_id": "course-ai-101", "instruction": "Stale scope",
+            "document_ids": ["document-ai-101"],
+        }
+
+    monkeypatch.setattr(learning, "resolve_learning_scope", stale_scope)
+    with pytest.raises(HTTPException) as exc:
+        await public_learning_api.api_ask_learning_tutor(
+            request(), "course-ai-201",
+            public_learning_api.LearningTutorRequest(question="Explain this lesson"),
+            principal("learning:participate"), Db(),
+        )
+    assert exc.value.status_code == 409
+    assert "selected course" in str(exc.value.detail)
