@@ -437,7 +437,7 @@ export default function App() {
                     <div style={s.verticalGroupTitle}>Learning</div>
                     <button style={s.verticalItem} onClick={openLearningWorkflow}>
                       <span>🎓</span>
-                      <span>Learning Intelligence</span>
+                      <span>Knowledge Academy</span>
                     </button>
                   </div>
                 </div>
@@ -551,7 +551,7 @@ export default function App() {
                 </button>
                 <button type="button" style={s.menuItem} onClick={openLearningWorkflow}>
                   <span>🎓</span>
-                  <span>Learning Intelligence</span>
+                  <span>Knowledge Academy</span>
                 </button>
               </section>
 

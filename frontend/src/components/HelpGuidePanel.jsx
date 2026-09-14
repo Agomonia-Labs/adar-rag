@@ -136,10 +136,10 @@ const GUIDE_SECTIONS = [
   {
     key: 'learning',
     icon: '🎓',
-    title: 'Learning Intelligence',
+    title: 'Knowledge Academy',
     summary: 'Build grounded courses from documents, speech, and video.',
     steps: [
-      'Select a shared workspace, open Learning Intelligence, and create a course.',
+      'Select a shared workspace, open Knowledge Academy, and create a course.',
       'Complete the course profile, organize modules and lessons, and enroll students, teachers, or advisors.',
       'Attach processed workspace documents, audio transcripts, and videos as governed course content.',
       'Use AI Tutor for persistent, evidence-backed Q&A with document citations and video timestamps.',

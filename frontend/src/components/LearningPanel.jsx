@@ -111,10 +111,10 @@ export default function LearningPanel({ activeWorkspace = null, onClose }) {
     finally { if(requestId===courseRequestRef.current)setBusy(false); }
   };
 
-  return <div style={s.overlay} role="dialog" aria-modal="true" aria-label="Learning Intelligence">
+  return <div style={s.overlay} role="dialog" aria-modal="true" aria-label="Knowledge Academy">
     <section style={{...s.panel, ...(mobile ? s.panelMobile : {})}}>
       <header style={s.header}>
-        <div style={{minWidth:0}}><h2 style={s.title}><GraduationCap size={19}/> Learning Intelligence</h2><div style={s.subtitle}>Grounded learning across documents, recordings, and video</div></div>
+        <div style={{minWidth:0}}><h2 style={s.title}><GraduationCap size={19}/> Knowledge Academy</h2><div style={s.subtitle}>Grounded learning across documents, recordings, and video</div></div>
         <div style={s.headerActions}>
           <button style={s.iconBtn} onClick={()=>load(course?.id)} title="Refresh"><RefreshCw size={16}/></button>
           <button style={s.iconBtn} onClick={onClose} title="Close"><X size={18}/></button>
