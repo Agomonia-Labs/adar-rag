@@ -1289,6 +1289,17 @@ export async function saveLearningQuizAttempt(courseId, artifactId, answers, rep
   }));
 }
 
+export async function getLearningMastery(courseId, learnerId = '') {
+  const suffix = learnerId ? `?learner_id=${encodeURIComponent(learnerId)}` : '';
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/mastery${suffix}`, { headers:authHdr() }));
+}
+
+export async function updateLearningLessonProgress(courseId, lessonId, payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/lessons/${lessonId}/progress`, {
+    method:'PUT', headers:{...authHdr(),'Content-Type':'application/json'}, body:JSON.stringify(payload),
+  }));
+}
+
 export async function deleteLearningArtifact(courseId, artifactId) {
   return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/artifacts/${artifactId}`, { method:'DELETE', headers:authHdr() }));
 }

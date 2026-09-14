@@ -1018,6 +1018,26 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
         except DocIntelMcpError as exc: return exc.as_dict()
 
     @mcp.tool()
+    async def update_learning_progress(ctx: Context, course_id: str, lesson_id: str, status: str = "in_progress", progress_pct: int = 0, time_spent_seconds: int = 0, last_position_seconds: float | None = None) -> dict:
+        """Save the caller's durable progress for one curriculum lesson."""
+        try:
+            async with api_client(ctx, settings, "learning:participate") as client:
+                return await client.update_learning_lesson_progress(course_id, lesson_id, {
+                    "status": status, "progress_pct": progress_pct,
+                    "time_spent_seconds": time_spent_seconds,
+                    "last_position_seconds": last_position_seconds,
+                })
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def get_learning_mastery(ctx: Context, course_id: str, learner_id: str | None = None) -> dict:
+        """Read evidence-backed completion, competency mastery, and recommended next actions."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client:
+                return await client.get_learning_mastery(course_id, learner_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
     async def ask_learning_person(ctx: Context, course_id: str, question: str, target_role: str = "teacher", context: dict[str, Any] | None = None) -> dict:
         """Escalate a learning question to a course teacher or advisor."""
         try:

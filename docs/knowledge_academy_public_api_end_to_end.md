@@ -1,5 +1,9 @@
 # Knowledge Academy Public REST API End-to-End Test
 
+For the focused lesson progress, evidence-backed mastery, UI, REST, and MCP
+acceptance sequence, see
+[Knowledge Academy Progress and Mastery End-to-End Test](knowledge_academy_progress_mastery_end_to_end.md).
+
 This test verifies OAuth, workspace isolation, course administration, curriculum,
 multimodal content mapping, lesson-scoped Tutor retrieval, saved study material,
 interactive quizzes, learner progress, and teacher or advisor questions.
@@ -298,6 +302,37 @@ printf '%s\n' "$ATTEMPT" | jq -e \
 curl -fsS "$API/learning/courses/$COURSE_ID/progress" \
   -H "$AUTH" -H "$WS" | jq
 ```
+
+### Save lesson progress and inspect mastery
+
+Lesson progress records where a learner stopped and whether the lesson is
+complete. Mastery is calculated separately from completed, graded practice
+questions so a completed lesson is not automatically treated as mastered.
+
+```bash
+curl -fsS -X PUT \
+  "$API/learning/courses/$COURSE_ID/lessons/$LESSON_ID/progress" \
+  -H "$AUTH" -H "$WS" -H "$JSON" \
+  --data '{
+    "status":"completed",
+    "progress_pct":100,
+    "time_spent_seconds":900,
+    "last_position_seconds":420
+  }' | tee /tmp/learning-lesson-progress.json | jq
+
+curl -fsS "$API/learning/courses/$COURSE_ID/mastery" \
+  -H "$AUTH" -H "$WS" \
+  | tee /tmp/learning-mastery.json | jq
+
+jq '{summary,recommendations,modules}' /tmp/learning-mastery.json
+```
+
+Expected behavior:
+
+- `completion_pct` reflects saved lesson completion.
+- `mastery_pct` reflects only completed quiz evidence.
+- Each lesson exposes competency status and assessment evidence.
+- `recommendations` identifies the next lesson, review, or reassessment action.
 
 ## 12. Ask and Answer a Human Question
 

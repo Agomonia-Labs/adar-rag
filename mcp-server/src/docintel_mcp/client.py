@@ -701,6 +701,17 @@ class DocIntelApiClient:
         await self.get_learning_course(course_id)
         return await self.request("GET", f"/api/learning/courses/{course_id}/progress")
 
+    async def update_learning_lesson_progress(self, course_id: str, lesson_id: str, payload: dict[str, Any]) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("PUT", f"/api/learning/courses/{course_id}/lessons/{lesson_id}/progress", json=payload)
+
+    async def get_learning_mastery(self, course_id: str, learner_id: str | None = None) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request(
+            "GET", f"/api/learning/courses/{course_id}/mastery",
+            params={"learner_id": learner_id},
+        )
+
     async def ask_learning_question(self, course_id: str, payload: dict[str, Any]) -> dict:
         await self.get_learning_course(course_id)
         return await self.request("POST", f"/api/learning/courses/{course_id}/questions", json=payload)

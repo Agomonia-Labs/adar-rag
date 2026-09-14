@@ -83,7 +83,7 @@ WEBHOOK_EVENT_TYPES = (
     "batch.completed", "video.processing.completed", "workflow.completed",
     "review.approved", "packet.generated",
     "learning.course.created", "learning.content.attached", "learning.quiz.submitted",
-    "learning.question.answered",
+    "learning.question.answered", "learning.progress.updated",
 )
 
 

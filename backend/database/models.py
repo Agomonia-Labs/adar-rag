@@ -974,6 +974,26 @@ CREATE TABLE IF NOT EXISTS learning_quiz_attempts (
 CREATE INDEX IF NOT EXISTS idx_learning_quiz_attempts_course
     ON learning_quiz_attempts(course_id, user_id, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS learning_lesson_progress (
+    id                    UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    course_id             UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+    module_id             UUID        NOT NULL REFERENCES learning_modules(id) ON DELETE CASCADE,
+    lesson_id             UUID        NOT NULL REFERENCES learning_lessons(id) ON DELETE CASCADE,
+    user_id               UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status                TEXT        NOT NULL DEFAULT 'not_started'
+                                      CHECK (status IN ('not_started','in_progress','completed')),
+    progress_pct          INTEGER     NOT NULL DEFAULT 0 CHECK (progress_pct BETWEEN 0 AND 100),
+    time_spent_seconds    INTEGER     NOT NULL DEFAULT 0 CHECK (time_spent_seconds >= 0),
+    last_position_seconds DOUBLE PRECISION CHECK (last_position_seconds IS NULL OR last_position_seconds >= 0),
+    started_at            TIMESTAMPTZ,
+    completed_at          TIMESTAMPTZ,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(lesson_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_learning_lesson_progress_course
+    ON learning_lesson_progress(course_id, user_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS learning_questions (
     id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     course_id   UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,

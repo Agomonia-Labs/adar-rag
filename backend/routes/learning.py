@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
@@ -121,6 +121,24 @@ class ArtifactCreate(BaseModel):
 class QuizAttemptCreate(BaseModel):
     answers: dict[str, list[str]] = Field(default_factory=dict)
     replace: bool = False
+
+
+class LessonProgressUpdate(BaseModel):
+    status: Literal["not_started", "in_progress", "completed"] = "in_progress"
+    progress_pct: int = Field(default=0, ge=0, le=100)
+    time_spent_seconds: int = Field(default=0, ge=0)
+    last_position_seconds: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def normalize_status(self):
+        if self.status == "completed":
+            self.progress_pct = 100
+        elif self.status == "not_started":
+            self.progress_pct = 0
+            self.last_position_seconds = None
+        elif self.progress_pct == 100:
+            self.status = "completed"
+        return self
 
 
 class PracticeOption(BaseModel):
@@ -735,7 +753,7 @@ async def submit_quiz_attempt(
     user_id = str(current_user["id"])
     await _course_access(db, course_id, user_id)
     artifact = await db.fetchrow(
-        """SELECT id,content FROM learning_artifacts
+        """SELECT id,content,module_id,lesson_id FROM learning_artifacts
            WHERE id=$1::uuid AND course_id=$2::uuid AND artifact_type='practice_questions'""",
         artifact_id, course_id,
     )
@@ -764,6 +782,26 @@ async def submit_quiz_attempt(
     result = _jsonable(dict(row))
     result["answers"] = _decode_json(result.get("answers"), {})
     result["result"] = _decode_json(result.get("result"), {})
+    if artifact.get("lesson_id"):
+        course_config = _decode_json(
+            await db.fetchval("SELECT domain_config FROM learning_courses WHERE id=$1::uuid", course_id), {},
+        )
+        passing_score = max(0, min(100, int(course_config.get("passing_score", 80))))
+        score_pct = round((graded["correct_count"] / graded["question_count"]) * 100) if graded["question_count"] else 0
+        lesson_status = "completed" if graded["completed"] and score_pct >= passing_score else "in_progress"
+        await db.execute(
+            """INSERT INTO learning_lesson_progress
+               (course_id,module_id,lesson_id,user_id,status,progress_pct,started_at,completed_at)
+               VALUES ($1,$2,$3,$4,$5,$6,NOW(),CASE WHEN $5='completed' THEN NOW() END)
+               ON CONFLICT (lesson_id,user_id) DO UPDATE SET
+                 status=CASE WHEN learning_lesson_progress.status='completed' THEN 'completed' ELSE EXCLUDED.status END,
+                 progress_pct=GREATEST(learning_lesson_progress.progress_pct,EXCLUDED.progress_pct),
+                 started_at=COALESCE(learning_lesson_progress.started_at,NOW()),
+                 completed_at=CASE WHEN EXCLUDED.status='completed' THEN COALESCE(learning_lesson_progress.completed_at,NOW()) ELSE learning_lesson_progress.completed_at END,
+                 updated_at=NOW()""",
+            course_id, str(artifact["module_id"]), str(artifact["lesson_id"]), user_id,
+            lesson_status, 100 if lesson_status == "completed" else 50,
+        )
     course_workspace_id = await db.fetchval("SELECT workspace_id FROM learning_courses WHERE id=$1::uuid", course_id)
     await emit_event(
         db, user_id=user_id, workspace_id=str(course_workspace_id),
@@ -790,6 +828,99 @@ async def get_learning_progress(course_id: str, current_user: CurrentUser, db=De
         course_id, can_review, user_id,
     )
     return [_quiz_attempt_response(row) for row in rows]
+
+
+@router.put("/courses/{course_id}/lessons/{lesson_id}/progress")
+async def update_lesson_progress(
+    course_id: str, lesson_id: str, body: LessonProgressUpdate,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id)
+    lesson = await db.fetchrow(
+        """SELECT l.id,l.module_id FROM learning_lessons l
+           JOIN learning_modules m ON m.id=l.module_id
+           WHERE l.id=$1::uuid AND m.course_id=$2::uuid""",
+        lesson_id, course_id,
+    )
+    if not lesson:
+        raise HTTPException(404, "Lesson not found in this course")
+    row = await db.fetchrow(
+        """INSERT INTO learning_lesson_progress
+           (course_id,module_id,lesson_id,user_id,status,progress_pct,time_spent_seconds,
+            last_position_seconds,started_at,completed_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,
+                   CASE WHEN $5<>'not_started' THEN NOW() END,
+                   CASE WHEN $5='completed' THEN NOW() END)
+           ON CONFLICT (lesson_id,user_id) DO UPDATE SET
+             status=EXCLUDED.status,progress_pct=EXCLUDED.progress_pct,
+             time_spent_seconds=GREATEST(learning_lesson_progress.time_spent_seconds,EXCLUDED.time_spent_seconds),
+             last_position_seconds=EXCLUDED.last_position_seconds,
+             started_at=CASE WHEN EXCLUDED.status='not_started' THEN NULL ELSE COALESCE(learning_lesson_progress.started_at,NOW()) END,
+             completed_at=CASE WHEN EXCLUDED.status='completed' THEN COALESCE(learning_lesson_progress.completed_at,NOW()) ELSE NULL END,
+             updated_at=NOW()
+           RETURNING *""",
+        course_id, str(lesson["module_id"]), lesson_id, user_id, body.status,
+        body.progress_pct, body.time_spent_seconds, body.last_position_seconds,
+    )
+    await emit_event(
+        db, user_id=user_id, workspace_id=str(course["workspace_id"]),
+        event_type="learning.progress.updated", resource_type="learning_lesson_progress",
+        resource_id=str(row["id"]), payload={
+            "course_id": course_id, "lesson_id": lesson_id,
+            "status": body.status, "progress_pct": body.progress_pct,
+        },
+    )
+    return _jsonable(dict(row))
+
+
+@router.get("/courses/{course_id}/mastery")
+async def get_learning_mastery(
+    course_id: str, current_user: CurrentUser, learner_id: str | None = None,
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id)
+    can_review = bool(
+        course.get("workspace_role") in ("owner", "editor")
+        or course.get("persona") in MANAGER_PERSONAS | {"advisor"}
+    )
+    target_user_id = learner_id or user_id
+    if target_user_id != user_id and not can_review:
+        raise HTTPException(403, "Only a teacher, advisor, or admin may review another learner")
+    member = await db.fetchrow(
+        """SELECT u.id,u.email,u.full_name,m.persona FROM learning_course_members m
+           JOIN users u ON u.id=m.user_id
+           WHERE m.course_id=$1::uuid AND m.user_id=$2::uuid""",
+        course_id, target_user_id,
+    )
+    if not member:
+        raise HTTPException(404, "Learner is not enrolled in this course")
+    modules = await db.fetch(
+        "SELECT id,title,description,position FROM learning_modules WHERE course_id=$1::uuid ORDER BY position,created_at",
+        course_id,
+    )
+    lessons = await db.fetch(
+        """SELECT l.id,l.module_id,l.title,l.description,l.objectives,l.competencies,l.position
+           FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id
+           WHERE m.course_id=$1::uuid ORDER BY m.position,l.position,l.created_at""",
+        course_id,
+    )
+    progress = await db.fetch(
+        "SELECT * FROM learning_lesson_progress WHERE course_id=$1::uuid AND user_id=$2::uuid",
+        course_id, target_user_id,
+    )
+    attempts = await db.fetch(
+        """SELECT qa.*,a.module_id,a.lesson_id,a.title AS artifact_title
+           FROM learning_quiz_attempts qa JOIN learning_artifacts a ON a.id=qa.artifact_id
+           WHERE qa.course_id=$1::uuid AND qa.user_id=$2::uuid""",
+        course_id, target_user_id,
+    )
+    return _build_mastery_projection(
+        _course_response(course), [_jsonable(dict(row)) for row in modules],
+        [_jsonable(dict(row)) for row in lessons], [_jsonable(dict(row)) for row in progress],
+        [_quiz_attempt_response(row) for row in attempts], _jsonable(dict(member)),
+    )
 
 
 @router.delete("/courses/{course_id}/artifacts/{artifact_id}")
@@ -909,6 +1040,10 @@ async def _course_workspace(db, course_id: str, user_id: str) -> dict:
         "SELECT * FROM learning_quiz_attempts WHERE course_id=$1 AND user_id=$2 ORDER BY updated_at DESC",
         course_id, user_id,
     )
+    lesson_progress = await db.fetch(
+        "SELECT * FROM learning_lesson_progress WHERE course_id=$1 AND user_id=$2 ORDER BY updated_at DESC",
+        course_id, user_id,
+    )
     effective_persona = course.get("persona") or ("admin" if course.get("workspace_role") in ("owner", "editor") else "student")
     questions = await db.fetch(
         """SELECT q.*,asker.full_name AS asker_name,asker.email AS asker_email,
@@ -927,6 +1062,7 @@ async def _course_workspace(db, course_id: str, user_id: str) -> dict:
         "assets": [_jsonable(dict(row)) for row in assets],
         "artifacts": [_jsonable(dict(row)) for row in artifacts],
         "quiz_attempts": [_quiz_attempt_response(row) for row in quiz_attempts],
+        "lesson_progress": [_jsonable(dict(row)) for row in lesson_progress],
         "questions": [_question_response(row) for row in questions],
     })
     return result
@@ -953,6 +1089,158 @@ def _quiz_attempt_response(row) -> dict:
     result["answers"] = _decode_json(result.get("answers"), {})
     result["result"] = _decode_json(result.get("result"), {})
     return result
+
+
+def _build_mastery_projection(
+    course: dict, modules: list[dict], lessons: list[dict], progress: list[dict],
+    attempts: list[dict], learner: dict,
+) -> dict:
+    passing_score = max(0, min(100, int((course.get("domain_config") or {}).get("passing_score", 80))))
+    progress_by_lesson = {str(row["lesson_id"]): row for row in progress}
+    attempts_by_lesson: dict[str, list[dict]] = {}
+    for attempt in attempts:
+        if (
+            attempt.get("lesson_id")
+            and attempt.get("completed")
+            and int(attempt.get("question_count") or 0) > 0
+        ):
+            attempts_by_lesson.setdefault(str(attempt["lesson_id"]), []).append(attempt)
+
+    lessons_by_module: dict[str, list[dict]] = {}
+    assessed_correct = 0
+    assessed_questions = 0
+    completed_lessons = 0
+    mastered_lessons = 0
+    progress_total = 0
+    recommendations: list[dict] = []
+
+    for lesson in lessons:
+        lesson_id = str(lesson["id"])
+        lesson_progress = progress_by_lesson.get(lesson_id, {})
+        lesson_attempts = attempts_by_lesson.get(lesson_id, [])
+        correct_count = sum(int(item.get("correct_count") or 0) for item in lesson_attempts)
+        question_count = sum(int(item.get("question_count") or 0) for item in lesson_attempts)
+        score = round((correct_count / question_count) * 100) if question_count else None
+        status = str(lesson_progress.get("status") or "not_started")
+        progress_pct = int(lesson_progress.get("progress_pct") or 0)
+        mastery_status = (
+            "mastered" if score is not None and score >= passing_score
+            else "developing" if score is not None
+            else "not_assessed"
+        )
+        objectives = _clean_list(_decode_json(lesson.get("objectives"), []))
+        competency_names = _clean_list(_decode_json(lesson.get("competencies"), []))
+        evidence = [
+            {
+                "artifact_id": str(item.get("artifact_id") or ""),
+                "artifact_title": item.get("artifact_title") or "Practice questions",
+                "correct_count": int(item.get("correct_count") or 0),
+                "question_count": int(item.get("question_count") or 0),
+                "completed": bool(item.get("completed")),
+                "updated_at": item.get("updated_at"),
+            }
+            for item in lesson_attempts
+        ]
+        lesson_result = {
+            **lesson,
+            "id": lesson_id,
+            "status": status,
+            "progress_pct": progress_pct,
+            "time_spent_seconds": int(lesson_progress.get("time_spent_seconds") or 0),
+            "last_position_seconds": lesson_progress.get("last_position_seconds"),
+            "assessment_score": score,
+            "mastery_status": mastery_status,
+            "passing_score": passing_score,
+            "objectives": objectives,
+            "competencies": [
+                {"name": name, "score": score, "status": mastery_status, "evidence": evidence}
+                for name in competency_names
+            ],
+            "assessment_evidence": evidence,
+        }
+        lessons_by_module.setdefault(str(lesson["module_id"]), []).append(lesson_result)
+        completed_lessons += int(status == "completed")
+        mastered_lessons += int(mastery_status == "mastered")
+        progress_total += progress_pct
+        assessed_correct += correct_count
+        assessed_questions += question_count
+
+        recommendation = None
+        if score is not None and score < passing_score:
+            recommendation = {
+                "priority": 1, "type": "review_and_retake", "lesson_id": lesson_id,
+                "module_id": str(lesson["module_id"]), "title": f"Review {lesson['title']}",
+                "reason": f"Assessment score {score}% is below the {passing_score}% mastery threshold.",
+                "action": "Review cited lesson evidence, ask the AI Tutor about missed concepts, and retake the practice questions.",
+            }
+        elif status == "in_progress":
+            recommendation = {
+                "priority": 2, "type": "continue_lesson", "lesson_id": lesson_id,
+                "module_id": str(lesson["module_id"]), "title": f"Continue {lesson['title']}",
+                "reason": f"Lesson progress is {progress_pct}%.",
+                "action": "Continue from the saved position and complete the lesson activities.",
+            }
+        elif status == "not_started":
+            recommendation = {
+                "priority": 3, "type": "start_lesson", "lesson_id": lesson_id,
+                "module_id": str(lesson["module_id"]), "title": f"Start {lesson['title']}",
+                "reason": "This is the next incomplete curriculum lesson.",
+                "action": "Open the lesson, review its learning objectives, and begin the attached content.",
+            }
+        elif score is None:
+            recommendation = {
+                "priority": 4, "type": "assess_mastery", "lesson_id": lesson_id,
+                "module_id": str(lesson["module_id"]), "title": f"Assess {lesson['title']}",
+                "reason": "The lesson is complete but has no graded mastery evidence.",
+                "action": "Generate and complete practice questions for this lesson.",
+            }
+        if recommendation:
+            recommendations.append(recommendation)
+    module_results = []
+    for module in modules:
+        module_lessons = lessons_by_module.get(str(module["id"]), [])
+        module_results.append({
+            **module,
+            "id": str(module["id"]),
+            "lesson_count": len(module_lessons),
+            "completed_lessons": sum(item["status"] == "completed" for item in module_lessons),
+            "progress_pct": round(sum(item["progress_pct"] for item in module_lessons) / len(module_lessons)) if module_lessons else 0,
+            "mastery_pct": (
+                round(sum(item["assessment_score"] for item in module_lessons if item["assessment_score"] is not None)
+                      / sum(item["assessment_score"] is not None for item in module_lessons))
+                if any(item["assessment_score"] is not None for item in module_lessons) else None
+            ),
+            "lessons": module_lessons,
+        })
+
+    lesson_count = len(lessons)
+    mastery_pct = round((assessed_correct / assessed_questions) * 100) if assessed_questions else None
+    recommendations.sort(key=lambda item: (item["priority"], next(
+        (int(lesson.get("position") or 0) for lesson in lessons if str(lesson["id"]) == item["lesson_id"]), 0,
+    )))
+    if not recommendations and lesson_count:
+        recommendations.append({
+            "priority": 5, "type": "course_review", "title": "Review completed course",
+            "reason": "All lessons are complete and current assessments meet the mastery threshold.",
+            "action": "Review key concepts or ask the AI Tutor for a cumulative course check.",
+        })
+    return {
+        "course_id": str(course["id"]),
+        "learner": learner,
+        "passing_score": passing_score,
+        "summary": {
+            "lesson_count": lesson_count,
+            "completed_lessons": completed_lessons,
+            "completion_pct": round((completed_lessons / lesson_count) * 100) if lesson_count else 0,
+            "progress_pct": round(progress_total / lesson_count) if lesson_count else 0,
+            "assessed_lessons": len(attempts_by_lesson),
+            "mastered_lessons": mastered_lessons,
+            "mastery_pct": mastery_pct,
+        },
+        "modules": module_results,
+        "recommendations": recommendations[:5],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def _clean_list(values) -> list[str]:

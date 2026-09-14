@@ -166,6 +166,39 @@ async def test_learning_scope_and_quiz_use_authoritative_learning_endpoints():
 
 
 @pytest.mark.asyncio
+async def test_learning_progress_and_mastery_use_authoritative_learning_endpoints():
+    requests: list[tuple[str, str, dict]] = []
+
+    async def handler(request: httpx.Request):
+        payload = json.loads(request.content) if request.content else {}
+        requests.append((request.method, request.url.path, payload))
+        if request.url.path == "/api/learning/courses/course-1":
+            return httpx.Response(200, json={"id": "course-1", "workspace_id": "workspace-1"})
+        if request.url.path.endswith("/progress"):
+            return httpx.Response(200, json={"lesson_id": "lesson-1", "progress_pct": 60})
+        if request.url.path.endswith("/mastery"):
+            return httpx.Response(200, json={"summary": {"mastery_pct": 85}})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        progress = await client.update_learning_lesson_progress(
+            "course-1", "lesson-1", {"status": "in_progress", "progress_pct": 60},
+        )
+        mastery = await client.get_learning_mastery("course-1")
+
+    assert progress["progress_pct"] == 60
+    assert mastery["summary"]["mastery_pct"] == 85
+    assert requests == [
+        ("GET", "/api/learning/courses/course-1", {}),
+        ("PUT", "/api/learning/courses/course-1/lessons/lesson-1/progress", {
+            "status": "in_progress", "progress_pct": 60,
+        }),
+        ("GET", "/api/learning/courses/course-1", {}),
+        ("GET", "/api/learning/courses/course-1/mastery", {}),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_backend_forbidden_is_preserved_as_safe_error():
     async def handler(_request: httpx.Request):
         return httpx.Response(403, json={"detail": "Document is not accessible"})

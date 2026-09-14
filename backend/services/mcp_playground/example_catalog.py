@@ -116,6 +116,8 @@ def example_catalog() -> list[dict]:
         _tool("Knowledge Academy", "list_learning_artifacts", {"course_id": course}, "List caller-owned study materials."),
         _tool("Knowledge Academy", "submit_learning_quiz", {"course_id": course, "artifact_id": artifact, "answers": {"q1": ["A", "C"]}}, "Grade and persist quiz answers."),
         _tool("Knowledge Academy", "get_learning_progress", {"course_id": course}, "Review persisted learner progress."),
+        _tool("Knowledge Academy", "update_learning_progress", {"course_id": course, "lesson_id": lesson, "status": "in_progress", "progress_pct": 50, "time_spent_seconds": 900, "last_position_seconds": 420}, "Save resumable lesson progress for the caller."),
+        _tool("Knowledge Academy", "get_learning_mastery", {"course_id": course, "learner_id": None}, "Review evidence-backed mastery and recommended next actions."),
         _tool("Knowledge Academy", "ask_learning_person", {"course_id": course, "question": "Can you review my retrieval design?", "target_role": "teacher", "context": {"module_id": module, "lesson_id": lesson}}, "Escalate a question to a teacher or advisor."),
         _tool("Knowledge Academy", "answer_learning_question", {"course_id": course, "question_id": "YOUR_QUESTION_ID", "answer": "Review precision, recall, and citation quality.", "status": "answered"}, "Answer a learner as an authorized educator."),
         _tool("Knowledge Academy", "delete_learning_artifact", {"course_id": course, "artifact_id": artifact, "confirm": True}, "Delete caller-owned study material."),
@@ -151,6 +153,7 @@ def example_catalog() -> list[dict]:
         ("Learning artifacts", "docintel://learning/courses/YOUR_COURSE_ID/artifacts", "Read caller-owned study artifacts."),
         ("Learning questions", "docintel://learning/courses/YOUR_COURSE_ID/questions", "Read visible teacher and advisor questions."),
         ("Learning progress", "docintel://learning/courses/YOUR_COURSE_ID/progress", "Read persisted quiz progress."),
+        ("Learning mastery", "docintel://learning/courses/YOUR_COURSE_ID/mastery", "Read completion, competency mastery, evidence, and adaptive recommendations."),
     ]
     examples.extend(_request("Resources", f"{name} resource", "resources/read", {"uri": uri}, description)
                     for name, uri, description in resources)

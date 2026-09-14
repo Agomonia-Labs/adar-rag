@@ -410,6 +410,43 @@ mcp_tool submit_learning_quiz "$(jq -cn \
 Confirm the attempt is incomplete, then resubmit `QUIZ_ANSWERS` and confirm the
 score is recalculated.
 
+### Save lesson progress and inspect adaptive recommendations
+
+```bash
+mcp_tool update_learning_progress "$(jq -cn \
+  --arg course "$COURSE_ID" \
+  --arg lesson "$LESSON_ID" \
+  '{
+    course_id:$course,
+    lesson_id:$lesson,
+    status:"completed",
+    progress_pct:100,
+    time_spent_seconds:900,
+    last_position_seconds:420
+  }'
+)" | tool_data | tee /tmp/learning-lesson-progress.json | jq
+
+mcp_tool get_learning_mastery "$(jq -cn \
+  --arg course "$COURSE_ID" \
+  '{course_id:$course}'
+)" | tool_data | tee /tmp/learning-mastery.json | jq
+
+jq '{summary,recommendations,modules}' /tmp/learning-mastery.json
+```
+
+Completion and mastery are intentionally separate. Completion comes from the
+saved lesson state; mastery comes only from completed, graded quiz evidence.
+The response includes competency evidence and deterministic next actions.
+
+The same projection is available as an MCP resource:
+
+```bash
+mcp_request "$(jq -cn \
+  --arg uri "docintel://learning/courses/$COURSE_ID/mastery" \
+  '{jsonrpc:"2.0",id:31,method:"resources/read",params:{uri:$uri}}'
+)" | tool_data | jq
+```
+
 ## 12. Generate every study-tool type
 
 Supported artifact types are `summary`, `study_guide`, `key_concepts`,

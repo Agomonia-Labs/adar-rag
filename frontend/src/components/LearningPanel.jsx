@@ -1,21 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  BookOpen, CheckCircle2, ChevronDown, CircleHelp, FileText, GraduationCap, LoaderCircle,
+  BarChart3, BookOpen, CheckCircle2, ChevronDown, CircleHelp, FileText, GraduationCap, LoaderCircle,
   Maximize2, MessageSquareText, Mic, Plus, RefreshCw, RotateCcw, Save, Send, Sparkles, Square, Trash2, UserPlus, X, XCircle,
 } from 'lucide-react';
 import {
   addLearningAsset, addLearningMember, createLearningCourse, createLearningQuestion,
-  createSession, deleteLearningArtifact, deleteLearningCourse, getLearningCourse, getSession,
+  createSession, deleteLearningArtifact, deleteLearningCourse, getLearningCourse, getLearningMastery, getSession,
   listLearningCourses, listLearningDocuments, removeLearningAsset, removeLearningMember,
   resolveLearningScope, saveLearningArtifact, saveLearningCurriculum, saveLearningQuizAttempt,
   saveSessionMessages, streamChat, transcribeVoice,
-  updateLearningAsset, updateLearningCourse, updateLearningQuestion,
+  updateLearningAsset, updateLearningCourse, updateLearningLessonProgress, updateLearningQuestion,
 } from '../services/api.js';
 import MarkdownRenderer from './MarkdownRenderer.jsx';
 
 const TABS = [
   ['overview', 'Overview'], ['curriculum', 'Curriculum'], ['content', 'Course Content'],
-  ['tutor', 'AI Tutor'], ['study', 'Study Tools'], ['questions', 'Teacher / Advisor'],
+  ['tutor', 'AI Tutor'], ['study', 'Study Tools'], ['progress', 'Progress & Mastery'], ['questions', 'Teacher / Advisor'],
 ];
 const TUTOR_LANGUAGES = [
   ['auto', 'Auto'], ['en-US', 'English'], ['bn-BD', 'Bangla'],
@@ -136,6 +136,7 @@ export default function LearningPanel({ activeWorkspace = null, onClose }) {
             {tab==='content' && <CourseContent course={course} documents={documents} mutate={mutate}/>} 
             {tab==='tutor' && <Tutor key={`tutor-${course.id}`} course={course} workspaceId={workspaceId}/>}
             {tab==='study' && <StudyTools key={`study-${course.id}`} course={course} workspaceId={workspaceId} mutate={mutate}/>}
+            {tab==='progress' && <LearningProgress key={`progress-${course.id}`} course={course}/>}
             {tab==='questions' && <Questions course={course} mutate={mutate}/>} 
           </main>
         </>}
@@ -459,6 +460,60 @@ function PracticeQuiz({courseId,artifact,attempt}) {
   </div>;
 }
 
+function LearningProgress({course}) {
+  const canReview=course.can_manage||['teacher','advisor','admin'].includes(course.my_persona);
+  const learners=(course.members||[]).filter(member=>member.persona==='student');
+  const reviewerDefault=canReview&&course.my_persona!=='student'?(learners[0]?.user_id||''):'';
+  const [learnerId,setLearnerId]=useState('');
+  const [mastery,setMastery]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState('');
+  const [savingLesson,setSavingLesson]=useState('');
+  const load=async(target=learnerId)=>{setLoading(true);setError('');try{setMastery(await getLearningMastery(course.id,target||''))}catch(e){setMastery(null);setError(e.message||String(e))}finally{setLoading(false)}};
+  useEffect(()=>{setLearnerId(reviewerDefault);load(reviewerDefault)},[course.id]);
+  const selectLearner=value=>{setLearnerId(value);load(value)};
+  const saveProgress=async(lesson,status,progressPct)=>{
+    setSavingLesson(lesson.id);setError('');
+    try{
+      await updateLearningLessonProgress(course.id,lesson.id,{status,progress_pct:progressPct,time_spent_seconds:lesson.time_spent_seconds||0,last_position_seconds:lesson.last_position_seconds??null});
+      await load(learnerId);
+    }catch(e){setError(e.message||String(e))}finally{setSavingLesson('')}
+  };
+  const summary=mastery?.summary||{};
+  return <div style={s.scroll}>
+    <div style={s.progressToolbar}>
+      <div><h3 style={s.progressTitle}><BarChart3 size={17}/>Learner progress and mastery</h3><p>Completion comes from saved lesson activity. Mastery comes only from graded practice evidence.</p></div>
+      <div style={s.progressActions}>{canReview&&learners.length>0&&<label style={s.inlineField}><span>Learner</span><select value={learnerId} onChange={e=>selectLearner(e.target.value)}>{course.my_persona==='student'&&<option value="">My progress</option>}{learners.map(member=><option key={member.user_id} value={member.user_id}>{member.full_name||member.email}</option>)}</select></label>}<button style={s.secondary} onClick={()=>load()} disabled={loading}><RefreshCw size={14}/>Refresh</button></div>
+    </div>
+    {loading&&<div style={s.loading}><LoaderCircle size={14} className="spin"/>Calculating learning state...</div>}
+    {error&&<div style={s.error}>{error}</div>}
+    {mastery&&<>
+      <div style={s.metricGrid}>
+        <Metric label="Course completion" value={`${summary.completion_pct||0}%`} detail={`${summary.completed_lessons||0} of ${summary.lesson_count||0} lessons`}/>
+        <Metric label="Learning progress" value={`${summary.progress_pct||0}%`} detail="Includes lessons in progress"/>
+        <Metric label="Documented mastery" value={summary.mastery_pct==null?'Not assessed':`${summary.mastery_pct}%`} detail={`${summary.mastered_lessons||0} mastered · ${summary.assessed_lessons||0} assessed`}/>
+        <Metric label="Mastery threshold" value={`${mastery.passing_score}%`} detail="Configured course passing score"/>
+      </div>
+      <Section title="Recommended next actions" icon={<Sparkles size={16}/> }>
+        <div style={s.recommendationGrid}>{(mastery.recommendations||[]).map((item,index)=><article style={s.recommendation} key={`${item.type}-${item.lesson_id||index}`}><span style={s.recommendationNumber}>{index+1}</span><div><strong>{item.title}</strong><p>{item.reason}</p><small>{item.action}</small></div></article>)}</div>
+      </Section>
+      {(mastery.modules||[]).map(module=><Section key={module.id} title={module.title} icon={<BookOpen size={16}/> }>
+        <div style={s.moduleSummary}><span>{module.completed_lessons} / {module.lesson_count} lessons complete</span><span>{module.progress_pct}% progress</span><span>{module.mastery_pct==null?'Not assessed':`${module.mastery_pct}% mastery`}</span></div>
+        <div style={s.masteryLessons}>{(module.lessons||[]).map(lesson=><article style={s.masteryLesson} key={lesson.id}>
+          <div style={s.masteryLessonHeader}><div style={s.metaStack}><strong>{lesson.title}</strong><small>{pretty(lesson.status)} · {lesson.progress_pct}% complete</small></div><span style={{...s.masteryBadge,...(lesson.mastery_status==='mastered'?s.masteredBadge:lesson.mastery_status==='developing'?s.developingBadge:{})}}>{lesson.assessment_score==null?'Not assessed':`${lesson.assessment_score}% · ${pretty(lesson.mastery_status)}`}</span></div>
+          {lesson.objectives?.length>0&&<p style={s.masteryObjectives}><b>Objectives:</b> {lesson.objectives.join(' · ')}</p>}
+          {lesson.competencies?.length>0&&<div style={s.competencyList}>{lesson.competencies.map(item=><span key={item.name}>{item.name}{item.score==null?'':` · ${item.score}%`}</span>)}</div>}
+          {!learnerId&&<div style={s.lessonProgressActions}><button style={s.secondary} disabled={savingLesson===lesson.id} onClick={()=>saveProgress(lesson,'in_progress',Math.max(lesson.progress_pct||0,25))}>Start / Continue</button><button style={s.primary} disabled={savingLesson===lesson.id} onClick={()=>saveProgress(lesson,'completed',100)}><CheckCircle2 size={14}/>Mark complete</button></div>}
+          {lesson.assessment_evidence?.length>0&&<details style={s.sources}><summary>Assessment evidence ({lesson.assessment_evidence.length})</summary>{lesson.assessment_evidence.map(item=><div key={item.artifact_id}>{item.artifact_title}: {item.correct_count} / {item.question_count}</div>)}</details>}
+        </article>)}</div>
+      </Section>)}
+      {!mastery.modules?.length&&<Empty title="No curriculum yet" text="Add modules and lessons before tracking learner progress and mastery."/>}
+    </>}
+  </div>;
+}
+
+function Metric({label,value,detail}) { return <article style={s.metric}><small>{label}</small><strong>{value}</strong><span>{detail}</span></article> }
+
 function Questions({course,mutate}) {
   const [form,setForm]=useState({target_role:'teacher',question:''});
   const submit=async()=>{await mutate(()=>createLearningQuestion(course.id,{...form,context:{course_title:course.title,source_document_ids:(course.assets||[]).map(x=>x.document_id)}}));setForm({...form,question:''})};
@@ -522,6 +577,7 @@ const s={
   rangeHint:{marginTop:8,color:'#86efac',fontSize:10.5},mappingFeedback:{marginTop:8,padding:'6px 8px',border:'1px solid rgba(250,204,21,.3)',borderRadius:5,background:'rgba(250,204,21,.08)',color:'#fde68a',fontSize:10.5},assetGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,430px),1fr))',gap:8},asset:{display:'grid',gridTemplateColumns:'38px minmax(0,1fr) 30px',gap:9,alignItems:'center',padding:10,border:'1px solid var(--b1)',borderRadius:7,background:'var(--s1)'},assetIcon:{display:'grid',placeItems:'center',width:36,height:36,borderRadius:6,background:'rgba(74,222,128,.1)',color:'#4ade80'},assetMapping:{minWidth:0,padding:10,border:'1px solid var(--b1)',borderRadius:7,background:'var(--s1)'},assetHeader:{display:'flex',alignItems:'center',gap:9,minWidth:0},assetScope:{margin:'8px 0',padding:'6px 8px',borderRadius:5,background:'rgba(74,222,128,.06)',color:'var(--muted2)',fontSize:10.5},assetMappingControls:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,170px),1fr))',gap:7,alignItems:'end'},ellipsis:{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},scopeBar:{display:'flex',alignItems:'end',justifyContent:'space-between',gap:10,padding:'8px 12px',borderBottom:'1px solid var(--b1)',background:'var(--s1)',flexWrap:'wrap'},scopeSelectors:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,180px),1fr))',gap:7,flex:'1 1 390px',maxWidth:520},studyTarget:{display:'flex',alignItems:'center',gap:7,margin:'8px 0',padding:'7px 9px',border:'1px solid rgba(74,222,128,.2)',borderRadius:6,background:'rgba(74,222,128,.06)',color:'var(--muted2)',fontSize:11},
   tutor:{height:'100%',display:'flex',flexDirection:'column'},messages:{flex:1,minHeight:0,overflowY:'auto',padding:12},message:{maxWidth:'min(820px,92%)',marginBottom:9,padding:'9px 11px',borderRadius:7},userMessage:{marginLeft:'auto',background:'#166534',color:'#fff'},aiMessage:{marginRight:'auto',border:'1px solid var(--b1)',background:'var(--s1)'},messageText:{marginTop:5,whiteSpace:'pre-wrap',lineHeight:1.55,fontSize:13},tutorAnswer:{marginTop:5,fontSize:13,lineHeight:1.65,color:'var(--tx2)',overflowWrap:'anywhere'},sources:{marginTop:8,paddingTop:6,borderTop:'1px solid var(--b1)',fontSize:10.5,color:'var(--muted2)'},composer:{display:'grid',gridTemplateColumns:'minmax(78px,108px) minmax(0,1fr) 40px 40px',gap:7,padding:10,borderTop:'1px solid var(--b1)',background:'var(--s1)'},tutorLanguage:{minWidth:0,width:'100%',padding:'0 7px',border:'1px solid var(--b2)',borderRadius:6,background:'var(--s2)',color:'var(--tx)',fontSize:11},voiceButton:{display:'grid',placeItems:'center',padding:0,border:'1px solid var(--b2)',borderRadius:6,background:'var(--s2)',color:'#86efac',cursor:'pointer'},voiceButtonOn:{borderColor:'rgba(248,113,113,.55)',background:'rgba(248,113,113,.12)',color:'#fca5a5'},voiceStatus:{gridColumn:'1/-1',fontSize:10.5,color:'var(--muted2)'},send:{display:'grid',placeItems:'center',border:0,borderRadius:6,background:'#15803d',color:'#fff',cursor:'pointer'},
   artifactGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,360px),1fr))',gap:9},artifact:{padding:11,border:'1px solid var(--b1)',borderRadius:7,background:'var(--s1)'},artifactHeader:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8},quizArtifact:{gridColumn:'1/-1'},flashcardDeck:{display:'flex',flexDirection:'column',gap:12,marginTop:10},flashcardExchange:{display:'flex',flexDirection:'column',gap:7,padding:'10px 0',borderTop:'1px solid var(--b1)'},flashcardLabel:{alignSelf:'center',padding:'3px 8px',borderRadius:12,background:'rgba(74,222,128,.08)',color:'var(--muted2)',fontSize:10},flashcardMessage:{width:'min(820px,92%)',boxSizing:'border-box',marginBottom:0},quiz:{display:'flex',flexDirection:'column',gap:12,marginTop:10},quizSummary:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,flexWrap:'wrap',padding:10,border:'1px solid rgba(74,222,128,.22)',borderRadius:6,background:'rgba(74,222,128,.06)'},quizScore:{display:'flex',gap:6,flexWrap:'wrap',color:'#bbf7d0',fontSize:11},quizQuestion:{padding:12,border:'1px solid var(--b1)',borderRadius:7,background:'var(--s2)'},quizQuestionHeader:{display:'flex',alignItems:'flex-start',gap:8,marginBottom:10},questionNumber:{display:'grid',placeItems:'center',width:25,height:25,flexShrink:0,borderRadius:5,background:'rgba(74,222,128,.12)',color:'#86efac',fontWeight:800},correctBadge:{display:'inline-flex',alignItems:'center',gap:4,marginLeft:'auto',padding:'3px 7px',borderRadius:12,background:'rgba(74,222,128,.12)',color:'#86efac',fontSize:10},incorrectBadge:{display:'inline-flex',alignItems:'center',gap:4,marginLeft:'auto',padding:'3px 7px',borderRadius:12,background:'rgba(248,113,113,.12)',color:'#fca5a5',fontSize:10},quizOptions:{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:7,marginBottom:10},quizOption:{display:'grid',gridTemplateColumns:'20px 24px minmax(0,1fr) 18px',alignItems:'center',gap:7,minHeight:48,padding:'8px 10px',border:'1px solid var(--b1)',borderRadius:6,background:'var(--s1)',color:'var(--tx2)',cursor:'pointer'},correctOption:{borderColor:'rgba(74,222,128,.55)',background:'rgba(74,222,128,.1)',color:'#dcfce7'},incorrectOption:{borderColor:'rgba(248,113,113,.55)',background:'rgba(248,113,113,.1)',color:'#fee2e2'},answerFeedback:{display:'flex',flexDirection:'column',gap:5,padding:10,borderRadius:6,lineHeight:1.45},correctFeedback:{border:'1px solid rgba(74,222,128,.35)',background:'rgba(74,222,128,.08)'},incorrectFeedback:{border:'1px solid rgba(248,113,113,.35)',background:'rgba(248,113,113,.08)'},clamped:{display:'-webkit-box',WebkitLineClamp:8,WebkitBoxOrient:'vertical',overflow:'hidden',marginTop:8,whiteSpace:'pre-wrap',fontSize:12,lineHeight:1.5,color:'var(--tx2)'},linkBtn:{marginTop:7,padding:0,border:0,background:'transparent',color:'#4ade80',cursor:'pointer'},questionForm:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,220px),1fr))',gap:7,alignItems:'end'},question:{display:'flex',flexDirection:'column',gap:9,padding:11,border:'1px solid var(--b1)',borderRadius:7,background:'var(--s1)'},questionHeader:{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'},status:{padding:'3px 7px',borderRadius:12,background:'rgba(74,222,128,.1)',color:'#86efac',fontSize:10,textTransform:'uppercase'},
+  progressToolbar:{display:'flex',alignItems:'end',justifyContent:'space-between',gap:12,marginBottom:10,flexWrap:'wrap'},progressTitle:{display:'flex',alignItems:'center',gap:7,margin:'0 0 4px',fontSize:15},progressActions:{display:'flex',alignItems:'end',gap:7,flexWrap:'wrap'},metricGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,190px),1fr))',gap:8,marginBottom:12},metric:{display:'flex',flexDirection:'column',gap:5,padding:12,border:'1px solid var(--b1)',borderRadius:7,background:'var(--s1)'},recommendationGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,280px),1fr))',gap:8},recommendation:{display:'grid',gridTemplateColumns:'28px minmax(0,1fr)',gap:8,padding:10,border:'1px solid rgba(74,222,128,.18)',borderRadius:6,background:'var(--s2)'},recommendationNumber:{display:'grid',placeItems:'center',width:25,height:25,borderRadius:5,background:'rgba(74,222,128,.12)',color:'#86efac',fontWeight:800},moduleSummary:{display:'flex',gap:8,flexWrap:'wrap',marginBottom:9},masteryLessons:{display:'grid',gap:8},masteryLesson:{padding:10,border:'1px solid var(--b1)',borderRadius:6,background:'var(--s2)'},masteryLessonHeader:{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:8,flexWrap:'wrap'},masteryBadge:{padding:'4px 7px',borderRadius:12,background:'rgba(148,163,184,.1)',color:'var(--muted2)',fontSize:10},masteredBadge:{background:'rgba(74,222,128,.12)',color:'#86efac'},developingBadge:{background:'rgba(250,204,21,.12)',color:'#fde68a'},masteryObjectives:{margin:'8px 0',fontSize:11,color:'var(--muted2)'},competencyList:{display:'flex',gap:5,flexWrap:'wrap'},lessonProgressActions:{display:'flex',justifyContent:'flex-end',gap:6,marginTop:9,flexWrap:'wrap'},
   empty:{height:'100%',minHeight:150,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:7,padding:18,textAlign:'center',color:'var(--muted2)'},markdownPreview:{maxHeight:360,marginTop:8,overflow:'auto',padding:'2px 8px 2px 2px',borderTop:'1px solid var(--b1)'},artifactMarkdown:{fontSize:13,lineHeight:1.65,color:'var(--tx2)'},readerOverlay:{position:'fixed',inset:0,zIndex:3300,display:'grid',placeItems:'center',padding:'max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))',background:'rgba(0,0,0,.8)'},reader:{width:'min(900px,100%)',height:'min(86dvh,760px)',display:'flex',flexDirection:'column',overflow:'hidden',border:'1px solid var(--b2)',borderRadius:8,background:'#102010'},readerHeader:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,padding:10,borderBottom:'1px solid var(--b1)',background:'#142714',flexShrink:0},markdownReader:{flex:1,minHeight:0,overflow:'auto',padding:16},readerMarkdown:{fontSize:14,lineHeight:1.75,color:'var(--tx)'},
   editorField:{position:'relative',minWidth:0,width:'100%'},scrollableTextarea:{display:'block',width:'100%',height:86,minHeight:64,maxHeight:180,overflowY:'auto',resize:'vertical',padding:'9px 36px 9px 10px',boxSizing:'border-box',lineHeight:1.45},compactTextarea:{height:58,minHeight:48,maxHeight:130},expandBtn:{position:'absolute',top:6,right:6,display:'grid',placeItems:'center',width:27,height:27,padding:0,border:'1px solid var(--b2)',borderRadius:5,background:'var(--s2)',color:'#86efac',cursor:'pointer'},editorDialog:{width:'min(980px,100%)',height:'min(88dvh,820px)',display:'flex',flexDirection:'column',overflow:'hidden',border:'1px solid rgba(74,222,128,.3)',borderRadius:8,background:'#102010',boxShadow:'0 24px 80px rgba(0,0,0,.65)'},editorHeader:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,padding:'10px 12px',borderBottom:'1px solid var(--b1)',background:'#142714',flexShrink:0},largeEditor:{flex:1,minHeight:0,width:'100%',overflow:'auto',resize:'none',padding:16,boxSizing:'border-box',border:0,borderRadius:0,background:'var(--s1)',color:'var(--tx)',fontFamily:'inherit',fontSize:15,lineHeight:1.6},editorFooter:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,padding:'9px 12px',borderTop:'1px solid var(--b1)',background:'#142714',color:'var(--muted2)',fontSize:10.5,flexShrink:0},
 };

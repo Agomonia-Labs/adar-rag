@@ -112,6 +112,7 @@ def test_catalog_covers_registered_tools_and_resources():
         "delete_learning_course", "save_learning_curriculum", "enroll_learning_member", "remove_learning_member",
         "attach_learning_content", "update_learning_content_mapping", "remove_learning_content", "ask_learning_tutor", "generate_learning_artifact",
         "list_learning_artifacts", "delete_learning_artifact", "submit_learning_quiz", "get_learning_progress",
+        "update_learning_progress", "get_learning_mastery",
         "ask_learning_person", "answer_learning_question",
         "search_federated_knowledgebase", "get_enterprise_capabilities", "get_workflow_schema",
         "validate_workflow_inputs", "list_operation_events", "create_event_subscription",
@@ -121,7 +122,7 @@ def test_catalog_covers_registered_tools_and_resources():
         "evaluate_trace_quality", "list_my_traces", "get_my_trace",
     }
     assert tools == expected
-    assert sum(item["category"] == "Resources" for item in catalog) == 27
+    assert sum(item["category"] == "Resources" for item in catalog) == 28
 
 
 def test_formats_json_resource_text_as_structured_data():

@@ -203,10 +203,11 @@ MVP capabilities:
 - Attach existing workspace documents, audio transcripts, and processed videos to a course.
 - Ask grounded questions through persistent chat sessions with source citations and video timestamps.
 - Generate and save summaries, study guides, key concepts, flashcards, and practice questions.
+- Save lesson position and completion, calculate evidence-backed competency mastery, and recommend the next learning action.
 - Escalate questions to a teacher or advisor with course and source context, then retain reviewed answers.
 - Keep ingestion, chunking, embedding, retrieval, access control, tracing, and audit behavior on the shared DocIntel platform.
 
-The MVP intentionally excludes gradebooks, attendance, payments, proctoring, and certificate issuance. It complements an LMS by making learning content understandable and interactive rather than replacing academic systems of record.
+The MVP intentionally excludes attendance, payments, proctoring, and certificate issuance. Progress and mastery are learning-readiness signals, not an institutional gradebook. The Academy complements an LMS by making learning content understandable and interactive rather than replacing academic systems of record.
 
 ### Lease Intelligence
 

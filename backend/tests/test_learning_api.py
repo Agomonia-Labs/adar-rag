@@ -11,7 +11,9 @@ from routes.learning import (
     AssetMappingUpdate,
     ArtifactCreate,
     CourseCreate,
+    LessonProgressUpdate,
     PracticeQuiz,
+    _build_mastery_projection,
     _grade_practice_quiz,
     _normalize_artifact_content,
     _clean_list,
@@ -20,6 +22,7 @@ from routes.learning import (
     _resolve_learning_scope,
     _scope_evidence_ranges,
     update_asset_mapping,
+    update_lesson_progress,
 )
 
 
@@ -166,6 +169,38 @@ async def test_update_asset_mapping_replaces_existing_row(monkeypatch):
     assert update_call.args[-2:] == (180.0, 300.0)
 
 
+@pytest.mark.asyncio
+async def test_update_lesson_progress_persists_course_scoped_state(monkeypatch):
+    db = AsyncMock()
+    db.fetchrow.side_effect = [
+        {"id": "lesson-1", "module_id": "module-1"},
+        {
+            "id": "progress-1", "course_id": "course-1", "module_id": "module-1",
+            "lesson_id": "lesson-1", "user_id": "user-1", "status": "in_progress",
+            "progress_pct": 45, "time_spent_seconds": 300, "last_position_seconds": 120,
+        },
+    ]
+    monkeypatch.setattr(
+        "routes.learning._course_access",
+        AsyncMock(return_value={"workspace_id": "workspace-1"}),
+    )
+    event = AsyncMock()
+    monkeypatch.setattr("routes.learning.emit_event", event)
+
+    result = await update_lesson_progress(
+        "course-1", "lesson-1",
+        LessonProgressUpdate(
+            status="in_progress", progress_pct=45,
+            time_spent_seconds=300, last_position_seconds=120,
+        ),
+        {"id": "user-1"}, db,
+    )
+
+    assert result["progress_pct"] == 45
+    assert result["last_position_seconds"] == 120
+    assert event.await_args.kwargs["event_type"] == "learning.progress.updated"
+
+
 def test_learning_asset_requires_complete_valid_time_range():
     with pytest.raises(ValueError):
         AssetCreate(document_id="document-1", start_seconds=60)
@@ -280,3 +315,78 @@ def test_practice_quiz_grading_rejects_unknown_question():
     with pytest.raises(HTTPException) as exc:
         _grade_practice_quiz(quiz, {"q99": ["A"]})
     assert exc.value.status_code == 400
+
+
+def test_lesson_progress_contract_normalizes_terminal_states():
+    assert LessonProgressUpdate(status="completed", progress_pct=40).progress_pct == 100
+    reset = LessonProgressUpdate(status="not_started", progress_pct=80, last_position_seconds=30)
+    assert reset.progress_pct == 0
+    assert reset.last_position_seconds is None
+    assert LessonProgressUpdate(status="in_progress", progress_pct=100).status == "completed"
+
+
+def test_mastery_projection_separates_completion_from_assessment_evidence():
+    course = {"id": "course-1", "domain_config": {"passing_score": 80}}
+    modules = [{"id": "module-1", "title": "Foundations", "position": 0}]
+    lessons = [
+        {"id": "lesson-1", "module_id": "module-1", "title": "Retrieval", "position": 0,
+         "objectives": ["Explain retrieval"], "competencies": ["Hybrid retrieval"]},
+        {"id": "lesson-2", "module_id": "module-1", "title": "Evaluation", "position": 1,
+         "objectives": ["Evaluate evidence"], "competencies": ["Groundedness"]},
+    ]
+    progress = [
+        {"lesson_id": "lesson-1", "status": "completed", "progress_pct": 100},
+        {"lesson_id": "lesson-2", "status": "in_progress", "progress_pct": 25},
+    ]
+    attempts = [
+        {"artifact_id": "quiz-1", "lesson_id": "lesson-1", "correct_count": 4,
+         "question_count": 5, "completed": True, "artifact_title": "Retrieval quiz"},
+        {"artifact_id": "quiz-2", "lesson_id": "lesson-2", "correct_count": 1,
+         "question_count": 4, "completed": True, "artifact_title": "Evaluation quiz"},
+    ]
+
+    result = _build_mastery_projection(course, modules, lessons, progress, attempts, {"id": "user-1"})
+
+    assert result["summary"] == {
+        "lesson_count": 2, "completed_lessons": 1, "completion_pct": 50,
+        "progress_pct": 62, "assessed_lessons": 2, "mastered_lessons": 1,
+        "mastery_pct": 56,
+    }
+    projected = result["modules"][0]["lessons"]
+    assert projected[0]["mastery_status"] == "mastered"
+    assert projected[0]["competencies"][0]["score"] == 80
+    assert projected[1]["mastery_status"] == "developing"
+    assert result["recommendations"][0]["type"] == "review_and_retake"
+
+
+def test_completed_lesson_without_quiz_is_not_reported_as_mastered():
+    result = _build_mastery_projection(
+        {"id": "course-1", "domain_config": {}},
+        [{"id": "module-1", "title": "Module"}],
+        [{"id": "lesson-1", "module_id": "module-1", "title": "Lesson", "competencies": []}],
+        [{"lesson_id": "lesson-1", "status": "completed", "progress_pct": 100}],
+        [], {"id": "user-1"},
+    )
+
+    assert result["summary"]["completion_pct"] == 100
+    assert result["summary"]["mastery_pct"] is None
+    assert result["modules"][0]["lessons"][0]["mastery_status"] == "not_assessed"
+    assert result["recommendations"][0]["type"] == "assess_mastery"
+
+
+def test_incomplete_or_reset_attempt_does_not_reduce_mastery():
+    result = _build_mastery_projection(
+        {"id": "course-1", "domain_config": {"passing_score": 80}},
+        [{"id": "module-1", "title": "Module"}],
+        [{"id": "lesson-1", "module_id": "module-1", "title": "Lesson", "competencies": []}],
+        [{"lesson_id": "lesson-1", "status": "in_progress", "progress_pct": 40}],
+        [{
+            "artifact_id": "quiz-1", "lesson_id": "lesson-1", "correct_count": 0,
+            "question_count": 4, "completed": False, "result": {},
+        }],
+        {"id": "user-1"},
+    )
+
+    assert result["summary"]["assessed_lessons"] == 0
+    assert result["summary"]["mastery_pct"] is None
+    assert result["modules"][0]["lessons"][0]["assessment_evidence"] == []

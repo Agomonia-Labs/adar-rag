@@ -181,6 +181,28 @@ async def api_get_learning_progress(request: Request, course_id: str, principal:
     return await learning.get_learning_progress(course_id, current_user=principal.user, db=db)
 
 
+@router.put("/learning/courses/{course_id}/lessons/{lesson_id}/progress", summary="Save the caller's lesson progress")
+async def api_update_learning_lesson_progress(
+    request: Request, course_id: str, lesson_id: str, body: learning.LessonProgressUpdate,
+    principal: LearningParticipant, db=Depends(get_db),
+):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.update_lesson_progress(
+        course_id, lesson_id, body, current_user=principal.user, db=db,
+    )
+
+
+@router.get("/learning/courses/{course_id}/mastery", summary="Read evidence-backed completion, mastery, and next actions")
+async def api_get_learning_mastery(
+    request: Request, course_id: str, principal: LearningReader,
+    learner_id: str | None = None, db=Depends(get_db),
+):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.get_learning_mastery(
+        course_id, current_user=principal.user, learner_id=learner_id, db=db,
+    )
+
+
 @router.post("/learning/courses/{course_id}/questions", status_code=201, summary="Escalate a question to a teacher or advisor")
 async def api_ask_learning_person(request: Request, course_id: str, body: learning.QuestionCreate, principal: LearningParticipant, db=Depends(get_db)):
     await _require_course_workspace(request, db, course_id)

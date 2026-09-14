@@ -277,3 +277,12 @@ def register_resources(mcp: FastMCP, settings: Settings) -> None:
             async with api_client(ctx, settings, "learning:read") as client: attempts = await client.get_learning_progress(course_id)
             return json.dumps({"course_id": course_id, "attempts": attempts}, ensure_ascii=False, default=str)
         except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://learning/courses/{course_id}/mastery")
+    async def learning_mastery(course_id: str, ctx: Context) -> str:
+        """Evidence-backed mastery projection and adaptive next actions for the caller."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client:
+                result = await client.get_learning_mastery(course_id)
+            return json.dumps(result, ensure_ascii=False, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())

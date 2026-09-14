@@ -48,7 +48,9 @@ tokens are audience-bound and cannot be exchanged between the two resources.
 | Manage curriculum, enrollment, and content mapping | `/api/v1/learning/courses/{id}/{curriculum,members,assets}` | `learning:manage` |
 | Ask the scoped AI Tutor | `POST /api/v1/learning/courses/{id}/tutor/query/stream` | `learning:participate` |
 | Save study materials and submit quiz attempts | `/api/v1/learning/courses/{id}/artifacts` | `learning:participate` |
-| Read learner progress | `GET /api/v1/learning/courses/{id}/progress` | `learning:read` |
+| Read saved quiz progress | `GET /api/v1/learning/courses/{id}/progress` | `learning:read` |
+| Save lesson position and completion | `PUT /api/v1/learning/courses/{id}/lessons/{lesson_id}/progress` | `learning:participate` |
+| Read evidence-backed learner mastery and recommendations | `GET /api/v1/learning/courses/{id}/mastery` | `learning:read` |
 | Ask or answer teacher/advisor questions | `/api/v1/learning/courses/{id}/questions` | `learning:participate` |
 | Operations catalog | `GET /api/v1/operations/catalog` | `workflows:read` |
 | Workflow schema | `GET /api/v1/workflows/{workflow}/schema` | `workflows:read` |
