@@ -950,6 +950,46 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
         except DocIntelMcpError as exc: return exc.as_dict()
 
     @mcp.tool()
+    async def create_learning_assignment(ctx: Context, course_id: str, title: str, description: str = "", assignment_type: str = "written", module_id: str | None = None, lesson_id: str | None = None, rubric: list[dict[str, Any]] | None = None, due_at: str | None = None, publication_status: str = "draft") -> dict:
+        """Create a written assignment, document submission, presentation, or project with a rubric."""
+        try:
+            async with api_client(ctx, settings, "learning:manage") as client:
+                return await client.create_learning_assignment(course_id, {"title": title, "description": description, "assignment_type": assignment_type, "module_id": module_id, "lesson_id": lesson_id, "rubric": rubric or [], "source_document_ids": [], "max_score": 100, "due_at": due_at, "publication_status": publication_status})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def submit_learning_assignment(ctx: Context, course_id: str, assignment_id: str, submission_text: str = "", document_ids: list[str] | None = None, presentation_document_id: str | None = None, submit: bool = True) -> dict:
+        """Save or submit written and uploaded assignment evidence for the authenticated learner."""
+        try:
+            async with api_client(ctx, settings, "learning:participate") as client:
+                return await client.save_learning_submission(course_id, assignment_id, {"submission_text": submission_text, "document_ids": document_ids or [], "presentation_document_id": presentation_document_id, "submit": submit})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def evaluate_learning_submission(ctx: Context, course_id: str, assignment_id: str, submission_id: str) -> dict:
+        """Run evidence-grounded rubric evaluation before instructor review."""
+        try:
+            async with api_client(ctx, settings, "learning:manage") as client:
+                return await client.evaluate_learning_submission(course_id, assignment_id, submission_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def review_learning_submission(ctx: Context, course_id: str, assignment_id: str, submission_id: str, status: str, instructor_feedback: str = "", score: float | None = None) -> dict:
+        """Request revision or record final instructor approval and score."""
+        try:
+            async with api_client(ctx, settings, "learning:manage") as client:
+                return await client.review_learning_submission(course_id, assignment_id, submission_id, {"status": status, "instructor_feedback": instructor_feedback, "score": score})
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def get_learning_instructor_dashboard(ctx: Context, course_id: str) -> dict:
+        """Read cohort progress, difficult concepts, risk signals, open questions, and content gaps."""
+        try:
+            async with api_client(ctx, settings, "learning:manage") as client:
+                return await client.get_learning_instructor_dashboard(course_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
     async def ask_learning_tutor(ctx: Context, course_id: str, question: str, module_id: str | None = None, lesson_id: str | None = None, history: list[dict] | None = None, response_language: str | None = None) -> dict:
         """Ask an evidence-grounded AI Tutor question within a course, module, or lesson."""
         try:
@@ -1058,7 +1098,7 @@ def _normalized_sources(sources: list[dict[str, Any]] | None) -> list[dict[str, 
         result.append({
             "citation_id": source.get("citation_id") or f"citation-{index + 1}",
             "document_id": source.get("document_id") or source.get("doc_id"),
-            "document_name": source.get("document_name") or source.get("filename") or source.get("source"),
+            "document_name": source.get("document_name") or source.get("doc_name") or source.get("original_name") or source.get("filename") or source.get("source"),
             "chunk_id": source.get("chunk_id") or source.get("id"),
             "chunk_index": source.get("chunk_index", source.get("index")),
             "page_number": source.get("page_number") or source.get("page"),
@@ -1066,7 +1106,7 @@ def _normalized_sources(sources: list[dict[str, Any]] | None) -> list[dict[str, 
             "retrieval_score": source.get("retrieval_score", source.get("score")),
             "rerank_score": source.get("rerank_score"), "confidence": source.get("confidence"),
             "source_url": source.get("source_url") or source.get("url"),
-            "excerpt": str(source.get("excerpt") or source.get("text") or source.get("content") or "")[:600],
+            "excerpt": str(source.get("excerpt") or source.get("preview") or source.get("text") or source.get("content") or "")[:600],
         })
     return result
 

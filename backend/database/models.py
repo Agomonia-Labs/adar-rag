@@ -994,6 +994,70 @@ CREATE TABLE IF NOT EXISTS learning_lesson_progress (
 CREATE INDEX IF NOT EXISTS idx_learning_lesson_progress_course
     ON learning_lesson_progress(course_id, user_id, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS learning_assignments (
+    id                  UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    course_id           UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+    module_id           UUID        REFERENCES learning_modules(id) ON DELETE SET NULL,
+    lesson_id           UUID        REFERENCES learning_lessons(id) ON DELETE SET NULL,
+    created_by          UUID        REFERENCES users(id) ON DELETE SET NULL,
+    title               TEXT        NOT NULL,
+    description         TEXT        NOT NULL DEFAULT '',
+    assignment_type     TEXT        NOT NULL DEFAULT 'written'
+                                    CHECK (assignment_type IN ('written','document','presentation','project')),
+    rubric              JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    source_document_ids JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    max_score           INTEGER     NOT NULL DEFAULT 100 CHECK (max_score > 0),
+    due_at              TIMESTAMPTZ,
+    publication_status  TEXT        NOT NULL DEFAULT 'draft'
+                                    CHECK (publication_status IN ('draft','published','closed')),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_learning_assignments_course
+    ON learning_assignments(course_id, publication_status, due_at);
+
+CREATE TABLE IF NOT EXISTS learning_submissions (
+    id                       UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    course_id                UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+    assignment_id            UUID        NOT NULL REFERENCES learning_assignments(id) ON DELETE CASCADE,
+    user_id                  UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    submission_text          TEXT        NOT NULL DEFAULT '',
+    document_ids             JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    presentation_document_id UUID        REFERENCES documents(id) ON DELETE SET NULL,
+    status                   TEXT        NOT NULL DEFAULT 'draft'
+                                         CHECK (status IN ('draft','submitted','in_review','revision_requested','approved')),
+    revision_number          INTEGER     NOT NULL DEFAULT 1 CHECK (revision_number > 0),
+    ai_evaluation            JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    instructor_feedback      TEXT        NOT NULL DEFAULT '',
+    score                    NUMERIC(8,2),
+    reviewed_by              UUID        REFERENCES users(id) ON DELETE SET NULL,
+    submitted_at             TIMESTAMPTZ,
+    reviewed_at              TIMESTAMPTZ,
+    approved_at              TIMESTAMPTZ,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(assignment_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_learning_submissions_course
+    ON learning_submissions(course_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_learning_submissions_learner
+    ON learning_submissions(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS learning_submission_revisions (
+    id                       UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    submission_id            UUID        NOT NULL REFERENCES learning_submissions(id) ON DELETE CASCADE,
+    revision_number          INTEGER     NOT NULL,
+    submission_text          TEXT        NOT NULL DEFAULT '',
+    document_ids             JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    presentation_document_id UUID        REFERENCES documents(id) ON DELETE SET NULL,
+    status                   TEXT        NOT NULL,
+    created_by               UUID        REFERENCES users(id) ON DELETE SET NULL,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(submission_id, revision_number)
+);
+CREATE INDEX IF NOT EXISTS idx_learning_submission_revisions
+    ON learning_submission_revisions(submission_id, revision_number DESC);
+
 CREATE TABLE IF NOT EXISTS learning_questions (
     id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     course_id   UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,

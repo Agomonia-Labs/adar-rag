@@ -1347,7 +1347,10 @@ def _build_context(chunks: list[dict], redact_pii: bool = False) -> str:
 def _sanitise(chunks: list[dict], redact_pii: bool = False) -> list[dict]:
     return [
         {
+            "source_number": index + 1,
+            "document_id":  str(c.get("document_id") or ""),
             "doc_name":     c.get("doc_name"),
+            "original_name": c.get("doc_name") or c.get("original_name"),
             "chunk_index":  c.get("chunk_index"),
             "chunk_total":  c.get("chunk_total"),
             **_video_source_fields(c),
@@ -1355,9 +1358,10 @@ def _sanitise(chunks: list[dict], redact_pii: bool = False) -> list[dict]:
             "rerank_score": round(float(c.get("rerank_score") or 0), 4)
                             if c.get("rerank_score") is not None else None,
             "match_type":   c.get("match_type", "vector"),
-            "preview":      redact_text((c.get("content") or "")[:300], redact_pii).text,
+            "preview":      redact_text((c.get("content") or "")[:500], redact_pii).text,
+            "excerpt":      redact_text((c.get("content") or "")[:500], redact_pii).text,
         }
-        for c in chunks
+        for index, c in enumerate(chunks)
     ]
 
 

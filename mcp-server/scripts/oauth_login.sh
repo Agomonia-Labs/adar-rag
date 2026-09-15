@@ -31,8 +31,15 @@ docintel_oauth_login() {
     resource="${DOCINTEL_OAUTH_RESOURCE:-${DOCINTEL_MCP_URL:-$default_resource}}"
     scopes="${DOCINTEL_OAUTH_SCOPES:-${DOCINTEL_MCP_SCOPES:-$default_scopes}}"
   else
-    resource="${DOCINTEL_OAUTH_RESOURCE:-$default_resource}"
+    resource="${DOCINTEL_OAUTH_RESOURCE:-${DOCINTEL_API_URL:-$default_resource}}"
     scopes="${DOCINTEL_OAUTH_SCOPES:-$default_scopes}"
+  fi
+  # This script is normally sourced, so its exported resource survives after
+  # login. Never carry an MCP audience into REST verification or vice versa.
+  if [[ "$target" == "api" && "${resource%/}" == */mcp ]]; then
+    resource="${DOCINTEL_API_URL:-$default_resource}"
+  elif [[ "$target" == "mcp" && "${resource%/}" == */api/v1 ]]; then
+    resource="${DOCINTEL_MCP_URL:-$default_resource}"
   fi
   local callback_port="${DOCINTEL_OAUTH_CALLBACK_PORT:-8765}"
   local callback_url="http://127.0.0.1:${callback_port}/callback"
@@ -117,6 +124,7 @@ docintel_oauth_login() {
   export DOCINTEL_OAUTH_CLIENT_ID="$CLIENT_ID"
   export DOCINTEL_OAUTH_TARGET="$target"
   echo "OAuth client: $CLIENT_ID"
+  echo "OAuth resource: $resource"
 
   read -r CODE_VERIFIER CODE_CHALLENGE OAUTH_STATE < <(
     python3 - <<'PY'
@@ -317,12 +325,23 @@ PY
 )"
   echo "Authenticated user ID: $token_subject"
   if [[ "$target" == "api" ]]; then
-    local identity_response
-    identity_response="$(curl -fsS "${resource%/}/me" \
+    local identity_response identity_status identity_url identity_file
+    identity_url="${resource%/}/me"
+    identity_file="$(mktemp "${TMPDIR:-/tmp}/docintel-identity.XXXXXX")" || return 1
+    identity_status="$(curl -sS -o "$identity_file" -w '%{http_code}' "$identity_url" \
       -H "Authorization: Bearer $DOCINTEL_ACCESS_TOKEN")" || {
-      echo "Token was issued, but API identity verification failed." >&2
+      rm -f "$identity_file"
+      echo "Token was issued, but API identity verification could not reach $identity_url." >&2
       return 1
     }
+    identity_response="$(cat "$identity_file")"
+    rm -f "$identity_file"
+    if [[ "$identity_status" != "200" ]]; then
+      echo "Token was issued, but API identity verification returned HTTP $identity_status." >&2
+      echo "Verification URL: $identity_url" >&2
+      [[ -n "$identity_response" ]] && printf 'Response: %s\n' "$identity_response" >&2
+      return 1
+    fi
     export DOCINTEL_AUTHENTICATED_USER_ID="$(jq -r '.data.user_id // empty' <<<"$identity_response")"
     export DOCINTEL_AUTHENTICATED_EMAIL="$(jq -r '.data.email // empty' <<<"$identity_response")"
     export DOCINTEL_WORKSPACE_COUNT="$(jq -r '.data.workspace_count // 0' <<<"$identity_response")"

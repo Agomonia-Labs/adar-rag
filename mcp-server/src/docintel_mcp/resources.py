@@ -286,3 +286,21 @@ def register_resources(mcp: FastMCP, settings: Settings) -> None:
                 result = await client.get_learning_mastery(course_id)
             return json.dumps(result, ensure_ascii=False, default=str)
         except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://learning/courses/{course_id}/assignments")
+    async def learning_assignments(course_id: str, ctx: Context) -> str:
+        """Role-filtered assignments and submissions visible to the authenticated course member."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client:
+                course = await client.get_learning_course(course_id)
+            return json.dumps({"course_id": course_id, "assignments": course.get("assignments") or [], "submissions": course.get("submissions") or []}, ensure_ascii=False, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
+    @mcp.resource("docintel://learning/courses/{course_id}/instructor-dashboard")
+    async def learning_instructor_dashboard(course_id: str, ctx: Context) -> str:
+        """Teacher-only cohort progress, assessment, risk, question, and content-quality signals."""
+        try:
+            async with api_client(ctx, settings, "learning:manage") as client:
+                result = await client.get_learning_instructor_dashboard(course_id)
+            return json.dumps(result, ensure_ascii=False, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())

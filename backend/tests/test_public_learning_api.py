@@ -93,7 +93,7 @@ def test_public_learning_openapi_exposes_every_operation():
         for operation in path_item
         if operation in {"get", "post", "put", "patch", "delete"}
     ]
-    assert len(operations) == 24
+    assert len(operations) == 33
 
 
 @pytest.mark.anyio

@@ -112,6 +112,11 @@ def example_catalog() -> list[dict]:
         _tool("Knowledge Academy", "attach_learning_content", {"course_id": course, "document_id": doc, "module_id": module, "lesson_id": lesson, "title": "Hybrid Retrieval Lesson", "start_seconds": 60, "end_seconds": 180}, "Map a complete asset or approved media range into a lesson."),
         _tool("Knowledge Academy", "update_learning_content_mapping", {"course_id": course, "asset_id": "YOUR_ASSET_ID", "module_id": module, "lesson_id": lesson, "title": "Hybrid Retrieval Lesson", "start_seconds": 180, "end_seconds": 300}, "Replace the scope or media range of one existing course mapping."),
         _tool("Knowledge Academy", "ask_learning_tutor", {"course_id": course, "question": "How does hybrid retrieval improve grounding?", "module_id": module, "lesson_id": lesson, "history": [], "response_language": "en"}, "Ask an evidence-grounded tutor within a precise learning scope."),
+        _tool("Knowledge Academy", "create_learning_assignment", {"course_id": course, "title": "Grounded RAG project", "description": "Submit an evidence-backed retrieval design.", "assignment_type": "project", "module_id": module, "lesson_id": lesson, "rubric": [{"id": "grounding", "title": "Evidence grounding", "description": "Claims cite approved evidence.", "weight": 100}], "publication_status": "published"}, "Create a governed assignment or project."),
+        _tool("Knowledge Academy", "submit_learning_assignment", {"course_id": course, "assignment_id": "YOUR_ASSIGNMENT_ID", "submission_text": "My evidence-backed response", "document_ids": [doc], "presentation_document_id": None, "submit": True}, "Submit written, document, or recorded evidence."),
+        _tool("Knowledge Academy", "evaluate_learning_submission", {"course_id": course, "assignment_id": "YOUR_ASSIGNMENT_ID", "submission_id": "YOUR_SUBMISSION_ID"}, "Run a rubric-based evidence evaluation."),
+        _tool("Knowledge Academy", "review_learning_submission", {"course_id": course, "assignment_id": "YOUR_ASSIGNMENT_ID", "submission_id": "YOUR_SUBMISSION_ID", "status": "approved", "instructor_feedback": "Evidence verified.", "score": 90}, "Approve or request revision after human review."),
+        _tool("Knowledge Academy", "get_learning_instructor_dashboard", {"course_id": course}, "Read cohort progress, risk, engagement, and content-quality signals."),
         _tool("Knowledge Academy", "generate_learning_artifact", {"course_id": course, "artifact_type": "practice_questions", "module_id": module, "lesson_id": lesson, "title": "Hybrid Retrieval Practice", "custom_instruction": ""}, "Generate and save scoped study material."),
         _tool("Knowledge Academy", "list_learning_artifacts", {"course_id": course}, "List caller-owned study materials."),
         _tool("Knowledge Academy", "submit_learning_quiz", {"course_id": course, "artifact_id": artifact, "answers": {"q1": ["A", "C"]}}, "Grade and persist quiz answers."),
@@ -154,6 +159,8 @@ def example_catalog() -> list[dict]:
         ("Learning questions", "docintel://learning/courses/YOUR_COURSE_ID/questions", "Read visible teacher and advisor questions."),
         ("Learning progress", "docintel://learning/courses/YOUR_COURSE_ID/progress", "Read persisted quiz progress."),
         ("Learning mastery", "docintel://learning/courses/YOUR_COURSE_ID/mastery", "Read completion, competency mastery, evidence, and adaptive recommendations."),
+        ("Learning assignments", "docintel://learning/courses/YOUR_COURSE_ID/assignments", "Read role-filtered assignments and submissions."),
+        ("Instructor dashboard", "docintel://learning/courses/YOUR_COURSE_ID/instructor-dashboard", "Read teacher-only cohort intelligence."),
     ]
     examples.extend(_request("Resources", f"{name} resource", "resources/read", {"uri": uri}, description)
                     for name, uri, description in resources)

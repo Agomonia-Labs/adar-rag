@@ -673,6 +673,34 @@ class DocIntelApiClient:
         await self.get_learning_course(course_id)
         return await self.request("DELETE", f"/api/learning/courses/{course_id}/assets/{asset_id}")
 
+    async def create_learning_assignment(self, course_id: str, payload: dict[str, Any]) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("POST", f"/api/learning/courses/{course_id}/assignments", json=payload)
+
+    async def update_learning_assignment(self, course_id: str, assignment_id: str, payload: dict[str, Any]) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("PATCH", f"/api/learning/courses/{course_id}/assignments/{assignment_id}", json=payload)
+
+    async def delete_learning_assignment(self, course_id: str, assignment_id: str) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("DELETE", f"/api/learning/courses/{course_id}/assignments/{assignment_id}")
+
+    async def save_learning_submission(self, course_id: str, assignment_id: str, payload: dict[str, Any]) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("PUT", f"/api/learning/courses/{course_id}/assignments/{assignment_id}/submission", json=payload)
+
+    async def evaluate_learning_submission(self, course_id: str, assignment_id: str, submission_id: str) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("POST", f"/api/learning/courses/{course_id}/assignments/{assignment_id}/submissions/{submission_id}/evaluate")
+
+    async def review_learning_submission(self, course_id: str, assignment_id: str, submission_id: str, payload: dict[str, Any]) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("PATCH", f"/api/learning/courses/{course_id}/assignments/{assignment_id}/submissions/{submission_id}/review", json=payload)
+
+    async def get_learning_instructor_dashboard(self, course_id: str) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("GET", f"/api/learning/courses/{course_id}/instructor-dashboard")
+
     async def resolve_learning_scope(
         self, course_id: str, module_id: str | None = None, lesson_id: str | None = None,
     ) -> dict:

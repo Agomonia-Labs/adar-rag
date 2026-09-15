@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Literal
@@ -15,8 +16,10 @@ from routes.workspaces import ROLE_ORDER, _require_role
 from services.audit import audit, ip_from, ua_from
 from services.notifications import send_learning_question_notification
 from services.mcp_enterprise import emit_event
+import services.storage as gcs
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 PERSONAS = {"admin", "teacher", "student", "advisor"}
 MANAGER_PERSONAS = {"admin", "teacher"}
@@ -197,6 +200,256 @@ class QuestionUpdate(BaseModel):
     answer: str | None = None
     status: Literal["open", "answered", "closed"] | None = None
     assigned_to: str | None = None
+
+
+class RubricCriterion(BaseModel):
+    id: str = Field(min_length=1, max_length=80)
+    title: str = Field(min_length=1, max_length=180)
+    description: str = Field(default="", max_length=2000)
+    weight: int = Field(default=1, ge=1, le=100)
+
+
+class AssignmentCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=240)
+    description: str = Field(default="", max_length=12_000)
+    assignment_type: Literal["written", "document", "presentation", "project"] = "written"
+    module_id: str | None = None
+    lesson_id: str | None = None
+    rubric: list[RubricCriterion] = Field(default_factory=list, max_length=20)
+    source_document_ids: list[str] = Field(default_factory=list, max_length=50)
+    max_score: int = Field(default=100, gt=0, le=10_000)
+    due_at: datetime | None = None
+    publication_status: Literal["draft", "published", "closed"] = "draft"
+
+    @model_validator(mode="after")
+    def validate_rubric(self):
+        if self.rubric:
+            if len({item.id for item in self.rubric}) != len(self.rubric):
+                raise ValueError("Rubric criterion IDs must be unique")
+            if sum(item.weight for item in self.rubric) != 100:
+                raise ValueError("Rubric criterion weights must total 100")
+        return self
+
+
+class AssignmentUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=240)
+    description: str | None = Field(default=None, max_length=12_000)
+    assignment_type: Literal["written", "document", "presentation", "project"] | None = None
+    module_id: str | None = None
+    lesson_id: str | None = None
+    rubric: list[RubricCriterion] | None = Field(default=None, max_length=20)
+    source_document_ids: list[str] | None = Field(default=None, max_length=50)
+    max_score: int | None = Field(default=None, gt=0, le=10_000)
+    due_at: datetime | None = None
+    publication_status: Literal["draft", "published", "closed"] | None = None
+
+    @model_validator(mode="after")
+    def validate_rubric(self):
+        if self.rubric is not None and self.rubric:
+            if len({item.id for item in self.rubric}) != len(self.rubric):
+                raise ValueError("Rubric criterion IDs must be unique")
+            if sum(item.weight for item in self.rubric) != 100:
+                raise ValueError("Rubric criterion weights must total 100")
+        return self
+
+
+class SubmissionUpsert(BaseModel):
+    submission_text: str = Field(default="", max_length=100_000)
+    document_ids: list[str] = Field(default_factory=list, max_length=30)
+    presentation_document_id: str | None = None
+    submit: bool = False
+
+    @model_validator(mode="after")
+    def require_evidence(self):
+        if self.submit and not (
+            self.submission_text.strip() or self.document_ids or self.presentation_document_id
+        ):
+            raise ValueError("A submitted assignment requires written or uploaded evidence")
+        return self
+
+
+class SubmissionReview(BaseModel):
+    status: Literal["in_review", "revision_requested", "approved"]
+    instructor_feedback: str = Field(default="", max_length=30_000)
+    score: float | None = Field(default=None, ge=0)
+
+
+def _assignment_response(row) -> dict:
+    result = _jsonable(dict(row))
+    result["rubric"] = _decode_json(result.get("rubric"), [])
+    result["source_document_ids"] = _decode_json(result.get("source_document_ids"), [])
+    return result
+
+
+def _submission_response(row) -> dict:
+    result = _jsonable(dict(row))
+    result["document_ids"] = _decode_json(result.get("document_ids"), [])
+    result["ai_evaluation"] = _decode_json(result.get("ai_evaluation"), {})
+    return result
+
+
+async def _validate_assignment_scope(db, course_id: str, module_id: str | None, lesson_id: str | None):
+    if lesson_id:
+        row = await db.fetchrow(
+            """SELECT l.module_id FROM learning_lessons l
+               JOIN learning_modules m ON m.id=l.module_id
+               WHERE l.id=$1::uuid AND m.course_id=$2::uuid""",
+            lesson_id, course_id,
+        )
+        if not row:
+            raise HTTPException(400, "Lesson does not belong to this course")
+        if module_id and str(row["module_id"]) != str(module_id):
+            raise HTTPException(400, "Lesson does not belong to the selected module")
+        module_id = str(row["module_id"])
+    elif module_id and not await db.fetchval(
+        "SELECT 1 FROM learning_modules WHERE id=$1::uuid AND course_id=$2::uuid", module_id, course_id,
+    ):
+        raise HTTPException(400, "Module does not belong to this course")
+    return module_id, lesson_id
+
+
+async def _validate_course_documents(db, workspace_id: str, document_ids: list[str]) -> None:
+    unique_ids = list(dict.fromkeys(str(value) for value in document_ids if value))
+    if not unique_ids:
+        return
+    rows = await db.fetch(
+        """SELECT id FROM documents WHERE id=ANY($1::uuid[]) AND workspace_id=$2::uuid
+           AND status<>'deleted'""", unique_ids, workspace_id,
+    )
+    if {str(row["id"]) for row in rows} != set(unique_ids):
+        raise HTTPException(400, "One or more documents are outside the course workspace")
+
+
+def _extract_json_object(value: str) -> dict:
+    text = str(value or "").strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("AI evaluation did not contain a JSON object")
+    parsed = json.loads(text[start:end + 1])
+    if not isinstance(parsed, dict):
+        raise ValueError("AI evaluation must be a JSON object")
+    return parsed
+
+
+def _normalize_submission_evaluation(result: dict, assignment: dict) -> dict:
+    maximum = float(assignment.get("max_score") or 100)
+    rubric = assignment.get("rubric") or []
+    rubric_by_id = {str(item.get("id")): item for item in rubric if isinstance(item, dict) and item.get("id")}
+    raw_criteria = result.get("criteria") or []
+    if isinstance(raw_criteria, dict):
+        raw_criteria = [dict(value, criterion_id=key) if isinstance(value, dict) else {"criterion_id": key, "feedback": str(value)}
+                        for key, value in raw_criteria.items()]
+    if not isinstance(raw_criteria, list):
+        raise ValueError("AI evaluation criteria must be a list")
+
+    criteria = []
+    for index, raw in enumerate(raw_criteria):
+        if not isinstance(raw, dict):
+            continue
+        fallback = rubric[index] if index < len(rubric) and isinstance(rubric[index], dict) else {}
+        criterion_id = str(raw.get("criterion_id") or raw.get("id") or fallback.get("id") or f"criterion_{index + 1}")
+        rubric_item = rubric_by_id.get(criterion_id, fallback)
+        criterion_max = raw.get("max_score")
+        if criterion_max is None and rubric_item:
+            criterion_max = maximum * float(rubric_item.get("weight") or 0) / 100
+        criterion_score = raw.get("score")
+        if criterion_score is None or criterion_max is None:
+            continue
+        criterion_score, criterion_max = float(criterion_score), float(criterion_max)
+        if criterion_score < 0 or criterion_max <= 0 or criterion_score > criterion_max:
+            raise ValueError(f"AI score for criterion '{criterion_id}' is outside its allowed range")
+        evidence = raw.get("evidence") or []
+        criteria.append({
+            "criterion_id": criterion_id,
+            "score": criterion_score,
+            "max_score": criterion_max,
+            "feedback": str(raw.get("feedback") or "").strip(),
+            "evidence": [str(item).strip() for item in evidence if str(item).strip()]
+            if isinstance(evidence, list) else [str(evidence).strip()],
+        })
+
+    score = result.get("overall_score")
+    if score is None and criteria:
+        score = sum(item["score"] for item in criteria)
+    if score is None:
+        raise ValueError("AI evaluation did not provide an overall or criterion-derived score")
+    score = float(score)
+    if score < 0 or score > maximum:
+        raise ValueError("AI score is outside the assignment score range")
+
+    strengths = result.get("strengths") or []
+    improvements = result.get("improvements") or []
+    return {
+        "status": "completed",
+        "requires_human_review": True,
+        "overall_score": round(score, 2),
+        "summary": str(result.get("summary") or "AI rubric evaluation completed for instructor review.").strip(),
+        "criteria": criteria,
+        "strengths": _clean_list(strengths if isinstance(strengths, list) else [strengths]),
+        "improvements": _clean_list(improvements if isinstance(improvements, list) else [improvements]),
+    }
+
+
+def _can_run_submission_evaluation(submission: dict) -> bool:
+    if submission.get("status") == "submitted":
+        return True
+    evaluation = _decode_json(submission.get("ai_evaluation"), {})
+    return submission.get("status") == "in_review" and evaluation.get("status") == "needs_human_review"
+
+
+async def _generate_submission_evaluation(assignment: dict, submission: dict, evidence: str) -> dict:
+    from services.llm import chat_json
+
+    rubric = assignment.get("rubric") or []
+    maximum = float(assignment.get("max_score") or 100)
+    rubric_contract = []
+    for item in rubric:
+        if not isinstance(item, dict):
+            continue
+        rubric_contract.append({
+            **item,
+            "criterion_max_score": round(maximum * float(item.get("weight") or 0) / 100, 2),
+        })
+    system_prompt = (
+        "You are an evidence-grounded learning evaluator. Evaluate only the supplied submission evidence. "
+        "Do not infer missing work. Return JSON only, without Markdown or commentary. Use exactly this shape: "
+        '{"overall_score":0,"summary":"...","strengths":["..."],"improvements":["..."],'
+        '"criteria":[{"criterion_id":"...","score":0,"max_score":0,"feedback":"...","evidence":["..."]}]}. '
+        "Use each supplied rubric ID exactly once and keep every score within its criterion maximum."
+    )
+    prompt = {
+        "assignment": {"title": assignment.get("title"), "description": assignment.get("description"),
+                       "max_score": assignment.get("max_score"), "rubric": rubric_contract},
+        "submission_text": submission.get("submission_text") or "",
+        "uploaded_evidence": evidence[:30_000],
+    }
+    last_error: Exception | None = None
+    try:
+        for _attempt in range(2):
+            try:
+                result = await chat_json(
+                    [{"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}],
+                    system_prompt,
+                )
+                return _normalize_submission_evaluation(result, assignment)
+            except Exception as exc:
+                last_error = exc
+        raise last_error or ValueError("AI rubric evaluation returned no result")
+    except Exception as exc:
+        logger.warning(
+            "Learning rubric evaluation unavailable for assignment=%s submission=%s: %s",
+            assignment.get("id"), submission.get("id"), exc,
+        )
+        return {
+            "status": "needs_human_review", "requires_human_review": True,
+            "overall_score": None,
+            "summary": "Automated rubric evaluation was unavailable; instructor review is required.",
+            "criteria": [], "strengths": [], "improvements": [],
+            "error_code": "evaluation_unavailable",
+            "error": f"{type(exc).__name__}: {str(exc)}"[:1000],
+        }
 
 
 async def _course_access(db, course_id: str, user_id: str, manage: bool = False):
@@ -726,6 +979,245 @@ async def remove_asset(course_id: str, asset_id: str, current_user: CurrentUser,
     return {"ok": True}
 
 
+@router.post("/courses/{course_id}/assignments")
+async def create_assignment(
+    course_id: str, body: AssignmentCreate, request: Request,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id, manage=True)
+    module_id, lesson_id = await _validate_assignment_scope(db, course_id, body.module_id, body.lesson_id)
+    await _validate_course_documents(db, str(course["workspace_id"]), body.source_document_ids)
+    row = await db.fetchrow(
+        """INSERT INTO learning_assignments
+           (course_id,module_id,lesson_id,created_by,title,description,assignment_type,rubric,
+            source_document_ids,max_score,due_at,publication_status)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12) RETURNING *""",
+        course_id, module_id, lesson_id, user_id, body.title.strip(), body.description.strip(),
+        body.assignment_type, json.dumps([item.model_dump() for item in body.rubric]),
+        json.dumps(body.source_document_ids), body.max_score, body.due_at, body.publication_status,
+    )
+    await audit(db, user_id=user_id, action="learning_assignment_create", resource_type="learning_assignment",
+                resource_id=str(row["id"]), metadata={"course_id": course_id},
+                ip_address=ip_from(request), user_agent=ua_from(request))
+    await emit_event(
+        db, user_id=user_id, workspace_id=str(course["workspace_id"]),
+        event_type="learning.assignment.created", resource_type="learning_assignment",
+        resource_id=str(row["id"]), payload={"course_id": course_id, "title": body.title},
+    )
+    return _assignment_response(row)
+
+
+@router.get("/courses/{course_id}/assignments")
+async def list_assignments(course_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    workspace = await _course_workspace(db, course_id, str(current_user["id"]))
+    return {"assignments": workspace["assignments"], "submissions": workspace["submissions"]}
+
+
+@router.patch("/courses/{course_id}/assignments/{assignment_id}")
+async def update_assignment(
+    course_id: str, assignment_id: str, body: AssignmentUpdate,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id, manage=True)
+    existing = await db.fetchrow(
+        "SELECT * FROM learning_assignments WHERE id=$1::uuid AND course_id=$2::uuid", assignment_id, course_id,
+    )
+    if not existing:
+        raise HTTPException(404, "Assignment not found")
+    values = body.model_dump(exclude_unset=True)
+    module_id = values.get("module_id", str(existing["module_id"]) if existing["module_id"] else None)
+    lesson_id = values.get("lesson_id", str(existing["lesson_id"]) if existing["lesson_id"] else None)
+    module_id, lesson_id = await _validate_assignment_scope(db, course_id, module_id, lesson_id)
+    values["module_id"], values["lesson_id"] = module_id, lesson_id
+    if "source_document_ids" in values:
+        await _validate_course_documents(db, str(course["workspace_id"]), values["source_document_ids"])
+    allowed = {"title", "description", "assignment_type", "module_id", "lesson_id", "rubric",
+               "source_document_ids", "max_score", "due_at", "publication_status"}
+    sets, params = [], [assignment_id, course_id]
+    for key, value in values.items():
+        if key not in allowed:
+            continue
+        if key == "rubric":
+            value = json.dumps([item.model_dump() if hasattr(item, "model_dump") else item for item in value])
+        elif key == "source_document_ids":
+            value = json.dumps(value)
+        params.append(value)
+        cast = "::jsonb" if key in {"rubric", "source_document_ids"} else "::uuid" if key in {"module_id", "lesson_id"} else ""
+        sets.append(f"{key}=${len(params)}{cast}")
+    if sets:
+        await db.execute(
+            f"UPDATE learning_assignments SET {','.join(sets)},updated_at=NOW() WHERE id=$1::uuid AND course_id=$2::uuid",
+            *params,
+        )
+    row = await db.fetchrow("SELECT * FROM learning_assignments WHERE id=$1::uuid", assignment_id)
+    return _assignment_response(row)
+
+
+@router.delete("/courses/{course_id}/assignments/{assignment_id}")
+async def delete_assignment(course_id: str, assignment_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    await _course_access(db, course_id, str(current_user["id"]), manage=True)
+    result = await db.execute(
+        "DELETE FROM learning_assignments WHERE id=$1::uuid AND course_id=$2::uuid", assignment_id, course_id,
+    )
+    if result == "DELETE 0":
+        raise HTTPException(404, "Assignment not found")
+    return {"ok": True}
+
+
+@router.put("/courses/{course_id}/assignments/{assignment_id}/submission")
+async def save_assignment_submission(
+    course_id: str, assignment_id: str, body: SubmissionUpsert,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id)
+    assignment = await db.fetchrow(
+        "SELECT * FROM learning_assignments WHERE id=$1::uuid AND course_id=$2::uuid", assignment_id, course_id,
+    )
+    if not assignment or (assignment["publication_status"] == "draft" and not course.get("persona") in MANAGER_PERSONAS):
+        raise HTTPException(404, "Assignment not found")
+    if assignment["publication_status"] == "closed":
+        raise HTTPException(409, "This assignment is closed")
+    document_ids = list(dict.fromkeys(body.document_ids + ([body.presentation_document_id] if body.presentation_document_id else [])))
+    await _validate_course_documents(db, str(course["workspace_id"]), document_ids)
+    existing = await db.fetchrow(
+        "SELECT * FROM learning_submissions WHERE assignment_id=$1::uuid AND user_id=$2::uuid", assignment_id, user_id,
+    )
+    revision_number = int(existing["revision_number"] or 1) if existing else 1
+    if existing and existing["status"] in {"submitted", "in_review"}:
+        raise HTTPException(409, "The submission is under review; wait for instructor feedback")
+    if existing and existing["status"] == "approved":
+        raise HTTPException(409, "The approved submission is final")
+    if existing and existing["status"] == "revision_requested":
+        await db.execute(
+            """INSERT INTO learning_submission_revisions
+               (submission_id,revision_number,submission_text,document_ids,presentation_document_id,status,created_by)
+               VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING""",
+            str(existing["id"]), revision_number, existing["submission_text"],
+            json.dumps(_decode_json(existing["document_ids"], [])),
+            existing["presentation_document_id"], existing["status"], user_id,
+        )
+        revision_number += 1
+    status = "submitted" if body.submit else "draft"
+    row = await db.fetchrow(
+        """INSERT INTO learning_submissions
+           (course_id,assignment_id,user_id,submission_text,document_ids,presentation_document_id,status,
+            revision_number,submitted_at)
+           VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,CASE WHEN $7='submitted' THEN NOW() END)
+           ON CONFLICT (assignment_id,user_id) DO UPDATE SET
+             submission_text=EXCLUDED.submission_text,document_ids=EXCLUDED.document_ids,
+             presentation_document_id=EXCLUDED.presentation_document_id,status=EXCLUDED.status,
+             revision_number=EXCLUDED.revision_number,ai_evaluation='{}'::jsonb,instructor_feedback='',
+             score=NULL,reviewed_by=NULL,reviewed_at=NULL,approved_at=NULL,
+             submitted_at=CASE WHEN EXCLUDED.status='submitted' THEN NOW() ELSE learning_submissions.submitted_at END,
+             updated_at=NOW() RETURNING *""",
+        course_id, assignment_id, user_id, body.submission_text.strip(), json.dumps(body.document_ids),
+        body.presentation_document_id, status, revision_number,
+    )
+    await emit_event(
+        db, user_id=user_id, workspace_id=str(course["workspace_id"]),
+        event_type="learning.assignment.submitted" if body.submit else "learning.assignment.saved",
+        resource_type="learning_submission", resource_id=str(row["id"]),
+        payload={"course_id": course_id, "assignment_id": assignment_id, "status": status},
+    )
+    return _submission_response(row)
+
+
+@router.post("/courses/{course_id}/assignments/{assignment_id}/submissions/{submission_id}/evaluate")
+async def evaluate_assignment_submission(
+    course_id: str, assignment_id: str, submission_id: str,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    await _course_access(db, course_id, user_id, manage=True)
+    assignment_row = await db.fetchrow(
+        "SELECT * FROM learning_assignments WHERE id=$1::uuid AND course_id=$2::uuid", assignment_id, course_id,
+    )
+    submission_row = await db.fetchrow(
+        "SELECT * FROM learning_submissions WHERE id=$1::uuid AND assignment_id=$2::uuid", submission_id, assignment_id,
+    )
+    if not assignment_row or not submission_row:
+        raise HTTPException(404, "Assignment submission not found")
+    assignment, submission = _assignment_response(assignment_row), _submission_response(submission_row)
+    if not _can_run_submission_evaluation(submission):
+        raise HTTPException(409, "Only submitted work or a failed automated evaluation can be evaluated")
+    evidence_ids = list(dict.fromkeys(submission["document_ids"] + (
+        [submission["presentation_document_id"]] if submission.get("presentation_document_id") else []
+    )))
+    chunk_rows = await db.fetch(
+        """SELECT d.original_name,c.chunk_index,c.content FROM document_chunks c
+           JOIN documents d ON d.id=c.document_id
+           WHERE c.document_id=ANY($1::uuid[]) ORDER BY d.original_name,c.chunk_index LIMIT 30""",
+        evidence_ids,
+    ) if evidence_ids else []
+    evidence = "\n\n".join(
+        f"[{row['original_name']} chunk {int(row['chunk_index']) + 1}]\n{str(row['content'])[:2000]}" for row in chunk_rows
+    )
+    evaluation = await _generate_submission_evaluation(assignment, submission, evidence)
+    row = await db.fetchrow(
+        """UPDATE learning_submissions SET ai_evaluation=$3::jsonb,status='in_review',updated_at=NOW()
+           WHERE id=$1::uuid AND assignment_id=$2::uuid RETURNING *""",
+        submission_id, assignment_id, json.dumps(evaluation),
+    )
+    return _submission_response(row)
+
+
+@router.patch("/courses/{course_id}/assignments/{assignment_id}/submissions/{submission_id}/review")
+async def review_assignment_submission(
+    course_id: str, assignment_id: str, submission_id: str, body: SubmissionReview,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id, manage=True)
+    maximum = await db.fetchval(
+        "SELECT max_score FROM learning_assignments WHERE id=$1::uuid AND course_id=$2::uuid", assignment_id, course_id,
+    )
+    if maximum is None:
+        raise HTTPException(404, "Assignment not found")
+    current_status = await db.fetchval(
+        "SELECT status FROM learning_submissions WHERE id=$1::uuid AND assignment_id=$2::uuid AND course_id=$3::uuid",
+        submission_id, assignment_id, course_id,
+    )
+    if current_status not in {"submitted", "in_review"}:
+        raise HTTPException(409, "Only submitted or evaluated work can be reviewed")
+    if body.score is not None and body.score > float(maximum):
+        raise HTTPException(400, "Score exceeds the assignment maximum")
+    row = await db.fetchrow(
+        """UPDATE learning_submissions SET status=$4,instructor_feedback=$5,score=$6,reviewed_by=$7,
+           reviewed_at=NOW(),approved_at=CASE WHEN $4='approved' THEN NOW() ELSE NULL END,updated_at=NOW()
+           WHERE id=$1::uuid AND assignment_id=$2::uuid AND course_id=$3::uuid RETURNING *""",
+        submission_id, assignment_id, course_id, body.status, body.instructor_feedback.strip(), body.score, user_id,
+    )
+    if not row:
+        raise HTTPException(404, "Submission not found")
+    await emit_event(
+        db, user_id=user_id, workspace_id=str(course["workspace_id"]),
+        event_type="learning.assignment.reviewed", resource_type="learning_submission",
+        resource_id=submission_id, payload={"course_id": course_id, "status": body.status, "score": body.score},
+    )
+    return _submission_response(row)
+
+
+@router.get("/courses/{course_id}/evidence/{document_id}/view-url")
+async def get_learning_evidence_url(
+    course_id: str, document_id: str, current_user: CurrentUser, db=Depends(get_db),
+):
+    await _course_access(db, course_id, str(current_user["id"]))
+    row = await db.fetchrow(
+        """SELECT d.id,d.original_name,d.file_type,d.gcs_source_path
+           FROM documents d JOIN learning_assets a ON a.document_id=d.id
+           WHERE a.course_id=$1::uuid AND d.id=$2::uuid LIMIT 1""", course_id, document_id,
+    )
+    if not row:
+        raise HTTPException(404, "Evidence is not attached to this course")
+    if not row["gcs_source_path"]:
+        raise HTTPException(409, "The original evidence file is not available in storage")
+    return {"document_id": document_id, "filename": row["original_name"], "file_type": row["file_type"],
+            "url": await gcs.get_signed_url(row["gcs_source_path"])}
+
+
 @router.post("/courses/{course_id}/artifacts")
 async def save_artifact(course_id: str, body: ArtifactCreate, current_user: CurrentUser, db=Depends(get_db)):
     user_id = str(current_user["id"])
@@ -1004,6 +1496,132 @@ async def answer_human(course_id: str, question_id: str, body: QuestionUpdate, r
     return _question_response(row)
 
 
+def _build_instructor_dashboard(
+    course: dict, members: list[dict], lessons: list[dict], progress: list[dict],
+    attempts: list[dict], assignments: list[dict], submissions: list[dict], questions: list[dict],
+) -> dict:
+    students = [member for member in members if member.get("persona") == "student"]
+    lesson_count = len(lessons)
+    progress_by_user: dict[str, list[dict]] = {}
+    attempts_by_user: dict[str, list[dict]] = {}
+    submissions_by_user: dict[str, list[dict]] = {}
+
+    def is_overdue(value) -> bool:
+        if not value:
+            return False
+        due = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if due.tzinfo is None:
+            due = due.replace(tzinfo=timezone.utc)
+        return due < datetime.now(timezone.utc)
+    for row in progress:
+        progress_by_user.setdefault(str(row.get("user_id")), []).append(row)
+    for row in attempts:
+        attempts_by_user.setdefault(str(row.get("user_id")), []).append(row)
+    for row in submissions:
+        submissions_by_user.setdefault(str(row.get("user_id")), []).append(row)
+    published = [item for item in assignments if item.get("publication_status") != "draft"]
+    now = datetime.now(timezone.utc)
+    learner_rows = []
+    for student in students:
+        student_id = str(student["user_id"])
+        learner_progress = progress_by_user.get(student_id, [])
+        learner_attempts = attempts_by_user.get(student_id, [])
+        learner_submissions = submissions_by_user.get(student_id, [])
+        average_progress = round(sum(int(item.get("progress_pct") or 0) for item in learner_progress) / lesson_count) if lesson_count else 0
+        correct = sum(int(item.get("correct_count") or 0) for item in learner_attempts)
+        questions_total = sum(int(item.get("question_count") or 0) for item in learner_attempts)
+        assessment_pct = round(correct / questions_total * 100) if questions_total else None
+        submitted_ids = {str(item.get("assignment_id")) for item in learner_submissions if item.get("status") != "draft"}
+        overdue = sum(
+            1 for item in published
+            if is_overdue(item.get("due_at"))
+            and str(item["id"]) not in submitted_ids
+        )
+        risk_reasons = []
+        if average_progress < 50:
+            risk_reasons.append("Course progress is below 50%")
+        if assessment_pct is not None and assessment_pct < int(course.get("domain_config", {}).get("passing_score", 80)):
+            risk_reasons.append("Assessment performance is below the mastery threshold")
+        if overdue:
+            risk_reasons.append(f"{overdue} overdue assignment(s)")
+        learner_rows.append({
+            **student, "progress_pct": average_progress, "assessment_pct": assessment_pct,
+            "engagement_seconds": sum(int(item.get("time_spent_seconds") or 0) for item in learner_progress),
+            "submitted_assignments": len(submitted_ids), "assignment_count": len(published),
+            "overdue_assignments": overdue, "at_risk": bool(risk_reasons), "risk_reasons": risk_reasons,
+        })
+    lesson_attempts: dict[str, list[dict]] = {}
+    for attempt in attempts:
+        if attempt.get("lesson_id") and int(attempt.get("question_count") or 0):
+            lesson_attempts.setdefault(str(attempt["lesson_id"]), []).append(attempt)
+    difficult = []
+    for lesson in lessons:
+        rows = lesson_attempts.get(str(lesson["id"]), [])
+        correct = sum(int(item.get("correct_count") or 0) for item in rows)
+        total = sum(int(item.get("question_count") or 0) for item in rows)
+        score = round(correct / total * 100) if total else None
+        if score is not None and score < int(course.get("domain_config", {}).get("passing_score", 80)):
+            difficult.append({"lesson_id": str(lesson["id"]), "title": lesson["title"], "assessment_pct": score,
+                              "attempt_count": len(rows), "competencies": _decode_json(lesson.get("competencies"), [])})
+    embedded_assets = [item for item in course.get("assets", []) if item.get("status") == "embedded"]
+    def lesson_has_evidence(lesson: dict) -> bool:
+        return any(
+            not asset.get("module_id")
+            or (
+                str(asset.get("module_id")) == str(lesson.get("module_id"))
+                and (not asset.get("lesson_id") or str(asset.get("lesson_id")) == str(lesson.get("id")))
+            )
+            for asset in embedded_assets
+        )
+    content_gaps = [
+        {"lesson_id": str(lesson["id"]), "title": lesson["title"], "gap": "No embedded lesson evidence"}
+        for lesson in lessons if not lesson_has_evidence(lesson)
+    ]
+    open_questions = [item for item in questions if item.get("status") == "open"]
+    completion_values = [item["progress_pct"] for item in learner_rows]
+    assessment_values = [item["assessment_pct"] for item in learner_rows if item["assessment_pct"] is not None]
+    engagement_values = [item["engagement_seconds"] for item in learner_rows]
+    return {
+        "course_id": str(course["id"]), "generated_at": now.isoformat(),
+        "summary": {"student_count": len(students),
+                    "cohort_progress_pct": round(sum(completion_values) / len(completion_values)) if completion_values else 0,
+                    "assessment_performance_pct": round(sum(assessment_values) / len(assessment_values)) if assessment_values else None,
+                    "average_engagement_seconds": round(sum(engagement_values) / len(engagement_values)) if engagement_values else 0,
+                    "at_risk_count": sum(item["at_risk"] for item in learner_rows),
+                    "open_question_count": len(open_questions), "assignment_count": len(published)},
+        "learners": learner_rows, "difficult_concepts": difficult,
+        "unanswered_questions": open_questions, "content_quality_gaps": content_gaps,
+        "assignment_performance": [
+            {"assignment_id": str(item["id"]), "title": item["title"],
+             "submitted_count": sum(str(row.get("assignment_id")) == str(item["id"]) and row.get("status") != "draft" for row in submissions),
+             "approved_count": sum(str(row.get("assignment_id")) == str(item["id"]) and row.get("status") == "approved" for row in submissions)}
+            for item in published
+        ],
+    }
+
+
+@router.get("/courses/{course_id}/instructor-dashboard")
+async def get_instructor_dashboard(course_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    user_id = str(current_user["id"])
+    course_access = await _course_access(db, course_id, user_id, manage=True)
+    workspace = await _course_workspace(db, course_id, user_id)
+    members = workspace["members"]
+    lessons = [lesson for module in workspace["modules"] for lesson in module.get("lessons", [])]
+    progress = [_jsonable(dict(row)) for row in await db.fetch(
+        "SELECT * FROM learning_lesson_progress WHERE course_id=$1::uuid", course_id,
+    )]
+    attempts = [_quiz_attempt_response(row) for row in await db.fetch(
+        """SELECT qa.*,a.lesson_id FROM learning_quiz_attempts qa
+           JOIN learning_artifacts a ON a.id=qa.artifact_id WHERE qa.course_id=$1::uuid""", course_id,
+    )]
+    course_data = _course_response(course_access)
+    course_data["assets"] = workspace["assets"]
+    return _build_instructor_dashboard(
+        course_data, members, lessons, progress, attempts,
+        workspace.get("assignments", []), workspace.get("submissions", []), workspace["questions"],
+    )
+
+
 async def _course_workspace(db, course_id: str, user_id: str) -> dict:
     course = await _course_access(db, course_id, user_id)
     members = await db.fetch(
@@ -1053,10 +1671,37 @@ async def _course_workspace(db, course_id: str, user_id: str) -> dict:
            WHERE q.course_id=$1 AND (q.asked_by=$2 OR q.assigned_to=$2 OR $3 IN ('admin','teacher','advisor'))
            ORDER BY q.created_at DESC""", course_id, user_id, effective_persona,
     )
+    can_manage = bool(course.get("workspace_role") in ("owner", "editor") or course.get("persona") in MANAGER_PERSONAS)
+    assignments = await db.fetch(
+        """SELECT a.*,m.title AS module_title,l.title AS lesson_title
+           FROM learning_assignments a
+           LEFT JOIN learning_modules m ON m.id=a.module_id
+           LEFT JOIN learning_lessons l ON l.id=a.lesson_id
+           WHERE a.course_id=$1::uuid AND ($2::boolean OR a.publication_status<>'draft')
+           ORDER BY a.due_at NULLS LAST,a.created_at DESC""", course_id, can_manage,
+    )
+    submissions = await db.fetch(
+        """SELECT s.*,u.email,u.full_name,a.title AS assignment_title,a.max_score
+           FROM learning_submissions s JOIN users u ON u.id=s.user_id
+           JOIN learning_assignments a ON a.id=s.assignment_id
+           WHERE s.course_id=$1::uuid AND ($2::boolean OR s.user_id=$3::uuid)
+           ORDER BY s.updated_at DESC""", course_id, can_manage, user_id,
+    )
+    revisions = await db.fetch(
+        """SELECT r.* FROM learning_submission_revisions r
+           JOIN learning_submissions s ON s.id=r.submission_id
+           WHERE s.course_id=$1::uuid AND ($2::boolean OR s.user_id=$3::uuid)
+           ORDER BY r.submission_id,r.revision_number DESC""", course_id, can_manage, user_id,
+    )
+    revisions_by_submission: dict[str, list[dict]] = {}
+    for revision in revisions:
+        item = _jsonable(dict(revision))
+        item["document_ids"] = _decode_json(item.get("document_ids"), [])
+        revisions_by_submission.setdefault(str(revision["submission_id"]), []).append(item)
     result = _course_response(course)
     result.update({
         "my_persona": effective_persona,
-        "can_manage": bool(course.get("workspace_role") in ("owner", "editor") or course.get("persona") in MANAGER_PERSONAS),
+        "can_manage": can_manage,
         "members": [_jsonable(dict(row)) for row in members],
         "modules": modules,
         "assets": [_jsonable(dict(row)) for row in assets],
@@ -1064,6 +1709,11 @@ async def _course_workspace(db, course_id: str, user_id: str) -> dict:
         "quiz_attempts": [_quiz_attempt_response(row) for row in quiz_attempts],
         "lesson_progress": [_jsonable(dict(row)) for row in lesson_progress],
         "questions": [_question_response(row) for row in questions],
+        "assignments": [_assignment_response(row) for row in assignments],
+        "submissions": [
+            {**_submission_response(row), "revisions": revisions_by_submission.get(str(row["id"]), [])}
+            for row in submissions
+        ],
     })
     return result
 

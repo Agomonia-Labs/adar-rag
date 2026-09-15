@@ -64,6 +64,20 @@ if LLM_PROVIDER == "openai":
             if d:
                 await on_token(d)
 
+    async def chat_json(messages: list[dict], system_prompt: str) -> dict:
+        """Generate one provider-enforced JSON object for structured workflows."""
+        response = await _c.chat.completions.create(
+            model=_CHAT_MODEL,
+            max_tokens=4000,
+            response_format={"type": "json_object"},
+            messages=[{"role": "system", "content": system_prompt}, *messages],
+        )
+        content = response.choices[0].message.content or ""
+        result = json.loads(content)
+        if not isinstance(result, dict):
+            raise ValueError("Structured LLM response must be a JSON object")
+        return result
+
 
 # ══════════════════════════════════════════════════════════════════
 #  Gemini — pure REST API
@@ -173,6 +187,38 @@ elif LLM_PROVIDER == "gemini":
                                         await on_token(text)
                         except (json.JSONDecodeError, KeyError):
                             continue
+
+    async def chat_json(messages: list[dict], system_prompt: str) -> dict:
+        """Generate one provider-enforced JSON object for structured workflows."""
+        url = f"{_GEMINI_CHAT_BASE}/{_CHAT_MODEL_ID}:generateContent"
+        contents = []
+        for message in messages:
+            role = "user" if message["role"] == "user" else "model"
+            contents.append({"role": role, "parts": [{"text": message["content"]}]})
+        payload = {
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "contents": contents,
+            "generationConfig": {
+                "maxOutputTokens": 4000,
+                "temperature": 0.1,
+                "responseMimeType": "application/json",
+            },
+        }
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(url, params={"key": _GOOGLE_KEY}, json=payload)
+            if not response.is_success:
+                raise RuntimeError(f"Gemini chat error {response.status_code}: {response.text[:300]}")
+            candidates = response.json().get("candidates") or []
+            if not candidates:
+                raise ValueError("Gemini structured response contained no candidate")
+            text = "".join(
+                str(part.get("text") or "")
+                for part in candidates[0].get("content", {}).get("parts", [])
+            )
+            result = json.loads(text)
+            if not isinstance(result, dict):
+                raise ValueError("Structured LLM response must be a JSON object")
+            return result
 
 else:
     raise ValueError(f"Unknown LLM_PROVIDER={LLM_PROVIDER!r}. Set openai or gemini in .env")

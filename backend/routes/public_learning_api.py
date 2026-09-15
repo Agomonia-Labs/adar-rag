@@ -133,6 +133,60 @@ async def api_remove_learning_content(request: Request, course_id: str, asset_id
     return await learning.remove_asset(course_id, asset_id, current_user=principal.user, db=db)
 
 
+@router.post("/learning/courses/{course_id}/assignments", status_code=201, summary="Create an assignment or project")
+async def api_create_learning_assignment(request: Request, course_id: str, body: learning.AssignmentCreate, principal: LearningManager, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.create_assignment(course_id, body, request, current_user=principal.user, db=db)
+
+
+@router.get("/learning/courses/{course_id}/assignments", summary="List role-filtered assignments and submissions")
+async def api_list_learning_assignments(request: Request, course_id: str, principal: LearningReader, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.list_assignments(course_id, current_user=principal.user, db=db)
+
+
+@router.patch("/learning/courses/{course_id}/assignments/{assignment_id}", summary="Update an assignment or project")
+async def api_update_learning_assignment(request: Request, course_id: str, assignment_id: str, body: learning.AssignmentUpdate, principal: LearningManager, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.update_assignment(course_id, assignment_id, body, current_user=principal.user, db=db)
+
+
+@router.delete("/learning/courses/{course_id}/assignments/{assignment_id}", summary="Delete an assignment and its submissions")
+async def api_delete_learning_assignment(request: Request, course_id: str, assignment_id: str, principal: LearningManager, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.delete_assignment(course_id, assignment_id, current_user=principal.user, db=db)
+
+
+@router.put("/learning/courses/{course_id}/assignments/{assignment_id}/submission", summary="Save or submit assignment evidence")
+async def api_save_learning_submission(request: Request, course_id: str, assignment_id: str, body: learning.SubmissionUpsert, principal: LearningParticipant, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.save_assignment_submission(course_id, assignment_id, body, current_user=principal.user, db=db)
+
+
+@router.post("/learning/courses/{course_id}/assignments/{assignment_id}/submissions/{submission_id}/evaluate", summary="Run evidence-grounded rubric evaluation")
+async def api_evaluate_learning_submission(request: Request, course_id: str, assignment_id: str, submission_id: str, principal: LearningManager, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.evaluate_assignment_submission(course_id, assignment_id, submission_id, current_user=principal.user, db=db)
+
+
+@router.patch("/learning/courses/{course_id}/assignments/{assignment_id}/submissions/{submission_id}/review", summary="Request revision or approve a submission")
+async def api_review_learning_submission(request: Request, course_id: str, assignment_id: str, submission_id: str, body: learning.SubmissionReview, principal: LearningManager, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.review_assignment_submission(course_id, assignment_id, submission_id, body, current_user=principal.user, db=db)
+
+
+@router.get("/learning/courses/{course_id}/instructor-dashboard", summary="Read cohort learning intelligence")
+async def api_get_learning_instructor_dashboard(request: Request, course_id: str, principal: LearningManager, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.get_instructor_dashboard(course_id, current_user=principal.user, db=db)
+
+
+@router.get("/learning/courses/{course_id}/evidence/{document_id}/view-url", summary="Open course evidence at its source")
+async def api_get_learning_evidence_url(request: Request, course_id: str, document_id: str, principal: LearningReader, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.get_learning_evidence_url(course_id, document_id, current_user=principal.user, db=db)
+
+
 @router.post("/learning/courses/{course_id}/tutor/query/stream", summary="Ask the evidence-grounded AI Tutor")
 async def api_ask_learning_tutor(request: Request, course_id: str, body: LearningTutorRequest, principal: LearningParticipant, db=Depends(get_db)):
     workspace_id = await _require_course_workspace(request, db, course_id)

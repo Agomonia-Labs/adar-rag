@@ -204,6 +204,9 @@ MVP capabilities:
 - Ask grounded questions through persistent chat sessions with source citations and video timestamps.
 - Generate and save summaries, study guides, key concepts, flashcards, and practice questions.
 - Save lesson position and completion, calculate evidence-backed competency mastery, and recommend the next learning action.
+- Ground Tutor answers with document excerpts, video timestamps, curriculum boundaries, and direct evidence navigation.
+- Manage written assignments, document evidence, recorded presentations, projects, rubric-assisted evaluation, revisions, instructor feedback, and final approval.
+- Monitor cohort progress, engagement, difficult concepts, unanswered questions, assessment performance, at-risk learners, assignments, and content-quality gaps.
 - Escalate questions to a teacher or advisor with course and source context, then retain reviewed answers.
 - Keep ingestion, chunking, embedding, retrieval, access control, tracing, and audit behavior on the shared DocIntel platform.
 

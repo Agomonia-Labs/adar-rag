@@ -9,21 +9,88 @@ from fastapi import HTTPException
 from routes.learning import (
     AssetCreate,
     AssetMappingUpdate,
+    AssignmentCreate,
     ArtifactCreate,
     CourseCreate,
     LessonProgressUpdate,
     PracticeQuiz,
     _build_mastery_projection,
+    _build_instructor_dashboard,
+    _can_run_submission_evaluation,
     _grade_practice_quiz,
+    _generate_submission_evaluation,
     _normalize_artifact_content,
+    _normalize_submission_evaluation,
     _clean_list,
     _course_access,
     _course_response,
     _resolve_learning_scope,
     _scope_evidence_ranges,
+    evaluate_assignment_submission,
     update_asset_mapping,
     update_lesson_progress,
 )
+
+
+def test_submission_evaluation_derives_score_from_criteria_and_normalizes_evidence():
+    assignment = {
+        "max_score": 100,
+        "rubric": [
+            {"id": "accuracy", "title": "Accuracy", "weight": 60},
+            {"id": "evidence", "title": "Evidence", "weight": 40},
+        ],
+    }
+    result = _normalize_submission_evaluation({
+        "summary": "Grounded work",
+        "criteria": [
+            {"criterion_id": "accuracy", "score": 54, "feedback": "Accurate", "evidence": "Submission paragraph 1"},
+            {"criterion_id": "evidence", "score": 32, "feedback": "Supported", "evidence": ["Document chunk 2"]},
+        ],
+    }, assignment)
+
+    assert result["overall_score"] == 86
+    assert result["criteria"][0]["max_score"] == 60
+    assert result["criteria"][0]["evidence"] == ["Submission paragraph 1"]
+    assert result["status"] == "completed"
+
+
+def test_failed_submission_evaluation_can_be_retried_from_in_review():
+    assert _can_run_submission_evaluation({
+        "status": "in_review",
+        "ai_evaluation": {"status": "needs_human_review"},
+    })
+    assert not _can_run_submission_evaluation({
+        "status": "in_review",
+        "ai_evaluation": {"status": "completed"},
+    })
+
+
+@pytest.mark.asyncio
+async def test_submission_evaluation_retries_structured_generation(monkeypatch):
+    structured = AsyncMock(side_effect=[
+        ValueError("temporary malformed response"),
+        {
+            "overall_score": 91,
+            "summary": "Strong evidence-backed submission",
+            "strengths": ["Clear retrieval explanation"],
+            "improvements": [],
+            "criteria": [{
+                "criterion_id": "quality", "score": 91, "max_score": 100,
+                "feedback": "Meets the rubric", "evidence": ["Submission response"],
+            }],
+        },
+    ])
+    monkeypatch.setattr("services.llm.chat_json", structured)
+
+    result = await _generate_submission_evaluation(
+        {"id": "assignment-1", "max_score": 100, "rubric": [{"id": "quality", "weight": 100}]},
+        {"id": "submission-1", "submission_text": "Grounded response"},
+        "Retrieved evidence",
+    )
+
+    assert structured.await_count == 2
+    assert result["status"] == "completed"
+    assert result["overall_score"] == 91
 
 
 class FakeDb:
@@ -121,6 +188,16 @@ def test_learning_request_contracts_cover_course_and_saved_study_material():
     )
     assert course.title == "AI Systems"
     assert artifact.artifact_type == "practice_questions"
+
+
+def test_assignment_contract_requires_substantive_rubric_fields():
+    assignment = AssignmentCreate(
+        title="Grounded project", assignment_type="project",
+        rubric=[{"id": "evidence", "title": "Evidence", "weight": 100}],
+        publication_status="published",
+    )
+    assert assignment.rubric[0].id == "evidence"
+    assert assignment.rubric[0].weight == 100
 
 
 def test_learning_asset_contract_supports_curriculum_mapping():
@@ -390,3 +467,64 @@ def test_incomplete_or_reset_attempt_does_not_reduce_mastery():
     assert result["summary"]["assessed_lessons"] == 0
     assert result["summary"]["mastery_pct"] is None
     assert result["modules"][0]["lessons"][0]["assessment_evidence"] == []
+
+
+def test_instructor_dashboard_surfaces_risk_difficulty_questions_and_content_gaps():
+    course = {"id": "course-1", "domain_config": {"passing_score": 80}, "assets": []}
+    members = [{"user_id": "student-1", "email": "student@example.com", "persona": "student"}]
+    lessons = [{"id": "lesson-1", "title": "Retrieval", "competencies": ["Grounding"]}]
+    progress = [{"user_id": "student-1", "lesson_id": "lesson-1", "progress_pct": 25}]
+    attempts = [{"user_id": "student-1", "lesson_id": "lesson-1", "correct_count": 1, "question_count": 4}]
+    questions = [{"id": "question-1", "status": "open", "question": "Why rerank?"}]
+
+    result = _build_instructor_dashboard(course, members, lessons, progress, attempts, [], [], questions)
+
+    assert result["summary"]["at_risk_count"] == 1
+    assert result["summary"]["assessment_performance_pct"] == 25
+    assert result["difficult_concepts"][0]["title"] == "Retrieval"
+    assert result["content_quality_gaps"][0]["gap"] == "No embedded lesson evidence"
+    assert result["unanswered_questions"][0]["id"] == "question-1"
+
+
+@pytest.mark.asyncio
+async def test_ai_rubric_persists_result_and_moves_submission_to_in_review(monkeypatch):
+    db = AsyncMock()
+    db.fetchrow.side_effect = [
+        {
+            "id": "assignment-1", "title": "Grounded project", "description": "Use evidence",
+            "max_score": 100, "rubric": '[{"id":"evidence","title":"Evidence","weight":100}]',
+            "source_document_ids": "[]",
+        },
+        {
+            "id": "submission-1", "assignment_id": "assignment-1", "status": "submitted",
+            "submission_text": "Hybrid retrieval combines lexical and semantic evidence.",
+            "document_ids": '["document-1"]', "presentation_document_id": None,
+        },
+        {
+            "id": "submission-1", "assignment_id": "assignment-1", "status": "in_review",
+            "submission_text": "Hybrid retrieval combines lexical and semantic evidence.",
+            "document_ids": '["document-1"]', "presentation_document_id": None,
+            "ai_evaluation": '{"status":"completed","overall_score":88,"summary":"Grounded response","criteria":[]}',
+        },
+    ]
+    db.fetch.return_value = [{
+        "original_name": "RAG_Architecture_Notes.docx", "chunk_index": 0,
+        "content": "Hybrid retrieval combines keyword and vector retrieval.",
+    }]
+    monkeypatch.setattr("routes.learning._course_access", AsyncMock(return_value={"workspace_id": "workspace-1"}))
+    monkeypatch.setattr(
+        "routes.learning._generate_submission_evaluation",
+        AsyncMock(return_value={
+            "status": "completed", "overall_score": 88, "summary": "Grounded response",
+            "criteria": [], "strengths": [], "improvements": [], "requires_human_review": True,
+        }),
+    )
+
+    result = await evaluate_assignment_submission(
+        "course-1", "assignment-1", "submission-1", {"id": "teacher-1"}, db,
+    )
+
+    assert result["status"] == "in_review"
+    assert result["ai_evaluation"]["overall_score"] == 88
+    update = db.fetchrow.await_args_list[-1]
+    assert "status='in_review'" in update.args[0]

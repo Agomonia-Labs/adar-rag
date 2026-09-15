@@ -199,6 +199,38 @@ async def test_learning_progress_and_mastery_use_authoritative_learning_endpoint
 
 
 @pytest.mark.asyncio
+async def test_learning_assignment_submission_review_and_dashboard_use_course_endpoints():
+    requests: list[tuple[str, str, dict]] = []
+
+    async def handler(request: httpx.Request):
+        payload = json.loads(request.content) if request.content else {}
+        requests.append((request.method, request.url.path, payload))
+        if request.url.path == "/api/learning/courses/course-1":
+            return httpx.Response(200, json={"id": "course-1", "workspace_id": "workspace-1"})
+        if request.url.path.endswith("/assignments"):
+            return httpx.Response(200, json={"id": "assignment-1", **payload})
+        if request.url.path.endswith("/submission"):
+            return httpx.Response(200, json={"id": "submission-1", **payload})
+        if request.url.path.endswith("/review"):
+            return httpx.Response(200, json={"id": "submission-1", **payload})
+        if request.url.path.endswith("/instructor-dashboard"):
+            return httpx.Response(200, json={"summary": {"student_count": 1}})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        assignment = await client.create_learning_assignment("course-1", {"title": "Project"})
+        submission = await client.save_learning_submission("course-1", "assignment-1", {"submission_text": "Evidence", "submit": True})
+        review = await client.review_learning_submission("course-1", "assignment-1", "submission-1", {"status": "approved", "score": 90})
+        dashboard = await client.get_learning_instructor_dashboard("course-1")
+
+    assert assignment["id"] == "assignment-1"
+    assert submission["submit"] is True
+    assert review["status"] == "approved"
+    assert dashboard["summary"]["student_count"] == 1
+    assert [request[0] for request in requests].count("GET") == 5
+
+
+@pytest.mark.asyncio
 async def test_backend_forbidden_is_preserved_as_safe_error():
     async def handler(_request: httpx.Request):
         return httpx.Response(403, json={"detail": "Document is not accessible"})

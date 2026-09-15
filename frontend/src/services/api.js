@@ -1316,6 +1316,48 @@ export async function updateLearningQuestion(courseId, questionId, payload) {
   }));
 }
 
+export async function createLearningAssignment(courseId, payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/assignments`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function updateLearningAssignment(courseId, assignmentId, payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/assignments/${assignmentId}`, {
+    method:'PATCH', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function deleteLearningAssignment(courseId, assignmentId) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/assignments/${assignmentId}`, { method:'DELETE', headers:authHdr() }));
+}
+
+export async function saveLearningSubmission(courseId, assignmentId, payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/assignments/${assignmentId}/submission`, {
+    method:'PUT', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function evaluateLearningSubmission(courseId, assignmentId, submissionId) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/assignments/${assignmentId}/submissions/${submissionId}/evaluate`, {
+    method:'POST', headers:authHdr(),
+  }));
+}
+
+export async function reviewLearningSubmission(courseId, assignmentId, submissionId, payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/assignments/${assignmentId}/submissions/${submissionId}/review`, {
+    method:'PATCH', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function getLearningInstructorDashboard(courseId) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/instructor-dashboard`, { headers:authHdr() }));
+}
+
+export async function getLearningEvidenceUrl(courseId, documentId) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/evidence/${documentId}/view-url`, { headers:authHdr() }));
+}
+
 // ── Agent workflow evaluations ───────────────────────────────────────────────
 export async function evaluateAgentWorkflow(vertical, runId, { persist = true } = {}) {
   return handleRes(await fetch(`${BASE}/agent-evals/${vertical}/runs/${runId}`, {
