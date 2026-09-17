@@ -25,11 +25,64 @@ from routes.learning import (
     _course_access,
     _course_response,
     _resolve_learning_scope,
+    _serialize_course_members,
     _scope_evidence_ranges,
     evaluate_assignment_submission,
     update_asset_mapping,
     update_lesson_progress,
 )
+
+
+def test_course_directory_hides_private_fields_and_opted_out_classmates_from_students():
+    members = [
+        {
+            "id": "member-1", "user_id": "student-1", "persona": "student",
+            "email": "student@example.com", "full_name": "Current Student",
+            "headline": "RAG learner", "bio": "Learning retrieval", "skills": '["Python"]',
+            "interests": '["AI"]', "city": "Seattle", "region": "Washington",
+            "country": "United States", "timezone": "America/Los_Angeles",
+            "directory_visible": True, "profile_updated_at": None, "created_at": None,
+        },
+        {
+            "id": "member-2", "user_id": "student-2", "persona": "student",
+            "email": "classmate@example.com", "full_name": "Visible Classmate",
+            "headline": "ML learner", "bio": "Learning grounding", "skills": '[]',
+            "interests": '[]', "city": "Portland", "region": "Oregon",
+            "country": "United States", "timezone": "America/Los_Angeles",
+            "directory_visible": True, "profile_updated_at": None, "created_at": None,
+        },
+        {
+            "id": "member-3", "user_id": "student-3", "persona": "student",
+            "email": "private@example.com", "full_name": "Private Student",
+            "headline": "", "bio": "", "skills": '[]', "interests": '[]',
+            "city": "", "region": "", "country": "", "timezone": "",
+            "directory_visible": False, "profile_updated_at": None, "created_at": None,
+        },
+    ]
+
+    directory, own = _serialize_course_members(members, "student-1", can_manage=False)
+
+    assert [item["user_id"] for item in directory] == ["student-1", "student-2"]
+    assert own["email"] == "student@example.com"
+    assert "email" not in directory[1]
+    assert directory[1]["city"] == "Portland"
+    assert directory[0]["skills"] == ["Python"]
+
+
+def test_course_directory_gives_teachers_the_complete_roster():
+    members = [{
+        "id": "member-1", "user_id": "student-1", "persona": "student",
+        "email": "private@example.com", "full_name": "Private Student",
+        "headline": "", "bio": "", "skills": '[]', "interests": '[]',
+        "city": "", "region": "", "country": "", "timezone": "",
+        "directory_visible": False, "profile_updated_at": None, "created_at": None,
+    }]
+
+    directory, own = _serialize_course_members(members, "teacher-1", can_manage=True)
+
+    assert own is None
+    assert directory[0]["email"] == "private@example.com"
+    assert directory[0]["directory_visible"] is False
 
 
 def test_submission_evaluation_derives_score_from_criteria_and_normalizes_evidence():

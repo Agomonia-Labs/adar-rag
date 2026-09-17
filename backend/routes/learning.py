@@ -74,6 +74,18 @@ class MemberCreate(BaseModel):
     persona: Literal["admin", "teacher", "student", "advisor"] = "student"
 
 
+class CourseMemberProfileUpdate(BaseModel):
+    headline: str = Field(default="", max_length=240)
+    bio: str = Field(default="", max_length=4000)
+    skills: list[str] = Field(default_factory=list, max_length=50)
+    interests: list[str] = Field(default_factory=list, max_length=50)
+    city: str = Field(default="", max_length=120)
+    region: str = Field(default="", max_length=120)
+    country: str = Field(default="", max_length=120)
+    timezone: str = Field(default="", max_length=80)
+    directory_visible: bool = True
+
+
 class CurriculumSave(BaseModel):
     modules: list[dict] = Field(default_factory=list)
 
@@ -752,6 +764,50 @@ async def add_member(course_id: str, body: MemberCreate, current_user: CurrentUs
            VALUES ($1,$2,$3,$4) ON CONFLICT (course_id,user_id)
            DO UPDATE SET persona=EXCLUDED.persona,added_by=EXCLUDED.added_by""",
         course_id, str(target["id"]), body.persona, user_id,
+    )
+    return await _course_workspace(db, course_id, user_id)
+
+
+@router.get("/courses/{course_id}/directory")
+async def get_course_directory(course_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    user_id = str(current_user["id"])
+    workspace = await _course_workspace(db, course_id, user_id)
+    return {
+        "course_id": course_id,
+        "my_profile": workspace["my_profile"],
+        "members": workspace["members"],
+        "can_manage": workspace["can_manage"],
+    }
+
+
+@router.patch("/courses/{course_id}/profile")
+async def update_course_member_profile(
+    course_id: str, body: CourseMemberProfileUpdate, request: Request,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    await _course_access(db, course_id, user_id)
+    values = body.model_dump()
+    values["skills"] = _clean_list(values["skills"])
+    values["interests"] = _clean_list(values["interests"])
+    row = await db.fetchrow(
+        """UPDATE learning_course_members
+           SET headline=$3,bio=$4,skills=$5::jsonb,interests=$6::jsonb,
+               city=$7,region=$8,country=$9,timezone=$10,directory_visible=$11,
+               profile_updated_at=NOW()
+           WHERE course_id=$1::uuid AND user_id=$2::uuid RETURNING id""",
+        course_id, user_id, values["headline"].strip(), values["bio"].strip(),
+        json.dumps(values["skills"]), json.dumps(values["interests"]),
+        values["city"].strip(), values["region"].strip(), values["country"].strip(),
+        values["timezone"].strip(), values["directory_visible"],
+    )
+    if not row:
+        raise HTTPException(403, "Course profile requires an active course enrollment")
+    await audit(
+        db, user_id=user_id, action="learning_course_profile_update",
+        resource_type="learning_course_member", resource_id=str(row["id"]),
+        metadata={"course_id": course_id, "directory_visible": values["directory_visible"]},
+        ip_address=ip_from(request), user_agent=ua_from(request),
     )
     return await _course_workspace(db, course_id, user_id)
 
@@ -1625,7 +1681,9 @@ async def get_instructor_dashboard(course_id: str, current_user: CurrentUser, db
 async def _course_workspace(db, course_id: str, user_id: str) -> dict:
     course = await _course_access(db, course_id, user_id)
     members = await db.fetch(
-        """SELECT m.id,m.user_id,m.persona,m.created_at,u.email,u.full_name
+        """SELECT m.id,m.user_id,m.persona,m.created_at,m.headline,m.bio,m.skills,m.interests,
+                  m.city,m.region,m.country,m.timezone,m.directory_visible,m.profile_updated_at,
+                  u.email,u.full_name
            FROM learning_course_members m JOIN users u ON u.id=m.user_id
            WHERE m.course_id=$1 ORDER BY m.persona,u.full_name,u.email""", course_id,
     )
@@ -1698,11 +1756,13 @@ async def _course_workspace(db, course_id: str, user_id: str) -> dict:
         item = _jsonable(dict(revision))
         item["document_ids"] = _decode_json(item.get("document_ids"), [])
         revisions_by_submission.setdefault(str(revision["submission_id"]), []).append(item)
+    member_profiles, my_profile = _serialize_course_members(members, user_id, can_manage)
     result = _course_response(course)
     result.update({
         "my_persona": effective_persona,
         "can_manage": can_manage,
-        "members": [_jsonable(dict(row)) for row in members],
+        "members": member_profiles,
+        "my_profile": my_profile,
         "modules": modules,
         "assets": [_jsonable(dict(row)) for row in assets],
         "artifacts": [_jsonable(dict(row)) for row in artifacts],
@@ -1716,6 +1776,28 @@ async def _course_workspace(db, course_id: str, user_id: str) -> dict:
         ],
     })
     return result
+
+
+def _serialize_course_members(members, user_id: str, can_manage: bool) -> tuple[list[dict], dict | None]:
+    member_profiles: list[dict] = []
+    my_profile = None
+    for row in members:
+        item = _jsonable(dict(row))
+        item["skills"] = _decode_json(item.get("skills"), [])
+        item["interests"] = _decode_json(item.get("interests"), [])
+        is_self = str(item["user_id"]) == str(user_id)
+        item["is_current_user"] = is_self
+        item["profile_complete"] = bool(item.get("headline") and item.get("bio") and (
+            item.get("city") or item.get("region") or item.get("country")
+        ))
+        if not (can_manage or is_self):
+            item.pop("email", None)
+            item.pop("directory_visible", None)
+        if is_self:
+            my_profile = dict(item)
+        if can_manage or is_self or bool(row["directory_visible"]):
+            member_profiles.append(item)
+    return member_profiles, my_profile
 
 
 def _course_response(row) -> dict:

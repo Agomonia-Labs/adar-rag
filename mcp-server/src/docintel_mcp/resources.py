@@ -246,6 +246,15 @@ def register_resources(mcp: FastMCP, settings: Settings) -> None:
             return json.dumps({key: course.get(key) for key in fields}, ensure_ascii=False, default=str)
         except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
 
+    @mcp.resource("docintel://learning/courses/{course_id}/directory")
+    async def learning_directory(course_id: str, ctx: Context) -> str:
+        """Classmate profiles and coarse locations, filtered by caller role and profile visibility."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client:
+                result = await client.get_learning_directory(course_id)
+            return json.dumps(result, ensure_ascii=False, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
     @mcp.resource("docintel://learning/courses/{course_id}/content")
     async def learning_content(course_id: str, ctx: Context) -> str:
         """Documents, recordings, and videos mapped to course, module, and lesson scopes."""

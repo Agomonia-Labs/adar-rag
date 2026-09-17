@@ -166,6 +166,40 @@ async def test_learning_scope_and_quiz_use_authoritative_learning_endpoints():
 
 
 @pytest.mark.asyncio
+async def test_learning_profile_and_directory_use_course_endpoints():
+    requests: list[tuple[str, str, dict]] = []
+
+    async def handler(request: httpx.Request):
+        payload = json.loads(request.content) if request.content else {}
+        requests.append((request.method, request.url.path, payload))
+        if request.url.path == "/api/learning/courses/course-1":
+            return httpx.Response(200, json={"id": "course-1", "workspace_id": "workspace-1"})
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json={"my_profile": payload})
+        if request.url.path.endswith("/directory"):
+            return httpx.Response(200, json={"course_id": "course-1", "members": []})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    profile = {
+        "headline": "RAG learner", "bio": "Learning grounded AI", "skills": ["Python"],
+        "interests": ["Governance"], "city": "Seattle", "region": "Washington",
+        "country": "United States", "timezone": "America/Los_Angeles", "directory_visible": True,
+    }
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        updated = await client.update_learning_profile("course-1", profile)
+        directory = await client.get_learning_directory("course-1")
+
+    assert updated["my_profile"]["city"] == "Seattle"
+    assert directory["course_id"] == "course-1"
+    assert requests == [
+        ("GET", "/api/learning/courses/course-1", {}),
+        ("PATCH", "/api/learning/courses/course-1/profile", profile),
+        ("GET", "/api/learning/courses/course-1", {}),
+        ("GET", "/api/learning/courses/course-1/directory", {}),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_learning_progress_and_mastery_use_authoritative_learning_endpoints():
     requests: list[tuple[str, str, dict]] = []
 

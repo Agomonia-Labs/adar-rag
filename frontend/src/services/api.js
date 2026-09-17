@@ -1240,6 +1240,16 @@ export async function addLearningMember(courseId, payload) {
   }));
 }
 
+export async function updateLearningMemberProfile(courseId, payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/profile`, {
+    method:'PATCH', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function getLearningCourseDirectory(courseId) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/directory`, { headers:authHdr() }));
+}
+
 export async function removeLearningMember(courseId, userId) {
   return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/members/${userId}`, { method:'DELETE', headers:authHdr() }));
 }

@@ -918,6 +918,31 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
         except DocIntelMcpError as exc: return exc.as_dict()
 
     @mcp.tool()
+    async def get_learning_directory(ctx: Context, course_id: str) -> dict:
+        """List classmates' shared profiles; teachers and admins receive the complete course roster."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client: return await client.get_learning_directory(course_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def update_learning_profile(
+        ctx: Context, course_id: str, headline: str = "", bio: str = "",
+        skills: list[str] | None = None, interests: list[str] | None = None,
+        city: str = "", region: str = "", country: str = "", timezone: str = "",
+        directory_visible: bool = True,
+    ) -> dict:
+        """Update the authenticated member's course profile and class-directory location."""
+        try:
+            payload = {
+                "headline": headline, "bio": bio, "skills": skills or [], "interests": interests or [],
+                "city": city, "region": region, "country": country, "timezone": timezone,
+                "directory_visible": directory_visible,
+            }
+            async with api_client(ctx, settings, "learning:participate") as client:
+                return await client.update_learning_profile(course_id, payload)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
     async def remove_learning_member(ctx: Context, course_id: str, user_id: str, confirm: bool = False) -> dict:
         """Remove a member from a course without deleting the DocIntel user."""
         if not confirm: return {"ok": False, "error": {"code": "confirmation_required", "message": "Set confirm=true to remove the member"}}

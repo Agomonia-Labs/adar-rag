@@ -655,6 +655,14 @@ class DocIntelApiClient:
         await self.get_learning_course(course_id)
         return await self.request("POST", f"/api/learning/courses/{course_id}/members", json={"email": email, "persona": persona})
 
+    async def get_learning_directory(self, course_id: str) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("GET", f"/api/learning/courses/{course_id}/directory")
+
+    async def update_learning_profile(self, course_id: str, payload: dict) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("PATCH", f"/api/learning/courses/{course_id}/profile", json=payload)
+
     async def remove_learning_member(self, course_id: str, user_id: str) -> dict:
         await self.get_learning_course(course_id)
         return await self.request("DELETE", f"/api/learning/courses/{course_id}/members/{user_id}")

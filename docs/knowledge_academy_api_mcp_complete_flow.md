@@ -684,6 +684,8 @@ remain filtered by workspace membership, course enrollment, and persona.
 | `delete_learning_course` | Delete course-owned records | `learning:manage` |
 | `save_learning_curriculum` | Replace modules and lessons | `learning:manage` |
 | `enroll_learning_member` | Add student/teacher/advisor/admin | `learning:manage` |
+| `update_learning_profile` | Update the caller's registration profile | `learning:participate` |
+| `get_learning_directory` | Read role-filtered profiles and locations | `learning:read` |
 | `remove_learning_member` | Remove course membership | `learning:manage` |
 | `attach_learning_content` | Map document/audio/video evidence | `learning:manage` |
 | `update_learning_content_mapping` | Replace one mapping or media range | `learning:manage` |
@@ -704,7 +706,51 @@ remain filtered by workspace membership, course enrollment, and persona.
 | `review_learning_submission` | Request revision or approve | `learning:manage` |
 | `get_learning_instructor_dashboard` | Read cohort intelligence | `learning:manage` |
 
-## 17. Troubleshooting
+## 17. Course registration profile and class directory
+
+Enrollment creates a course profile automatically. Students update their own
+profile; they cannot update another learner. Location is intentionally limited
+to city, region, country, and time zone.
+
+```bash
+curl -fsS -X PATCH "$API/learning/courses/$COURSE_ID/profile" \
+  -H "$AUTH" -H "$WS" -H "Content-Type: application/json" \
+  --data '{
+    "headline":"AI learner and platform engineer",
+    "bio":"Studying evidence-grounded enterprise AI.",
+    "skills":["Python","RAG"],
+    "interests":["AI governance","Knowledge systems"],
+    "city":"Seattle",
+    "region":"Washington",
+    "country":"United States",
+    "timezone":"America/Los_Angeles",
+    "directory_visible":true
+  }' | jq '{my_profile,members}'
+
+curl -fsS "$API/learning/courses/$COURSE_ID/directory" \
+  -H "$AUTH" -H "$WS" | jq
+```
+
+Students receive their own email and settings, visible classmates' public
+profiles, and no classmate email. Opted-out classmates are omitted. Teachers
+and admins receive the complete roster, including email and visibility state.
+
+```bash
+mcp_tool update_learning_profile "$(jq -cn --arg course "$COURSE_ID" '{
+  course_id:$course, headline:"AI learner and platform engineer",
+  bio:"Studying evidence-grounded enterprise AI.", skills:["Python","RAG"],
+  interests:["AI governance"], city:"Seattle", region:"Washington",
+  country:"United States", timezone:"America/Los_Angeles", directory_visible:true
+}')" | tool_data | jq
+
+mcp_tool get_learning_directory "$(jq -cn --arg course "$COURSE_ID" \
+  '{course_id:$course}')" | tool_data | jq
+
+mcp_request "$(jq -cn --arg uri "docintel://learning/courses/$COURSE_ID/directory" \
+  '{jsonrpc:"2.0",id:1,method:"resources/read",params:{uri:$uri}}')" | tool_data | jq
+```
+
+## 18. Troubleshooting
 
 ### OAuth succeeds but identity verification returns 404
 

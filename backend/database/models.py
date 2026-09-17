@@ -897,6 +897,16 @@ CREATE TABLE IF NOT EXISTS learning_course_members (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(course_id, user_id)
 );
+ALTER TABLE learning_course_members ADD COLUMN IF NOT EXISTS headline TEXT NOT NULL DEFAULT '';
+ALTER TABLE learning_course_members ADD COLUMN IF NOT EXISTS bio TEXT NOT NULL DEFAULT '';
+ALTER TABLE learning_course_members ADD COLUMN IF NOT EXISTS skills JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE learning_course_members ADD COLUMN IF NOT EXISTS interests JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE learning_course_members ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';
+ALTER TABLE learning_course_members ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT '';
+ALTER TABLE learning_course_members ADD COLUMN IF NOT EXISTS country TEXT NOT NULL DEFAULT '';
+ALTER TABLE learning_course_members ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT '';
+ALTER TABLE learning_course_members ADD COLUMN IF NOT EXISTS directory_visible BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE learning_course_members ADD COLUMN IF NOT EXISTS profile_updated_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_learning_members_user ON learning_course_members(user_id, course_id);
 
 CREATE TABLE IF NOT EXISTS learning_modules (

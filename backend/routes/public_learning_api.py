@@ -92,6 +92,23 @@ async def api_enroll_learning_member(request: Request, course_id: str, body: lea
     return await learning.add_member(course_id, body, current_user=principal.user, db=db)
 
 
+@router.get("/learning/courses/{course_id}/directory", summary="Get the privacy-aware class directory")
+async def api_get_learning_directory(request: Request, course_id: str, principal: LearningReader, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.get_course_directory(course_id, current_user=principal.user, db=db)
+
+
+@router.patch("/learning/courses/{course_id}/profile", summary="Update the caller's course registration profile")
+async def api_update_learning_profile(
+    request: Request, course_id: str, body: learning.CourseMemberProfileUpdate,
+    principal: LearningParticipant, db=Depends(get_db),
+):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.update_course_member_profile(
+        course_id, body, request, current_user=principal.user, db=db,
+    )
+
+
 @router.delete("/learning/courses/{course_id}/members/{member_user_id}", summary="Remove a course member")
 async def api_remove_learning_member(request: Request, course_id: str, member_user_id: str, principal: LearningManager, db=Depends(get_db)):
     await _require_course_workspace(request, db, course_id)

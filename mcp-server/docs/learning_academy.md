@@ -1,5 +1,32 @@
 # Knowledge Academy MCP End-to-End Test Guide
 
+## Course registration profiles and class directory
+
+Enrollment creates a course-scoped profile. A student can update it with
+`update_learning_profile`; classmates can read shared profiles with
+`get_learning_directory` or `docintel://learning/courses/{course_id}/directory`.
+Only city, region, country, and time zone are stored for directory location.
+Email and hidden profiles remain visible only to the profile owner and course
+teachers/admins.
+
+```bash
+mcp_tool update_learning_profile "$(jq -cn --arg course "$COURSE_ID" '{
+  course_id:$course,
+  headline:"AI learner and platform engineer",
+  bio:"Studying evidence-grounded enterprise AI.",
+  skills:["Python","RAG"],
+  interests:["AI governance"],
+  city:"Seattle",
+  region:"Washington",
+  country:"United States",
+  timezone:"America/Los_Angeles",
+  directory_visible:true
+}')" | tool_data | jq
+
+mcp_tool get_learning_directory "$(jq -cn --arg course "$COURSE_ID" \
+  '{course_id:$course}')" | tool_data | jq
+```
+
 ADAR Knowledge Academy uses DocIntel workspace security, multimodal ingestion,
 chunking, embeddings, retrieval, citations, sessions, audit, and observability.
 This guide validates the complete MCP path from deployment and OAuth through
