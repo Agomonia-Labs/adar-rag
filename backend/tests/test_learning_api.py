@@ -23,6 +23,8 @@ from routes.learning import (
     _normalize_submission_evaluation,
     _clean_list,
     _course_access,
+    _course_calendar_access,
+    _course_calendar_workspace,
     _course_response,
     _resolve_learning_scope,
     _serialize_course_members,
@@ -83,6 +85,52 @@ def test_course_directory_gives_teachers_the_complete_roster():
     assert own is None
     assert directory[0]["email"] == "private@example.com"
     assert directory[0]["directory_visible"] is False
+
+
+@pytest.mark.anyio
+async def test_students_cannot_manage_course_calendar(monkeypatch):
+    monkeypatch.setattr(
+        "routes.learning._course_access",
+        AsyncMock(return_value={"persona": "student", "workspace_role": "viewer"}),
+    )
+    with pytest.raises(HTTPException) as exc:
+        await _course_calendar_access(AsyncMock(), "course-1", "student-1")
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("persona", ["advisor", "teacher", "admin"])
+async def test_course_staff_can_manage_calendar(monkeypatch, persona):
+    course = {"persona": persona, "workspace_role": "viewer"}
+    monkeypatch.setattr("routes.learning._course_access", AsyncMock(return_value=course))
+    assert await _course_calendar_access(AsyncMock(), "course-1", "staff-1") == course
+
+
+@pytest.mark.anyio
+async def test_course_calendar_combines_staff_items_and_assignment_deadlines():
+    db = AsyncMock()
+    db.fetch.side_effect = [
+        [{
+            "id": "calendar-1", "course_id": "course-1", "item_type": "announcement",
+            "title": "Review session", "description": "Bring questions",
+            "starts_at": "2026-10-05T17:00:00+00:00", "ends_at": None, "all_day": False,
+            "created_by": "teacher-1", "created_by_name": "Teacher", "created_at": None,
+            "updated_at": None,
+        }],
+        [{
+            "id": "assignment-1", "title": "RAG project", "description": "Submit design",
+            "due_at": "2026-10-10T17:00:00+00:00", "updated_at": None,
+        }],
+    ]
+
+    result = await _course_calendar_workspace(
+        db, "course-1", {"persona": "student", "workspace_role": "viewer"}, "student-1",
+    )
+
+    assert result["can_manage_calendar"] is False
+    assert [item["source"] for item in result["items"]] == ["course_calendar", "assignment"]
+    assert result["items"][1]["id"] == "assignment:assignment-1"
+    assert result["items"][1]["editable"] is False
 
 
 def test_submission_evaluation_derives_score_from_criteria_and_normalizes_evidence():

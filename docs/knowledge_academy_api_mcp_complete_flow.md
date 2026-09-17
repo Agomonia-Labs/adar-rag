@@ -750,7 +750,52 @@ mcp_request "$(jq -cn --arg uri "docintel://learning/courses/$COURSE_ID/director
   '{jsonrpc:"2.0",id:1,method:"resources/read",params:{uri:$uri}}')" | tool_data | jq
 ```
 
-## 18. Troubleshooting
+## 18. Course announcements and deadline calendar
+
+Advisors, teachers, and admins can publish calendar items. Students can read
+the resulting course calendar but receive `403` if they attempt to change it.
+Published assignment due dates appear automatically with `source=assignment`.
+
+```bash
+curl -fsS -X POST "$API/learning/courses/$COURSE_ID/calendar" \
+  -H "$AUTH" -H "$WS" -H "Content-Type: application/json" \
+  --data '{
+    "item_type":"announcement",
+    "title":"Live RAG review session",
+    "description":"Bring questions from the retrieval lesson.",
+    "starts_at":"2026-10-05T17:00:00Z",
+    "ends_at":"2026-10-05T18:00:00Z",
+    "all_day":false
+  }' | tee /tmp/learning-calendar.json | jq
+
+export CALENDAR_ITEM_ID="$(jq -r '.items[] | select(.title=="Live RAG review session") | .id' \
+  /tmp/learning-calendar.json)"
+
+curl -fsS "$API/learning/courses/$COURSE_ID/calendar" \
+  -H "$AUTH" -H "$WS" | jq '.items'
+
+curl -fsS -X PATCH "$API/learning/courses/$COURSE_ID/calendar/$CALENDAR_ITEM_ID" \
+  -H "$AUTH" -H "$WS" -H "Content-Type: application/json" \
+  --data '{"title":"Updated live RAG review session"}' | jq '.items'
+```
+
+MCP equivalents:
+
+```bash
+mcp_tool create_learning_calendar_item "$(jq -cn --arg course "$COURSE_ID" '{
+  course_id:$course,item_type:"deadline",title:"RAG design due",
+  description:"Submit the grounded retrieval design.",
+  starts_at:"2026-10-10T23:59:00Z",ends_at:null,all_day:false
+}')" | tool_data | jq
+
+mcp_tool get_learning_calendar "$(jq -cn --arg course "$COURSE_ID" \
+  '{course_id:$course}')" | tool_data | jq
+
+mcp_request "$(jq -cn --arg uri "docintel://learning/courses/$COURSE_ID/calendar" \
+  '{jsonrpc:"2.0",id:1,method:"resources/read",params:{uri:$uri}}')" | tool_data | jq
+```
+
+## 19. Troubleshooting
 
 ### OAuth succeeds but identity verification returns 404
 

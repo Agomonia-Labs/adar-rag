@@ -909,6 +909,23 @@ ALTER TABLE learning_course_members ADD COLUMN IF NOT EXISTS directory_visible B
 ALTER TABLE learning_course_members ADD COLUMN IF NOT EXISTS profile_updated_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_learning_members_user ON learning_course_members(user_id, course_id);
 
+CREATE TABLE IF NOT EXISTS learning_course_calendar_items (
+    id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    course_id   UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+    item_type   TEXT        NOT NULL CHECK (item_type IN ('announcement','deadline')),
+    title       TEXT        NOT NULL,
+    description TEXT        NOT NULL DEFAULT '',
+    starts_at   TIMESTAMPTZ NOT NULL,
+    ends_at     TIMESTAMPTZ,
+    all_day     BOOLEAN     NOT NULL DEFAULT FALSE,
+    created_by  UUID        REFERENCES users(id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (ends_at IS NULL OR ends_at >= starts_at)
+);
+CREATE INDEX IF NOT EXISTS idx_learning_calendar_course_date
+    ON learning_course_calendar_items(course_id, starts_at, item_type);
+
 CREATE TABLE IF NOT EXISTS learning_modules (
     id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     course_id   UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,

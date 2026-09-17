@@ -27,6 +27,28 @@ mcp_tool get_learning_directory "$(jq -cn --arg course "$COURSE_ID" \
   '{course_id:$course}')" | tool_data | jq
 ```
 
+## Course announcements and deadline calendar
+
+Every enrolled learner reads the same authoritative course calendar. Advisors,
+teachers, and admins can publish announcements and deadlines. Published
+assignment due dates are merged into the calendar automatically and remain
+owned by the assignment workflow.
+
+```bash
+mcp_tool create_learning_calendar_item "$(jq -cn --arg course "$COURSE_ID" '{
+  course_id:$course,
+  item_type:"announcement",
+  title:"Live review session",
+  description:"Bring questions from the RAG module.",
+  starts_at:"2026-10-05T17:00:00Z",
+  ends_at:"2026-10-05T18:00:00Z",
+  all_day:false
+}')" | tool_data | jq
+
+mcp_tool get_learning_calendar "$(jq -cn --arg course "$COURSE_ID" \
+  '{course_id:$course}')" | tool_data | jq
+```
+
 ADAR Knowledge Academy uses DocIntel workspace security, multimodal ingestion,
 chunking, embeddings, retrieval, citations, sessions, audit, and observability.
 This guide validates the complete MCP path from deployment and OAuth through

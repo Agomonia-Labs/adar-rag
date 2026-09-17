@@ -86,6 +86,30 @@ class CourseMemberProfileUpdate(BaseModel):
     directory_visible: bool = True
 
 
+class CourseCalendarItemCreate(BaseModel):
+    item_type: Literal["announcement", "deadline"]
+    title: str = Field(min_length=1, max_length=240)
+    description: str = Field(default="", max_length=8000)
+    starts_at: datetime
+    ends_at: datetime | None = None
+    all_day: bool = False
+
+    @model_validator(mode="after")
+    def validate_dates(self):
+        if self.ends_at and self.ends_at < self.starts_at:
+            raise ValueError("ends_at cannot be earlier than starts_at")
+        return self
+
+
+class CourseCalendarItemUpdate(BaseModel):
+    item_type: Literal["announcement", "deadline"] | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=240)
+    description: str | None = Field(default=None, max_length=8000)
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    all_day: bool | None = None
+
+
 class CurriculumSave(BaseModel):
     modules: list[dict] = Field(default_factory=list)
 
@@ -486,6 +510,14 @@ async def _course_access(db, course_id: str, user_id: str, manage: bool = False)
     return data
 
 
+async def _course_calendar_access(db, course_id: str, user_id: str):
+    course = await _course_access(db, course_id, user_id)
+    is_workspace_manager = course.get("workspace_role") in ("owner", "editor")
+    if not (is_workspace_manager or course.get("persona") in {"admin", "teacher", "advisor"}):
+        raise HTTPException(403, "Course calendar updates require an advisor, teacher, or admin role")
+    return course
+
+
 async def _resolve_learning_scope(
     db, course_id: str, user_id: str, module_id: str | None = None, lesson_id: str | None = None,
 ) -> dict:
@@ -810,6 +842,82 @@ async def update_course_member_profile(
         ip_address=ip_from(request), user_agent=ua_from(request),
     )
     return await _course_workspace(db, course_id, user_id)
+
+
+@router.get("/courses/{course_id}/calendar")
+async def get_course_calendar(course_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id)
+    return await _course_calendar_workspace(db, course_id, course, user_id)
+
+
+@router.post("/courses/{course_id}/calendar")
+async def create_course_calendar_item(
+    course_id: str, body: CourseCalendarItemCreate, request: Request,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_calendar_access(db, course_id, user_id)
+    row = await db.fetchrow(
+        """INSERT INTO learning_course_calendar_items
+           (course_id,item_type,title,description,starts_at,ends_at,all_day,created_by)
+           VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8::uuid) RETURNING *""",
+        course_id, body.item_type, body.title.strip(), body.description.strip(),
+        body.starts_at, body.ends_at, body.all_day, user_id,
+    )
+    await _record_calendar_change(db, request, course, user_id, row, "created")
+    return await _course_calendar_workspace(db, course_id, course, user_id)
+
+
+@router.patch("/courses/{course_id}/calendar/{item_id}")
+async def update_course_calendar_item(
+    course_id: str, item_id: str, body: CourseCalendarItemUpdate, request: Request,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_calendar_access(db, course_id, user_id)
+    existing = await db.fetchrow(
+        "SELECT * FROM learning_course_calendar_items WHERE id=$1::uuid AND course_id=$2::uuid",
+        item_id, course_id,
+    )
+    if not existing:
+        raise HTTPException(404, "Course calendar item not found")
+    values = body.model_dump(exclude_unset=True)
+    if not values:
+        return await _course_calendar_workspace(db, course_id, course, user_id)
+    merged_start = values.get("starts_at", existing["starts_at"])
+    merged_end = values.get("ends_at", existing["ends_at"])
+    if merged_end and merged_end < merged_start:
+        raise HTTPException(422, "ends_at cannot be earlier than starts_at")
+    sets, params = [], [item_id, course_id]
+    for key, value in values.items():
+        params.append(value.strip() if isinstance(value, str) else value)
+        sets.append(f"{key}=${len(params)}")
+    row = await db.fetchrow(
+        f"""UPDATE learning_course_calendar_items SET {','.join(sets)},updated_at=NOW()
+             WHERE id=$1::uuid AND course_id=$2::uuid RETURNING *""",
+        *params,
+    )
+    await _record_calendar_change(db, request, course, user_id, row, "updated")
+    return await _course_calendar_workspace(db, course_id, course, user_id)
+
+
+@router.delete("/courses/{course_id}/calendar/{item_id}")
+async def delete_course_calendar_item(
+    course_id: str, item_id: str, request: Request,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_calendar_access(db, course_id, user_id)
+    row = await db.fetchrow(
+        """DELETE FROM learning_course_calendar_items
+           WHERE id=$1::uuid AND course_id=$2::uuid RETURNING *""",
+        item_id, course_id,
+    )
+    if not row:
+        raise HTTPException(404, "Course calendar item not found")
+    await _record_calendar_change(db, request, course, user_id, row, "deleted")
+    return await _course_calendar_workspace(db, course_id, course, user_id)
 
 
 @router.delete("/courses/{course_id}/members/{member_user_id}")
@@ -1678,6 +1786,68 @@ async def get_instructor_dashboard(course_id: str, current_user: CurrentUser, db
     )
 
 
+def _can_manage_course_calendar(course: dict) -> bool:
+    return bool(
+        course.get("workspace_role") in ("owner", "editor")
+        or course.get("persona") in {"admin", "teacher", "advisor"}
+    )
+
+
+async def _course_calendar_workspace(db, course_id: str, course: dict, user_id: str) -> dict:
+    rows = await db.fetch(
+        """SELECT i.*,u.full_name AS created_by_name
+           FROM learning_course_calendar_items i LEFT JOIN users u ON u.id=i.created_by
+           WHERE i.course_id=$1::uuid ORDER BY i.starts_at,i.created_at""",
+        course_id,
+    )
+    assignment_rows = await db.fetch(
+        """SELECT id,title,description,due_at,updated_at
+           FROM learning_assignments
+           WHERE course_id=$1::uuid AND publication_status='published' AND due_at IS NOT NULL
+           ORDER BY due_at""",
+        course_id,
+    )
+    items = []
+    for row in rows:
+        item = _jsonable(dict(row))
+        item.update({"source": "course_calendar", "editable": True})
+        items.append(item)
+    for row in assignment_rows:
+        item = _jsonable(dict(row))
+        items.append({
+            "id": f"assignment:{item['id']}", "assignment_id": item["id"],
+            "course_id": course_id, "item_type": "deadline", "title": item["title"],
+            "description": item.get("description") or "", "starts_at": item["due_at"],
+            "ends_at": None, "all_day": False, "source": "assignment", "editable": False,
+            "created_by": None, "created_by_name": "Assignment", "created_at": item.get("updated_at"),
+            "updated_at": item.get("updated_at"),
+        })
+    items.sort(key=lambda item: str(item.get("starts_at") or ""))
+    return {
+        "course_id": course_id,
+        "can_manage_calendar": _can_manage_course_calendar(course),
+        "items": items,
+    }
+
+
+async def _record_calendar_change(db, request: Request, course: dict, user_id: str, row, action: str) -> None:
+    item = _jsonable(dict(row))
+    await audit(
+        db, user_id=user_id, action=f"learning_calendar_{action}",
+        resource_type="learning_course_calendar_item", resource_id=str(item["id"]),
+        metadata={"course_id": str(item["course_id"]), "item_type": item["item_type"]},
+        ip_address=ip_from(request), user_agent=ua_from(request),
+    )
+    await emit_event(
+        db, user_id=user_id, workspace_id=str(course["workspace_id"]),
+        event_type=f"learning.calendar.{action}", resource_type="learning_course_calendar_item",
+        resource_id=str(item["id"]), payload={
+            "course_id": str(item["course_id"]), "item_type": item["item_type"],
+            "title": item["title"], "starts_at": item["starts_at"],
+        },
+    )
+
+
 async def _course_workspace(db, course_id: str, user_id: str) -> dict:
     course = await _course_access(db, course_id, user_id)
     members = await db.fetch(
@@ -1757,10 +1927,13 @@ async def _course_workspace(db, course_id: str, user_id: str) -> dict:
         item["document_ids"] = _decode_json(item.get("document_ids"), [])
         revisions_by_submission.setdefault(str(revision["submission_id"]), []).append(item)
     member_profiles, my_profile = _serialize_course_members(members, user_id, can_manage)
+    calendar = await _course_calendar_workspace(db, course_id, course, user_id)
     result = _course_response(course)
     result.update({
         "my_persona": effective_persona,
         "can_manage": can_manage,
+        "can_manage_calendar": calendar["can_manage_calendar"],
+        "calendar_items": calendar["items"],
         "members": member_profiles,
         "my_profile": my_profile,
         "modules": modules,

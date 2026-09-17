@@ -1250,6 +1250,28 @@ export async function getLearningCourseDirectory(courseId) {
   return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/directory`, { headers:authHdr() }));
 }
 
+export async function getLearningCalendar(courseId) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/calendar`, { headers:authHdr() }));
+}
+
+export async function createLearningCalendarItem(courseId, payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/calendar`, {
+    method:'POST', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function updateLearningCalendarItem(courseId, itemId, payload) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/calendar/${itemId}`, {
+    method:'PATCH', headers:{'Content-Type':'application/json', ...authHdr()}, body:JSON.stringify(payload),
+  }));
+}
+
+export async function deleteLearningCalendarItem(courseId, itemId) {
+  return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/calendar/${itemId}`, {
+    method:'DELETE', headers:authHdr(),
+  }));
+}
+
 export async function removeLearningMember(courseId, userId) {
   return handleRes(await fetch(`${BASE}/learning/courses/${courseId}/members/${userId}`, { method:'DELETE', headers:authHdr() }));
 }

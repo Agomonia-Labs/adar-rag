@@ -255,6 +255,15 @@ def register_resources(mcp: FastMCP, settings: Settings) -> None:
             return json.dumps(result, ensure_ascii=False, default=str)
         except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
 
+    @mcp.resource("docintel://learning/courses/{course_id}/calendar")
+    async def learning_calendar(course_id: str, ctx: Context) -> str:
+        """Course announcements, deadlines, and assignment due dates visible to enrolled members."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client:
+                result = await client.get_learning_calendar(course_id)
+            return json.dumps(result, ensure_ascii=False, default=str)
+        except DocIntelMcpError as exc: return json.dumps(exc.as_dict())
+
     @mcp.resource("docintel://learning/courses/{course_id}/content")
     async def learning_content(course_id: str, ctx: Context) -> str:
         """Documents, recordings, and videos mapped to course, module, and lesson scopes."""

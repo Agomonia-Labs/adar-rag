@@ -943,6 +943,43 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
         except DocIntelMcpError as exc: return exc.as_dict()
 
     @mcp.tool()
+    async def get_learning_calendar(ctx: Context, course_id: str) -> dict:
+        """Read course announcements, staff deadlines, and published assignment due dates."""
+        try:
+            async with api_client(ctx, settings, "learning:read") as client: return await client.get_learning_calendar(course_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def create_learning_calendar_item(
+        ctx: Context, course_id: str, item_type: str, title: str, starts_at: str,
+        description: str = "", ends_at: str | None = None, all_day: bool = False,
+    ) -> dict:
+        """Publish an announcement or deadline as an advisor, teacher, or admin."""
+        try:
+            payload = {"item_type": item_type, "title": title, "description": description, "starts_at": starts_at, "ends_at": ends_at, "all_day": all_day}
+            async with api_client(ctx, settings, "learning:participate") as client: return await client.create_learning_calendar_item(course_id, payload)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def update_learning_calendar_item(
+        ctx: Context, course_id: str, item_id: str, changes: dict[str, Any],
+    ) -> dict:
+        """Update a staff-managed course announcement or deadline."""
+        try:
+            async with api_client(ctx, settings, "learning:participate") as client: return await client.update_learning_calendar_item(course_id, item_id, changes)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
+    async def delete_learning_calendar_item(
+        ctx: Context, course_id: str, item_id: str, confirm: bool = False,
+    ) -> dict:
+        """Delete a staff-managed calendar item; assignment deadlines remain owned by assignments."""
+        if not confirm: return {"ok": False, "error": {"code": "confirmation_required", "message": "Set confirm=true to delete the calendar item"}}
+        try:
+            async with api_client(ctx, settings, "learning:participate") as client: return await client.delete_learning_calendar_item(course_id, item_id)
+        except DocIntelMcpError as exc: return exc.as_dict()
+
+    @mcp.tool()
     async def remove_learning_member(ctx: Context, course_id: str, user_id: str, confirm: bool = False) -> dict:
         """Remove a member from a course without deleting the DocIntel user."""
         if not confirm: return {"ok": False, "error": {"code": "confirmation_required", "message": "Set confirm=true to remove the member"}}

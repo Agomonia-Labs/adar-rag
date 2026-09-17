@@ -663,6 +663,22 @@ class DocIntelApiClient:
         await self.get_learning_course(course_id)
         return await self.request("PATCH", f"/api/learning/courses/{course_id}/profile", json=payload)
 
+    async def get_learning_calendar(self, course_id: str) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("GET", f"/api/learning/courses/{course_id}/calendar")
+
+    async def create_learning_calendar_item(self, course_id: str, payload: dict) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("POST", f"/api/learning/courses/{course_id}/calendar", json=payload)
+
+    async def update_learning_calendar_item(self, course_id: str, item_id: str, payload: dict) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("PATCH", f"/api/learning/courses/{course_id}/calendar/{item_id}", json=payload)
+
+    async def delete_learning_calendar_item(self, course_id: str, item_id: str) -> dict:
+        await self.get_learning_course(course_id)
+        return await self.request("DELETE", f"/api/learning/courses/{course_id}/calendar/{item_id}")
+
     async def remove_learning_member(self, course_id: str, user_id: str) -> dict:
         await self.get_learning_course(course_id)
         return await self.request("DELETE", f"/api/learning/courses/{course_id}/members/{user_id}")

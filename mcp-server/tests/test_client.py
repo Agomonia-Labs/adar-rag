@@ -200,6 +200,40 @@ async def test_learning_profile_and_directory_use_course_endpoints():
 
 
 @pytest.mark.asyncio
+async def test_learning_calendar_crud_uses_course_endpoints():
+    requests: list[tuple[str, str, dict]] = []
+
+    async def handler(request: httpx.Request):
+        payload = json.loads(request.content) if request.content else {}
+        requests.append((request.method, request.url.path, payload))
+        if request.url.path == "/api/learning/courses/course-1":
+            return httpx.Response(200, json={"id": "course-1"})
+        return httpx.Response(200, json={"course_id": "course-1", "items": []})
+
+    payload = {
+        "item_type": "deadline", "title": "Project due",
+        "description": "Submit the project", "starts_at": "2026-10-10T17:00:00Z",
+        "ends_at": None, "all_day": False,
+    }
+    async with DocIntelApiClient("https://docintel.test", "token", transport=httpx.MockTransport(handler)) as client:
+        await client.get_learning_calendar("course-1")
+        await client.create_learning_calendar_item("course-1", payload)
+        await client.update_learning_calendar_item("course-1", "calendar-1", {"title": "Updated due date"})
+        await client.delete_learning_calendar_item("course-1", "calendar-1")
+
+    assert [(method, path) for method, path, _ in requests] == [
+        ("GET", "/api/learning/courses/course-1"),
+        ("GET", "/api/learning/courses/course-1/calendar"),
+        ("GET", "/api/learning/courses/course-1"),
+        ("POST", "/api/learning/courses/course-1/calendar"),
+        ("GET", "/api/learning/courses/course-1"),
+        ("PATCH", "/api/learning/courses/course-1/calendar/calendar-1"),
+        ("GET", "/api/learning/courses/course-1"),
+        ("DELETE", "/api/learning/courses/course-1/calendar/calendar-1"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_learning_progress_and_mastery_use_authoritative_learning_endpoints():
     requests: list[tuple[str, str, dict]] = []
 

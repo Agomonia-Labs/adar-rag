@@ -52,6 +52,10 @@ def route_scope(path: str, method: str) -> str:
         ("/learning/courses/{course_id}/members", "POST", "learning:manage"),
         ("/learning/courses/{course_id}/directory", "GET", "learning:read"),
         ("/learning/courses/{course_id}/profile", "PATCH", "learning:participate"),
+        ("/learning/courses/{course_id}/calendar", "GET", "learning:read"),
+        ("/learning/courses/{course_id}/calendar", "POST", "learning:participate"),
+        ("/learning/courses/{course_id}/calendar/{item_id}", "PATCH", "learning:participate"),
+        ("/learning/courses/{course_id}/calendar/{item_id}", "DELETE", "learning:participate"),
         ("/learning/courses/{course_id}/members/{member_user_id}", "DELETE", "learning:manage"),
         ("/learning/courses/{course_id}/assets", "POST", "learning:manage"),
         ("/learning/courses/{course_id}/assets/{asset_id}", "PATCH", "learning:manage"),
@@ -95,7 +99,7 @@ def test_public_learning_openapi_exposes_every_operation():
         for operation in path_item
         if operation in {"get", "post", "put", "patch", "delete"}
     ]
-    assert len(operations) == 35
+    assert len(operations) == 39
 
 
 @pytest.mark.anyio
