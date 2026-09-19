@@ -149,6 +149,58 @@ def existing_curriculum_ids(client: Client, course_id: str) -> tuple[dict[str, s
     return module_ids, lesson_ids
 
 
+def save_curriculum_from_manifest(client: Client, course_id: str, manifest: dict) -> None:
+    existing_module_ids, existing_lesson_ids = existing_curriculum_ids(client, course_id)
+
+    def _lesson_payload(module_title: str, lesson: dict) -> dict:
+        payload = {"title": lesson["title"], "description": lesson["description"]}
+        existing_id = existing_lesson_ids.get((module_title, lesson["title"]))
+        if existing_id:
+            payload["id"] = existing_id
+        return payload
+
+    def _module_payload(module: dict) -> dict:
+        payload = {
+            "title": module["title"],
+            "description": module["description"],
+            "lessons": [_lesson_payload(module["title"], l) for l in module["lessons"]],
+        }
+        existing_id = existing_module_ids.get(module["title"])
+        if existing_id:
+            payload["id"] = existing_id
+        return payload
+
+    curriculum_payload = {"modules": [_module_payload(m) for m in manifest["modules"]]}
+    course = client.put(f"/learning/courses/{course_id}/curriculum", json=curriculum_payload)
+    print(f"  saved curriculum: {len(course['modules'])} modules")
+    for module in course["modules"]:
+        renamed = module["title"] not in existing_module_ids
+        print(f"    - {module['title']}{' (new/renamed)' if renamed else ''}")
+
+
+def relabel_and_resync_content(client: Client, course_id: str, manifest: dict,
+                                adar_web_dir: Path, export_files_dir: Path) -> None:
+    """--relabel-curriculum's actual work: relabel the curriculum from the
+    manifest, re-upload and re-embed every module's grounding text fresh
+    (cheap -- markdown, not video, so this takes seconds per module) so an
+    edited or merged text_content actually becomes searchable rather than
+    silently keeping the OLD pre-edit grounding text, then hand off to
+    reattach_all_content() for everything else (PDFs, videos -- unchanged
+    bytes, so those are reattached by filename to what's already embedded,
+    not re-uploaded). reattach_all_content() always prefers the newest
+    document per filename, so the grounding text just uploaded here is
+    exactly what it picks up."""
+    save_curriculum_from_manifest(client, course_id, manifest)
+    course = client.get(f"/learning/courses/{course_id}")
+    workspace_id = course["workspace_id"]
+    for manifest_module in manifest["modules"]:
+        doc_id = upload_text_document(
+            client, workspace_id, manifest_module["id"], manifest_module["title"], manifest_module["text_content"],
+        )
+        print(f"  re-embedded grounding text for '{manifest_module['title']}' ({doc_id})")
+    reattach_all_content(client, course_id, manifest, adar_web_dir, export_files_dir)
+
+
 def reattach_all_content(client: Client, course_id: str, manifest: dict,
                           adar_web_dir: Path, export_files_dir: Path) -> None:
     """Full remediation for a course whose learning_assets rows are stale
@@ -557,19 +609,31 @@ def main() -> None:
              "anything already created instead of duplicating it. Assignment due dates automatically "
              "also appear as calendar deadlines -- see seed_calendar_and_assignments().",
     )
+    parser.add_argument(
+        "--relabel-curriculum", action="store_true",
+        help="Re-save ONLY the module/lesson titles, descriptions, and grouping from the manifest -- "
+             "no document/video upload or re-processing at all -- then reattach every already-embedded "
+             "document and video to the resulting module/lesson ids by filename (like --reattach-all). "
+             "Requires --course-id. Use this after editing course_manifest.json to rename modules/"
+             "lessons or regroup lessons into a different/merged module: it's the safe, cheap way to "
+             "apply a relabel without re-uploading or re-embedding a single file.",
+    )
     args = parser.parse_args()
     video_modes_selected = sum([
         bool(args.skip_videos), bool(args.only_lessons), bool(args.reattach_videos), bool(args.reattach_all),
-        bool(args.seed_extras),
+        bool(args.seed_extras), bool(args.relabel_curriculum),
     ])
     if video_modes_selected > 1:
-        die("--skip-videos, --only-lessons, --reattach-videos, --reattach-all, and --seed-extras are mutually exclusive")
+        die("--skip-videos, --only-lessons, --reattach-videos, --reattach-all, --seed-extras, and "
+            "--relabel-curriculum are mutually exclusive")
     if args.reattach_videos and not args.course_id:
         die("--reattach-videos updates an existing course's video attachments -- pass --course-id")
     if args.reattach_all and not args.course_id:
         die("--reattach-all updates an existing course's content mappings -- pass --course-id")
     if args.seed_extras and not args.course_id:
         die("--seed-extras adds content to an existing course -- pass --course-id")
+    if args.relabel_curriculum and not args.course_id:
+        die("--relabel-curriculum updates an existing course's curriculum -- pass --course-id")
     only_lessons = {t.strip() for t in args.only_lessons.split(",")} if args.only_lessons else None
 
     api_base = os.getenv("ADAR_API_BASE", DEFAULT_API_BASE)
@@ -582,6 +646,7 @@ def main() -> None:
     adar_web_dir = Path(os.getenv("ADAR_WEB_DIR", "")).expanduser()
     export_files_dir = Path(os.getenv("EXPORT_FILES_DIR", "")).expanduser()
     if (not args.skip_videos and not args.reattach_videos and not args.reattach_all and not args.seed_extras
+            and not args.relabel_curriculum
             and (not adar_web_dir.is_dir() or not export_files_dir.is_dir())):
         die("Set ADAR_WEB_DIR and EXPORT_FILES_DIR to real local paths, or pass --skip-videos")
 
@@ -605,6 +670,14 @@ def main() -> None:
         })
         course_id = created["id"]
         print(f"Created course {course_id}")
+
+    if args.relabel_curriculum:
+        relabel_and_resync_content(client, course_id, manifest, adar_web_dir, export_files_dir)
+        print()
+        print("=" * 72)
+        print(f"Done. Relabeled curriculum, re-embedded grounding text, and reattached content "
+              f"for GUEST_LEARNING_COURSE_ID={course_id}")
+        return
 
     if args.seed_extras:
         seed_calendar_and_assignments(client, course_id)

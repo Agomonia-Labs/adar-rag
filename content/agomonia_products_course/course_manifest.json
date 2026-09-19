@@ -17,36 +17,26 @@
   "modules": [
     {
       "id": "platform-architecture",
-      "title": "ADAR Platform & Architecture",
-      "description": "The cloud-native architecture behind every Agomonia Labs product: Firebase Hosting, Cloud Run, hybrid retrieval, the agent layer, and the reusable design pattern that lets the same core move from restaurants to healthcare to sports.",
-      "text_content": "ADAR (Agentic Data Access and Reasoning) is the reusable core behind every Agomonia Labs product: autonomous agents, live data access, document intelligence, video intelligence, retrieval, reasoning, evaluation, memory, and cloud deployment.\n\nAgomonia Labs is designed with a modular, cloud-native architecture that separates stateless request handling, durable memory, retrieval indexes, file storage, agent execution, evaluation, and governance, allowing every layer to scale, evolve, and operate independently. React and Vite frontends are served through Firebase Hosting, while authenticated requests move through HTTPS and JWTs into backend services that can evolve independently. FastAPI services run on Cloud Run, so request capacity can scale horizontally while sessions, documents, vectors, memory, and logs remain in durable managed stores. Cloud SQL, pgvector, Firestore, full-text search, chunk storage, and source files work together so grounded answers can cite private documents and operational data. Larger videos route through direct browser-to-GCS upload, while conversation recordings become transcript documents through a consent-based speech workflow -- both paths create timestamped knowledge chunks and embeddings instead of disconnected media silos. Google ADK, Gemini, domain tools, workflow agents, and memory services coordinate work across healthcare, restaurants, sports, music, real estate, finance, and document intelligence.\n\nThe same reusable design pattern moves across verticals: keep the chat, memory, orchestration, audit, and cloud runtime stable, and swap the agents, tools, data schema, and workflow contracts for each domain. A root orchestrator reads intent and delegates to focused agents rather than forcing one model to handle every workflow. Agents call live APIs, search indexes, databases, web sources, document stores, and business functions. Documents, transcripts, audio, and video enter the same governed knowledge layer, where metadata, captions, chunks, embeddings, and citations make every asset searchable. Session state carries active context, user memory restores preferences, and logs preserve the audit trail.",
+      "title": "ADAR Platform, Architecture, Observability",
+      "description": "The cloud-native architecture behind every Agomonia Labs product, and how every chat, ingestion, retrieval, and MCP call becomes a reviewable OpenTelemetry trace -- from Firebase Hosting and Cloud Run through the agent layer to SLOs, alerts, and quality correlation.",
+      "text_content": "ADAR (Agentic Data Access and Reasoning) is the reusable core behind every Agomonia Labs product: autonomous agents, live data access, document intelligence, video intelligence, retrieval, reasoning, evaluation, memory, and cloud deployment.\n\nAgomonia Labs is designed with a modular, cloud-native architecture that separates stateless request handling, durable memory, retrieval indexes, file storage, agent execution, evaluation, and governance, allowing every layer to scale, evolve, and operate independently. React and Vite frontends are served through Firebase Hosting, while authenticated requests move through HTTPS and JWTs into backend services that can evolve independently. FastAPI services run on Cloud Run, so request capacity can scale horizontally while sessions, documents, vectors, memory, and logs remain in durable managed stores. Cloud SQL, pgvector, Firestore, full-text search, chunk storage, and source files work together so grounded answers can cite private documents and operational data. Larger videos route through direct browser-to-GCS upload, while conversation recordings become transcript documents through a consent-based speech workflow -- both paths create timestamped knowledge chunks and embeddings instead of disconnected media silos. Google ADK, Gemini, domain tools, workflow agents, and memory services coordinate work across healthcare, restaurants, sports, music, real estate, finance, and document intelligence.\n\nThe same reusable design pattern moves across verticals: keep the chat, memory, orchestration, audit, and cloud runtime stable, and swap the agents, tools, data schema, and workflow contracts for each domain. A root orchestrator reads intent and delegates to focused agents rather than forcing one model to handle every workflow. Agents call live APIs, search indexes, databases, web sources, document stores, and business functions. Documents, transcripts, audio, and video enter the same governed knowledge layer, where metadata, captions, chunks, embeddings, and citations make every asset searchable. Session state carries active context, user memory restores preferences, and logs preserve the audit trail.\n\n---\n\nADAR DocIntel Observability uses OpenTelemetry to trace document, speech, video, RAG, MCP, chat, ingestion, embedding, retrieval, reranking, LLM, and vertical workflows end to end. Each request gets a DocIntel trace ID (X-Trace-Id) and an OTEL trace ID (X-OTel-Trace-Id), while spans capture timing, status, metadata, model usage, errors, and redacted operational details.\n\nUsage checks, embeddings, hybrid retrieval, reranking, prompt assembly, agent context, LLM generation, ingestion, embedding, workflow runs, and packet generation are all captured as spans. Postgres powers Flow, Timeline, and Raw trace views inside the product; Cloud Trace supports engineering investigation; GCS archives trace exports for retention, audits, analytics, and historical review. The newest layer turns traces into operational management: metric rollups, SLO definitions, burn-rate results, alerts, notifications, and evaluation correlation, so teams can monitor request success, p95 latency, retrieval evidence, MCP/tool reliability, and evaluation quality without treating every AI workflow as a one-off debugging exercise. Each automated or human evaluation can carry the originating trace ID, letting teams answer practical questions like whether empty retrieval reduced groundedness or which MCP tools correlate with failed outcomes.\n\nContent-like attributes -- prompts, questions, chunks, responses, and document text -- are stored as hashes and lengths unless explicit content capture is enabled, and authorization headers, passwords, API keys, and tokens stay protected by default.",
       "lessons": [
         {
-          "title": "Cloud-native architecture walkthrough",
+          "title": "Cloud Native complete platform architecture walkthrough",
           "description": "See the full DocIntel platform end to end: ingestion, hybrid retrieval, grounded chat, governance, and the developer/MCP surface.",
           "video_source": "adar-web/local-demos/media/adar-docintel-complete-platform-walkthrough/adar_docintel_complete_platform_walkthrough.mp4"
+        },
+        {
+          "title": "OpenTelemetry Traces and Audit Logging",
+          "description": "One tracing backbone, watched live across DocIntel and ADAR Front Desk: dual trace IDs, full span detail, and the retrieval-to-generation pipeline chained into one trace.",
+          "video_source": "adar-web/local-demos/media/agomonia-otel-observability-docintel-frontdesk/agomonia_otel_observability_docintel_frontdesk.mp4"
         }
       ],
       "document_sources": [
         {
           "filename": "platform-architecture.pdf",
           "title": "ADAR Platform & Architecture -- module reference (PDF)"
-        }
-      ]
-    },
-    {
-      "id": "observability",
-      "title": "Observability: OpenTelemetry for Agentic AI",
-      "description": "How every chat, ingestion, retrieval, and MCP call becomes a reviewable trace -- from request to SLOs, alerts, and quality correlation.",
-      "text_content": "ADAR DocIntel Observability uses OpenTelemetry to trace document, speech, video, RAG, MCP, chat, ingestion, embedding, retrieval, reranking, LLM, and vertical workflows end to end. Each request gets a DocIntel trace ID (X-Trace-Id) and an OTEL trace ID (X-OTel-Trace-Id), while spans capture timing, status, metadata, model usage, errors, and redacted operational details.\n\nUsage checks, embeddings, hybrid retrieval, reranking, prompt assembly, agent context, LLM generation, ingestion, embedding, workflow runs, and packet generation are all captured as spans. Postgres powers Flow, Timeline, and Raw trace views inside the product; Cloud Trace supports engineering investigation; GCS archives trace exports for retention, audits, analytics, and historical review. The newest layer turns traces into operational management: metric rollups, SLO definitions, burn-rate results, alerts, notifications, and evaluation correlation, so teams can monitor request success, p95 latency, retrieval evidence, MCP/tool reliability, and evaluation quality without treating every AI workflow as a one-off debugging exercise. Each automated or human evaluation can carry the originating trace ID, letting teams answer practical questions like whether empty retrieval reduced groundedness or which MCP tools correlate with failed outcomes.\n\nContent-like attributes -- prompts, questions, chunks, responses, and document text -- are stored as hashes and lengths unless explicit content capture is enabled, and authorization headers, passwords, API keys, and tokens stay protected by default.",
-      "lessons": [
-        {
-          "title": "Cross-product tracing demo",
-          "description": "One tracing backbone, watched live across DocIntel and ADAR Front Desk: dual trace IDs, full span detail, and the retrieval-to-generation pipeline chained into one trace.",
-          "video_source": "adar-web/local-demos/media/agomonia-otel-observability-docintel-frontdesk/agomonia_otel_observability_docintel_frontdesk.mp4"
-        }
-      ],
-      "document_sources": [
+        },
         {
           "filename": "observability.pdf",
           "title": "Observability: OpenTelemetry for Agentic AI -- module reference (PDF)"
@@ -55,12 +45,12 @@
     },
     {
       "id": "security-governance",
-      "title": "Security & Governance",
+      "title": "Identity and Access Control",
       "description": "Identity management, MFA, RBAC, workspace scoping, and the shared usage-governance ledger that applies the same controls across REST and MCP.",
       "text_content": "DocIntel identity management is designed so users can enter the platform through a controlled signup and login flow before they reach sensitive document intelligence, chat, workflow, billing, or administrative areas. Signup captures the account information needed to create the user profile and connect the user to the right workspace, while login verifies the user before any protected capability is available. Multi-factor authentication adds a second verification step beyond the password, reducing the risk of unauthorized access for document-heavy and workflow-heavy environments handling contracts, healthcare documents, lease records, restaurant operations, and other sensitive business information.\n\nAfter authentication, DocIntel uses workspace scoping, role-based access control, audit history, and governance-aware workflow rules so each user sees only the data and actions allowed for their role. Admins, contributors, reviewers, operators, clinicians, patients, restaurant owners, staff, and other personas map into permission boundaries while traceability remains available for security review.\n\nDocIntel records normalized application activity across both the REST and MCP integration surfaces in one shared ledger: organization, application, principal, workspace, scope, operation, status, latency, bytes, tokens, request ID, job ID, and trace ID -- without indexing complete prompts or document contents. Quota policy can set a broad enterprise boundary, control one confidential integration, protect a team knowledge boundary from excessive automation, or limit expensive generation separately from reads, with the most restrictive matching policy winning. Clients read structured rate-limit signals -- X-DocIntel-Usage-Units, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, and Retry-After -- and quota units are reserved atomically before execution and reconciled afterward. Usage events correlate with OpenTelemetry traces so administrators can move from denial to diagnosis, investigating latency, failures, quota rejection, retrieval, MCP tools, model generation, or vertical workflows -- while users inspect only their own requests.",
       "lessons": [
         {
-          "title": "Signup, login, and MFA",
+          "title": "Signin, Login, MFA",
           "description": "The controlled signup and login flow, and how MFA adds a second verification step before any protected capability becomes available.",
           "video_source": "ExportFiles/DocIntel_Signup_SignIn.mp4",
           "note": "Sourced from a longer raw recording; consider trimming to a short highlight clip before production use."
@@ -75,58 +65,84 @@
     },
     {
       "id": "integration-api-mcp",
-      "title": "Integration Layer: REST API & MCP",
+      "title": "Enterprise Integration",
       "description": "The DocIntel Developer Platform: OAuth-secured REST, the public MCP gateway, and how AI assistants and enterprise applications connect without rebuilding ingestion or retrieval.",
       "text_content": "The DocIntel Developer Platform is one governed integration surface for REST applications, MCP clients, agents, and automation. It combines human and service OAuth, workspace-scoped documents and multimodal knowledge, durable batch and video operations, vertical workflows, signed webhooks, shared quotas, credential rotation, OpenTelemetry correlation, an OpenAPI spec, and starter SDKs.\n\nDocIntel MCP Integration securely extends ADAR DocIntel beyond its native web UI through a public Model Context Protocol server at https://mcp.docintel.adar.agomoniai.com/mcp. AI assistants, enterprise applications, agent frameworks, and automation platforms can connect to DocIntel's document, speech, and video intelligence knowledgebase through one governed integration layer. The gateway is a separately deployable adapter over the existing DocIntel API -- it never connects directly to PostgreSQL, pgvector, or Google Cloud Storage. It accepts MCP requests, validates identity, client, audience, expiration, and approved scopes through OAuth, forwards trace context, and calls DocIntel through controlled backend credentials, so the DocIntel API remains the sole authority for tenant, workspace, document, and session access.\n\nThe flow: the client discovers the MCP endpoint and protected-resource metadata, discovers the OAuth authorization server, registers dynamically or uses configured client policy, the user signs in with password and email MFA, consents to scopes such as workspace read, document read, knowledge query, and session write, the browser flow returns an S256-PKCE-protected authorization code, the client receives an audience-bound access token and rotating refresh token, and the MCP gateway validates and introspects the token before enforcing user, workspace, and scope boundaries. The public MCP token stops at the gateway; backend calls use a short-lived internal credential. Every tool requires both an operator-enabled capability and a caller-granted OAuth scope, and workspace/document IDs narrow a request but never grant access by themselves. Knowledge Academy itself is part of this same surface: courses, curricula, enrollment, tutoring, study-tool generation, grading, and instructor dashboards are all first-class REST endpoints and MCP tools.",
       "lessons": [
         {
-          "title": "Developer platform overview",
+          "title": "Overview of Developer Platform",
           "description": "REST, OAuth, SDKs, and the governed integration surface for applications and agents.",
           "video_source": "adar-web/local-demos/media/adar-docintel-developer-platform/adar_docintel_developer_platform.mp4"
         },
         {
-          "title": "MCP integration in action",
+          "title": "MCP Integration in Action",
           "description": "From OAuth login to governed MCP commands against the DocIntel knowledgebase.",
           "video_source": "adar-web/local-demos/media/adar-docintel-mcp-integration/adar_docintel_mcp_integration.mp4"
-        },
-        {
-          "title": "Module announcement (audio)",
-          "description": "A real narration excerpt from this module's own demo recording, presented as a stand-alone audio file and ingested through the same transcription + embedding pipeline as every video -- demonstrating that AI Tutor grounding works from an audio recording, not only from screen-recorded video.",
-          "video_source": "adar-web/media/knowledge-academy/integration_module_announcement.mp4"
         }
       ]
     },
     {
       "id": "docintel-core",
-      "title": "DocIntel: Document, Speech & Video Intelligence",
+      "title": "Media Intelligence",
       "description": "The foundation product: turning documents, guided conversations, and video into a searchable, cited, conversational knowledge base.",
       "text_content": "DocIntel turns static documents, guided conversation recordings, transcripts, audio, and videos into a secure, searchable, conversational knowledge base with hybrid retrieval, citations, timestamp-aware sources, summaries, multilingual voice/chat, Guest Preview upload and Q&A, Help Center product assistance, and vertical agent workflows for healthcare, talent management, restaurants, real estate leases, and finance/tax readiness. The platform combines rules for precision, embeddings for discovery, AI for reasoning, workflow orchestration for consistency, and human review for trust.\n\nDocIntel Video Intelligence treats video as an enterprise knowledge source rather than a passive media file: it routes uploads by file size, extracts metadata, frames, transcripts, and time segments, samples frames with bounded controls, generates visual captions, and embeds video chunks into pgvector so users can ask timestamp-aware questions and get citations back to the exact moment in the recording. Conversation Assistant lets users capture consent-based conversations from web or mobile using speech or typed responses; each completed turn is persisted, audio is transcribed into segments, and the finalized session becomes a reviewed transcript document that joins the same workspace knowledge base. Ingestion runs file-type and malware checks, extracts text/tables/images with OCR, standardizes content, segments it into semantic chunks, creates vector embeddings, and applies PII detection, redaction, and retention policy before anything is searchable. Retrieval combines semantic vector search and exact full-text search, then ranking brings forward the strongest evidence; answers are grounded with source citations, and responses are evaluated for relevance, completeness, citation quality, and faithfulness.",
       "lessons": [
         {
-          "title": "Video Intelligence",
+          "title": "Video processing and intelligence",
           "description": "Turn trainings, meetings, and walkthroughs into timestamp-aware, searchable, citable knowledge.",
           "video_source": "adar-web/local-demos/media/adar-docintel-video-intelligence/adar_docintel_video_intelligence.mp4"
         }
       ]
     },
     {
+      "id": "knowledge-academy",
+      "title": "ADAR Knowledge Academy",
+      "description": "How the course you are taking right now actually works: AI Tutor, Study Tools, assignments, AI-assisted grading, progress and mastery, and Instructor Intelligence.",
+      "text_content": "ADAR Knowledge Academy applies vertical Agentic AI workflows on top of DocIntel's conversational RAG foundation to turn any course material -- documents, recorded audio, and video -- into a governed learning platform. Instructors build curricula of modules and lessons, attach source content, and let an AI Tutor answer grounded questions with citations back to the exact material, in the student's own language. Study tools generate summaries, study guides, key concepts, flashcards, and graded practice questions on demand, and when the AI can't fully answer, students escalate directly to a teacher or advisor for a real response. Assignments and projects let teachers set a rubric and a due date; students submit written work, documents, or recorded presentations, with every revision tracked. An AI rubric scores each submission against the actual course evidence first, then a teacher reviews that score and approves it or sends it back for revision -- the AI never publishes a grade on its own. Progress and mastery are tracked separately, on purpose, because finishing a lesson and demonstrating mastery through graded practice are two different signals. Instructor Intelligence gives teachers a live rollup of cohort progress, engagement, at-risk learners, difficult concepts, and content-quality gaps, surfaced automatically from real usage. This public preview runs at the same access level as an enrolled student: it can use the AI Tutor and Study Tools, but it cannot create courses, manage members, or see instructor-only views.",
+      "lessons": [
+        {
+          "title": "AI Tutoring from course materials to cited answers",
+          "description": "From any course material to grounded tutoring, study tools, and human escalation -- including AI Tutor citations, assignments and projects, AI-assisted grading, and Instructor Intelligence.",
+          "video_source": "ExportFiles/Adar_Knowledge_Academy_Overview_v4.mp4"
+        }
+      ]
+    },
+    {
+      "id": "front-desk-scheduling",
+      "title": "ADAR Front Desk",
+      "description": "A voice and chat assistant that actually books the appointment -- checks availability, holds the slot, confirms details, and never double-books.",
+      "text_content": "ADAR Front Desk turns appointment scheduling into a voice and chat conversation. It checks live availability, holds a slot inside a transaction so it can never be double-booked, confirms name, phone, and email back before booking, and emails a confirmation only once the caller accepts. One deployment can serve multiple practices and providers, each with its own live admin console for providers, hours, appointment types, and a bookings calendar. Every booking is traced, not just chatted -- the same OpenTelemetry backbone that powers DocIntel observability covers Front Desk's booking conversations, scored by a judge agent, with full tool-call arguments and results visible in the trace Flow view.",
+      "lessons": [
+        {
+          "title": "Overview of Agentic AI Scheduling Assistant",
+          "description": "From setup to booked appointment, in one minute.",
+          "video_source": "adar-web/local-demos/media/adar-front-desk-overview/adar_front_desk_overview.mp4"
+        },
+        {
+          "title": "Trace flow: Calendar booking conversation end to end.",
+          "description": "Check, hold, confirm, book -- watched live through the trace Flow view.",
+          "video_source": "adar-web/local-demos/media/adar-front-desk-trace-flow/adar_front_desk_trace_flow.mp4"
+        }
+      ]
+    },
+    {
       "id": "healthcare",
-      "title": "DocIntel for Healthcare",
+      "title": "Healthcare Agentic AI Vertical",
       "description": "Clinical scribe intake, after-visit summaries, and prior-authorization intelligence in one reviewable healthcare workspace.",
       "text_content": "DocIntel for Healthcare covers clinical documents, conversations, and payer policies in one reviewable workspace, from first conversation to prior authorization. The clinical scribe workflow captures visit audio into a structured clinical packet with a patient-ready after-visit summary, persona-aware access for patient, clinician, and assistant workflows, and searchable patient context assembled from grounded evidence. Prior-authorization intelligence maps payer criteria against patient evidence, supports coder review, generates packets, and tracks case status end to end -- one grounded workspace for clinical context, payer criteria, code readiness, packets, and payer case status. Role-based access and JSON-orchestrated healthcare agents keep every step reviewable with human approval before anything is finalized.",
       "lessons": [
         {
-          "title": "DocIntel for Healthcare overview",
+          "title": "Healthcare Vertical AI workflow automations",
           "description": "From patient conversation scribe to a patient-ready after-visit summary.",
           "video_source": "adar-web/local-demos/media/adar-docintel-healthcare/adar_docintel_healthcare.mp4"
         },
         {
-          "title": "Clinical scribe & after-visit summary",
+          "title": "Clinical Scribe and After Visit Summary",
           "description": "Conversation becomes structured, reviewable clinical intelligence -- consent capture, grounded chat, and the reviewable clinical packet.",
           "video_source": "adar-web/local-demos/media/adar-docintel-clinical-scribe-avs/adar_docintel_clinical_scribe_avs.mp4"
         },
         {
-          "title": "Prior authorization workflow",
+          "title": "Prior Authorization Workflow",
           "description": "Payer criteria, patient evidence, coding review, and case tracking in one grounded workflow.",
           "video_source": "adar-web/local-demos/media/adar-docintel-prior-authorization/adar_docintel_prior_authorization.mp4"
         }
@@ -134,12 +150,12 @@
     },
     {
       "id": "restaurant",
-      "title": "Restaurant AI",
+      "title": "Restaurant menu comparison and food order",
       "description": "Menu scribe, paid carryout ordering, recommendation, and feedback intelligence for restaurant operators and customers.",
       "text_content": "DocIntel Restaurant AI lets owners scribe menu data by voice in English, Spanish, Bangla, Hindi, or Arabic, approve extracted rows, and make the result searchable by text or voice for customers. Specialist agents turn approved restaurant data into actionable food decisions: customers can search, compare, and order menu items from chat, and pay for carryout orders through Stripe Checkout, all from a phone browser. Restaurant Feedback Intelligence lets customers submit text or voice feedback on restaurants, menu items, or verified carryout orders, and AI suggests rating scores, sentiment, and tags such as taste, value, portion, freshness, spice, packaging, wait time, and accuracy. The same reference architecture extends into POS, inventory, customer experience, locations, memory, and natural-language operations analytics.",
       "lessons": [
         {
-          "title": "Restaurant platform overview",
+          "title": "Restaurant food ordering start to finish",
           "description": "Owner scribe to searchable menu, paid ordering, and feedback intelligence.",
           "video_source": "adar-web/local-demos/media/adar-docintel-restaurant-platform-overview/adar_docintel_restaurant_platform_overview.mp4"
         }
@@ -147,12 +163,12 @@
     },
     {
       "id": "talent-management",
-      "title": "Talent Management & Employee Growth",
+      "title": "Talent and Employee Growth",
       "description": "Resumes, job descriptions, and performance reviews become evidence-backed candidate and employee-growth readiness.",
       "text_content": "Talent Management Readiness turns resumes, job descriptions, interview notes, performance reviews, skills matrices, career goals, and evaluations into candidate profiles, employee growth profiles, semantic role matching, evidence matrices, gap analysis, validation questions, and reviewed talent packets. Talent agents prepare stronger evidence, better interview questions, and more transparent review. Employee Growth Mobility extends the same evidence model to connect employee potential with opportunity -- from employee evidence to development gap analysis, manager validation questions, feedback reconciliation, mobility-readiness assessment, and auditable change history, with every packet human-reviewed before it becomes a decision.",
       "lessons": [
         {
-          "title": "Talent Management readiness overview",
+          "title": "Talent management and employee growth workflow",
           "description": "Turn hiring documents into evidence-backed candidate readiness.",
           "video_source": "adar-web/local-demos/media/adar-docintel-talent-management-readiness/adar_docintel_talent_management_readiness.mp4"
         }
@@ -160,58 +176,32 @@
     },
     {
       "id": "finance-tax",
-      "title": "Finance & Tax Planning Readiness",
-      "description": "Scattered financial documents become tax readiness, financial planning readiness, and reviewed advisor packets.",
-      "text_content": "Finance and Tax Planning classifies tax and financial documents, extracts exact values, creates tax organizers, calculates planning snapshots, and detects missing planning documents. It combines OCR, classification, embeddings, deterministic extraction, regex, and AI reasoning with missing-item detection, prior-year comparison, net worth and cash-flow snapshots, human review, CPA/EA packets, advisor packet PDF creation, and approved packet upload into the workspace -- across tax returns, brokerage statements, retirement records, mortgage documents, bank statements, credit cards, property records, and client notes. The workflow moves through a repeatable path from intake to intelligence, readiness views, advisor packet PDF creation, approved packet upload, and human approval, so reliable finance automation is built as accountable intelligence rather than a black box.",
+      "title": "Finance, Tax, Real Estate",
+      "description": "Scattered financial and lease documents become tax readiness, financial planning readiness, and cited lease intelligence in one reviewable workspace.",
+      "text_content": "Finance and Tax Planning classifies tax and financial documents, extracts exact values, creates tax organizers, calculates planning snapshots, and detects missing planning documents. It combines OCR, classification, embeddings, deterministic extraction, regex, and AI reasoning with missing-item detection, prior-year comparison, net worth and cash-flow snapshots, human review, CPA/EA packets, advisor packet PDF creation, and approved packet upload into the workspace -- across tax returns, brokerage statements, retirement records, mortgage documents, bank statements, credit cards, property records, and client notes. The workflow moves through a repeatable path from intake to intelligence, readiness views, advisor packet PDF creation, approved packet upload, and human approval, so reliable finance automation is built as accountable intelligence rather than a black box.\n\n---\n\nDocIntel Lease Intelligence extracts financial terms, critical dates, obligations, clauses, and risk signals from lease documents on top of the conversational RAG foundation, and turns one document into persona-specific answers. Lease intelligence agents map obligations, deadlines, and risks so property managers, tenants, and finance teams can each ask grounded questions and get cited answers back to the exact clause.",
       "lessons": [
         {
-          "title": "Finance & Tax readiness overview",
+          "title": "Tax and Financial planning readiness",
           "description": "Scattered inputs, hybrid reasoning, and reviewed outputs -- from document upload to tax and planning readiness.",
           "video_source": "adar-web/local-demos/media/adar-docintel-finance-tax-readiness/adar_docintel_finance_tax_readiness.mp4"
-        }
-      ]
-    },
-    {
-      "id": "lease-intelligence",
-      "title": "Lease Intelligence",
-      "description": "Lease documents become cited, structured business intelligence -- terms, dates, obligations, and risk in one grounded workspace.",
-      "text_content": "DocIntel Lease Intelligence extracts financial terms, critical dates, obligations, clauses, and risk signals from lease documents on top of the conversational RAG foundation, and turns one document into persona-specific answers. Lease intelligence agents map obligations, deadlines, and risks so property managers, tenants, and finance teams can each ask grounded questions and get cited answers back to the exact clause.",
-      "lessons": [
+        },
         {
-          "title": "Lease Intelligence overview",
+          "title": "Real Estate Lease intelligence",
           "description": "From lease upload to extracted terms, obligations, and cited answers.",
           "video_source": "adar-web/local-demos/media/adar-docintel-lease-intelligence-overview/adar_docintel_lease_intelligence_overview.mp4"
         }
       ]
     },
     {
-      "id": "front-desk-scheduling",
-      "title": "ADAR Front Desk: Scheduling",
-      "description": "A voice and chat assistant that actually books the appointment -- checks availability, holds the slot, confirms details, and never double-books.",
-      "text_content": "ADAR Front Desk turns appointment scheduling into a voice and chat conversation. It checks live availability, holds a slot inside a transaction so it can never be double-booked, confirms name, phone, and email back before booking, and emails a confirmation only once the caller accepts. One deployment can serve multiple practices and providers, each with its own live admin console for providers, hours, appointment types, and a bookings calendar. Every booking is traced, not just chatted -- the same OpenTelemetry backbone that powers DocIntel observability covers Front Desk's booking conversations, scored by a judge agent, with full tool-call arguments and results visible in the trace Flow view.",
+      "id": "module-announcement-audio",
+      "title": "Module Announcement Audio",
+      "description": "This module is itself a demonstration: a real narration excerpt, ingested as a stand-alone audio file through the same transcription and embedding pipeline as every video lesson -- proof that AI Tutor grounding works from an audio recording, not only from screen-recorded video.",
+      "text_content": "This module exists to demonstrate audio-based knowledge ingestion in ADAR Knowledge Academy. The attached recording is transcribed automatically and indexed the same way as every video lesson in this course, so the AI Tutor can cite it as a source just like any other module.",
       "lessons": [
         {
-          "title": "Front Desk overview",
-          "description": "From setup to booked appointment, in one minute.",
-          "video_source": "adar-web/local-demos/media/adar-front-desk-overview/adar_front_desk_overview.mp4"
-        },
-        {
-          "title": "Trace flow: a booking conversation end to end",
-          "description": "Check, hold, confirm, book -- watched live through the trace Flow view.",
-          "video_source": "adar-web/local-demos/media/adar-front-desk-trace-flow/adar_front_desk_trace_flow.mp4"
-        }
-      ]
-    },
-    {
-      "id": "knowledge-academy",
-      "title": "ADAR Knowledge Academy (this course, explained)",
-      "description": "How the course you are taking right now actually works: AI Tutor, Study Tools, assignments, AI-assisted grading, progress and mastery, and Instructor Intelligence.",
-      "text_content": "ADAR Knowledge Academy applies vertical Agentic AI workflows on top of DocIntel's conversational RAG foundation to turn any course material -- documents, recorded audio, and video -- into a governed learning platform. Instructors build curricula of modules and lessons, attach source content, and let an AI Tutor answer grounded questions with citations back to the exact material, in the student's own language. Study tools generate summaries, study guides, key concepts, flashcards, and graded practice questions on demand, and when the AI can't fully answer, students escalate directly to a teacher or advisor for a real response. Assignments and projects let teachers set a rubric and a due date; students submit written work, documents, or recorded presentations, with every revision tracked. An AI rubric scores each submission against the actual course evidence first, then a teacher reviews that score and approves it or sends it back for revision -- the AI never publishes a grade on its own. Progress and mastery are tracked separately, on purpose, because finishing a lesson and demonstrating mastery through graded practice are two different signals. Instructor Intelligence gives teachers a live rollup of cohort progress, engagement, at-risk learners, difficult concepts, and content-quality gaps, surfaced automatically from real usage. This public preview runs at the same access level as an enrolled student: it can use the AI Tutor and Study Tools, but it cannot create courses, manage members, or see instructor-only views.",
-      "lessons": [
-        {
-          "title": "Knowledge Academy overview",
-          "description": "From any course material to grounded tutoring, study tools, and human escalation -- including AI Tutor citations, assignments and projects, AI-assisted grading, and Instructor Intelligence.",
-          "video_source": "ExportFiles/Adar_Knowledge_Academy_Overview_v4.mp4"
+          "title": "Module Announcement Audio",
+          "description": "A real narration excerpt from this module's own demo recording, presented as a stand-alone audio file and ingested through the same transcription + embedding pipeline as every video -- demonstrating that AI Tutor grounding works from an audio recording, not only from screen-recorded video.",
+          "video_source": "adar-web/media/knowledge-academy/integration_module_announcement.mp4"
         }
       ]
     }
