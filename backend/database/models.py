@@ -164,6 +164,29 @@ CREATE INDEX IF NOT EXISTS idx_docs_guest_session ON documents(guest_session_id)
 CREATE INDEX IF NOT EXISTS idx_chunks_guest_session ON document_chunks(guest_session_id);
 
 
+-- Public, no-login "viewer role" access to ONE fixed ADAR Knowledge Academy
+-- course, modeled on guest_sessions above but kept fully separate so it can
+-- be modified or removed without touching the DocIntel guest-preview system.
+-- Each row is a session for one ephemeral guest-learner `users` row (see
+-- routes/guest_learning.py); deleting that user cascades through
+-- workspace_members, learning_course_members, learning_artifacts,
+-- learning_quiz_attempts, and learning_lesson_progress.
+CREATE TABLE IF NOT EXISTS guest_learning_sessions (
+    id                UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    token_hash        TEXT        UNIQUE NOT NULL,
+    guest_user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    course_id         UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+    expires_at        TIMESTAMPTZ NOT NULL,
+    tutor_query_count INTEGER     NOT NULL DEFAULT 0,
+    artifact_count    INTEGER     NOT NULL DEFAULT 0,
+    created_at        TIMESTAMPTZ DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_guest_learning_sessions_token_hash ON guest_learning_sessions(token_hash);
+CREATE INDEX IF NOT EXISTS idx_guest_learning_sessions_expires_at ON guest_learning_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_guest_learning_sessions_course ON guest_learning_sessions(course_id);
+
+
 -- Hybrid search: full-text search vector column
 ALTER TABLE document_chunks
     ADD COLUMN IF NOT EXISTS search_vector tsvector;

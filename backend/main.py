@@ -173,6 +173,7 @@ _ROUTERS = [
     ("routes.restaurant",     "restaurant_router",     "/api/restaurant",    ["restaurant"]),
     ("routes.talent",         "talent_router",         "/api/talent",        ["talent"]),
     ("routes.learning",       "learning_router",       "/api/learning",      ["learning"]),
+    ("routes.guest_learning",  "router",                "/api/guest-learning", ["guest-learning"]),
     ("routes.agent_evals",    "agent_evals_router",    "/api/agent-evals",   ["agent-evals"]),
     ("routes.mcp_playground", "mcp_playground_router", "/api/mcp-playground", ["mcp-playground"]),
     ("routes.batches",        "batches_router",        "/api/batches",        ["batches"]),

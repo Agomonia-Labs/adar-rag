@@ -247,6 +247,15 @@ for item in (containers[0].get("env", []) if containers else []):
 ' "$variable_name" || true
 }
 
+GUEST_LEARNING_FLAGS=()
+GUEST_LEARNING_COURSE_ID="${GUEST_LEARNING_COURSE_ID:-$(current_service_env GUEST_LEARNING_COURSE_ID)}"
+if [[ -n "$GUEST_LEARNING_COURSE_ID" ]]; then
+  GUEST_LEARNING_FLAGS+=("--set-env-vars=GUEST_LEARNING_COURSE_ID=${GUEST_LEARNING_COURSE_ID}")
+  echo "  Guest learning: public Knowledge Academy demo enabled ($GUEST_LEARNING_COURSE_ID)"
+else
+  echo "  Guest learning: disabled until GUEST_LEARNING_COURSE_ID is supplied"
+fi
+
 WEBSITE_ASSISTANT_FLAGS=()
 WEBSITE_ASSISTANT_WORKSPACE_ID="${WEBSITE_ASSISTANT_WORKSPACE_ID:-$(current_service_env WEBSITE_ASSISTANT_WORKSPACE_ID)}"
 WEBSITE_ASSISTANT_BASE_URL="${WEBSITE_ASSISTANT_BASE_URL:-$(current_service_env WEBSITE_ASSISTANT_BASE_URL)}"
@@ -350,8 +359,9 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="OBSERVABILITY_ALERT_EMAIL_ENABLED=true" \
   --set-env-vars="OBSERVABILITY_ROLLUP_RETENTION_DAYS=90" \
   --set-env-vars="OBSERVABILITY_RESULT_RETENTION_DAYS=180" \
-  "${WEBSITE_ASSISTANT_FLAGS[@]}" \
-  "${OTEL_FLAGS[@]}" \
+  "${WEBSITE_ASSISTANT_FLAGS[@]+"${WEBSITE_ASSISTANT_FLAGS[@]}"}" \
+  "${GUEST_LEARNING_FLAGS[@]+"${GUEST_LEARNING_FLAGS[@]}"}" \
+  "${OTEL_FLAGS[@]+"${OTEL_FLAGS[@]}"}" \
   $SECRETS_FLAGS \
   --quiet
 
@@ -393,7 +403,7 @@ gcloud run jobs deploy docintel-video-worker \
   --set-env-vars="FFMPEG_COMMAND_TIMEOUT_SECONDS=180" \
   --set-env-vars="WEBHOOK_CLOUD_TASKS_QUEUE_PATH=projects/$PROJECT_ID/locations/$REGION/queues/$WEBHOOK_QUEUE_NAME" \
   --set-env-vars="WEBHOOK_DELIVERY_WORKER_URL=https://docintel.adar.agomoniai.com/api/internal/webhooks/deliver" \
-  "${VIDEO_OTEL_FLAGS[@]}" \
+  "${VIDEO_OTEL_FLAGS[@]+"${VIDEO_OTEL_FLAGS[@]}"}" \
   $SECRETS_FLAGS \
   --quiet
 
