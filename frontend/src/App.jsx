@@ -84,6 +84,8 @@ export default function App() {
       localStorage.removeItem('user');
       // Keep the billing params in URL for the login screen banner
       // App will re-render showing AuthFlow with the success banner
+    } else if (p.get('billing') === 'product-success') {
+      setShowBilling(true);
     }
   }, []); // {id,name,my_role} or null=personal
   const [embeddedDocs, setEmbeddedDocs] = useState([]);

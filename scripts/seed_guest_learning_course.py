@@ -618,6 +618,14 @@ def main() -> None:
              "lessons or regroup lessons into a different/merged module: it's the safe, cheap way to "
              "apply a relabel without re-uploading or re-embedding a single file.",
     )
+    parser.add_argument(
+        "--manifest-path", default=None,
+        help="Path to an alternate course_manifest.json to seed from, instead of the built-in "
+             "content/agomonia_products_course/course_manifest.json. Lets this same script seed a "
+             "second curated public course -- e.g. a partner pilot such as a university's own "
+             "Knowledge Academy instance -- without editing this file. The manifest's own documents/ "
+             "folder is assumed to sit alongside it, same layout as the default course.",
+    )
     args = parser.parse_args()
     video_modes_selected = sum([
         bool(args.skip_videos), bool(args.only_lessons), bool(args.reattach_videos), bool(args.reattach_all),
@@ -649,6 +657,12 @@ def main() -> None:
             and not args.relabel_curriculum
             and (not adar_web_dir.is_dir() or not export_files_dir.is_dir())):
         die("Set ADAR_WEB_DIR and EXPORT_FILES_DIR to real local paths, or pass --skip-videos")
+
+    if args.manifest_path:
+        global MANIFEST_PATH, DOCUMENTS_DIR
+        MANIFEST_PATH = Path(args.manifest_path).expanduser().resolve()
+        DOCUMENTS_DIR = MANIFEST_PATH.parent / "documents"
+        print(f"Using alternate manifest: {MANIFEST_PATH}")
 
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     client = Client(api_base, token)

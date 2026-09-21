@@ -30,11 +30,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -61,6 +62,7 @@ from routes.learning import (
     _validate_course_documents,
 )
 from services.audit import audit, ip_from, ua_from
+from services.evaluator import eval_groundedness
 from services.language import response_language_instruction
 from services.llm import chat_stream, embed_query, rag_system
 from services.pii import redact_text
@@ -69,6 +71,7 @@ from services.vectordb import RERANK_FETCH_K, TOP_K, find_similar
 import services.storage as gcs
 
 router = APIRouter()
+log = logging.getLogger("docintel.guest_learning")
 
 # ── Configuration (env-overridable; separate from routes/guest.py's own knobs) ──
 GUEST_LEARNING_COURSE_ID = os.getenv("GUEST_LEARNING_COURSE_ID", "")
@@ -139,7 +142,17 @@ class GuestQuizAttemptRequest(BaseModel):
     replace: bool = False
 
 
-def _require_course_configured() -> str:
+async def _resolve_public_course(db, slug: str | None) -> str:
+    """Resolve a public course id for the guest demo. `slug` (the optional
+    `?course=` query param) maps through the public_courses registry table
+    so this deployment can serve more than one curated public course --
+    adding one is an INSERT into public_courses, not an env var change or a
+    redeploy. No slug, or a slug with no matching row, falls back to the
+    single-course GUEST_LEARNING_COURSE_ID env var."""
+    if slug:
+        row = await db.fetchrow("SELECT course_id FROM public_courses WHERE slug=$1", slug)
+        if row:
+            return str(row["course_id"])
     if not GUEST_LEARNING_COURSE_ID:
         raise HTTPException(503, "The public Knowledge Academy demo is not configured yet (GUEST_LEARNING_COURSE_ID unset).")
     return GUEST_LEARNING_COURSE_ID
@@ -167,8 +180,12 @@ async def _require_guest_learner(db, guest_token: str | None) -> dict:
 
 
 @router.post("/session", response_model=GuestLearningSessionResponse)
-async def create_guest_learning_session(request: Request, db=Depends(get_db)):
-    course_id = _require_course_configured()
+async def create_guest_learning_session(
+    request: Request,
+    course: str | None = Query(default=None, description="Public course slug, e.g. a partner pilot. Omit for the default Knowledge Academy course."),
+    db=Depends(get_db),
+):
+    course_id = await _resolve_public_course(db, course)
     course = await db.fetchrow(
         "SELECT id, workspace_id, publication_status FROM learning_courses WHERE id=$1::uuid",
         course_id,
@@ -247,14 +264,17 @@ async def create_guest_learning_session(request: Request, db=Depends(get_db)):
 
 
 @router.get("/course")
-async def get_guest_course(db=Depends(get_db)):
+async def get_guest_course(
+    course: str | None = Query(default=None, description="Public course slug, e.g. a partner pilot. Omit for the default Knowledge Academy course."),
+    db=Depends(get_db),
+):
     """Public, unauthenticated curriculum read -- no guest token required.
     Lets the adar-web page render the module/lesson browser before a
     visitor starts a session. Returns only published, student-safe fields,
     plus enough asset metadata (a lesson's video document_id, a module's
     attached PDF/DOC materials) for the page to render clickable citations
     and a course-materials list without needing an authenticated call."""
-    course_id = _require_course_configured()
+    course_id = await _resolve_public_course(db, course)
     course = await db.fetchrow(
         """SELECT id, title, course_code, description, instructor_name, objectives, domain
              FROM learning_courses WHERE id=$1::uuid AND publication_status='published'""",
@@ -612,6 +632,7 @@ def _grounded_instruction(scope: dict, response_language: str | None) -> str:
 
 @router.post("/tutor/query/stream")
 async def guest_tutor_query_stream(
+    request: Request,
     req: GuestTutorRequest,
     x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
     db=Depends(get_db),
@@ -630,8 +651,10 @@ async def guest_tutor_query_stream(
 
     async def generate():
         queue: asyncio.Queue = asyncio.Queue()
+        answer_parts: list[str] = []
 
         async def on_token(t: str):
+            answer_parts.append(t)
             await queue.put(("token", t))
 
         async def run():
@@ -663,7 +686,32 @@ async def guest_tutor_query_stream(
                         session["id"],
                     )
                 sources = [_public_source(c, idx) for idx, c in enumerate(chunks)]
-                await queue.put(("done", {"sources": sources, "learning_boundary": scope["label"]}))
+                judge = None
+                try:
+                    judge = await eval_groundedness(question, "".join(answer_parts), context)
+                except Exception as judge_exc:
+                    log.warning(f"guest tutor judge eval failed: {judge_exc}")
+                try:
+                    await audit(
+                        db,
+                        user_id=user_id,
+                        action="guest_tutor_query",
+                        resource_type="guest_learning_session",
+                        resource_id=str(session["id"]),
+                        metadata={
+                            "course_id": course_id,
+                            "module_id": req.module_id,
+                            "lesson_id": req.lesson_id,
+                            "question": question,
+                            "judge_verdict": (judge or {}).get("verdict"),
+                            "judge_score": (judge or {}).get("score"),
+                        },
+                        ip_address=ip_from(request),
+                        user_agent=ua_from(request),
+                    )
+                except Exception as audit_exc:
+                    log.warning(f"guest tutor audit log failed: {audit_exc}")
+                await queue.put(("done", {"sources": sources, "learning_boundary": scope["label"], "judge": judge}))
             except Exception as exc:
                 await queue.put(("error", str(exc)))
 

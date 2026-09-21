@@ -1,0 +1,70 @@
+{
+  "course": {
+    "title": "[MOCK/PLACEHOLDER] Husky Matchmaker Pilot Preview",
+    "course_code": "UW-PILOT-DRAFT-101",
+    "description": "FICTIONAL PLACEHOLDER CONTENT -- generated to test the ADAR guest-learning platform's multi-course pipeline end to end. Nothing in this manifest is real University of Washington program information, real staff, or real policy. It exists so --manifest-path / the public_courses table can be exercised with a second course before any real UW-provided content exists. Every module below must be replaced with material UW actually supplies (or approves) before this is ever pointed at outside the pilot itself.",
+    "instructor_name": "UW Advising & Student Success (placeholder -- not a real contact)",
+    "domain": "higher_ed_advising_pilot_mock",
+    "objectives": [
+      "[MOCK] Explain what a Husky Matchmaker-style advising pilot could help a prospective or current student do",
+      "[MOCK] Describe a generic process for exploring majors and career pathways",
+      "[MOCK] Describe a generic process for connecting with an academic advisor",
+      "[MOCK] Summarize placeholder next-step resources a student pilot could point to"
+    ],
+    "publication_status": "draft"
+  },
+  "modules": [
+    {
+      "id": "welcome-huskymatchmaker-mock",
+      "title": "[MOCK] Welcome to Husky Matchmaker",
+      "description": "Placeholder overview module explaining what this pilot preview is and is not.",
+      "text_content": "This is placeholder content for a hypothetical \"Husky Matchmaker\" advising pilot, built only to prove out the ADAR guest-learning platform's ability to host a second, separately-configured public course alongside the existing Agomonia Labs Knowledge Academy. No claim in this module is a real University of Washington policy, program, or contact -- it is illustrative copy standing in for content that would need to come from UW's own advising and program staff.\n\nIn a real pilot, this module would introduce the program: what \"matching\" means in this context (for example, connecting a student's stated interests and constraints to majors, minors, certificate programs, or advisors who can speak to them), who the pilot is for, and what a student can expect from an AI Tutor that only answers from curated, UW-approved source material rather than guessing.\n\nEvery answer this AI Tutor gives is grounded in whatever documents are attached to this course -- right now, only this placeholder text. Once real program guides, advising FAQs, and major-requirement sheets are supplied, the Tutor's answers will reflect those documents instead.",
+      "lessons": [
+        {
+          "title": "[MOCK] What this pilot preview is (and isn't)",
+          "description": "Placeholder walkthrough lesson -- swap in a real intro video once one exists.",
+          "video_source": "adar-web/local-demos/media/PLACEHOLDER-uw-pilot/welcome-placeholder.mp4"
+        }
+      ]
+    },
+    {
+      "id": "exploring-majors-pathways-mock",
+      "title": "[MOCK] Exploring Majors & Career Pathways",
+      "description": "Placeholder module on how a student might explore majors and pathways through the pilot.",
+      "text_content": "Placeholder content only. In a real version of this module, a student would be able to ask the AI Tutor open-ended questions -- \"what majors touch both design and biology,\" \"what's the difference between these two related degrees,\" \"what would a first-generation student want to know before choosing a pathway\" -- and get answers grounded in UW's actual program descriptions, course catalogs, and pathway guides, each one citing the specific document it came from.\n\nThis mock module stands in for that real content. A generic, illustrative example of the kind of structure real content might follow: an overview of a field of study, the kinds of courses a student in it typically takes, common combinations with other majors or minors, and where to go next (an advising appointment, an info session, a student organization) if the pathway sounds like a fit.\n\nNone of the specific majors, requirements, or course numbers a student might ask about are represented here -- they would need to come from UW's own academic departments and be kept current as requirements change.",
+      "lessons": [
+        {
+          "title": "[MOCK] How to ask the AI Tutor about majors and pathways",
+          "description": "Placeholder lesson demonstrating the intended interaction pattern.",
+          "video_source": "adar-web/local-demos/media/PLACEHOLDER-uw-pilot/majors-pathways-placeholder.mp4"
+        }
+      ]
+    },
+    {
+      "id": "meeting-your-advisor-mock",
+      "title": "[MOCK] Meeting Your Advisor",
+      "description": "Placeholder module on the generic idea of connecting a student to an advisor.",
+      "text_content": "Placeholder content only. A real version of this module would explain, using UW's actual advising structure, how a student is assigned or chooses an advisor, what an advising appointment typically covers, how to prepare questions in advance, and how advising differs across a student's first year versus a declared major.\n\nIt would also be the natural place to explain any AI-assisted matching the pilot offers -- for example, surfacing which advisor or advising unit is the right first stop for a given question, without replacing the human advising relationship itself. The AI Tutor in this platform is designed to answer from approved source material and cite it, and to hand off to a real person rather than invent policy it wasn't given.\n\nNo specific advisor names, office locations, or scheduling instructions are included in this placeholder -- those would need to be supplied and kept current by UW's advising offices.",
+      "lessons": [
+        {
+          "title": "[MOCK] What advising support could look like in this pilot",
+          "description": "Placeholder lesson -- swap in a real advising-office walkthrough once available.",
+          "video_source": "adar-web/local-demos/media/PLACEHOLDER-uw-pilot/advisor-placeholder.mp4"
+        }
+      ]
+    },
+    {
+      "id": "campus-resources-next-steps-mock",
+      "title": "[MOCK] Campus Resources & Next Steps",
+      "description": "Placeholder module on generic follow-up resources and next steps.",
+      "text_content": "Placeholder content only. A real version of this module would round out the pilot with a short, curated list of next-step resources a student could act on immediately after using the tool -- for example, how to book an advising appointment, where to find official program and requirement pages, relevant student support offices, and any info sessions or events tied to the pilot.\n\nIt would also be a reasonable place to set expectations: that this AI Tutor answers only from the material it has been given, that a Judge Agent scores each answer for groundedness in real time so the platform stays auditable, and that every question asked can be reviewed later by the program team as a signal of what students actually want to know -- without ever collecting anything beyond the guest session itself.\n\nNo real UW office names, links, or event details are included here -- this section exists only to demonstrate where that information would go.",
+      "lessons": [
+        {
+          "title": "[MOCK] Where to go next",
+          "description": "Placeholder closing lesson -- swap in real next-step guidance once available.",
+          "video_source": "adar-web/local-demos/media/PLACEHOLDER-uw-pilot/next-steps-placeholder.mp4"
+        }
+      ]
+    }
+  ]
+}

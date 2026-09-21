@@ -187,6 +187,23 @@ CREATE INDEX IF NOT EXISTS idx_guest_learning_sessions_expires_at ON guest_learn
 CREATE INDEX IF NOT EXISTS idx_guest_learning_sessions_course ON guest_learning_sessions(course_id);
 
 
+-- Slug -> course_id registry for the public, no-login guest learning demo.
+-- Lets routes/guest_learning.py serve more than one curated public course
+-- (Agomonia Labs' own Knowledge Academy, plus future partner pilots such as
+-- a university's own instance) from the SAME backend deployment, without a
+-- redeploy to add one -- adding a course is an INSERT, not an env var
+-- change. A slug with no row here still falls back to the single
+-- GUEST_LEARNING_COURSE_ID env var (see _resolve_public_course in
+-- guest_learning.py), so the existing default deployment needs no row at
+-- all until a SECOND public course exists.
+CREATE TABLE IF NOT EXISTS public_courses (
+    slug        TEXT        PRIMARY KEY,
+    course_id   UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+    label       TEXT        NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+
 -- Hybrid search: full-text search vector column
 ALTER TABLE document_chunks
     ADD COLUMN IF NOT EXISTS search_vector tsvector;
@@ -247,6 +264,24 @@ ALTER TABLE users
     ADD COLUMN IF NOT EXISTS subscription_status     TEXT NOT NULL DEFAULT 'inactive',
     ADD COLUMN IF NOT EXISTS subscription_period_end TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_users_stripe_customer ON users(stripe_customer_id);
+
+-- Knowledge Academy subscriptions are independent from the user's platform tier.
+CREATE TABLE IF NOT EXISTS product_subscriptions (
+    id                       UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id                  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    product_key              TEXT NOT NULL CHECK (product_key IN ('knowledge_academy')),
+    billing_interval         TEXT NOT NULL CHECK (billing_interval IN ('month', 'year')),
+    stripe_subscription_id   TEXT NOT NULL UNIQUE,
+    stripe_price_id          TEXT NOT NULL,
+    status                   TEXT NOT NULL DEFAULT 'incomplete',
+    current_period_end       TIMESTAMPTZ,
+    cancel_at_period_end     BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, product_key)
+);
+CREATE INDEX IF NOT EXISTS idx_product_subscriptions_user
+    ON product_subscriptions(user_id, status);
 
 -- Email verification
 ALTER TABLE users

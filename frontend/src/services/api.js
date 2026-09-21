@@ -1561,6 +1561,21 @@ export async function createCheckout(plan) {
     body: JSON.stringify({ plan }),
   }));
 }
+export async function getProductPlans() {
+  return handleRes(await fetch(`${BASE}/billing/product-plans`, { headers: authHdr() }));
+}
+export async function createProductCheckout(plan) {
+  return handleRes(await fetch(`${BASE}/billing/product-checkout`, {
+    method:'POST', headers:{'Content-Type':'application/json',...authHdr()},
+    body: JSON.stringify({ plan }),
+  }));
+}
+export async function syncProductSubscription(sessionId) {
+  return handleRes(await fetch(
+    `${BASE}/billing/product-subscriptions/sync?session_id=${encodeURIComponent(sessionId)}`,
+    { method:'POST', headers: authHdr() },
+  ));
+}
 export async function syncBilling(sessionId = '') {
   const q = sessionId ? `?session_id=${sessionId}` : '';
   return handleRes(await fetch(`${BASE}/billing/sync${q}`, { method:'POST', headers: authHdr() }));

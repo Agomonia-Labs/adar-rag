@@ -1,6 +1,9 @@
 // src/components/BillingPanel.jsx
 import React, { useState, useEffect } from 'react';
-import { getBillingStatus, createCheckout, openBillingPortal, syncBilling } from '../services/api.js';
+import {
+  getBillingStatus, createCheckout, openBillingPortal, syncBilling,
+  getProductPlans, createProductCheckout, syncProductSubscription,
+} from '../services/api.js';
 
 const PLANS = [
   {
@@ -56,12 +59,27 @@ export default function BillingPanel({ onClose }) {
   const [loading,  setLoading]  = useState(true);
   const [working,  setWorking]  = useState('');
   const [error,    setError]    = useState('');
+  const [productBilling, setProductBilling] = useState({ plans:[], subscriptions:{} });
+  const [intervals, setIntervals] = useState({ knowledge_academy:'month' });
 
   useEffect(() => {
-    getBillingStatus()
-      .then(setStatus)
+    const params = new URLSearchParams(window.location.search);
+    const productReturn = params.get('billing') === 'product-success';
+    const productSessionId = params.get('session_id') || '';
+    if (productReturn) setUpgrading(true);
+    Promise.all([
+      getBillingStatus(),
+      productReturn ? syncProductSubscription(productSessionId) : getProductPlans(),
+    ])
+      .then(([billing, products]) => { setStatus(billing); setProductBilling(products); })
       .catch(e => setError(e.message))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (productReturn) {
+          window.history.replaceState({}, '', window.location.pathname);
+          setUpgrading(false);
+        }
+        setLoading(false);
+      });
   }, []);
 
   const [upgrading, setUpgrading] = useState(false);
@@ -109,6 +127,17 @@ export default function BillingPanel({ onClose }) {
     } catch(e) {
       setError(e.message);
     } finally { setWorking(''); }
+  };
+
+  const handleProductCheckout = async plan => {
+    setWorking(plan); setError('');
+    try {
+      const { checkout_url } = await createProductCheckout(plan);
+      window.location.href = checkout_url;
+    } catch(e) {
+      setError(e.message);
+      setWorking('');
+    }
   };
 
   const currentTier = status?.tier || 'free';
@@ -220,8 +249,65 @@ export default function BillingPanel({ onClose }) {
                 })}
               </div>
 
+              <div style={s.sectionHeader}>
+                <span style={{ fontSize:14, fontWeight:800, color:'var(--tx)' }}>Product subscriptions</span>
+                <span style={{ fontSize:11, color:'var(--muted2)' }}>Monthly or yearly billing</span>
+              </div>
+
+              <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                {[
+                  { key:'knowledge_academy', label:'ADAR Knowledge Academy', color:'#34d399' },
+                ].map(product => {
+                  const selectedInterval = intervals[product.key];
+                  const plan = productBilling.plans.find(item => item.product_key === product.key && item.billing_interval === selectedInterval);
+                  const monthly = productBilling.plans.find(item => item.product_key === product.key && item.billing_interval === 'month');
+                  const subscription = productBilling.subscriptions?.[product.key];
+                  const active = ['active','trialing'].includes(subscription?.status);
+                  const managed = ['active','trialing','past_due'].includes(subscription?.status);
+                  const annualSaving = monthly && plan?.billing_interval === 'year'
+                    ? monthly.amount_cents * 12 - plan.amount_cents : 0;
+                  return (
+                    <div key={product.key} style={{ background:'var(--s2)', border:`1px solid ${active ? product.color + '70' : 'var(--b1)'}`, borderRadius:'var(--rl)', padding:'14px 16px' }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', gap:12, alignItems:'center', marginBottom:12 }}>
+                        <div>
+                          <div style={{ color:product.color, fontSize:14, fontWeight:800 }}>{product.label}</div>
+                          {managed && <div style={{ color:subscription.status === 'past_due' ? '#f87171' : product.color, fontSize:11, marginTop:3 }}>
+                            {subscription.status === 'past_due' ? 'Payment issue' : 'Active'} · {subscription.billing_interval === 'year' ? 'yearly' : 'monthly'}
+                          </div>}
+                        </div>
+                        <div style={s.segmented}>
+                          {['month','year'].map(interval => (
+                            <button key={interval} type="button" onClick={() => setIntervals(v => ({...v, [product.key]:interval}))}
+                              style={{ ...s.segmentButton, ...(selectedInterval === interval ? { background:product.color, color:'#111827' } : {}) }}>
+                              {interval === 'month' ? 'Monthly' : 'Yearly'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'end', gap:12 }}>
+                        <div>
+                          <span style={{ fontSize:22, fontWeight:900, color:'var(--tx)' }}>
+                            {plan ? `$${(plan.amount_cents / 100).toLocaleString('en-US', { maximumFractionDigits:2 })}` : 'Not configured'}
+                          </span>
+                          {plan && <span style={{ fontSize:12, color:'var(--muted2)' }}>/{selectedInterval === 'year' ? 'year' : 'month'}</span>}
+                          {annualSaving > 0 && <div style={{ fontSize:11, color:'#4ade80', marginTop:3 }}>Save ${(annualSaving / 100).toLocaleString()} per year</div>}
+                        </div>
+                        {managed ? (
+                          <button type="button" onClick={handlePortal} disabled={!!working} style={s.secondaryButton}>Manage</button>
+                        ) : (
+                          <button type="button" disabled={!!working || !plan?.configured} onClick={() => handleProductCheckout(plan.plan)}
+                            style={{ ...s.productButton, background:product.color, opacity:(!plan?.configured || working) ? .55 : 1 }}>
+                            {working === plan?.plan ? 'Opening…' : 'Subscribe'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
               {/* Manage subscription */}
-              {currentTier !== 'free' && (
+              {(currentTier !== 'free' || Object.keys(productBilling.subscriptions || {}).length > 0) && (
                 <div style={{ marginTop:14, textAlign:'center' }}>
                   <button onClick={handlePortal} disabled={!!working}
                     style={{ fontSize:12.5, padding:'7px 18px', background:'var(--s3)', color:'var(--muted2)', border:'1px solid var(--b2)', borderRadius:'var(--r)', cursor:'pointer' }}>
@@ -251,4 +337,9 @@ const s = {
   panel:    { width:'min(440px,95vw)', height:'100%', background:'var(--s1)', borderLeft:'1px solid var(--b2)', display:'flex', flexDirection:'column', boxShadow:'-8px 0 32px rgba(0,0,0,.4)' },
   hdr:      { display:'flex', justifyContent:'space-between', alignItems:'flex-start', padding:'1.25rem', borderBottom:'1px solid var(--b1)', background:'var(--s2)', flexShrink:0 },
   closeBtn: { position:'fixed', top:'max(10px, env(safe-area-inset-top))', right:10, zIndex:6000, background:'var(--s2)', border:'1px solid rgba(192,132,252,.38)', color:'var(--tx)', cursor:'pointer', fontSize:20, width:40, height:40, borderRadius:8, boxShadow:'0 10px 28px rgba(0,0,0,.45)' },
+  sectionHeader: { display:'flex', justifyContent:'space-between', alignItems:'baseline', gap:12, margin:'22px 2px 10px' },
+  segmented: { display:'grid', gridTemplateColumns:'1fr 1fr', background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:7, padding:2, flexShrink:0 },
+  segmentButton: { border:0, borderRadius:5, padding:'6px 8px', background:'transparent', color:'var(--muted2)', fontSize:11, fontWeight:700, cursor:'pointer' },
+  productButton: { border:0, borderRadius:'var(--r)', padding:'8px 13px', color:'#111827', fontSize:12, fontWeight:800, cursor:'pointer' },
+  secondaryButton: { border:'1px solid var(--b2)', borderRadius:'var(--r)', padding:'7px 12px', background:'var(--s3)', color:'var(--tx)', fontSize:12, fontWeight:700, cursor:'pointer' },
 };

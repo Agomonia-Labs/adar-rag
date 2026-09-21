@@ -444,11 +444,19 @@ async def _sync_stripe_on_login(db, user_id: str) -> None:
             status = sub.get("status", "")
             if status not in ("active", "trialing", "past_due"):
                 continue
+            metadata = sub.get("metadata") or {}
+            if metadata.get("kind") == "product_subscription":
+                continue
             items    = sub.get("items", {}).get("data", [])
             price_id = items[0]["price"]["id"] if items else ""
-            plan     = sub.get("metadata", {}).get("plan")
+            plan     = metadata.get("plan")
             if not plan:
-                plan = "enterprise" if price_id == ent_price_id else "pro"
+                if price_id == ent_price_id:
+                    plan = "enterprise"
+                elif price_id == pro_price_id:
+                    plan = "pro"
+                else:
+                    continue
             tier = plan if status in ("active", "trialing") else "free"
             if tier_rank.get(tier, 0) > tier_rank.get(active_tier, 0):
                 active_tier = tier

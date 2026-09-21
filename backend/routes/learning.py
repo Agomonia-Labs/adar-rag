@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
@@ -1784,6 +1784,117 @@ async def get_instructor_dashboard(course_id: str, current_user: CurrentUser, db
         course_data, members, lessons, progress, attempts,
         workspace.get("assignments", []), workspace.get("submissions", []), workspace["questions"],
     )
+
+
+@router.get("/courses/{course_id}/guest-insights")
+async def get_guest_tutor_insights(
+    course_id: str,
+    current_user: CurrentUser,
+    since_days: int | None = None,
+    recent_limit: int = 20,
+    db=Depends(get_db),
+):
+    """Real-time read of the guest AI Tutor's audit trail for one course --
+    the JSON counterpart to scripts/guest_tutor_insights_report.py, for a
+    UI or an external client to poll instead of re-running the CLI report
+    and re-uploading its CSV by hand. Same audit_log rows the Judge Agent
+    writes in guest_learning.py's guest_tutor_query_stream, no new
+    infrastructure. Instructor-only, like get_instructor_dashboard above --
+    this is guest question text, not published course content."""
+    await _course_access(db, course_id, str(current_user["id"]), manage=True)
+    recent_limit = max(1, min(recent_limit, 200))
+
+    where = ["action = 'guest_tutor_query'", "metadata->>'course_id' = $1"]
+    params: list = [course_id]
+    if since_days is not None:
+        params.append(datetime.now(timezone.utc) - timedelta(days=max(since_days, 0)))
+        where.append(f"created_at >= ${len(params)}")
+    rows = await db.fetch(
+        f"""SELECT resource_id AS session_id, metadata, created_at
+              FROM audit_log
+             WHERE {' AND '.join(where)}
+             ORDER BY created_at DESC""",
+        *params,
+    )
+
+    def _meta(raw):
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw)
+            except (TypeError, ValueError):
+                return {}
+        return raw or {}
+
+    parsed = []
+    for r in rows:
+        meta = _meta(r["metadata"])
+        parsed.append({
+            "created_at": r["created_at"],
+            "session_id": str(r["session_id"]) if r["session_id"] else None,
+            "module_id": meta.get("module_id"),
+            "lesson_id": meta.get("lesson_id"),
+            "question": meta.get("question"),
+            "judge_verdict": meta.get("judge_verdict"),
+            "judge_score": meta.get("judge_score"),
+        })
+
+    module_ids = [p["module_id"] for p in parsed if p["module_id"]]
+    module_titles: dict[str, str] = {}
+    if module_ids:
+        module_titles = {
+            str(m["id"]): m["title"]
+            for m in await db.fetch(
+                "SELECT id, title FROM learning_modules WHERE id = ANY($1::uuid[])",
+                list(set(module_ids)),
+            )
+        }
+
+    total = len(parsed)
+    unique_sessions = len({p["session_id"] for p in parsed if p["session_id"]})
+    scores = [p["judge_score"] for p in parsed if isinstance(p["judge_score"], (int, float))]
+    avg_score = round(sum(scores) / len(scores), 2) if scores else None
+    grounded = sum(1 for p in parsed if p["judge_verdict"] in ("grounded", "mostly_grounded"))
+
+    verdict_counts: dict[str, int] = {}
+    module_counts: dict[str, int] = {}
+    for p in parsed:
+        v = p["judge_verdict"] or "unscored"
+        verdict_counts[v] = verdict_counts.get(v, 0) + 1
+        if p["module_id"]:
+            module_counts[p["module_id"]] = module_counts.get(p["module_id"], 0) + 1
+
+    verdict_distribution = [
+        {"verdict": v, "count": c, "pct": round(100 * c / total, 1) if total else 0.0}
+        for v, c in sorted(verdict_counts.items(), key=lambda kv: -kv[1])
+    ]
+    by_module = [
+        {"module_id": mid, "module_title": module_titles.get(mid, mid), "count": c}
+        for mid, c in sorted(module_counts.items(), key=lambda kv: -kv[1])
+    ]
+    recent_questions = [
+        {
+            "created_at": p["created_at"].isoformat() if p["created_at"] else None,
+            "module_id": p["module_id"],
+            "module_title": module_titles.get(p["module_id"], p["module_id"]),
+            "judge_verdict": p["judge_verdict"],
+            "judge_score": p["judge_score"],
+            "question": p["question"],
+        }
+        for p in parsed[:recent_limit]
+    ]
+
+    return {
+        "course_id": course_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "since_days": since_days,
+        "total_questions": total,
+        "unique_sessions": unique_sessions,
+        "avg_judge_score": avg_score,
+        "grounded_rate_pct": round(100 * grounded / total, 1) if total else 0.0,
+        "verdict_distribution": verdict_distribution,
+        "by_module": by_module,
+        "recent_questions": recent_questions,
+    }
 
 
 def _can_manage_course_calendar(course: dict) -> bool:

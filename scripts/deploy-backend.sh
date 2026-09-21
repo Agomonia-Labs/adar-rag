@@ -180,6 +180,17 @@ if gcloud secrets describe docintel-stripe-secret-key --project="$PROJECT_ID" &>
   fi
   SECRETS+=("STRIPE_PRO_PRICE_ID=docintel-stripe-pro-price-id:latest")
   SECRETS+=("STRIPE_ENTERPRISE_PRICE_ID=docintel-stripe-enterprise-price-id:latest")
+  for price_secret in \
+    docintel-stripe-knowledge-academy-monthly-price-id \
+    docintel-stripe-knowledge-academy-yearly-price-id; do
+    if gcloud secrets describe "$price_secret" --project="$PROJECT_ID" &>/dev/null; then
+      case "$price_secret" in
+        *knowledge-academy-monthly*) env_name="STRIPE_KNOWLEDGE_ACADEMY_MONTHLY_PRICE_ID" ;;
+        *knowledge-academy-yearly*)  env_name="STRIPE_KNOWLEDGE_ACADEMY_YEARLY_PRICE_ID" ;;
+      esac
+      SECRETS+=("$env_name=$price_secret:latest")
+    fi
+  done
   echo "  Stripe Billing: enabled"
 else
   echo "  Stripe Billing: ⚠ not configured (billing features disabled)"
