@@ -228,6 +228,23 @@ async def _stream_summary(
 
 
 # ── Streaming helper (yields SSE events) ─────────────────────────────────────
+# STALL_TIMEOUT_SECONDS bounds the gap between tokens, not the total
+# request duration -- every received token resets the clock (see
+# `asyncio.wait_for(q.get(), ...)` below), so a slow-but-steady stream of
+# any length is fine. It only fires when Gemini genuinely stops producing
+# output for this long (model stall, connection drop). Bumped from the
+# original 90s, which was too tight for the map-reduce path on a large
+# document -- BATCH_SIZE=6 chunks per batch, run sequentially, and a
+# batch's *first* token can legitimately take well over 90s to arrive
+# before generation even starts streaming, cutting summaries off mid-run.
+# Cloud Run's own request timeout is 3600s (see scripts/deploy-backend.sh),
+# so there's plenty of headroom above this. Keep this value <= llm.py's
+# Gemini-branch httpx client timeout for chat_stream/chat_json, so this
+# friendlier "Summary timed out" message is what callers see instead of a
+# raw httpx.ReadTimeout.
+STALL_TIMEOUT_SECONDS = 240
+
+
 async def _run_chat(messages: list[dict], system: str):
     """Run chat_stream and yield SSE token/done/error events."""
     q: asyncio.Queue = asyncio.Queue()
@@ -245,7 +262,7 @@ async def _run_chat(messages: list[dict], system: str):
     task = asyncio.create_task(run())
     while True:
         try:
-            item = await asyncio.wait_for(q.get(), timeout=90)
+            item = await asyncio.wait_for(q.get(), timeout=STALL_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
             yield _sse_error("Summary timed out — document may be too large")
             task.cancel()
@@ -278,7 +295,7 @@ async def _await_chat(messages: list[dict], system: str, on_token: Callable):
     task = asyncio.create_task(run())
     while True:
         try:
-            item = await asyncio.wait_for(q.get(), timeout=90)
+            item = await asyncio.wait_for(q.get(), timeout=STALL_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
             task.cancel()
             return

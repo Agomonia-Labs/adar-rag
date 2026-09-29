@@ -155,7 +155,13 @@ elif LLM_PROVIDER == "gemini":
             },
         }
 
-        async with httpx.AsyncClient(timeout=120) as client:
+        # 240s matches routes/summarize.py's STALL_TIMEOUT_SECONDS -- this is
+        # httpx's per-read-operation timeout (time to wait for the *next*
+        # chunk of an already-open stream), not a cap on total stream
+        # duration, so a long-but-steadily-streaming summary is unaffected.
+        # Was 120s, which could time out this call before summarize.py's
+        # own (now also-raised) stall detector ever got a chance to.
+        async with httpx.AsyncClient(timeout=240) as client:
             async with client.stream(
                 "POST", url,
                 params={"key": _GOOGLE_KEY, "alt": "sse"},
@@ -204,7 +210,10 @@ elif LLM_PROVIDER == "gemini":
                 "responseMimeType": "application/json",
             },
         }
-        async with httpx.AsyncClient(timeout=120) as client:
+        # Bumped alongside chat_stream above -- chat_json backs structured
+        # calls (classification, Academy's assignment evaluation) that can
+        # also involve a large prompt and were hitting the same ceiling.
+        async with httpx.AsyncClient(timeout=240) as client:
             response = await client.post(url, params={"key": _GOOGLE_KEY}, json=payload)
             if not response.is_success:
                 raise RuntimeError(f"Gemini chat error {response.status_code}: {response.text[:300]}")
