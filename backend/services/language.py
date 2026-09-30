@@ -7,6 +7,7 @@ LANGUAGE_NAMES = {
     "bn": "Bengali",
     "hi": "Hindi",
     "ar": "Arabic",
+    "fr": "French",
 }
 
 RTL_LANGUAGES = {"ar", "he", "fa", "ur"}

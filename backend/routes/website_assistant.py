@@ -44,7 +44,7 @@ class WebsiteAssistantRequest(BaseModel):
     question: str = Field(min_length=1, max_length=1200)
     history: list[dict] = Field(default_factory=list, max_length=12)
     session_id: str | None = Field(default=None, max_length=128)
-    response_language: Literal["en", "es", "bn", "hi", "ar"] = "en"
+    response_language: Literal["en", "es", "bn", "hi", "ar", "fr"] = "en"
 
 
 def _metadata_dict(value) -> dict:

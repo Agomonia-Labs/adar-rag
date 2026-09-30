@@ -45,7 +45,12 @@ async def set_tier(
     if body.tier not in TIER_LIMITS:
         raise HTTPException(400, f"Unknown tier. Valid: {list(TIER_LIMITS)}")
     await db.execute(
-        "UPDATE users SET tier=$1, custom_limits=$2 WHERE id=$3::uuid",
+        # tier_admin_locked=TRUE so this sticks -- otherwise the next time
+        # this user logs in, _sync_stripe_on_login (auth/router.py) resets
+        # `tier` back to whatever Stripe actually shows (free, if there's no
+        # real subscription behind this admin override), silently undoing
+        # this call.
+        "UPDATE users SET tier=$1, custom_limits=$2, tier_admin_locked=TRUE WHERE id=$3::uuid",
         body.tier,
         json.dumps(body.custom_limits) if body.custom_limits else None,
         body.user_id,

@@ -23,7 +23,7 @@ class LearningTutorRequest(BaseModel):
     module_id: str | None = None
     lesson_id: str | None = None
     history: list[dict[str, Any]] = Field(default_factory=list, max_length=30)
-    response_language: Literal["en", "es", "bn", "hi", "ar"] | None = None
+    response_language: Literal["en", "es", "bn", "hi", "ar", "fr"] | None = None
     redact_pii: bool = False
 
 

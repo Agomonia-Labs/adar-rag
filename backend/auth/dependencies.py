@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 
@@ -19,6 +19,7 @@ _FORBIDDEN = HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin 
 
 
 async def get_current_user(
+    request: Request,
     token: Annotated[str, Depends(oauth2_scheme)],
     db=Depends(get_db),
 ) -> dict:
@@ -36,6 +37,12 @@ async def get_current_user(
     )
     if not row:
         raise _UNAUTHORIZED
+    # services/limiter.py's by_user=True limiters read this to key on the
+    # signed-in user rather than the apparent client IP -- without it they
+    # silently fell back to IP-keying (never actually set anywhere), which
+    # on Cloud Run can collapse multiple distinct users behind one apparent
+    # IP and share a rate-limit budget that was meant to be per-user.
+    request.state.user_id = str(row["id"])
     return dict(row)
 
 

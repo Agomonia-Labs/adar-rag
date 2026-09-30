@@ -11,7 +11,8 @@ from auth.dependencies  import CurrentUser
 from database.connection import get_db
 from services.limiter   import ip_3_per_min, ip_10_per_min
 from services.audit     import audit, ip_from, ua_from
-from services.notifications import send_verification_email
+from services.notifications import send_verification_email, send_account_deleted_email
+import services.storage as gcs
 
 router   = APIRouter()
 APP_URL  = os.getenv("APP_URL", "http://localhost:5173")
@@ -164,6 +165,17 @@ async def register(
     role        = "admin" if user_count == 0 else "user"
     auto_verify = role == "admin"   # admins skip email verification
 
+    # Mobile apps (shared-auth's registerUser -- see
+    # packages/shared-auth/src/api.ts in adar-mobile) send this header on
+    # self-registration; the DocIntel web frontend's own register() call
+    # (frontend/src/services/api.js) does not. New mobile signups default
+    # to the enterprise tier -- locked the same way an admin-granted tier
+    # is (routes/billing.py's set-tier), so it isn't silently reset back to
+    # 'free' by a later Stripe sync that finds no active subscription.
+    is_mobile_signup = request.headers.get("x-client-platform", "").strip().lower() == "mobile"
+    tier        = "enterprise" if is_mobile_signup else "free"
+    tier_locked = is_mobile_signup
+
     # Generate verification token
     token      = secrets.token_urlsafe(32)
     token_h    = _token_hash(token)
@@ -172,18 +184,20 @@ async def register(
     row = await db.fetchrow(
         """INSERT INTO users
                (email, hashed_password, full_name, role,
-                is_verified, verification_token_hash, verification_token_exp)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)
+                is_verified, verification_token_hash, verification_token_exp,
+                tier, tier_admin_locked)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
            RETURNING id, email, full_name, role""",
         body.email, hash_password(body.password), body.full_name, role,
         auto_verify, None if auto_verify else token_h,
         None        if auto_verify else token_exp,
+        tier, tier_locked,
     )
     user_id = str(row["id"])
 
     await audit(db, user_id=user_id, action="register",
                 resource_type="user", resource_id=user_id,
-                metadata={"email": body.email, "role": role},
+                metadata={"email": body.email, "role": role, "tier": tier, "mobile": is_mobile_signup},
                 ip_address=ip_from(request), user_agent=ua_from(request))
 
     if not auto_verify:
@@ -404,6 +418,69 @@ async def me(current_user: CurrentUser):
         "role":      current_user.get("role", "user"),
     }
 
+
+# ── Self-service account deletion ───────────────────────────────────────────────
+# App Store Review Guideline 5.1.1(v): an app that lets people create an
+# account (see /register above) must also let them delete that account from
+# within the app -- this is the mobile-facing counterpart to
+# routes/admin.py's admin-only delete_user, just scoped to the caller's own
+# id and gated by re-entering their password instead of an admin role.
+class DeleteAccountRequest(BaseModel):
+    password: str
+
+
+@router.get("/account/deletion-impact")
+async def account_deletion_impact(current_user: CurrentUser, db=Depends(get_db)):
+    """What deleting this account destroys for OTHER people, so the app can
+    show a clear warning before the final confirm. workspaces.owner_id is
+    ON DELETE CASCADE (see database/models.py), so a workspace this user
+    owns is destroyed for every member, not just this account, the moment
+    it's deleted -- personal documents/conversations only affect the
+    deleting user, so they aren't itemized here."""
+    rows = await db.fetch(
+        """SELECT w.id, w.name, COUNT(wm.user_id) AS member_count
+           FROM workspaces w
+           JOIN workspace_members wm ON wm.workspace_id = w.id
+           WHERE w.owner_id = $1
+           GROUP BY w.id, w.name""",
+        str(current_user["id"]),
+    )
+    shared_owned = [
+        {"id": str(r["id"]), "name": r["name"], "member_count": int(r["member_count"])}
+        for r in rows if int(r["member_count"]) > 1
+    ]
+    return {"owned_shared_workspaces": shared_owned}
+
+
+@router.delete("/account")
+async def delete_own_account(
+    body: DeleteAccountRequest,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    row = await db.fetchrow("SELECT hashed_password, email FROM users WHERE id=$1", str(current_user["id"]))
+    if not row or not verify_password(body.password, row["hashed_password"]):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect password")
+
+    user_id = str(current_user["id"])
+    user_email = row["email"]
+    await audit(db, user_id=user_id, action="delete_own_account",
+                resource_type="user", resource_id=user_id,
+                ip_address=ip_from(request), user_agent=ua_from(request))
+
+    # Same cleanup as routes/admin.py's admin delete_user: GCS data first
+    # (non-cascading, has to be done explicitly), then the DB row -- the FK
+    # cascade defined in database/models.py takes care of every dependent
+    # row (documents, chat sessions, owned workspaces and their members,
+    # conversations, tags, and so on).
+    await gcs.delete_prefix(f"users/{user_id}/")
+    await db.execute("DELETE FROM users WHERE id = $1", user_id)
+    # Best-effort confirmation email -- the account is already gone at this
+    # point, so a failure here must never surface as a deletion failure.
+    await send_account_deleted_email(user_email)
+    return {"deleted": True}
+
 async def _sync_stripe_on_login(db, user_id: str) -> None:
     """Sync Stripe tier on every login using raw REST — never raises."""
     import os, logging, httpx, datetime
@@ -419,8 +496,19 @@ async def _sync_stripe_on_login(db, user_id: str) -> None:
 
     try:
         row = await db.fetchrow(
-            "SELECT stripe_customer_id FROM users WHERE id=$1", user_id
+            "SELECT stripe_customer_id, tier_admin_locked FROM users WHERE id=$1", user_id
         )
+        if row and row["tier_admin_locked"]:
+            # An admin manually set this user's tier (routes/usage.py or
+            # routes/billing.py's set-tier endpoints) -- leave it alone.
+            # Without this check, a user with no *real* Stripe subscription
+            # would have their admin-granted tier silently reset back to
+            # 'free' on every login, via the "no active subscription found"
+            # branch below. A genuine Stripe billing event (checkout,
+            # subscription update/cancel) still overrides this -- see the
+            # webhook handlers, which clear the flag.
+            _log.info(f"[stripe_sync] tier is admin-locked for user={user_id}, skipping")
+            return
         if not row or not row["stripe_customer_id"]:
             _log.info(f"[stripe_sync] no customer for user={user_id}")
             return

@@ -1,6 +1,6 @@
 # routes/evals.py — Evaluation suite management and execution
 from __future__ import annotations
-import json, logging
+import asyncio, json, logging
 from uuid import uuid4
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -387,8 +387,16 @@ async def quick_score(body: QuickScoreRequest, current_user: CurrentUser, db=Dep
         metadata={"mode": "quick_score", "eval_types": body.eval_types},
     )
 
-    results = {}
-    for etype in body.eval_types:
+    # Each eval type below is its own independent Gemini round-trip
+    # (relevance, specificity, confidence each ~a few seconds). Running them
+    # one after another in a for-loop meant this endpoint -- which the
+    # mobile/web apps call right after every chat/summarize/compare answer,
+    # to auto-score it -- could take 10-20+ seconds before the thumbs
+    # up/down + eval badges appeared, even though the answer itself was
+    # already fully displayed. They don't share any state or a live
+    # connection (each _judge() call opens its own httpx client), so
+    # there's no reason not to run them concurrently.
+    async def _run_one(etype: str) -> tuple[str, dict]:
         try:
             if etype == "relevance":
                 r = await eval_relevance(body.question, body.answer)
@@ -400,13 +408,16 @@ async def quick_score(body: QuickScoreRequest, current_user: CurrentUser, db=Dep
                 r = await eval_coherence(body.answer)
             else:
                 r = {"score": None, "verdict": "unknown", "reasoning": ""}
-            results[etype] = {
+            return etype, {
                 "score":     r.get("score"),
                 "verdict":   r.get("verdict", ""),
                 "reasoning": r.get("reasoning", ""),
                 "passed":    r.get("passed", False),
             }
         except Exception as e:
-            results[etype] = {"score": None, "verdict": "error", "reasoning": str(e)[:200], "passed": False}
+            return etype, {"score": None, "verdict": "error", "reasoning": str(e)[:200], "passed": False}
+
+    pairs = await asyncio.gather(*(_run_one(etype) for etype in body.eval_types))
+    results = dict(pairs)
 
     return {"scores": results}

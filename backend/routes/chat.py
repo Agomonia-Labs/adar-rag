@@ -26,6 +26,21 @@ log = logging.getLogger("docintel.chat.route")
 # Fetch more candidates when re-ranking so the re-ranker has enough to work with
 _FETCH_K = RERANK_FETCH_K if RERANK_ENABLED else TOP_K
 
+# Bounds the gap between SSE events yielded to the client, not the total
+# request duration -- every token/done/error resets the clock (see the
+# asyncio.wait_for(queue.get(), ...) below), so a slow-but-steady answer of
+# any length is fine. It only fires when run() genuinely stops producing
+# *anything* for this long: a stage inside it (embedding, retrieval, re-rank,
+# agentic/restaurant context, or the final generation call) hanging on an
+# await with no bound of its own. Before this, that hang was invisible to the
+# client too -- the SSE consumer loop below did a plain `await queue.get()`,
+# so the request just sat open forever with no token/done/error ever sent
+# ("Flashcards for entire lesson runs forever" traced back to this). Mirrors
+# routes/summarize.py's STALL_TIMEOUT_SECONDS, which already had this guard;
+# kept equal to llm.py's Gemini-branch httpx timeout for chat_stream so this
+# friendlier message is what callers see instead of a raw httpx.ReadTimeout.
+STALL_TIMEOUT_SECONDS = 240
+
 
 class EvidenceWindow(BaseModel):
     start_seconds: float = Field(ge=0)
@@ -50,7 +65,7 @@ class ChatRequest(BaseModel):
     workspace_id: str | None = None
     redact_pii:   bool = False
     agent_mode:   str = "auto"  # auto | off | force
-    response_language: Literal["en", "es", "bn", "hi", "ar"] | None = None
+    response_language: Literal["en", "es", "bn", "hi", "ar", "fr"] | None = None
     evidence_ranges: list[DocumentEvidenceRange] = Field(default_factory=list)
 
 
@@ -346,7 +361,15 @@ async def chat_stream_endpoint(
 
         try:
             while True:
-                item = await queue.get()
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=STALL_TIMEOUT_SECONDS)
+                except asyncio.TimeoutError:
+                    await finish_trace(trace_id, "error", "stream stalled -- no output for STALL_TIMEOUT_SECONDS")
+                    yield f"data: {json.dumps({'type':'error','error':'This is taking longer than expected and may have stalled. Please try again.'})}\n\n"
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+                    return
                 if   item[0] == "token": yield f"data: {json.dumps({'type':'token','text':item[1]})}\n\n"
                 elif item[0] == "done":
                     payload = item[1] if isinstance(item[1], dict) else {"sources": item[1]}

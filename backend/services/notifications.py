@@ -200,6 +200,29 @@ You can access this workspace by logging in to আদর DocIntel:
         log.warning(f"Workspace invite notification failed for {invitee_email}: {e}")
 
 
+async def send_account_deleted_email(user_email: str) -> None:
+    """Confirms a self-service account deletion (auth/router.py's
+    delete_own_account) actually went through -- sent to the email address
+    captured before the user row was deleted, since by the time this runs
+    the account no longer exists to look it up again. Best-effort: a failed
+    send here must never undo or block the deletion itself, so exceptions
+    are caught and logged, same as send_workspace_invite above."""
+    subject = "Your আদর DocIntel account has been cancelled"
+    body = """Your আদর DocIntel account has been permanently deleted, along with your
+personal documents, videos, and conversations, at your request.
+
+If you didn't request this, or you believe this was a mistake, please
+contact support right away -- this action cannot be reversed and a deleted
+account cannot be restored.
+
+— আদর DocIntel
+"""
+    try:
+        await send_email(to=user_email, subject=subject, body=body)
+    except Exception as e:
+        log.warning(f"Account-deleted confirmation email failed for {user_email}: {e}")
+
+
 async def send_finance_tax_packet_notification(
     user_email: str,
     *,

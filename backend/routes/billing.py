@@ -520,10 +520,13 @@ async def _handle_checkout_completed(db, session: dict):
         )
 
     await db.execute(
+        # tier_admin_locked=FALSE: a real completed checkout is genuine
+        # billing, so it always retakes control from any earlier manual
+        # admin override (see the column comment in database/models.py).
         """UPDATE users
            SET tier=$1, stripe_subscription_id=$2,
                subscription_status='active',
-               subscription_period_end=$3
+               subscription_period_end=$3, tier_admin_locked=FALSE
            WHERE id=$4::uuid""",
         plan, sub_id, period_end, user_id,
     )
@@ -547,9 +550,11 @@ async def _handle_subscription_updated(db, sub: dict):
     tier = plan if status in ("active", "trialing") else "free"
 
     await db.execute(
+        # tier_admin_locked=FALSE -- see checkout.session.completed above.
         """UPDATE users
            SET tier=$1, stripe_subscription_id=$2,
-               subscription_status=$3, subscription_period_end=$4
+               subscription_status=$3, subscription_period_end=$4,
+               tier_admin_locked=FALSE
            WHERE stripe_customer_id=$5""",
         tier, sub_id, status, period_end, customer_id,
     )
@@ -561,9 +566,11 @@ async def _handle_subscription_deleted(db, sub: dict):
         return
     customer_id = sub.get("customer")
     await db.execute(
+        # tier_admin_locked=FALSE -- see checkout.session.completed above.
         """UPDATE users
            SET tier='free', stripe_subscription_id=NULL,
-               subscription_status='cancelled', subscription_period_end=NULL
+               subscription_status='cancelled', subscription_period_end=NULL,
+               tier_admin_locked=FALSE
            WHERE stripe_customer_id=$1""",
         customer_id,
     )
@@ -668,7 +675,9 @@ async def admin_set_tier(
         raise HTTPException(404, f"User {email} not found")
 
     await db.execute(
-        """UPDATE users SET tier=$1, subscription_status=$2 WHERE id=$3""",
+        # tier_admin_locked=TRUE so this sticks across the user's next
+        # login -- see the column comment in database/models.py.
+        """UPDATE users SET tier=$1, subscription_status=$2, tier_admin_locked=TRUE WHERE id=$3""",
         tier,
         "active" if tier != "free" else "inactive",
         str(row["id"]),

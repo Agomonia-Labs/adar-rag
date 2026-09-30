@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import os
 import re
+import subprocess
+import tempfile
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -28,6 +31,18 @@ from services.vectordb import delete_document_vectors
 import services.storage as gcs
 
 router = APIRouter()
+
+# Same rationale as routes/voice.py's AUDIO_TYPE_ALIASES: the OS networking
+# layer on a real iOS device rewrites the multipart part's Content-Type
+# based on file extension regardless of what the mobile app's JS declares,
+# so a conversation turn recorded on iPhone arrives as one of these instead
+# of the "audio/mp4" SUPPORTED_AUDIO_TYPES already expects.
+CONVERSATION_AUDIO_TYPE_ALIASES = {
+    "audio/x-m4a": "audio/mp4",
+    "audio/m4a": "audio/mp4",
+    "audio/aac": "audio/mp4",
+}
+CONVERSATION_FFMPEG_TIMEOUT_SECONDS = int(os.getenv("FFMPEG_COMMAND_TIMEOUT_SECONDS", "180"))
 
 
 class CompletedCall(BaseModel):
@@ -309,6 +324,7 @@ async def add_conversation_turn(
     text = transcript.strip()
     if audio:
         content_type = (audio.content_type or "").split(";")[0].lower()
+        content_type = CONVERSATION_AUDIO_TYPE_ALIASES.get(content_type, content_type)
         if content_type not in SUPPORTED_AUDIO_TYPES:
             raise HTTPException(400, f"Unsupported audio format: {content_type}")
         audio_bytes = await audio.read()
@@ -346,11 +362,30 @@ async def add_conversation_turn(
         template=template, existing_state=state, turns=turns, user_text=text,
         language=session["language_code"],
     )
+    # Best-effort: also persist the assistant's spoken reply as audio, in
+    # the same conversation-turns/ prefix as the participant's clip, so a
+    # finished conversation can later be stitched into one playable
+    # recording (see _build_conversation_recording, triggered on finalize)
+    # with both sides of the conversation in order -- not just the
+    # participant's voice. If speech synthesis is unavailable or
+    # misconfigured, the turn itself must still succeed uninterrupted (the
+    # live "speak the reply" step on desktop has the same tolerance --
+    # ConversationPanel.jsx falls back rather than blocking on it), so a
+    # missing assistant clip here just means playback has a silent gap
+    # rather than failing the whole conversation.
+    assistant_audio_path = None
+    try:
+        assistant_audio_bytes = await synthesize_speech(assistant["response"], session["language_code"])
+        assistant_audio_path = f"users/{session['user_id']}/documents/{session['document_id']}/conversation-turns/{uuid4()}.mp3"
+        await gcs.upload_bytes(assistant_audio_path, assistant_audio_bytes, "audio/mpeg")
+    except Exception:
+        assistant_audio_path = None
+
     next_sequence = sequence + 1
     await db.execute(
-        """INSERT INTO conversation_turns(call_id,sequence,role,speaker,transcript,collected_fields,citations,metadata)
-           VALUES($1,$2,'assistant','DocIntel Assistant',$3,$4::jsonb,$5::jsonb,$6::jsonb)""",
-        session_id, next_sequence, assistant["response"], json.dumps(assistant["collected_fields"]),
+        """INSERT INTO conversation_turns(call_id,sequence,role,speaker,transcript,audio_gcs_path,collected_fields,citations,metadata)
+           VALUES($1,$2,'assistant','DocIntel Assistant',$3,$4,$5::jsonb,$6::jsonb,$7::jsonb)""",
+        session_id, next_sequence, assistant["response"], assistant_audio_path, json.dumps(assistant["collected_fields"]),
         json.dumps(assistant["citations"]), json.dumps({"answered_from_knowledgebase": assistant["answered_from_knowledgebase"]}),
     )
     state.update({
@@ -389,8 +424,79 @@ async def update_conversation_session(session_id: str, body: SessionStateRequest
     return {"session_id": session_id, "session_state": state, "review_status": review_status}
 
 
+async def _build_conversation_recording(call_id: str) -> None:
+    """Best-effort: stitch every turn's stored audio clip -- participant
+    recordings plus the synthesized assistant replies saved alongside them
+    -- into one playable recording, in the order they happened, so a
+    finished conversation can be played back later the same way a video or
+    audio document can. Runs as a background task off finalize; never
+    raises past this function -- a missing/failed recording just means
+    playback isn't available for this conversation yet, not a failed
+    conversation. There is no equivalent step in ConversationPanel.jsx
+    today (see the /calls/{call_id}/recording-url route's docstring)."""
+    from database.connection import get_pool
+
+    pool = get_pool()
+    try:
+        async with pool.acquire() as db:
+            call = await db.fetchrow("SELECT user_id,document_id FROM telephony_calls WHERE id=$1", call_id)
+            if not call:
+                return
+            turns = await db.fetch(
+                """SELECT audio_gcs_path FROM conversation_turns
+                   WHERE call_id=$1 AND audio_gcs_path IS NOT NULL ORDER BY sequence""",
+                call_id,
+            )
+        clip_paths = [row["audio_gcs_path"] for row in turns]
+        if not clip_paths:
+            return
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            local_paths = []
+            for index, blob_path in enumerate(clip_paths):
+                suffix = os.path.splitext(blob_path)[1] or ".m4a"
+                local_path = os.path.join(tmp_dir, f"turn_{index:03d}{suffix}")
+                await gcs.download_to_file(blob_path, local_path)
+                local_paths.append(local_path)
+            output_path = os.path.join(tmp_dir, "recording.mp3")
+            if len(local_paths) == 1:
+                # ffmpeg's concat filter needs >= 2 inputs -- a single clip
+                # is just re-encoded to the same output format directly.
+                cmd = ["ffmpeg", "-y", "-i", local_paths[0], output_path]
+            else:
+                cmd = ["ffmpeg", "-y"]
+                for path in local_paths:
+                    cmd += ["-i", path]
+                filter_inputs = "".join(f"[{i}:a]" for i in range(len(local_paths)))
+                cmd += [
+                    "-filter_complex", f"{filter_inputs}concat=n={len(local_paths)}:v=0:a=1[out]",
+                    "-map", "[out]", output_path,
+                ]
+            completed = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=CONVERSATION_FFMPEG_TIMEOUT_SECONDS,
+            )
+            if completed.returncode != 0 or not os.path.exists(output_path):
+                logging.getLogger(__name__).warning(
+                    "conversation recording concat failed for %s: %s", call_id, completed.stderr[-2000:],
+                )
+                return
+            with open(output_path, "rb") as fh:
+                recording_bytes = fh.read()
+        recording_path = f"users/{call['user_id']}/documents/{call['document_id']}/conversation-recording.mp3"
+        await gcs.upload_bytes(recording_path, recording_bytes, "audio/mpeg")
+        async with pool.acquire() as db:
+            await db.execute(
+                """UPDATE telephony_calls SET recording_gcs_uri=$2,recording_mime_type='audio/mpeg',
+                   updated_at=NOW() WHERE id=$1""",
+                call_id, recording_path,
+            )
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to build conversation recording for call %s", call_id)
+
+
 @router.post("/conversation/sessions/{session_id}/finalize")
-async def finalize_conversation_session(session_id: str, current_user: CurrentUser, db=Depends(get_db)):
+async def finalize_conversation_session(
+    session_id: str, background: BackgroundTasks, current_user: CurrentUser, db=Depends(get_db),
+):
     session = await _owned_call(db, session_id, str(current_user["id"]), "editor")
     if session["consent_status"] != "confirmed":
         raise HTTPException(400, "Confirmed recording consent is required")
@@ -404,6 +510,7 @@ async def finalize_conversation_session(session_id: str, current_user: CurrentUs
            review_status='in_review',progress_pct=65,ended_at=NOW(),updated_at=NOW() WHERE id=$1""",
         session_id,
     )
+    background.add_task(_build_conversation_recording, session_id)
     return {"session_id": session_id, "document_id": str(session["document_id"]), "status": "in_review"}
 
 
@@ -521,6 +628,24 @@ async def get_call(call_id: str, current_user: CurrentUser, db=Depends(get_db)):
     data["segments"] = [_jsonable(segment) for segment in segments]
     data["turns"] = [_jsonable(turn) for turn in turns]
     return data
+
+
+@router.get("/calls/{call_id}/recording-url")
+async def get_conversation_recording_url(call_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    """Signed URL for the combined recording _build_conversation_recording
+    stitches together on finalize -- the equivalent of documents.py's own
+    /{doc_id}/view-url, but for a telephony_calls row instead of a
+    documents row (a conversation's `document_id` holds the text
+    transcript, not audio, once approve-transcript overwrites it -- see
+    that route's own docstring -- so playback has to be served from
+    telephony_calls.recording_gcs_uri instead). `url` is null while the
+    background task hasn't finished yet (or found nothing to concatenate),
+    which the caller should treat as "not ready yet", not an error."""
+    row = await _owned_call(db, call_id, str(current_user["id"]))
+    if not row["recording_gcs_uri"]:
+        return {"url": None}
+    url = await gcs.get_signed_url(row["recording_gcs_uri"])
+    return {"url": url, "expires_in_seconds": int(os.getenv("GCS_SIGNED_URL_EXPIRY_SECONDS", "3600"))}
 
 
 @router.post("/calls/{call_id}/retry")

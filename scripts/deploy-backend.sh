@@ -129,11 +129,21 @@ else
   echo "  Video STT    : ⚠ docintel-google-speech-key not found; GOOGLE_AI_KEY fallback will be used"
 fi
 
-if gcloud secrets describe docintel-google-tts-key --project="$PROJECT_ID" &>/dev/null; then
-  SECRETS+=("GOOGLE_TTS_API_KEY=docintel-google-tts-key:latest")
-  echo "  Conversation TTS: enabled (docintel-google-tts-key)"
+# Text-to-speech uses the SAME Secret Manager secret adar-core's Geetabitan
+# and Front Desk already use in production (bdas-493785, the same GCP
+# project docintel deploys to) -- a key deliberately restricted to only
+# texttospeech.googleapis.com (see adar-core/api/main.py's demo_tts: "Use
+# dedicated TTS key (restricted only to texttospeech.googleapis.com)").
+# Reusing it here means no new secret to create or provision -- just grant
+# docintel's own service account read access to this existing one, same as
+# the IAM binding pattern above for docintel-webhook-worker-token.
+if gcloud secrets describe geetabitan-tts-api-key --project="$PROJECT_ID" &>/dev/null; then
+  gcloud secrets add-iam-policy-binding geetabitan-tts-api-key \
+    --project="$PROJECT_ID" --member="serviceAccount:$SA_EMAIL" --role="roles/secretmanager.secretAccessor" --quiet >/dev/null
+  SECRETS+=("GOOGLE_TTS_API_KEY=geetabitan-tts-api-key:latest")
+  echo "  Conversation TTS: enabled (reusing adar-core's geetabitan-tts-api-key)"
 else
-  echo "  Conversation TTS: using existing Google API key fallback"
+  echo "  Conversation TTS: ⚠ geetabitan-tts-api-key not found in project $PROJECT_ID; using existing Google API key fallback"
 fi
 
 # Provider-neutral completed-call webhook authentication.
@@ -341,6 +351,8 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="FFMPEG_COMMAND_TIMEOUT_SECONDS=180" \
   --set-env-vars="JWT_ALGORITHM=HS256" \
   --set-env-vars="JWT_ACCESS_TOKEN_EXPIRE_MINUTES=480" \
+  --set-env-vars="MFA_ENABLED=true" \
+  --set-env-vars="MFA_BYPASS_EMAILS=appreview@agomoniai.com" \
   --set-env-vars="OAUTH_ISSUER_URL=https://auth.docintel.adar.agomoniai.com" \
   --set-env-vars="OAUTH_MCP_RESOURCE=https://mcp.docintel.adar.agomoniai.com/mcp" \
   --set-env-vars="OAUTH_API_RESOURCE=https://docintel.adar.agomoniai.com/api/v1" \

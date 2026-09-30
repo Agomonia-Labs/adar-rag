@@ -437,8 +437,19 @@ CREATE INDEX IF NOT EXISTS idx_conversation_turns_call
 
 -- User tier + custom limits (billing / tiered enforcement)
 ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS tier          TEXT    NOT NULL DEFAULT 'free',
-    ADD COLUMN IF NOT EXISTS custom_limits JSONB;
+    ADD COLUMN IF NOT EXISTS tier               TEXT    NOT NULL DEFAULT 'free',
+    ADD COLUMN IF NOT EXISTS custom_limits      JSONB,
+    -- Set whenever an admin manually sets a user's tier (routes/usage.py's
+    -- /admin/set-tier, routes/billing.py's /set-tier). While TRUE, the
+    -- per-login Stripe reconciliation (auth/router.py's
+    -- _sync_stripe_on_login) leaves `tier` alone instead of resetting it to
+    -- whatever Stripe itself shows (usually 'free', since an admin override
+    -- has no real subscription behind it) -- that silent reset on next
+    -- login was overwriting every manual admin upgrade. A real Stripe
+    -- billing event (checkout completed, subscription updated/deleted)
+    -- still always wins and clears this flag, since actual paid billing
+    -- should take back over once it exists.
+    ADD COLUMN IF NOT EXISTS tier_admin_locked  BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Usage events (metering every billable action)
 CREATE TABLE IF NOT EXISTS usage_events (
