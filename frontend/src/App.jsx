@@ -6,7 +6,6 @@ import BillingPanel     from './components/BillingPanel.jsx';
 import WorkspacesTab    from './components/WorkspacesTab.jsx';
 import DocumentsTab    from './components/DocumentsTab.jsx';
 import ChatTab         from './components/ChatTab.jsx';
-import GuestTryPanel   from './components/GuestTryPanel.jsx';
 import HelpGuidePanel  from './components/HelpGuidePanel.jsx';
 import HelpCenterPanel from './components/HelpCenterPanel.jsx';
 import AdminDashboard  from './components/AdminDashboard.jsx';
@@ -26,7 +25,6 @@ import { LANGUAGES, getLanguage, getStrings } from './i18n.js';
 
 export default function App() {
   const [authPage,     setAuthPage]     = useState('login');
-  const [showAuth,     setShowAuth]     = useState(false);
   const [user,         setUser]         = useState(null);
   const [checking,     setChecking]     = useState(true);
   const [tab,          setTab]          = useState('documents');
@@ -137,7 +135,6 @@ export default function App() {
     localStorage.setItem('user_role', data.role);
     setUser({ id:data.user_id, email:data.email, full_name:data.full_name, role:data.role });
     setTab(data.role==='admin'?'admin':'documents');
-    setShowAuth(false);
     if (localStorage.getItem('guest_token')) {
       try {
         await claimGuestSession();
@@ -160,19 +157,7 @@ export default function App() {
   }
 
   if (!user) {
-    return showAuth
-      ? <AuthFlow onLogin={handleLogin} />
-      : (
-        <>
-          <GuestTryPanel
-            onSignIn={() => setShowAuth(true)}
-            onOpenGuide={() => setShowHelpGuide(true)}
-            onOpenHelpCenter={() => setShowHelpCenter(true)}
-          />
-          {showHelpGuide && <HelpGuidePanel language={uiLang} onClose={() => setShowHelpGuide(false)} initialSection="quick-start" />}
-          {showHelpCenter && <HelpCenterPanel language={uiLang} onClose={() => setShowHelpCenter(false)} />}
-        </>
-      );
+    return <AuthFlow onLogin={handleLogin} />;
   }
 
   const isAdmin = user.role==='admin';
