@@ -761,6 +761,18 @@ CREATE INDEX IF NOT EXISTS idx_restaurants_user      ON restaurants(user_id);
 CREATE INDEX IF NOT EXISTS idx_restaurants_workspace ON restaurants(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_restaurants_name      ON restaurants(LOWER(name));
 
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'restaurants' AND column_name = 'marketplace_visible'
+    ) THEN
+        ALTER TABLE restaurants ADD COLUMN marketplace_visible BOOLEAN NOT NULL DEFAULT FALSE;
+    END IF;
+END;
+$$;
+CREATE INDEX IF NOT EXISTS idx_restaurants_marketplace ON restaurants(marketplace_visible) WHERE marketplace_visible;
+
 CREATE TABLE IF NOT EXISTS restaurant_menu_items (
     id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     restaurant_id  UUID        NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
@@ -785,6 +797,17 @@ CREATE INDEX IF NOT EXISTS idx_menu_restaurant ON restaurant_menu_items(restaura
 CREATE INDEX IF NOT EXISTS idx_menu_user       ON restaurant_menu_items(user_id);
 CREATE INDEX IF NOT EXISTS idx_menu_workspace  ON restaurant_menu_items(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_menu_name       ON restaurant_menu_items(LOWER(item_name));
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'restaurant_menu_items' AND column_name = 'image_gcs_path'
+    ) THEN
+        ALTER TABLE restaurant_menu_items ADD COLUMN image_gcs_path TEXT;
+    END IF;
+END;
+$$;
 
 CREATE TABLE IF NOT EXISTS restaurant_orders (
     id                   UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),

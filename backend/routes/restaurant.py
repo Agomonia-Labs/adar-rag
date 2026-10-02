@@ -7,7 +7,8 @@ import re
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
+from difflib import SequenceMatcher
+from typing import Any, Optional
 from uuid import UUID
 
 import httpx
@@ -56,6 +57,23 @@ SUPPORTED_RESTAURANT_AUDIO_TYPES = {
     "audio/wav",
     "audio/x-wav",
     "audio/ogg",
+}
+MAX_RESTAURANT_IMAGE_BYTES = int(os.getenv("RESTAURANT_MENU_PHOTO_MAX_MB", "8")) * 1024 * 1024
+SUPPORTED_RESTAURANT_IMAGE_TYPES = {
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "image/heif",
+}
+RESTAURANT_IMAGE_EXTENSIONS = {
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/heic": "heic",
+    "image/heif": "heif",
 }
 
 
@@ -357,8 +375,88 @@ async def approve_restaurant_agent_run(
     return response
 
 
+@router.get("/documents")
+async def list_restaurant_documents(current_user: CurrentUser, db=Depends(get_db)):
+    """List this owner's restaurant-menu-scribe recordings/transcripts --
+    the ADAR Eats mobile "Documents" tab, mirroring DocIntel's own
+    Documents screen (GET /api/documents/) but, unlike that endpoint,
+    visible across any workspace the caller belongs to (not just
+    personal, workspace_id-less rows) -- same broadened-access rule used
+    elsewhere in this file for restaurants themselves (see
+    list_restaurants/get_restaurant).
+
+    A document counts as "this owner's restaurant transcript" either way:
+    (a) doc_domain='restaurant' -- set by this file's own voice-scribe
+        submission (_persist_workflow_transcript et al), the normal case
+        for a menu recorded from the Eats mobile app, including one still
+        pending_approval (not yet turned into a restaurant row); or
+    (b) reachable via restaurants.source_run_id -> vertical_agent_runs.
+        document_id for one of the caller's restaurants -- covers a menu
+        that was instead recorded/uploaded through DocIntel's generic
+        desktop document flow and only became a restaurant at approval
+        time. The GENERIC classifier (services/classifier.py) has no
+        "restaurant" domain at all -- its DOMAINS list is legal/finance/
+        hr/medical/research/operations/general -- so a document ingested
+        that way is classified doc_domain='general' and branch (a) alone
+        would silently never show it, which is exactly the bug reported:
+        a restaurant recorded from DocIntel's desktop UI had a real menu
+        and real restaurant row, but its transcript never appeared in the
+        Eats Documents tab. _restaurant_source_transcript() below already
+        resolves a restaurant's transcript the same way for other
+        purposes (e.g. chat context); this mirrors that resolution path
+        for the document list instead of a single restaurant's text."""
+    from routes.documents import _doc_row
+
+    user_id = str(current_user["id"])
+    user_email = str(current_user.get("email") or "")
+    rows = await db.fetch(
+        f"""
+        SELECT d.id, d.user_id, d.original_name, d.filename, d.file_type, d.file_size,
+               d.status, d.chunk_count, d.error_message, d.doc_metadata, d.workspace_id,
+               d.doc_type, d.doc_domain, d.doc_language, d.created_at, d.updated_at,
+               '[]'::json AS tags,
+               (
+                 SELECT r.name FROM restaurants r
+                 JOIN vertical_agent_runs run ON run.id = r.source_run_id
+                 WHERE run.document_id = d.id
+                   AND {_restaurant_catalog_manage_sql('r', '$1', '$2')}
+                 LIMIT 1
+               ) AS restaurant_name
+        FROM documents d
+        LEFT JOIN workspace_members wm ON wm.workspace_id=d.workspace_id AND wm.user_id=$1::uuid
+        WHERE d.status != 'deleted'
+          AND (
+                (d.doc_domain='restaurant' AND (d.user_id=$1::uuid OR wm.role IS NOT NULL))
+             OR EXISTS (
+                  SELECT 1 FROM restaurants r
+                  JOIN vertical_agent_runs run ON run.id = r.source_run_id
+                  WHERE run.document_id = d.id
+                    AND {_restaurant_catalog_manage_sql('r', '$1', '$2')}
+                )
+          )
+        ORDER BY d.created_at DESC
+        LIMIT 200
+        """,
+        user_id,
+        user_email,
+    )
+    documents = []
+    for row in rows:
+        data = dict(row)
+        restaurant_name = data.pop("restaurant_name", None)
+        doc = _doc_row(data)
+        doc["restaurant_name"] = restaurant_name
+        documents.append(doc)
+    return {"documents": documents}
+
+
 @router.get("/restaurants")
-async def list_restaurants(current_user: CurrentUser, workspace_id: str | None = Query(None), db=Depends(get_db)):
+async def list_restaurants(
+    current_user: CurrentUser,
+    workspace_id: str | None = Query(None),
+    marketplace: bool = Query(False, description="If true, ignore workspace_id and return restaurants opted into the public marketplace"),
+    db=Depends(get_db),
+):
     user_id = str(current_user["id"])
     user_email = str(current_user.get("email") or "")
     restored_count = 0
@@ -386,13 +484,24 @@ async def list_restaurants(current_user: CurrentUser, workspace_id: str | None =
             WHERE status <> 'dismissed'
             GROUP BY restaurant_id
         ) fb ON fb.restaurant_id=r.id
-        WHERE (($2::uuid IS NULL AND r.workspace_id IS NULL) OR r.workspace_id=$2::uuid)
+        WHERE (
+          ($3 AND r.marketplace_visible = TRUE)
+          OR (NOT $3 AND (
+                $2::uuid IS NOT NULL AND r.workspace_id=$2::uuid
+                OR ($2::uuid IS NULL AND (
+                      r.workspace_id IS NULL
+                      OR r.user_id=$1::uuid
+                      OR wm.role IS NOT NULL
+                    ))
+              ))
+        )
         GROUP BY r.id, wm.role, fb.rating_count, fb.avg_rating, fb.verified_rating_count
         ORDER BY r.workspace_id NULLS LAST, r.updated_at DESC
         LIMIT 200
         """,
         user_id,
         workspace_id,
+        marketplace,
     )
     restaurant_rows = []
     for row in rows:
@@ -505,7 +614,15 @@ async def get_restaurant(
             GROUP BY restaurant_id
         ) fb ON fb.restaurant_id=r.id
         WHERE r.id=$1
-          AND (($3::uuid IS NULL AND r.workspace_id IS NULL) OR r.workspace_id=$3::uuid)
+          AND (
+            r.marketplace_visible = TRUE
+            OR ($3::uuid IS NOT NULL AND r.workspace_id=$3::uuid)
+            OR ($3::uuid IS NULL AND (
+                  r.workspace_id IS NULL
+                  OR r.user_id=$2::uuid
+                  OR wm.role IS NOT NULL
+                ))
+          )
         """,
         restaurant_id,
         user_id,
@@ -539,7 +656,7 @@ async def get_restaurant(
     restaurant["can_manage"] = can_manage
     return {
         "restaurant": restaurant,
-        "menu_items": [_menu_row(item) for item in items],
+        "menu_items": [await _menu_row(item) for item in items],
         "transcript": await _restaurant_source_transcript(db, dict(row), user_id) if can_manage else "",
     }
 
@@ -602,8 +719,8 @@ async def update_restaurant(
             """
             INSERT INTO restaurant_menu_items
               (restaurant_id, user_id, workspace_id, category, item_name, price, currency,
-               quantity, description, ingredients, dietary_tags, spice_level, availability, options, metadata)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14::jsonb,$15::jsonb)
+               quantity, description, ingredients, dietary_tags, spice_level, availability, options, metadata, image_gcs_path)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14::jsonb,$15::jsonb,$16)
             """,
             restaurant_id,
             user_id,
@@ -620,6 +737,7 @@ async def update_restaurant(
             item.get("availability") or "available",
             json.dumps(item.get("options") if isinstance(item.get("options"), list) else []),
             json.dumps({"source": "manual_update"}),
+            item.get("image_gcs_path") or None,
         )
     await audit(
         db,
@@ -637,6 +755,461 @@ async def update_restaurant(
         str(row["workspace_id"]) if row.get("workspace_id") else None,
         db,
     )
+
+
+class RestaurantMarketplaceVisibilityRequest(BaseModel):
+    visible: bool
+
+
+@router.post("/restaurants/{restaurant_id}/marketplace")
+async def set_restaurant_marketplace_visibility(
+    restaurant_id: str,
+    body: RestaurantMarketplaceVisibilityRequest,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Opt a restaurant in or out of the public, cross-workspace marketplace
+    listing used by the ADAR Eats mobile app (see /restaurants, /menu/search,
+    /menu/compare, /menu/recommend's `marketplace` query param). Restricted
+    to whoever can already manage this restaurant's catalog (matching email,
+    or workspace owner/editor)."""
+    user_id = str(current_user["id"])
+    user_email = str(current_user.get("email") or "")
+    row = await db.fetchrow(
+        f"""
+        SELECT r.*
+        FROM restaurants r
+        WHERE r.id=$1 AND {_restaurant_catalog_manage_sql('r', '$2', '$3')}
+        """,
+        restaurant_id,
+        user_id,
+        user_email,
+    )
+    if not row:
+        raise HTTPException(403, "Only a matching restaurant email or workspace owner/editor can change marketplace visibility")
+    await db.execute(
+        "UPDATE restaurants SET marketplace_visible=$2, updated_at=NOW() WHERE id=$1",
+        restaurant_id,
+        body.visible,
+    )
+    await audit(
+        db,
+        user_id=user_id,
+        action="restaurant_marketplace_visibility",
+        resource_type="restaurant",
+        resource_id=restaurant_id,
+        metadata={"visible": body.visible},
+    )
+    return {"id": restaurant_id, "marketplace_visible": body.visible}
+
+
+@router.post("/restaurants/{restaurant_id}/menu-items/{item_id}/photo")
+async def upload_menu_item_photo(
+    restaurant_id: str,
+    item_id: str,
+    current_user: CurrentUser,
+    photo: UploadFile = File(...),
+    db=Depends(get_db),
+):
+    """Upload or replace a single menu item's food/menu photo. Restricted to
+    whoever can already manage this restaurant's catalog (matching email, or
+    workspace owner/editor) -- same permission used to edit the menu itself."""
+    user_id = str(current_user["id"])
+    user_email = str(current_user.get("email") or "")
+    row = await db.fetchrow(
+        f"""
+        SELECT r.*
+        FROM restaurants r
+        WHERE r.id=$1 AND {_restaurant_catalog_manage_sql('r', '$2', '$3')}
+        """,
+        restaurant_id,
+        user_id,
+        user_email,
+    )
+    if not row:
+        raise HTTPException(403, "Only a matching restaurant email or workspace owner/editor can update this restaurant's menu photos")
+    item_row = await db.fetchrow(
+        "SELECT id FROM restaurant_menu_items WHERE id=$1::uuid AND restaurant_id=$2::uuid",
+        item_id,
+        restaurant_id,
+    )
+    if not item_row:
+        raise HTTPException(404, "Menu item not found")
+
+    content_type = (photo.content_type or "application/octet-stream").split(";")[0].strip().lower()
+    if content_type not in SUPPORTED_RESTAURANT_IMAGE_TYPES:
+        raise HTTPException(400, f"Unsupported image format: {content_type}")
+    data = await photo.read()
+    if not data:
+        raise HTTPException(400, "No image received")
+    if len(data) > MAX_RESTAURANT_IMAGE_BYTES:
+        raise HTTPException(413, f"Image is too large. Max {MAX_RESTAURANT_IMAGE_BYTES // 1024 // 1024} MB")
+
+    extension = RESTAURANT_IMAGE_EXTENSIONS.get(content_type, "jpg")
+    owner_id = str(row["user_id"])
+    image_gcs_path = f"users/{owner_id}/restaurants/{restaurant_id}/menu/{item_id}/{uuid.uuid4().hex}.{extension}"
+    await gcs.upload_bytes(image_gcs_path, data, content_type)
+    await db.execute(
+        "UPDATE restaurant_menu_items SET image_gcs_path=$2, updated_at=NOW() WHERE id=$1",
+        item_id,
+        image_gcs_path,
+    )
+    await audit(
+        db,
+        user_id=user_id,
+        action="restaurant_menu_item_photo_upload",
+        resource_type="restaurant_menu_item",
+        resource_id=item_id,
+        metadata={"restaurant_id": restaurant_id, "content_type": content_type, "size": len(data)},
+    )
+    return {"item_id": item_id, "image_url": await _resolve_menu_image_url(image_gcs_path)}
+
+
+@router.delete("/restaurants/{restaurant_id}/menu-items/{item_id}/photo")
+async def delete_menu_item_photo(
+    restaurant_id: str,
+    item_id: str,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    user_email = str(current_user.get("email") or "")
+    row = await db.fetchrow(
+        f"""
+        SELECT r.*
+        FROM restaurants r
+        WHERE r.id=$1 AND {_restaurant_catalog_manage_sql('r', '$2', '$3')}
+        """,
+        restaurant_id,
+        user_id,
+        user_email,
+    )
+    if not row:
+        raise HTTPException(403, "Only a matching restaurant email or workspace owner/editor can update this restaurant's menu photos")
+    item_row = await db.fetchrow(
+        "SELECT image_gcs_path FROM restaurant_menu_items WHERE id=$1::uuid AND restaurant_id=$2::uuid",
+        item_id,
+        restaurant_id,
+    )
+    if not item_row:
+        raise HTTPException(404, "Menu item not found")
+    await db.execute(
+        "UPDATE restaurant_menu_items SET image_gcs_path=NULL, updated_at=NOW() WHERE id=$1",
+        item_id,
+    )
+    return {"item_id": item_id, "image_url": None}
+
+
+class MenuItemUpdateRequest(BaseModel):
+    """Every field optional -- PATCH semantics, only sent fields change.
+    Mirrors the shape of restaurant_intelligence.py's menu item extraction
+    (item_name/category/price/currency/quantity/description/dietary_tags/
+    spice_level/availability), the same fields the mobile app's new
+    "Edit" button on a menu item lets an owner change after the fact."""
+
+    item_name: Optional[str] = None
+    category: Optional[str] = None
+    price: Optional[float] = None
+    currency: Optional[str] = None
+    quantity: Optional[str] = None
+    description: Optional[str] = None
+    dietary_tags: Optional[list[str]] = None
+    spice_level: Optional[str] = None
+    availability: Optional[str] = None
+
+
+@router.patch("/restaurants/{restaurant_id}/menu-items/{item_id}")
+async def update_menu_item(
+    restaurant_id: str,
+    item_id: str,
+    body: MenuItemUpdateRequest,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Edit a single already-saved menu item -- name, category, price, qty,
+    description, dietary tags, spice level, availability. Until now a menu
+    item could only be corrected by re-recording the whole menu via voice
+    scribe; this lets an owner fix a typo or price without doing that.
+    Same catalog-management permission as the photo endpoints above.
+
+    A successful edit also schedules a background resync of the
+    restaurant's transcript/menu document (see _resync_restaurant_document_task
+    below): the document is what the chat assistant's document-grounded
+    search is embedded from, so a price/description/qty change that only
+    touched restaurant_menu_items would otherwise leave "menu discovery"
+    answering from stale text."""
+    user_id = str(current_user["id"])
+    user_email = str(current_user.get("email") or "")
+    row = await db.fetchrow(
+        f"""
+        SELECT r.*
+        FROM restaurants r
+        WHERE r.id=$1 AND {_restaurant_catalog_manage_sql('r', '$2', '$3')}
+        """,
+        restaurant_id,
+        user_id,
+        user_email,
+    )
+    if not row:
+        raise HTTPException(403, "Only a matching restaurant email or workspace owner/editor can update this restaurant's menu")
+    restaurant_owner_id = str(row["user_id"])
+    restaurant_workspace_id = str(row["workspace_id"]) if row["workspace_id"] else None
+    item_row = await db.fetchrow(
+        "SELECT id FROM restaurant_menu_items WHERE id=$1::uuid AND restaurant_id=$2::uuid",
+        item_id,
+        restaurant_id,
+    )
+    if not item_row:
+        raise HTTPException(404, "Menu item not found")
+
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        item = await db.fetchrow("SELECT * FROM restaurant_menu_items WHERE id=$1::uuid", item_id)
+        return await _menu_row(dict(item))
+
+    sets: list[str] = []
+    params: list[Any] = [item_id]
+    i = 2
+    for key, value in updates.items():
+        if key == "dietary_tags":
+            sets.append(f"dietary_tags=${i}::jsonb")
+            params.append(json.dumps(value if isinstance(value, list) else []))
+        else:
+            sets.append(f"{key}=${i}")
+            params.append(value)
+        i += 1
+    sets.append("updated_at=NOW()")
+
+    row = await db.fetchrow(
+        f"UPDATE restaurant_menu_items SET {', '.join(sets)} WHERE id=$1::uuid RETURNING *",
+        *params,
+    )
+    await audit(
+        db,
+        user_id=user_id,
+        action="restaurant_menu_item_update",
+        resource_type="restaurant_menu_item",
+        resource_id=item_id,
+        metadata={"restaurant_id": restaurant_id, "fields": list(updates.keys())},
+    )
+    background_tasks.add_task(_resync_restaurant_document_task, restaurant_id, restaurant_owner_id, restaurant_workspace_id)
+    return await _menu_row(dict(row))
+
+
+class RestaurantTranscriptUpdateRequest(BaseModel):
+    text: str
+
+
+async def _restaurant_transcript_permission(db, restaurant_id: str, current_user) -> Any:
+    """Shared owner/editor permission check for every transcript-related
+    endpoint below (view, edit, list chunks, view a chunk) -- kept as one
+    helper so all of them enforce the exact same rule
+    (_restaurant_catalog_manage_sql) rather than drifting apart."""
+    user_id = str(current_user["id"])
+    user_email = str(current_user.get("email") or "")
+    restaurant = await db.fetchrow(
+        f"""
+        SELECT r.* FROM restaurants r
+        WHERE r.id=$1 AND {_restaurant_catalog_manage_sql('r', '$2', '$3')}
+        """,
+        restaurant_id,
+        user_id,
+        user_email,
+    )
+    if not restaurant:
+        raise HTTPException(403, "Only a matching restaurant email or workspace owner/editor can access this restaurant's transcript")
+    return restaurant
+
+
+@router.get("/restaurants/{restaurant_id}/transcript")
+async def get_restaurant_transcript(
+    restaurant_id: str,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """The restaurant's transcript/menu document, as currently saved and
+    embedded -- "this transcript user can view at any time" from the
+    Owner tab. Same document list_restaurant_documents/the Documents tab
+    already resolves (restaurants.source_run_id -> vertical_agent_runs.
+    document_id), just scoped to one restaurant and including the actual
+    text inline so the owner doesn't need a second view-url round trip.
+
+    Also returns chunk_count/error_message so the owner can see whether
+    re-chunking/re-embedding actually happened after a menu edit or a
+    direct transcript edit, not just that the save call succeeded --
+    status moves uploading -> chunking -> chunked -> embedding -> embedded
+    (or error, with error_message set), the same states the web Documents
+    tab shows via GET .../transcript/chunks below."""
+    restaurant = await _restaurant_transcript_permission(db, restaurant_id, current_user)
+    doc_id = await _resolve_restaurant_document_id(db, restaurant_id)
+    if not doc_id:
+        return {"document_id": None, "text": "", "status": None, "updated_at": None, "chunk_count": None, "error_message": None}
+    doc = await db.fetchrow(
+        "SELECT gcs_source_path, status, chunk_count, error_message, updated_at FROM documents WHERE id=$1",
+        doc_id,
+    )
+    text = ""
+    if doc and doc["gcs_source_path"]:
+        try:
+            text = await gcs.download_text(doc["gcs_source_path"])
+        except Exception:
+            log.warning("Could not read restaurant transcript text doc_id=%s", doc_id)
+    return {
+        "document_id": str(doc_id),
+        "text": text,
+        "status": doc["status"] if doc else None,
+        "updated_at": doc["updated_at"].isoformat() if doc and doc["updated_at"] else None,
+        "chunk_count": doc["chunk_count"] if doc else None,
+        "error_message": doc["error_message"] if doc else None,
+    }
+
+
+@router.get("/restaurants/{restaurant_id}/transcript/chunks")
+async def get_restaurant_transcript_chunks(
+    restaurant_id: str,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """The chunk breakdown of the restaurant's transcript/menu document --
+    same data the web Documents tab's ChunksViewer shows (index, word
+    count, GCS path per chunk), scoped to this restaurant and under the
+    restaurant-owner permission model rather than documents.py's own
+    workspace-membership check, so a restaurant owner who isn't a
+    workspace_members row (matched only by email on the restaurant) can
+    still see it. "I would like to see chunked menu data and whether
+    reembedding happens or not" -- this is that view, brought to mobile."""
+    await _restaurant_transcript_permission(db, restaurant_id, current_user)
+    doc_id = await _resolve_restaurant_document_id(db, restaurant_id)
+    if not doc_id:
+        raise HTTPException(404, "No transcript document exists yet for this restaurant")
+    doc = await db.fetchrow(
+        "SELECT user_id, status, chunk_count, error_message, updated_at FROM documents WHERE id=$1",
+        doc_id,
+    )
+    if not doc:
+        raise HTTPException(404, "Transcript document not found")
+    if doc["status"] not in ("chunked", "embedding", "embedded"):
+        return {
+            "document": {"status": doc["status"], "chunk_count": doc["chunk_count"], "error_message": doc["error_message"]},
+            "chunks": [],
+        }
+    try:
+        meta = await gcs.download_json(gcs.metadata_path(str(doc["user_id"]), str(doc_id)))
+    except Exception as exc:
+        raise HTTPException(404, f"Could not read chunk metadata: {exc}")
+    doc_summary = dict(meta.get("document") or {})
+    doc_summary["status"] = doc["status"]
+    doc_summary["chunk_count"] = doc["chunk_count"]
+    doc_summary["error_message"] = doc["error_message"]
+    doc_summary["updated_at"] = doc["updated_at"].isoformat() if doc["updated_at"] else None
+    return {"document": doc_summary, "chunks": meta.get("chunks", [])}
+
+
+@router.get("/restaurants/{restaurant_id}/transcript/chunks/{chunk_index}")
+async def get_restaurant_transcript_chunk_content(
+    restaurant_id: str,
+    chunk_index: int,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """A single chunk's full text, for the owner's chunk viewer -- the
+    mobile counterpart of the web Documents tab's per-chunk content view
+    (routes/documents.py's GET .../chunks/{chunk_index})."""
+    await _restaurant_transcript_permission(db, restaurant_id, current_user)
+    doc_id = await _resolve_restaurant_document_id(db, restaurant_id)
+    if not doc_id:
+        raise HTTPException(404, "No transcript document exists yet for this restaurant")
+    doc = await db.fetchrow("SELECT user_id, status FROM documents WHERE id=$1", doc_id)
+    if not doc or doc["status"] not in ("chunked", "embedding", "embedded"):
+        raise HTTPException(400, "Document has not been chunked yet")
+    meta = await gcs.download_json(gcs.metadata_path(str(doc["user_id"]), str(doc_id)))
+    chunk = next((c for c in meta.get("chunks", []) if int(c.get("index")) == chunk_index), None)
+    if not chunk or not chunk.get("gcs_path"):
+        raise HTTPException(404, "Chunk not found")
+    content = await gcs.download_text(chunk["gcs_path"])
+    return {"chunk_index": chunk_index, "content": content}
+
+
+@router.patch("/restaurants/{restaurant_id}/transcript")
+async def update_restaurant_transcript(
+    restaurant_id: str,
+    body: RestaurantTranscriptUpdateRequest,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Lets the owner directly edit the transcript/menu document's text.
+    Two things happen on save, in order:
+
+    1. The edited text is parsed (_parse_restaurant_document_text) and
+       any recognizable price/quantity/description changes -- plus
+       brand-new menu items -- are written back onto the LIVE
+       restaurant_menu_items rows (_sync_menu_items_from_transcript_text).
+       Before this, a transcript edit only ever changed the embedded
+       document text; the actual menu (what chat's direct-DB lookup and
+       the owner/customer menu screens read) never moved, which was the
+       reported bug ("when I updates menu price it updates transcript...
+       [but editing the transcript didn't update the menu]").
+    2. The document text is then REBUILT from the now-updated DB
+       (_build_restaurant_packet_from_db + _restaurant_document_text_
+       from_packet) and re-embedded via _reembed_restaurant_document --
+       the exact chunk/embed pipeline scribe approval and the menu-item-
+       edit resync both use. This is what makes the two directions
+       (edit menu -> transcript resyncs; edit transcript -> menu syncs)
+       converge on the same canonical text instead of drifting apart."""
+    restaurant = await _restaurant_transcript_permission(db, restaurant_id, current_user)
+    user_id = str(current_user["id"])
+    doc_id = await _resolve_restaurant_document_id(db, restaurant_id)
+    if not doc_id:
+        raise HTTPException(404, "No transcript document exists yet for this restaurant")
+    text = sanitize_text_for_storage(body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Transcript text cannot be empty")
+    restaurant_workspace_id = str(restaurant["workspace_id"]) if restaurant["workspace_id"] else None
+
+    sync_result = await _sync_menu_items_from_transcript_text(
+        db, restaurant_id, str(restaurant["user_id"]), restaurant_workspace_id, text
+    )
+
+    packet = await _build_restaurant_packet_from_db(db, restaurant_id)
+    canonical_text = _restaurant_document_text_from_packet(packet)
+    profile = packet.get("restaurant_profile") or {}
+
+    try:
+        await _reembed_restaurant_document(
+            db,
+            str(doc_id),
+            str(restaurant["user_id"]),
+            restaurant_workspace_id,
+            canonical_text,
+            restaurant_id,
+            filename=f"{profile.get('name') or restaurant['name'] or 'Restaurant'} Menu",
+        )
+    except Exception as exc:
+        raise HTTPException(500, f"Menu items were updated, but re-embedding the transcript failed: {exc}")
+
+    await audit(
+        db,
+        user_id=user_id,
+        action="restaurant_transcript_update",
+        resource_type="document",
+        resource_id=str(doc_id),
+        metadata={
+            "restaurant_id": restaurant_id,
+            "menu_items_updated": sync_result["updated"],
+            "menu_items_inserted": sync_result["inserted"],
+        },
+        ip_address=ip_from(request),
+        user_agent=ua_from(request),
+    )
+    return {
+        "document_id": str(doc_id),
+        "text": canonical_text,
+        "status": "embedded",
+        "menu_items_updated": sync_result["updated"],
+        "menu_items_inserted": sync_result["inserted"],
+    }
 
 
 @router.delete("/restaurants/{restaurant_id}")
@@ -718,6 +1291,69 @@ async def delete_restaurant(
     }
 
 
+# Known spelling/transliteration variants customers actually type for a
+# dish whose stored item_name/category uses a different canonical
+# spelling (see services/restaurant_agent_tools.py's _known_category,
+# which always writes "Biryani", never "Biriyani"). routes/chat.py's
+# _meaningful_restaurant_tokens already folds these same variants for
+# free-text chat questions; without the same folding here, the Discover
+# tab's plain text search ("Biriyani") could find literally nothing for
+# a dish chat could answer about, which is confusing for a customer who
+# has no reason to know which spelling is "the real one".
+_MENU_SEARCH_TERM_ALIASES = {
+    "biriyani": "biryani",
+    "biriani": "biryani",
+    "buriyani": "biryani",
+    "beriyani": "biryani",
+    "goad": "goat",
+    "good": "goat",
+    "goatdum": "goat",
+    "goadum": "goat",
+    "mutton": "goat",
+}
+
+
+def _normalize_menu_search_query(query: str) -> str:
+    """Folds known spelling variants into their canonical stored form
+    (see _MENU_SEARCH_TERM_ALIASES) before it's used to build an ILIKE
+    pattern. Multi-word queries are normalized word-by-word so "veg
+    biriyani" still matches a stored "Veg Biryani" item."""
+    words = re.findall(r"[a-zA-Z0-9']+", query or "")
+    if not words:
+        return query or ""
+    return " ".join(_MENU_SEARCH_TERM_ALIASES.get(w.lower(), w) for w in words)
+
+
+def _fuzzy_filter_menu_rows(rows: list, query: str, limit: int = 100) -> list:
+    """Token-level fuzzy fallback for when an exact ILIKE search (even
+    after _normalize_menu_search_query) finds nothing -- catches a typo
+    or a transliteration variant that isn't in the hardcoded alias list,
+    using the same SequenceMatcher-based tolerance routes/chat.py's menu
+    item scoring already relies on for chat answers. Only called when
+    the exact search already came back empty, so this never changes
+    results for a query that already matches something literally."""
+    query_tokens = [t.lower() for t in re.findall(r"[a-zA-Z0-9']+", query or "") if len(t) > 2]
+    if not query_tokens:
+        return []
+    scored: list[tuple[int, Any]] = []
+    for row in rows:
+        haystack = " ".join(
+            str(_row_get(row, key) or "") for key in ("item_name", "description", "restaurant_name", "category")
+        ).lower()
+        haystack_tokens = re.findall(r"[a-zA-Z0-9']+", haystack)
+        matched = 0
+        for qt in query_tokens:
+            if qt in haystack:
+                matched += 1
+                continue
+            if any(SequenceMatcher(None, qt, ht).ratio() >= 0.82 for ht in haystack_tokens):
+                matched += 1
+        if matched:
+            scored.append((matched, row))
+    scored.sort(key=lambda pair: (-pair[0], (_row_get(pair[1], "price") if _row_get(pair[1], "price") is not None else float("inf"))))
+    return [row for _, row in scored[:limit]]
+
+
 @router.get("/menu/search")
 async def search_menu(
     current_user: CurrentUser,
@@ -726,14 +1362,17 @@ async def search_menu(
     dietary_tag: str = Query(""),
     max_price: float | None = Query(None),
     workspace_id: str | None = Query(None),
+    marketplace: bool = Query(False, description="If true, ignore workspace_id and search across restaurants opted into the public marketplace"),
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
     if await _can_restore_restaurants(db, user_id, workspace_id):
         await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
-    q = f"%{query.strip()}%" if query.strip() else "%"
-    rows = await db.fetch(
-        f"""
+    raw_query = query.strip()
+    normalized_query = _normalize_menu_search_query(raw_query)
+    q = f"%{normalized_query}%" if normalized_query else "%"
+
+    sql = """
         SELECT mi.*, r.name AS restaurant_name, r.address, r.address AS restaurant_address,
                r.phone AS restaurant_phone, r.email AS restaurant_email, r.cuisine_type,
                COALESCE(fb.rating_count, 0)::int AS rating_count,
@@ -747,7 +1386,7 @@ async def search_menu(
                    COUNT(*)::int AS rating_count,
                    ROUND(AVG(rating)::numeric, 2) AS avg_rating,
                    COUNT(*) FILTER (WHERE verified_order)::int AS verified_rating_count,
-                   COALESCE(jsonb_agg(signals) FILTER (WHERE signals <> '{{}}'::jsonb), '[]'::jsonb) AS feedback_signals
+                   COALESCE(jsonb_agg(signals) FILTER (WHERE signals <> '{}'::jsonb), '[]'::jsonb) AS feedback_signals
             FROM restaurant_feedback
             WHERE status <> 'dismissed' AND menu_item_id IS NOT NULL
             GROUP BY menu_item_id
@@ -760,18 +1399,43 @@ async def search_menu(
               WHERE tag ILIKE '%' || $4 || '%'
           ))
           AND ($5::numeric IS NULL OR mi.price <= $5::numeric)
-          AND ($6::uuid IS NULL OR r.workspace_id=$6::uuid OR r.workspace_id IS NULL)
+          AND (
+            ($7 AND r.marketplace_visible = TRUE)
+            OR (NOT $7 AND ($6::uuid IS NULL OR r.workspace_id=$6::uuid OR r.workspace_id IS NULL))
+          )
         ORDER BY r.workspace_id NULLS LAST, mi.price NULLS LAST, r.name, mi.item_name
         LIMIT 100
-        """,
-        query.strip(),
+    """
+    rows = await db.fetch(
+        sql,
+        normalized_query,
         q,
         cuisine_type.strip(),
         dietary_tag.strip(),
         max_price,
         workspace_id,
+        marketplace,
     )
-    return {"items": [_menu_search_row(row) for row in rows]}
+    if not rows and raw_query:
+        # The exact (even alias-normalized) ILIKE search found nothing --
+        # broaden to every row the same cuisine/dietary/price/marketplace
+        # scoping would otherwise allow, then fuzzy-match the original
+        # query against it in Python (_fuzzy_filter_menu_rows). Keeps a
+        # typo or an unlisted transliteration variant from being a dead
+        # end, the same tolerance routes/chat.py already has for the
+        # same underlying data.
+        broad_rows = await db.fetch(
+            sql,
+            "",
+            "%",
+            cuisine_type.strip(),
+            dietary_tag.strip(),
+            max_price,
+            workspace_id,
+            marketplace,
+        )
+        rows = _fuzzy_filter_menu_rows(broad_rows, raw_query, limit=100)
+    return {"items": [await _menu_search_row(row) for row in rows]}
 
 
 @router.get("/menu/compare")
@@ -780,14 +1444,17 @@ async def compare_menu_prices(
     query: str = Query(..., min_length=1),
     cuisine_type: str = Query(""),
     workspace_id: str | None = Query(None),
+    marketplace: bool = Query(False, description="If true, ignore workspace_id and compare across restaurants opted into the public marketplace"),
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
     if await _can_restore_restaurants(db, user_id, workspace_id):
         await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
-    q = f"%{query.strip()}%"
-    rows = await db.fetch(
-        f"""
+    raw_query = query.strip()
+    normalized_query = _normalize_menu_search_query(raw_query)
+    q = f"%{normalized_query}%"
+
+    sql = """
         SELECT mi.*, r.name AS restaurant_name, r.address, r.address AS restaurant_address,
                r.phone AS restaurant_phone, r.email AS restaurant_email, r.cuisine_type,
                COALESCE(fb.rating_count, 0)::int AS rating_count,
@@ -801,7 +1468,7 @@ async def compare_menu_prices(
                    COUNT(*)::int AS rating_count,
                    ROUND(AVG(rating)::numeric, 2) AS avg_rating,
                    COUNT(*) FILTER (WHERE verified_order)::int AS verified_rating_count,
-                   COALESCE(jsonb_agg(signals) FILTER (WHERE signals <> '{{}}'::jsonb), '[]'::jsonb) AS feedback_signals
+                   COALESCE(jsonb_agg(signals) FILTER (WHERE signals <> '{}'::jsonb), '[]'::jsonb) AS feedback_signals
             FROM restaurant_feedback
             WHERE status <> 'dismissed' AND menu_item_id IS NOT NULL
             GROUP BY menu_item_id
@@ -809,15 +1476,34 @@ async def compare_menu_prices(
         WHERE TRUE
           AND (mi.item_name ILIKE $1 OR mi.description ILIKE $1)
           AND ($2='' OR r.cuisine_type ILIKE '%' || $2 || '%')
-          AND ($3::uuid IS NULL OR r.workspace_id=$3::uuid OR r.workspace_id IS NULL)
+          AND (
+            ($4 AND r.marketplace_visible = TRUE)
+            OR (NOT $4 AND ($3::uuid IS NULL OR r.workspace_id=$3::uuid OR r.workspace_id IS NULL))
+          )
         ORDER BY r.workspace_id NULLS LAST, mi.price NULLS LAST, r.name, mi.item_name
         LIMIT 100
-        """,
+    """
+    rows = await db.fetch(
+        sql,
         q,
         cuisine_type.strip(),
         workspace_id,
+        marketplace,
     )
-    items = [_menu_search_row(row) for row in rows]
+    if not rows:
+        # Same exact-search-found-nothing fallback as /menu/search: widen
+        # to every row the cuisine/marketplace scoping would otherwise
+        # allow (item_name/description ILIKE '%' matches everything) and
+        # fuzzy-match the original query against it.
+        broad_rows = await db.fetch(
+            sql,
+            "%",
+            cuisine_type.strip(),
+            workspace_id,
+            marketplace,
+        )
+        rows = _fuzzy_filter_menu_rows(broad_rows, raw_query, limit=100)
+    items = [await _menu_search_row(row) for row in rows]
     prices = [item["price"] for item in items if item.get("price") is not None]
     return {
         "query": query,
@@ -835,6 +1521,7 @@ async def recommend_restaurant_menu(
     cuisine_type: str = Query(""),
     max_price: float | None = Query(None),
     workspace_id: str | None = Query(None),
+    marketplace: bool = Query(False, description="If true, ignore workspace_id and recommend across restaurants opted into the public marketplace"),
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
@@ -863,7 +1550,10 @@ async def recommend_restaurant_menu(
           AND ($1='' OR mi.item_name ILIKE $2 OR mi.description ILIKE $2 OR r.name ILIKE $2 OR r.cuisine_type ILIKE $2)
           AND ($3='' OR r.cuisine_type ILIKE '%' || $3 || '%')
           AND ($4::numeric IS NULL OR mi.price <= $4::numeric)
-          AND ($5::uuid IS NULL OR r.workspace_id=$5::uuid OR r.workspace_id IS NULL)
+          AND (
+            ($6 AND r.marketplace_visible = TRUE)
+            OR (NOT $6 AND ($5::uuid IS NULL OR r.workspace_id=$5::uuid OR r.workspace_id IS NULL))
+          )
           AND LOWER(COALESCE(mi.availability, 'available')) <> 'unavailable'
         LIMIT 150
         """,
@@ -872,12 +1562,13 @@ async def recommend_restaurant_menu(
         cuisine_type.strip(),
         max_price,
         workspace_id,
+        marketplace,
     )
     items = []
     prices = [float(row["price"]) for row in rows if row["price"] is not None]
     max_seen_price = max(prices) if prices else None
     for row in rows:
-        item = _menu_search_row(row)
+        item = await _menu_search_row(row)
         item["recommendation_score"] = _restaurant_recommendation_score(item, query, max_seen_price)
         item["recommendation_reason"] = _restaurant_recommendation_reason(item)
         items.append(item)
@@ -972,11 +1663,21 @@ async def create_restaurant_order_draft(
     )
     if not restaurant:
         raise HTTPException(404, "Restaurant was not found or is not accessible")
-    requested_workspace_id = _id_text(body.workspace_id)
+    # The order's workspace_id always comes from the restaurant's OWN row
+    # (set just below as `workspace_id = restaurant_workspace_id`), never
+    # from the client. This used to also require body.workspace_id to
+    # exactly match and 403 otherwise, but the mobile app's cart is built
+    # from menu search/compare/recommend results and the chat assistant's
+    # "add to cart" actions -- none of which ever returned a workspace_id
+    # to send back (only restaurant listing/detail endpoints did) -- so a
+    # mobile-built cart for any workspace-owned restaurant always failed
+    # this guard. It was never a real access control (ordering from a
+    # restaurant has never been restricted to workspace members -- there's
+    # no such check on the menu_rows fetch above either), just a
+    # consistency check on a value the server already derives itself, so
+    # dropping the comparison is safe.
     restaurant_workspace_raw = _row_get(restaurant, "workspace_id")
     restaurant_workspace_id = str(restaurant_workspace_raw) if restaurant_workspace_raw else None
-    if requested_workspace_id != restaurant_workspace_id:
-        raise HTTPException(403, "Carryout orders must be created in the same workspace as the restaurant menu")
     for row in menu_rows:
         menu_workspace_raw = _row_get(row, "restaurant_workspace_id")
         menu_workspace_id = str(menu_workspace_raw) if menu_workspace_raw else None
@@ -1372,7 +2073,7 @@ async def list_my_restaurant_feedback(
         JOIN restaurants r ON r.id=f.restaurant_id
         LEFT JOIN restaurant_menu_items mi ON mi.id=f.menu_item_id
         WHERE f.customer_user_id=$1::uuid
-          AND (($2::uuid IS NULL AND f.workspace_id IS NULL) OR f.workspace_id=$2::uuid)
+          AND ($2::uuid IS NULL OR f.workspace_id=$2::uuid)
         ORDER BY f.created_at DESC
         LIMIT 100
         """,
@@ -1400,8 +2101,7 @@ async def list_restaurant_owner_feedback(
         LEFT JOIN users u ON u.id=f.customer_user_id
         WHERE {_restaurant_order_manage_sql("r", "$1", "$1")}
           AND ($2='' OR f.status=$2)
-          AND (($3::uuid IS NULL AND f.workspace_id IS NULL AND r.workspace_id IS NULL)
-               OR (f.workspace_id=$3::uuid AND r.workspace_id=$3::uuid))
+          AND ($3::uuid IS NULL OR f.workspace_id=$3::uuid)
         ORDER BY f.created_at DESC
         LIMIT 150
         """,
@@ -1431,8 +2131,7 @@ async def update_restaurant_feedback_status(
         JOIN restaurants r ON r.id=f.restaurant_id
         WHERE f.id=$1::uuid
           AND {_restaurant_order_manage_sql("r", "$2", "$2")}
-          AND (($3::uuid IS NULL AND f.workspace_id IS NULL AND r.workspace_id IS NULL)
-               OR (f.workspace_id=$3::uuid AND r.workspace_id=$3::uuid))
+          AND ($3::uuid IS NULL OR f.workspace_id=$3::uuid)
         """,
         feedback_id,
         user_email,
@@ -1496,7 +2195,7 @@ async def list_my_restaurant_orders(
         JOIN restaurants r ON r.id=o.restaurant_id
         LEFT JOIN restaurant_order_items oi ON oi.order_id=o.id
         WHERE o.customer_user_id=$1::uuid
-          AND (($2::uuid IS NULL AND o.workspace_id IS NULL) OR o.workspace_id=$2::uuid)
+          AND ($2::uuid IS NULL OR o.workspace_id=$2::uuid)
         GROUP BY o.id, r.id
         ORDER BY o.created_at DESC
         LIMIT 100
@@ -1559,8 +2258,7 @@ async def list_restaurant_owner_orders(
         WHERE {_restaurant_order_manage_sql("r", "$1", "$1")}
           AND o.status NOT IN ('draft', 'payment_pending', 'payment_failed')
           AND ($2='' OR o.status=$2)
-          AND (($3::uuid IS NULL AND o.workspace_id IS NULL AND r.workspace_id IS NULL)
-               OR (o.workspace_id=$3::uuid AND r.workspace_id=$3::uuid))
+          AND ($3::uuid IS NULL OR o.workspace_id=$3::uuid)
         GROUP BY o.id, r.id
         ORDER BY o.created_at DESC
         LIMIT 150
@@ -1614,6 +2312,78 @@ async def complete_restaurant_order(
     db=Depends(get_db),
 ):
     return await _owner_transition_order_endpoint(db, request, current_user, order_id, "completed", "completed", body.notes or "Order completed", "completed_at", body.workspace_id)
+
+
+@router.get("/notifications")
+async def list_restaurant_notifications(
+    current_user: CurrentUser,
+    status: str = Query("", description="Filter by status, e.g. 'unread'. Empty = all."),
+    limit: int = Query(50, ge=1, le=200),
+    db=Depends(get_db),
+):
+    """In-app notification feed for the signed-in user (customer order
+    updates, owner new-order alerts) -- backs the mobile app's notification
+    bell. Reuses the restaurant_notifications table that
+    _record_restaurant_notification already writes to on every order
+    transition (see _notify_restaurant_owner/_notify_restaurant_customer
+    above); this is simply the first reader of it -- the web app has never
+    exposed an in-app feed, only the parallel email notification."""
+    user_id = str(current_user["id"])
+    rows = await db.fetch(
+        """
+        SELECT n.*, r.name AS restaurant_name
+        FROM restaurant_notifications n
+        JOIN restaurants r ON r.id=n.restaurant_id
+        WHERE n.user_id=$1::uuid
+          AND n.channel='in_app'
+          AND ($2='' OR n.status=$2)
+        ORDER BY n.created_at DESC
+        LIMIT $3
+        """,
+        user_id,
+        status.strip(),
+        limit,
+    )
+    unread_count = await db.fetchval(
+        "SELECT COUNT(*) FROM restaurant_notifications WHERE user_id=$1::uuid AND channel='in_app' AND status='unread'",
+        user_id,
+    )
+    return {"notifications": [_order_row(row) for row in rows], "unread_count": int(unread_count or 0)}
+
+
+@router.post("/notifications/{notification_id}/read")
+async def mark_restaurant_notification_read(
+    notification_id: str,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    row = await db.fetchrow(
+        "SELECT id FROM restaurant_notifications WHERE id=$1::uuid AND user_id=$2::uuid AND channel='in_app'",
+        notification_id,
+        user_id,
+    )
+    if not row:
+        raise HTTPException(404, "Notification not found")
+    await db.execute(
+        "UPDATE restaurant_notifications SET status='read', read_at=NOW() WHERE id=$1::uuid",
+        notification_id,
+    )
+    return {"ok": True}
+
+
+@router.post("/notifications/read-all")
+async def mark_all_restaurant_notifications_read(
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    await db.execute(
+        "UPDATE restaurant_notifications SET status='read', read_at=NOW() WHERE user_id=$1::uuid AND channel='in_app' AND status='unread'",
+        user_id,
+    )
+    return {"ok": True}
+
 
 
 @router.post("/payments/webhook")
@@ -1944,8 +2714,8 @@ async def _save_restaurant_packet(
             """
             INSERT INTO restaurant_menu_items
               (restaurant_id, user_id, workspace_id, category, item_name, price, currency,
-               quantity, description, ingredients, dietary_tags, spice_level, availability, options, metadata)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14::jsonb,$15::jsonb)
+               quantity, description, ingredients, dietary_tags, spice_level, availability, options, metadata, image_gcs_path)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14::jsonb,$15::jsonb,$16)
             """,
             restaurant_id,
             user_id,
@@ -1962,6 +2732,7 @@ async def _save_restaurant_packet(
             item.get("availability") or "available",
             json.dumps(item.get("options") if isinstance(item.get("options"), list) else []),
             json.dumps({"source_run_id": run_id}),
+            item.get("image_gcs_path") or None,
         )
     return restaurant_id
 
@@ -2097,10 +2868,16 @@ async def _persist_workflow_transcript(
     )
 
 
-async def _persist_approved_restaurant_document(db, doc_id: str, user_id: str, workspace_id: str | None, packet: dict[str, Any]) -> None:
-    doc_id = _id_text(doc_id)
-    user_id = _id_text(user_id)
-    workspace_id = _id_text(workspace_id)
+def _restaurant_document_text_from_packet(packet: dict[str, Any]) -> str:
+    """The canonical, chat-searchable text for a restaurant's menu
+    document -- same shape used at scribe-approval time and, now, any
+    time the owner edits a menu item (see _reembed_restaurant_document's
+    callers). This is literally what gets chunked + embedded, so it's
+    also what the chat assistant's document-grounded search sees (the
+    chat system ALSO queries restaurant_menu_items directly via
+    routes/chat.py's _fetch_restaurant_menu_rows, but this text is what
+    backs free-text/semantic search over the "Restaurant Document
+    Source" -- menu discovery needs both in sync)."""
     profile = packet.get("restaurant_profile") or {}
     lines = [
         f"Restaurant: {profile.get('name') or 'Unnamed Restaurant'}",
@@ -2117,93 +2894,416 @@ async def _persist_approved_restaurant_document(db, doc_id: str, user_id: str, w
         price = item.get("price")
         price_text = f"${price}" if price is not None else "price not provided"
         lines.append(f"- {item.get('item_name')}: {price_text}; {item.get('quantity') or ''}; {item.get('description') or ''}")
-    text = sanitize_text_for_storage("\n".join(lines))
-    source_path = await db.fetchval("SELECT gcs_source_path FROM documents WHERE id=$1", doc_id)
-    if source_path:
-        await gcs.upload_text(source_path, text)
-    await delete_document_vectors(doc_id)
-    doc_meta = {
-        "document_id": doc_id,
-        "user_id": user_id,
-        "filename": f"{profile.get('name') or 'Restaurant'} Menu",
-        "file_type": "text",
-        "source_kind": "restaurant_menu_scribe",
-        "workflow_id": RESTAURANT_WORKFLOW_ID,
-        "restaurant_id": packet.get("restaurant_id"),
+    return sanitize_text_for_storage("\n".join(lines))
+
+
+_RESTAURANT_DOC_MENU_LINE_RE = re.compile(r"^-\s*(.+?):\s*(.*?)\s*;\s*(.*?)\s*;\s*(.*)$")
+
+
+def _parse_restaurant_document_text(text: str) -> dict[str, Any]:
+    """Reverse of _restaurant_document_text_from_packet: parses the
+    canonical transcript/document text format back into a
+    {restaurant_profile, menu_items} packet so a direct owner edit to
+    the transcript (PATCH .../transcript) can be synced back into the
+    structured restaurants/restaurant_menu_items rows that the rest of
+    the system actually reads from (chat's direct-DB menu lookup, the
+    owner's menu list, the customer-facing menu/search) -- without this,
+    editing a price in the transcript box only changed the embedded
+    document text, never the live menu, which is the bug this fixes.
+
+    Tolerant of extra/reordered/missing header lines and blank lines;
+    menu lines are only recognized once a "Menu:" header line has been
+    seen, in the "- name: price; qty; description" shape. A line that
+    doesn't match that shape (e.g. the owner added a free-form note) is
+    ignored rather than guessed at, so it never corrupts a real item."""
+    profile: dict[str, Any] = {}
+    menu_items: list[dict[str, Any]] = []
+    in_menu = False
+    header_map = {
+        "restaurant": "name",
+        "cuisine": "cuisine_type",
+        "address": "address",
+        "phone": "phone",
+        "description": "description",
     }
-    chunks = chunk_text(text, doc_meta=doc_meta)
-    if not chunks:
-        raise RestaurantIntelligenceError("Restaurant menu approval produced no chunks")
-    for chunk in chunks:
-        await gcs.upload_text(gcs.chunk_path(user_id, doc_id, chunk.index), chunk.text)
-    now = datetime.now(timezone.utc).isoformat()
-    meta_obj = {
-        "document": {
-            "id": doc_id,
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.lower() == "menu:":
+            in_menu = True
+            continue
+        if not in_menu:
+            if ":" in line:
+                key, _, value = line.partition(":")
+                key_norm = key.strip().lower()
+                if key_norm in header_map:
+                    profile[header_map[key_norm]] = value.strip()
+            continue
+        match = _RESTAURANT_DOC_MENU_LINE_RE.match(line)
+        if not match:
+            continue
+        item_name = match.group(1).strip()
+        price_text = match.group(2).strip()
+        quantity = match.group(3).strip()
+        description = match.group(4).strip()
+        if not item_name:
+            continue
+        if not price_text:
+            price, price_provided = None, False
+        elif price_text.lower() == "price not provided":
+            price, price_provided = None, True
+        else:
+            cleaned = price_text.lstrip("$").replace(",", "").strip()
+            try:
+                price, price_provided = float(cleaned), True
+            except ValueError:
+                price, price_provided = None, False
+        menu_items.append({
+            "item_name": item_name,
+            "price": price,
+            "price_provided": price_provided,
+            "quantity": quantity,
+            "description": description,
+        })
+    return {"restaurant_profile": profile, "menu_items": menu_items}
+
+
+async def _build_restaurant_packet_from_db(db, restaurant_id: str) -> dict[str, Any]:
+    """Rebuilds the same {restaurant_profile, menu_items} packet shape
+    _restaurant_document_text_from_packet expects, but from the LIVE
+    restaurants/restaurant_menu_items rows instead of a freshly-approved
+    agent packet -- used to regenerate the transcript/document after an
+    owner edits a menu item (PATCH .../menu-items/{item_id}), so the
+    document (and its embeddings) never drift out of sync with what the
+    owner actually has saved."""
+    restaurant = await db.fetchrow(
+        "SELECT id, name, cuisine_type, address, phone, description FROM restaurants WHERE id=$1::uuid",
+        restaurant_id,
+    )
+    if not restaurant:
+        return {"restaurant_profile": {}, "menu_items": [], "restaurant_id": restaurant_id}
+    items = await db.fetch(
+        """
+        SELECT item_name, category, price, quantity, description
+        FROM restaurant_menu_items
+        WHERE restaurant_id=$1::uuid
+        ORDER BY category, item_name
+        """,
+        restaurant_id,
+    )
+    return {
+        "restaurant_profile": {
+            "name": restaurant["name"],
+            "cuisine_type": restaurant["cuisine_type"],
+            "address": restaurant["address"],
+            "phone": restaurant["phone"],
+            "description": restaurant["description"],
+        },
+        "menu_items": [
+            {
+                "item_name": row["item_name"],
+                "category": row["category"],
+                "price": float(row["price"]) if row["price"] is not None else None,
+                "quantity": row["quantity"],
+                "description": row["description"],
+            }
+            for row in items
+        ],
+        "restaurant_id": restaurant_id,
+    }
+
+
+async def _sync_menu_items_from_transcript_text(
+    db,
+    restaurant_id: str,
+    user_id: str,
+    workspace_id: str | None,
+    text: str,
+) -> dict[str, int]:
+    """Parses an owner's direct transcript edit (_parse_restaurant_document_text)
+    and applies any recognizable price/quantity/description changes --
+    plus brand-new menu items -- back onto the LIVE restaurant_menu_items
+    rows (and matching restaurant profile fields), so editing the
+    transcript actually updates the menu everywhere else it's read from,
+    not just the embedded document. Called from update_restaurant_transcript
+    BEFORE the text is re-embedded; the caller then rebuilds the canonical
+    document text from the now-updated DB (_build_restaurant_packet_from_db
+    + _restaurant_document_text_from_packet) so the embedded text and the
+    live menu always converge to the same values.
+
+    Existing menu items whose name isn't found in the text are left
+    alone, never deleted -- a line the parser silently failed to match
+    would otherwise erase real menu data. Returns counts so the caller
+    (and the owner, via the API response) can see what actually changed."""
+    parsed = _parse_restaurant_document_text(text)
+    profile = parsed.get("restaurant_profile") or {}
+
+    field_map = {"name": "name", "cuisine_type": "cuisine_type", "address": "address", "phone": "phone", "description": "description"}
+    profile_sets: list[str] = []
+    profile_params: list[Any] = [restaurant_id]
+    i = 2
+    for key, col in field_map.items():
+        value = profile.get(key)
+        if value:
+            profile_sets.append(f"{col}=${i}")
+            profile_params.append(value)
+            i += 1
+    if profile_sets:
+        profile_sets.append("updated_at=NOW()")
+        await db.execute(
+            f"UPDATE restaurants SET {', '.join(profile_sets)} WHERE id=$1::uuid",
+            *profile_params,
+        )
+
+    existing = await db.fetch(
+        "SELECT id, item_name FROM restaurant_menu_items WHERE restaurant_id=$1::uuid",
+        restaurant_id,
+    )
+    existing_by_name = {str(row["item_name"] or "").strip().lower(): row["id"] for row in existing}
+
+    updated_count = 0
+    inserted_count = 0
+    for item in parsed.get("menu_items") or []:
+        name = str(item.get("item_name") or "").strip()
+        if not name:
+            continue
+        existing_id = existing_by_name.get(name.lower())
+        if existing_id:
+            sets: list[str] = []
+            params: list[Any] = [existing_id]
+            j = 2
+            if item.get("price_provided"):
+                sets.append(f"price=${j}")
+                params.append(item.get("price"))
+                j += 1
+            if item.get("quantity"):
+                sets.append(f"quantity=${j}")
+                params.append(item.get("quantity"))
+                j += 1
+            if item.get("description"):
+                sets.append(f"description=${j}")
+                params.append(item.get("description"))
+                j += 1
+            if sets:
+                sets.append("updated_at=NOW()")
+                await db.execute(
+                    f"UPDATE restaurant_menu_items SET {', '.join(sets)} WHERE id=$1::uuid",
+                    *params,
+                )
+                updated_count += 1
+        else:
+            await db.execute(
+                """
+                INSERT INTO restaurant_menu_items
+                  (restaurant_id, user_id, workspace_id, category, item_name, price, currency,
+                   quantity, description, ingredients, dietary_tags, spice_level, availability, options, metadata)
+                VALUES ($1,$2,$3,'',$4,$5,'USD',$6,$7,'[]'::jsonb,'[]'::jsonb,'','available','[]'::jsonb,$8::jsonb)
+                """,
+                restaurant_id,
+                user_id,
+                workspace_id,
+                name,
+                item.get("price"),
+                item.get("quantity") or "",
+                item.get("description") or "",
+                json.dumps({"source": "transcript_edit"}),
+            )
+            inserted_count += 1
+    return {"updated": updated_count, "inserted": inserted_count}
+
+
+async def _resolve_restaurant_document_id(db, restaurant_id: str) -> str | None:
+    """restaurants.source_run_id -> vertical_agent_runs.document_id, the
+    same chain list_restaurant_documents/_restaurant_source_transcript
+    use elsewhere in this file to find a restaurant's transcript
+    document regardless of how it was originally recorded/uploaded."""
+    return await db.fetchval(
+        """
+        SELECT run.document_id
+        FROM restaurants r
+        JOIN vertical_agent_runs run ON run.id = r.source_run_id
+        WHERE r.id=$1::uuid
+        """,
+        restaurant_id,
+    )
+
+
+async def _reembed_restaurant_document(
+    db,
+    doc_id: str,
+    user_id: str,
+    workspace_id: str | None,
+    text: str,
+    restaurant_id: str | None,
+    filename: str | None = None,
+) -> None:
+    """Overwrites a restaurant's transcript/menu document with `text`,
+    deletes its old chunk vectors, and re-chunks + re-embeds the new
+    text -- the exact pipeline scribe approval has always used
+    (chunk_text -> per-chunk GCS upload -> store_chunk w/ a fresh
+    embedding), extracted here so BOTH scribe approval and any later
+    "menu item edited" / "owner edited the transcript directly" re-sync
+    can share it. Without this, an owner's PATCH to a menu item's price/
+    description/qty would update the live restaurant_menu_items row but
+    leave the embedded document (what the chat assistant's document
+    search is grounded in) silently stale."""
+    doc_id = _id_text(doc_id)
+    user_id = _id_text(user_id)
+    workspace_id = _id_text(workspace_id)
+
+    # Flip to "embedding" immediately, before any work starts, and clear
+    # any previous error -- so GET .../transcript (and the owner's chunk
+    # viewer) shows "Embedding..." right away instead of a stale status
+    # for however long chunking + embedding actually takes.
+    await db.execute(
+        "UPDATE documents SET status='embedding', updated_at=NOW(), error_message=NULL WHERE id=$1",
+        doc_id,
+    )
+
+    try:
+        source_path = await db.fetchval("SELECT gcs_source_path FROM documents WHERE id=$1", doc_id)
+        if source_path:
+            await gcs.upload_text(source_path, text)
+        await delete_document_vectors(doc_id)
+        doc_meta = {
+            "document_id": doc_id,
             "user_id": user_id,
-            "filename": doc_meta["filename"],
+            "filename": filename or "Restaurant Menu",
             "file_type": "text",
-            "total_chunks": len(chunks),
-            "created_at": now,
             "source_kind": "restaurant_menu_scribe",
             "workflow_id": RESTAURANT_WORKFLOW_ID,
-            "restaurant_id": packet.get("restaurant_id"),
-        },
-        "chunks": [
-            {
-                "index": c.index,
-                "word_count": c.word_count,
-                "char_count": c.char_count,
-                "gcs_path": gcs.chunk_path(user_id, doc_id, c.index),
+            "restaurant_id": restaurant_id,
+        }
+        chunks = chunk_text(text, doc_meta=doc_meta)
+        if not chunks:
+            raise RestaurantIntelligenceError("Restaurant transcript produced no chunks")
+        for chunk in chunks:
+            await gcs.upload_text(gcs.chunk_path(user_id, doc_id, chunk.index), chunk.text)
+        now = datetime.now(timezone.utc).isoformat()
+        meta_obj = {
+            "document": {
+                "id": doc_id,
+                "user_id": user_id,
+                "filename": doc_meta["filename"],
+                "file_type": "text",
+                "total_chunks": len(chunks),
+                "created_at": now,
                 "source_kind": "restaurant_menu_scribe",
-                "restaurant_id": packet.get("restaurant_id"),
-            }
-            for c in chunks
-        ],
-    }
-    await gcs.upload_json(gcs.metadata_path(user_id, doc_id), meta_obj)
-    await db.execute(
-        """
-        UPDATE documents
-        SET status='embedding', chunk_count=$2, file_size=$3, updated_at=NOW(),
-            doc_metadata=COALESCE(doc_metadata, '{}'::jsonb) || $4::jsonb
-        WHERE id=$1
-        """,
-        doc_id,
-        len(chunks),
-        len(text.encode("utf-8")),
-        json.dumps({"restaurant_id": packet.get("restaurant_id"), "approved_restaurant_menu": True}),
-    )
-    await check_and_log_daily_event(
-        db,
-        user_id,
-        "embedding",
-        "max_embeds_day",
-        quantity=len(chunks),
-        metadata={"doc_id": doc_id, "chunk_count": len(chunks), "source_kind": "restaurant_menu_scribe"},
-    )
-    for chunk in chunks:
-        await store_chunk(
-            document_id=doc_id,
-            user_id=user_id,
-            workspace_id=workspace_id,
-            chunk_index=chunk.index,
-            chunk_total=len(chunks),
-            content=chunk.text,
-            embedding=await embed(chunk.text),
-            chunk_metadata=chunk.to_metadata(),
+                "workflow_id": RESTAURANT_WORKFLOW_ID,
+                "restaurant_id": restaurant_id,
+            },
+            "chunks": [
+                {
+                    "index": c.index,
+                    "word_count": c.word_count,
+                    "char_count": c.char_count,
+                    "gcs_path": gcs.chunk_path(user_id, doc_id, c.index),
+                    "source_kind": "restaurant_menu_scribe",
+                    "restaurant_id": restaurant_id,
+                }
+                for c in chunks
+            ],
+        }
+        await gcs.upload_json(gcs.metadata_path(user_id, doc_id), meta_obj)
+        await db.execute(
+            """
+            UPDATE documents
+            SET chunk_count=$2, file_size=$3, updated_at=NOW(),
+                doc_metadata=COALESCE(doc_metadata, '{}'::jsonb) || $4::jsonb
+            WHERE id=$1
+            """,
+            doc_id,
+            len(chunks),
+            len(text.encode("utf-8")),
+            json.dumps({"restaurant_id": restaurant_id, "approved_restaurant_menu": True}),
         )
-    await db.execute(
-        """
-        UPDATE documents
-        SET status='embedded', chunk_count=$2, file_size=$3, updated_at=NOW(),
-            doc_metadata=COALESCE(doc_metadata, '{}'::jsonb) || $4::jsonb
-        WHERE id=$1
-        """,
+        await check_and_log_daily_event(
+            db,
+            user_id,
+            "embedding",
+            "max_embeds_day",
+            quantity=len(chunks),
+            metadata={"doc_id": doc_id, "chunk_count": len(chunks), "source_kind": "restaurant_menu_scribe"},
+        )
+        for chunk in chunks:
+            await store_chunk(
+                document_id=doc_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                chunk_index=chunk.index,
+                chunk_total=len(chunks),
+                content=chunk.text,
+                embedding=await embed(chunk.text),
+                chunk_metadata=chunk.to_metadata(),
+            )
+        await db.execute(
+            """
+            UPDATE documents
+            SET status='embedded', chunk_count=$2, file_size=$3, updated_at=NOW(),
+                doc_metadata=COALESCE(doc_metadata, '{}'::jsonb) || $4::jsonb
+            WHERE id=$1
+            """,
+            doc_id,
+            len(chunks),
+            len(text.encode("utf-8")),
+            json.dumps({"restaurant_id": restaurant_id, "approved_restaurant_menu": True}),
+        )
+    except Exception as exc:
+        # Mirrors routes/documents.py's own chunk/embed pipeline: a failure
+        # partway through must not leave the document silently stuck on
+        # "Embedding..." forever -- the owner's transcript view needs to be
+        # able to show "Error" (and why), the same as the web Documents tab.
+        await db.execute(
+            "UPDATE documents SET status='error', error_message=$2, updated_at=NOW() WHERE id=$1",
+            doc_id,
+            str(exc)[:500],
+        )
+        raise
+
+
+async def _resync_restaurant_document_task(restaurant_id: str, user_id: str, workspace_id: str | None) -> None:
+    """Background task (see update_menu_item's background_tasks.add_task
+    call): after a menu item edit, rebuild the restaurant's transcript/
+    menu document from the live DB (current restaurant profile + every
+    current menu_items row) and re-embed it. Runs after the HTTP response
+    is already sent, on its own pool connection, since the request's own
+    `db` dependency is gone by the time a background task executes
+    (mirrors how the Stripe payment webhook acquires its own connection
+    above)."""
+    try:
+        pool = get_pool()
+        async with pool.acquire() as db:
+            doc_id = await _resolve_restaurant_document_id(db, restaurant_id)
+            if not doc_id:
+                return
+            packet = await _build_restaurant_packet_from_db(db, restaurant_id)
+            text = _restaurant_document_text_from_packet(packet)
+            profile = packet.get("restaurant_profile") or {}
+            await _reembed_restaurant_document(
+                db,
+                str(doc_id),
+                user_id,
+                workspace_id,
+                text,
+                restaurant_id,
+                filename=f"{profile.get('name') or 'Restaurant'} Menu",
+            )
+    except Exception:
+        log.exception("Failed to resync restaurant document after a menu item edit restaurant_id=%s", restaurant_id)
+
+
+async def _persist_approved_restaurant_document(db, doc_id: str, user_id: str, workspace_id: str | None, packet: dict[str, Any]) -> None:
+    text = _restaurant_document_text_from_packet(packet)
+    profile = packet.get("restaurant_profile") or {}
+    await _reembed_restaurant_document(
+        db,
         doc_id,
-        len(chunks),
-        len(text.encode("utf-8")),
-        json.dumps({"restaurant_id": packet.get("restaurant_id"), "approved_restaurant_menu": True}),
+        user_id,
+        workspace_id,
+        text,
+        packet.get("restaurant_id"),
+        filename=f"{profile.get('name') or 'Restaurant'} Menu",
     )
 
 
@@ -2339,14 +3439,66 @@ def _restaurant_row(row) -> dict[str, Any]:
     return {key: _clean(value) for key, value in data.items()}
 
 
-def _menu_row(row) -> dict[str, Any]:
+def _jsonb_list(value: Any) -> list:
+    """asyncpg has no jsonb codec registered on this pool (see
+    database/connection.py's create_pool call), so a JSONB column -- here,
+    restaurant_menu_items.dietary_tags/ingredients/options -- comes back as
+    the raw JSON text (e.g. '["vegetarian"]'), not a parsed list. Sending
+    that straight to the client crashed the mobile app's dietary_tags.join()
+    (TypeError: join is not a function) because it received a STRING where
+    EatsMenuItem.dietary_tags: string[] expected an array. Mirrors
+    chat_sessions.py's _parse_jsonb helper for the same asyncpg behavior."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except json.JSONDecodeError:
+            return []
+    return []
+
+
+def _jsonb_dict(value: Any) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+async def _menu_row(row) -> dict[str, Any]:
     data = dict(row)
-    return {key: _clean(value) for key, value in data.items()}
+    image_gcs_path = data.pop("image_gcs_path", None)
+    cleaned = {key: _clean(value) for key, value in data.items()}
+    if "dietary_tags" in cleaned:
+        cleaned["dietary_tags"] = _jsonb_list(cleaned["dietary_tags"])
+    if "ingredients" in cleaned:
+        cleaned["ingredients"] = _jsonb_list(cleaned["ingredients"])
+    if "options" in cleaned:
+        cleaned["options"] = _jsonb_list(cleaned["options"])
+    if "metadata" in cleaned:
+        cleaned["metadata"] = _jsonb_dict(cleaned["metadata"])
+    cleaned["image_url"] = await _resolve_menu_image_url(image_gcs_path)
+    return cleaned
 
 
-def _menu_search_row(row) -> dict[str, Any]:
-    data = _menu_row(row)
-    return data
+async def _menu_search_row(row) -> dict[str, Any]:
+    return await _menu_row(row)
+
+
+async def _resolve_menu_image_url(image_gcs_path: str | None) -> str | None:
+    if not image_gcs_path:
+        return None
+    try:
+        return await gcs.get_signed_url(image_gcs_path)
+    except Exception:
+        log.warning("Failed to sign restaurant menu item image url for %s", image_gcs_path)
+        return None
 
 
 def _row_get(row, key: str, default: Any = None) -> Any:
@@ -2378,8 +3530,7 @@ async def _fetch_order_record(
         LEFT JOIN users owner ON owner.id=r.user_id
         WHERE o.id=$1::uuid
           AND (o.customer_user_id=$2::uuid OR {_restaurant_order_manage_sql("r", "$2", "$3")})
-          AND (($4::uuid IS NULL AND o.workspace_id IS NULL AND r.workspace_id IS NULL)
-               OR (o.workspace_id=$4::uuid AND r.workspace_id=$4::uuid))
+          AND ($4::uuid IS NULL OR o.workspace_id=$4::uuid)
         """,
         order_id,
         user_id,

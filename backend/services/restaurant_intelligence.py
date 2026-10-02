@@ -107,7 +107,7 @@ Return JSON in this exact shape:
   "summary": "1-2 sentence menu summary",
   "items": [
     {{
-      "category": string,
+      "category": string (pick the single closest match from: "Appetizer", "Soup", "Salad", "Entree", "Side", "Dessert", "Beverage" -- use "Other" only if truly none fit; do not invent new category names, so the menu groups cleanly in the app),
       "item_name": string,
       "price": number|null,
       "currency": "USD",
@@ -151,7 +151,7 @@ Return JSON in this exact shape:
   }},
   "menu_items": [
     {{
-      "category": string,
+      "category": string (pick the single closest match from: "Appetizer", "Soup", "Salad", "Entree", "Side", "Dessert", "Beverage" -- use "Other" only if truly none fit; do not invent new category names, so the menu groups cleanly in the app),
       "item_name": string,
       "price": number|null,
       "currency": "USD",

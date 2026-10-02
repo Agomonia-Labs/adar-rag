@@ -67,6 +67,14 @@ class ChatRequest(BaseModel):
     agent_mode:   str = "auto"  # auto | off | force
     response_language: Literal["en", "es", "bn", "hi", "ar", "fr"] | None = None
     evidence_ranges: list[DocumentEvidenceRange] = Field(default_factory=list)
+    # ADAR Eats' customer-facing menu assistant: the caller usually isn't a
+    # restaurant owner and has no embedded documents of their own to pick --
+    # when true, skip the "select a document" requirement and widen the
+    # Restaurant DB Source lookup below to every marketplace-visible
+    # restaurant, not just ones the caller owns or is a workspace member of
+    # (mirrors the `marketplace` query param on /api/restaurant/restaurants,
+    # /menu/search, /menu/compare, /menu/recommend).
+    marketplace: bool = False
 
 
 @router.post("/stream")
@@ -78,7 +86,7 @@ async def chat_stream_endpoint(
 ):
     if not req.question.strip():
         raise HTTPException(400, "question must not be empty")
-    if not req.document_ids:
+    if not req.document_ids and not req.marketplace:
         raise HTTPException(400, "Select at least one embedded document to query")
 
     user_id = str(current_user["id"])
@@ -224,6 +232,7 @@ async def chat_stream_endpoint(
                                     workspace_id=req.workspace_id,
                                     question=question_for_model,
                                     chunks=chunks,
+                                    marketplace=req.marketplace,
                                 )
                                 restaurant_action_candidates = restaurant_meta.pop("action_candidates", []) or []
                         except Exception as exc:
@@ -554,10 +563,11 @@ async def _restaurant_db_context(
     workspace_id: str | None,
     question: str,
     chunks: list[dict] | None = None,
+    marketplace: bool = False,
 ) -> tuple[str, dict]:
     safe_workspace_id = _uuid_or_none(workspace_id)
     terms = _restaurant_query_terms(question)
-    rows = await _fetch_restaurant_menu_rows(db, user_id, safe_workspace_id, terms, limit=300)
+    rows = await _fetch_restaurant_menu_rows(db, user_id, safe_workspace_id, terms, limit=300, marketplace=marketplace)
     context_parts = _restaurant_context_parts(question, "", chunks or [])
     scored_rows = [
         (round(_restaurant_menu_match_score(row, context_parts), 3), row)
@@ -608,7 +618,9 @@ async def _restaurant_db_context(
     }
 
 
-async def _fetch_restaurant_menu_rows(db, user_id: str, workspace_id: str | None, terms: list[str], limit: int = 120):
+async def _fetch_restaurant_menu_rows(
+    db, user_id: str, workspace_id: str | None, terms: list[str], limit: int = 120, marketplace: bool = False
+):
     return await db.fetch(
         f"""
         SELECT mi.id, mi.restaurant_id, mi.category, mi.item_name, mi.price,
@@ -617,8 +629,11 @@ async def _fetch_restaurant_menu_rows(db, user_id: str, workspace_id: str | None
                r.name AS restaurant_name, r.address, r.phone, r.email, r.cuisine_type
         FROM restaurant_menu_items mi
         JOIN restaurants r ON r.id=mi.restaurant_id
-        WHERE {_restaurant_access_sql("r")}
-          AND ($2::uuid IS NULL OR r.workspace_id=$2::uuid OR r.workspace_id IS NULL)
+        WHERE (
+            {_restaurant_access_sql("r")}
+            OR ($5 AND r.marketplace_visible = TRUE)
+          )
+          AND ($5 OR $2::uuid IS NULL OR r.workspace_id=$2::uuid OR r.workspace_id IS NULL)
           AND LOWER(COALESCE(mi.availability, 'available')) <> 'unavailable'
           AND (
             cardinality($3::text[]) = 0
@@ -637,6 +652,7 @@ async def _fetch_restaurant_menu_rows(db, user_id: str, workspace_id: str | None
         workspace_id,
         terms,
         limit,
+        marketplace,
     )
 
 
