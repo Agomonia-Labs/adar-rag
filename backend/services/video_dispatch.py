@@ -30,7 +30,7 @@ async def create_or_reuse_video_job(
             await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", document_id)
             existing = await conn.fetchrow(
                 """
-                SELECT id, status,
+                SELECT id, status, input_data,
                        COALESCE(lease_expires_at, updated_at + ($2 * INTERVAL '1 second')) < NOW() AS stale
                   FROM video_processing_jobs
                  WHERE document_id=$1
@@ -43,7 +43,14 @@ async def create_or_reuse_video_job(
             if existing:
                 if existing["status"] in ACTIVE_VIDEO_JOB_STATUSES and not existing["stale"]:
                     return str(existing["id"]), True
-                checkpoint_exists = await conn.fetchval(
+                existing_input = existing["input_data"] if "input_data" in existing else {}
+                if isinstance(existing_input, str):
+                    existing_input = json.loads(existing_input or "{}")
+                same_profile = (
+                    (existing_input or {}).get("processing_profile", "standard")
+                    == payload.get("processing_profile", "standard")
+                )
+                checkpoint_exists = same_profile and await conn.fetchval(
                     "SELECT EXISTS(SELECT 1 FROM video_processing_checkpoints WHERE job_id=$1)",
                     existing["id"],
                 )

@@ -47,6 +47,7 @@ async def run(job_id: str) -> None:
             segment_seconds=int(payload.get("segment_seconds", 60)),
             embed_after_processing=bool(payload.get("embed_after_processing", True)),
             transcript_language=payload.get("transcript_language", "auto"),
+            processing_profile=payload.get("processing_profile", "standard"),
         )
     finally:
         await close_pool()

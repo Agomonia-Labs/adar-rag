@@ -19,6 +19,12 @@ from uuid import uuid4
 
 from database.connection import get_pool
 from services import storage as gcs
+from services.cultural_video_intelligence import (
+    CULTURAL_PERFORMANCE_PROFILE,
+    analyze_cultural_clip,
+    cultural_analysis_text,
+    normalize_processing_profile,
+)
 from services.notifications import send_video_processing_notification
 from services.text_safety import sanitize_text_for_storage
 from services.vectordb import delete_document_vectors, store_chunk
@@ -41,6 +47,9 @@ VIDEO_REMOTE_STAGE_RETRIES = int(os.getenv("VIDEO_REMOTE_STAGE_RETRIES", "3"))
 VIDEO_REMOTE_RETRY_DELAY_SECONDS = float(os.getenv("VIDEO_REMOTE_RETRY_DELAY_SECONDS", "3"))
 FFMPEG_COMMAND_TIMEOUT_SECONDS = int(os.getenv("FFMPEG_COMMAND_TIMEOUT_SECONDS", "180"))
 VIDEO_JOB_MAX_ATTEMPTS = max(1, int(os.getenv("VIDEO_JOB_MAX_ATTEMPTS", "3")))
+VIDEO_CULTURAL_CLIP_SECONDS = max(4, int(os.getenv("VIDEO_CULTURAL_CLIP_SECONDS", "12")))
+VIDEO_CULTURAL_MAX_SEGMENTS = max(1, int(os.getenv("VIDEO_CULTURAL_MAX_SEGMENTS", "24")))
+VIDEO_CULTURAL_CONCURRENCY = max(1, int(os.getenv("VIDEO_CULTURAL_CONCURRENCY", "2")))
 
 
 def is_video_file(filename: str = "", file_type: str = "", content_type: str = "") -> bool:
@@ -62,9 +71,11 @@ async def process_video_document(
     segment_seconds: int = DEFAULT_SEGMENT_SECONDS,
     embed_after_processing: bool = True,
     transcript_language: str = "auto",
+    processing_profile: str = "standard",
     job_id: str | None = None,
 ) -> dict[str, Any]:
     pool = get_pool()
+    processing_profile = normalize_processing_profile(processing_profile)
     job_id = job_id or str(uuid4())
     checkpoint_owner = checkpoints.worker_id()
     video_id: str | None = None
@@ -79,6 +90,7 @@ async def process_video_document(
             "segment_seconds": segment_seconds,
             "embed_after_processing": embed_after_processing,
             "transcript_language": transcript_language,
+            "processing_profile": processing_profile,
             "rights_confirmed": rights_confirmed,
         })
         await conn.execute(
@@ -221,7 +233,7 @@ async def process_video_document(
                 source_gcs_path,
                 frames_dir,
                 clips_dir,
-                json.dumps(metadata),
+                json.dumps({**metadata, "processing_profile": processing_profile}),
             )
             video_id = str(row["id"])
             await conn.execute(
@@ -315,13 +327,31 @@ async def process_video_document(
             message="Building timestamped video segments from transcript and sampled frames.",
         )
         segments = _build_segments(duration, segment_seconds, transcript, frames)
+        if processing_profile == CULTURAL_PERFORMANCE_PROFILE:
+            await _update_video_progress(
+                document_id,
+                step="analyzing_cultural_performance",
+                progress_pct=65,
+                message="Analyzing movement, music, observable expression, and cultural context.",
+            )
+            segments = await _enrich_cultural_segments(
+                document_id=document_id,
+                job_id=job_id,
+                checkpoint_owner=checkpoint_owner,
+                source_ref=source_ref,
+                segments=segments,
+                frames=frames,
+            )
         await _update_video_progress(
             document_id,
             step="creating_chunks",
             progress_pct=72,
             message="Creating searchable timestamped chunks for retrieval.",
         )
-        chunks = _build_video_chunks(document_id, user_id, filename, metadata, segments, frames, transcript)
+        chunks = _build_video_chunks(
+            document_id, user_id, filename, metadata, segments, frames, transcript,
+            processing_profile=processing_profile,
+        )
 
         await _update_video_progress(
             document_id,
@@ -385,12 +415,17 @@ async def process_video_document(
 
         output = {
             "video_id": video_id,
+            "processing_profile": processing_profile,
             "duration_seconds": duration,
             "frame_count": len(frames),
             "segment_count": len(segments),
             "chunk_count": len(chunks),
             "embed_status": embed_status,
             "embed_error": embed_error,
+            "cultural_segment_count": sum(
+                1 for segment in segments
+                if (segment.get("metadata") or {}).get("cultural_analysis", {}).get("analysis_status") == "completed"
+            ),
         }
         await _update_video_progress(
             document_id,
@@ -434,7 +469,8 @@ async def process_video_document(
                 conn, user_id=user_id, workspace_id=workspace_id,
                 event_type="video.processing.completed", resource_type="document", resource_id=document_id,
                 payload={"document_id": document_id, "filename": filename, "status": "completed",
-                         "stage": "video_processing", "chunk_count": len(chunks), "progress_pct": 100},
+                         "stage": "video_processing", "chunk_count": len(chunks), "progress_pct": 100,
+                         "processing_profile": processing_profile},
             )
         await _send_video_notification(
             user_id=user_id,
@@ -1157,6 +1193,154 @@ async def _google_speech_recognize(client: Any, api_key: str, audio_path: str, l
     return " ".join(p for p in parts if p).strip()
 
 
+async def _enrich_cultural_segments(
+    *,
+    document_id: str,
+    job_id: str,
+    checkpoint_owner: str,
+    source_ref: str,
+    segments: list[dict],
+    frames: list[dict],
+) -> list[dict]:
+    selected_indices = _select_segment_indices(len(segments), VIDEO_CULTURAL_MAX_SEGMENTS)
+    selected = [segments[index] for index in selected_indices]
+    semaphore = asyncio.Semaphore(VIDEO_CULTURAL_CONCURRENCY)
+    completed = 0
+
+    async def analyze(segment: dict) -> tuple[int, dict[str, Any]]:
+        nonlocal completed
+        segment_index = int(segment["segment_index"])
+        item_key = f"{segment_index:06d}"
+        saved = await checkpoints.completed_output(job_id, "cultural_analysis", item_key)
+        if saved is not None:
+            completed += 1
+            return segment_index, saved
+
+        async with semaphore:
+            await _require_checkpoint(
+                job_id=job_id,
+                document_id=document_id,
+                stage="cultural_analysis",
+                item_key=item_key,
+                owner=checkpoint_owner,
+                input_data={
+                    "start_seconds": segment["start_seconds"],
+                    "end_seconds": segment["end_seconds"],
+                    "processing_profile": CULTURAL_PERFORMANCE_PROFILE,
+                },
+            )
+            clip_path: str | None = None
+            try:
+                clip_start, clip_end, clip_path = await asyncio.to_thread(
+                    _extract_cultural_clip,
+                    source_ref,
+                    float(segment["start_seconds"]),
+                    float(segment["end_seconds"]),
+                )
+                captions = [
+                    str(frame.get("caption") or "")
+                    for frame in frames
+                    if clip_start <= float(frame.get("timestamp_seconds") or 0) <= clip_end
+                    and frame.get("caption")
+                ]
+                result = await analyze_cultural_clip(
+                    clip_path,
+                    start_seconds=clip_start,
+                    end_seconds=clip_end,
+                    transcript=str(segment.get("transcript") or ""),
+                    frame_captions=captions,
+                )
+                result["clip_start_seconds"] = clip_start
+                result["clip_end_seconds"] = clip_end
+            except Exception as exc:
+                log.warning(
+                    "Cultural analysis unavailable for document %s segment %s: %s",
+                    document_id,
+                    segment_index,
+                    exc,
+                )
+                result = {
+                    "analysis_status": "unavailable",
+                    "error": str(exc)[:500],
+                    "confidence": 0.0,
+                    "interpretation_guardrail": "Normal transcript and frame evidence remain available.",
+                }
+            finally:
+                _safe_unlink(clip_path, label="cultural analysis clip")
+
+            await checkpoints.complete(
+                job_id=job_id,
+                stage="cultural_analysis",
+                item_key=item_key,
+                output_data=result,
+                owner=checkpoint_owner,
+            )
+            completed += 1
+            await _update_video_progress(
+                document_id,
+                step="analyzing_cultural_performance",
+                progress_pct=_phase_pct(65, 71, completed, len(selected)),
+                message=f"Analyzed cultural performance segment {completed} of {len(selected)}.",
+            )
+            return segment_index, result
+
+    results = dict(await asyncio.gather(*(analyze(segment) for segment in selected)))
+    enriched: list[dict] = []
+    for segment in segments:
+        segment = dict(segment)
+        metadata = dict(segment.get("metadata") or {})
+        analysis = results.get(int(segment["segment_index"]))
+        if analysis is None:
+            analysis = {
+                "analysis_status": "not_selected",
+                "confidence": 0.0,
+                "interpretation_guardrail": "This interval was not selected for multimodal cultural analysis.",
+            }
+        metadata["processing_profile"] = CULTURAL_PERFORMANCE_PROFILE
+        metadata["cultural_analysis"] = analysis
+        segment["metadata"] = metadata
+        analysis_text = cultural_analysis_text(analysis)
+        if analysis_text:
+            segment["segment_type"] = CULTURAL_PERFORMANCE_PROFILE
+            segment["confidence"] = max(float(segment.get("confidence") or 0), float(analysis.get("confidence") or 0))
+        enriched.append(segment)
+    return enriched
+
+
+def _select_segment_indices(count: int, maximum: int) -> list[int]:
+    if count <= 0:
+        return []
+    if count <= maximum:
+        return list(range(count))
+    if maximum == 1:
+        return [count // 2]
+    return sorted({round(index * (count - 1) / (maximum - 1)) for index in range(maximum)})
+
+
+def _extract_cultural_clip(source: str, segment_start: float, segment_end: float) -> tuple[float, float, str]:
+    duration = max(1.0, segment_end - segment_start)
+    clip_length = min(float(VIDEO_CULTURAL_CLIP_SECONDS), duration)
+    clip_start = max(segment_start, segment_start + (duration - clip_length) / 2)
+    clip_end = min(segment_end, clip_start + clip_length)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    tmp.close()
+    try:
+        _run_command([
+            "ffmpeg", "-y", "-ss", str(clip_start),
+            *(_ffmpeg_remote_input_options(source)),
+            "-i", source, "-t", str(max(1.0, clip_end - clip_start)),
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", "fps=6,scale=640:-2:force_original_aspect_ratio=decrease",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "64k",
+            "-movflags", "+faststart", tmp.name,
+        ])
+        return clip_start, clip_end, tmp.name
+    except Exception:
+        _safe_unlink(tmp.name, label="failed cultural analysis clip")
+        raise
+
+
 def _build_segments(duration: float, segment_seconds: int, transcript: str, frames: list[dict]) -> list[dict]:
     segment_seconds = max(15, int(segment_seconds or DEFAULT_SEGMENT_SECONDS))
     if duration <= 0:
@@ -1222,24 +1406,38 @@ def _transcript_for_range(entries: list[dict[str, Any]], start: float, end: floa
     return " ".join(entry["text"] for entry in _transcript_entries_for_range(entries, start, end)).strip()
 
 
-def _build_video_chunks(document_id: str, user_id: str, filename: str, metadata: dict, segments: list[dict], frames: list[dict], transcript: str) -> list[dict]:
+def _build_video_chunks(
+    document_id: str,
+    user_id: str,
+    filename: str,
+    metadata: dict,
+    segments: list[dict],
+    frames: list[dict],
+    transcript: str,
+    *,
+    processing_profile: str = "standard",
+) -> list[dict]:
     chunks = []
     overview = (
         f"Video: {filename}\n"
         f"Duration: {_fmt_time(float(metadata.get('duration_seconds') or 0))}\n"
         f"Resolution: {metadata.get('width') or 'unknown'}x{metadata.get('height') or 'unknown'}\n"
         f"Codec: {metadata.get('codec') or 'unknown'}; audio codec: {metadata.get('audio_codec') or 'unknown'}\n"
+        f"Processing profile: {processing_profile}\n"
         f"Transcript available: {'yes' if transcript.strip() else 'no'}\n"
         f"Sampled frames: {len(frames)}"
     )
     chunks.append(_chunk(0, document_id, user_id, filename, "video_overview", 0, float(metadata.get("duration_seconds") or 0), overview))
     for seg in segments:
+        cultural_text = cultural_analysis_text((seg.get("metadata") or {}).get("cultural_analysis"))
         text = (
             f"Video segment {seg['segment_index'] + 1}: {seg['title']}\n"
+            f"Processing profile: {processing_profile}\n"
             f"Time range: {_fmt_time(seg['start_seconds'])} to {_fmt_time(seg['end_seconds'])}\n"
             f"Summary: {seg.get('summary') or ''}\n"
             f"Transcript: {seg.get('transcript') or ''}\n"
-            f"OCR text: {seg.get('ocr_text') or ''}"
+            f"OCR text: {seg.get('ocr_text') or ''}\n"
+            f"Cultural performance evidence:\n{cultural_text}"
         )
         chunks.append(_chunk(
             len(chunks),

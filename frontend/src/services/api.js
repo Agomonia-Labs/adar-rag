@@ -475,6 +475,7 @@ export async function uploadLargeVideoDocument(file, workspaceId = null, options
       segment_seconds: options.segmentSeconds || 60,
       embed_after_processing: options.embedAfterProcessing !== false,
       transcript_language: options.transcriptLanguage || 'auto',
+      processing_profile: options.processingProfile || 'standard',
     }),
   }, {step:'Finalizing video upload'}));
 }

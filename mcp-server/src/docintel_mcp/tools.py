@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.fastmcp import Context, FastMCP
 
@@ -412,6 +412,7 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
         max_frames: int = 12,
         segment_seconds: int = 60,
         embed_after_processing: bool = True,
+        processing_profile: Literal["standard", "cultural_performance"] = "standard",
     ) -> dict:
         """Verify a direct video upload and optionally start processing."""
         if process_after_upload and not rights_confirmed:
@@ -424,6 +425,7 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
                 "rights_confirmed": rights_confirmed, "transcript_language": transcript_language,
                 "max_frames": max_frames, "segment_seconds": segment_seconds,
                 "embed_after_processing": embed_after_processing,
+                "processing_profile": processing_profile,
             }
             async with api_client(ctx, settings, "video:process") as client:
                 return await client.complete_video_upload(payload)
@@ -449,8 +451,9 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
         max_frames: int = 12,
         segment_seconds: int = 60,
         embed_after_processing: bool = True,
+        processing_profile: Literal["standard", "cultural_performance"] = "standard",
     ) -> dict:
-        """Start transcript, frame, timeline, and embedding processing for an uploaded video."""
+        """Process video using the standard or cultural_performance intelligence profile."""
         if not rights_confirmed:
             return {"ok": False, "error": {"code": "rights_confirmation_required", "message": "Confirm that you have rights to process this video"}}
         try:
@@ -458,6 +461,7 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
                 "rights_confirmed": True, "source_type": "upload",
                 "transcript_language": transcript_language, "max_frames": max_frames,
                 "segment_seconds": segment_seconds, "embed_after_processing": embed_after_processing,
+                "processing_profile": processing_profile,
             }
             async with api_client(ctx, settings, "video:process") as client:
                 return await client.process_video(document_id, payload)

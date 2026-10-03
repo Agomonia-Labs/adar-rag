@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -36,6 +36,7 @@ class ProcessVideoRequest(BaseModel):
     segment_seconds: int = 60
     embed_after_processing: bool = True
     transcript_language: str = "auto"
+    processing_profile: Literal["standard", "cultural_performance"] = "standard"
 
 
 class VideoUploadSessionRequest(BaseModel):
@@ -58,6 +59,7 @@ class VideoUploadCompleteRequest(BaseModel):
     segment_seconds: int = 60
     embed_after_processing: bool = True
     transcript_language: str = "auto"
+    processing_profile: Literal["standard", "cultural_performance"] = "standard"
 
 
 class VideoQuestionRequest(BaseModel):
@@ -170,6 +172,7 @@ async def complete_video_upload(
             "direct_upload": True,
             "upload_content_type": meta.get("content_type") or content_type,
             "upload_generation": meta.get("generation"),
+            "video_processing_profile": body.processing_profile,
         }),
     )
     if result == "INSERT 0 0":
@@ -198,6 +201,7 @@ async def complete_video_upload(
             segment_seconds=body.segment_seconds,
             embed_after_processing=body.embed_after_processing,
             transcript_language=body.transcript_language,
+            processing_profile=body.processing_profile,
         )
     else:
         job_id, reused = None, False
@@ -289,13 +293,21 @@ async def process_video(
         segment_seconds=body.segment_seconds,
         embed_after_processing=body.embed_after_processing,
         transcript_language=body.transcript_language,
+        processing_profile=body.processing_profile,
     )
+    active_profile = body.processing_profile
+    if reused:
+        active_profile = await db.fetchval(
+            "SELECT COALESCE(input_data->>'processing_profile', 'standard') FROM video_processing_jobs WHERE id=$1",
+            job_id,
+        ) or "standard"
     return {
-        "message": "Video processing already active" if reused else "Video processing queued",
+        "message": f"Video processing already active using {active_profile}" if reused else "Video processing queued",
         "doc_id": doc_id,
         "job_id": job_id,
         "job_reused": reused,
         "dispatch_mode": video_dispatch_mode(),
+        "processing_profile": active_profile,
     }
 
 
@@ -497,7 +509,7 @@ async def _start_video_job(
     workspace_id: str | None, source_gcs_path: str, filename: str,
     rights_confirmed: bool, source_type: str, source_url: str | None,
     max_frames: int, segment_seconds: int, embed_after_processing: bool,
-    transcript_language: str,
+    transcript_language: str, processing_profile: str,
 ) -> tuple[str, bool]:
     payload = {
         "filename": filename,
@@ -509,6 +521,7 @@ async def _start_video_job(
         "segment_seconds": segment_seconds,
         "embed_after_processing": embed_after_processing,
         "transcript_language": transcript_language,
+        "processing_profile": processing_profile,
     }
     job_id, reused = await create_or_reuse_video_job(
         document_id=document_id,
@@ -561,6 +574,13 @@ def _with_video_progress(data: dict) -> dict:
         data["progress_pct"] = progress.get("progress_pct")
         data["progress_message"] = progress.get("message")
         data["progress_updated_at"] = progress.get("updated_at")
+    video_intelligence = doc_meta.get("video_intelligence") if isinstance(doc_meta, dict) else {}
+    data["processing_profile"] = (
+        video_meta.get("processing_profile")
+        or (video_intelligence or {}).get("processing_profile")
+        or doc_meta.get("video_processing_profile")
+        or "standard"
+    )
     return data
 
 

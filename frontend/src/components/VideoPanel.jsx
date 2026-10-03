@@ -28,6 +28,7 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
     segment_seconds: 60,
     embed_after_processing: true,
     transcript_language: 'auto',
+    processing_profile: 'standard',
   });
   const [openSections, setOpenSections] = useState({
     upload: true,
@@ -55,6 +56,13 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
     })();
     setAnswer(null);
   }, [selectedId]);
+
+  useEffect(() => {
+    const profile = selectedDoc?.processing_profile;
+    if (['standard', 'cultural_performance'].includes(profile)) {
+      setOptions(current => ({ ...current, processing_profile: profile }));
+    }
+  }, [selectedId, selectedDoc?.processing_profile]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -159,6 +167,7 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
         maxFrames: options.max_frames,
         segmentSeconds: options.segment_seconds,
         transcriptLanguage: options.transcript_language,
+        processingProfile: options.processing_profile,
         onUploadProgress: ({ loaded, total, percent, attempt, retrying }) => {
           const pct = Number.isFinite(percent) ? percent : 0;
           setUploadPercent(pct);
@@ -196,8 +205,8 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
     setMessage('');
     setAnswer(null);
     try {
-      await processVideoDocument(selectedId, options);
-      setMessage('Video processing started. Refresh status after a few seconds.');
+      const result = await processVideoDocument(selectedId, options);
+      setMessage(`${profileLabel(result?.processing_profile || options.processing_profile)} processing started. Progress will update automatically.`);
       setTimeline(null);
       setFrameUrls({});
       await refreshDocs();
@@ -237,6 +246,15 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
 
   function toggleSection(section) {
     setOpenSections(prev => ({ ...prev, [section]: !prev[section] }));
+  }
+
+  function selectProcessingProfile(profile) {
+    setOptions(current => ({
+      ...current,
+      processing_profile: profile,
+      max_frames: profile === 'cultural_performance' ? Math.max(current.max_frames, 24) : current.max_frames,
+      segment_seconds: profile === 'cultural_performance' ? Math.min(current.segment_seconds, 30) : current.segment_seconds,
+    }));
   }
 
   return (
@@ -337,6 +355,29 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
               </button>
               {openSections.process && (
                 <div className="video-panel-options" style={s.optionBox}>
+                  <label style={s.label}>Processing profile</label>
+                  <div style={s.profileControl} role="group" aria-label="Video processing profile">
+                    <button
+                      type="button"
+                      aria-pressed={options.processing_profile === 'standard'}
+                      style={options.processing_profile === 'standard' ? s.profileBtnActive : s.profileBtn}
+                      onClick={() => selectProcessingProfile('standard')}
+                    >
+                      Standard Video
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={options.processing_profile === 'cultural_performance'}
+                      style={options.processing_profile === 'cultural_performance' ? s.profileBtnCulturalActive : s.profileBtn}
+                      onClick={() => selectProcessingProfile('cultural_performance')}
+                    >
+                      Cultural Performance
+                    </button>
+                  </div>
+                  <div style={options.processing_profile === 'cultural_performance' ? s.culturalProfileNote : s.profileNote}>
+                    <strong>{profileLabel(options.processing_profile)}</strong>
+                    <span>{profileDescription(options.processing_profile)}</span>
+                  </div>
                   <label style={s.checkRow}>
                     <input
                       type="checkbox"
@@ -385,7 +426,11 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
                     style={s.input}
                   />
                   <button type="button" disabled={!selectedId || loading} style={s.primaryBtn} onClick={startProcessing}>
-                    Process Video
+                    {loading
+                      ? 'Starting processing...'
+                      : options.processing_profile === 'cultural_performance'
+                        ? 'Process Cultural Performance'
+                        : 'Process Standard Video'}
                   </button>
                 </div>
               )}
@@ -408,6 +453,7 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
                   <div className="video-panel-metrics" style={s.metrics}>
                     <Metric label="Document" value={status?.document_status || selectedDoc?.status || '-'} />
                     <Metric label="Video" value={status?.processing_status || selectedDoc?.processing_status || 'not processed'} />
+                    <Metric label="Profile" value={profileLabel(status?.processing_profile || selectedDoc?.processing_profile || options.processing_profile)} />
                     <Metric label="Progress" value={`${progress.progress_pct}%`} />
                     <Metric label="Chunks" value={status?.chunk_count ?? selectedDoc?.chunk_count ?? 0} />
                     <Metric label="Duration" value={status?.duration_seconds ? formatTime(status.duration_seconds) : '-'} />
@@ -509,6 +555,7 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
                           <strong>{seg.title}</strong>
                           <p>{seg.summary}</p>
                           {seg.transcript ? <small style={s.muted}>{seg.transcript}</small> : null}
+                          <CulturalAnalysis analysis={seg.metadata?.cultural_analysis} />
                         </div>
                       </article>
                     ))}
@@ -560,6 +607,47 @@ function Metric({ label, value }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function CulturalAnalysis({ analysis }) {
+  if (!analysis || analysis.analysis_status !== 'completed') return null;
+  const rows = [
+    ['Movement', analysis.movement_analysis],
+    ['Music and rhythm', analysis.music_analysis],
+    ['Expressive cues', joinValues(analysis.expressive_cues)],
+    ['Cultural context', analysis.cultural_context],
+    ['Interpretive themes', joinValues(analysis.interpretive_themes)],
+  ].filter(([, value]) => value);
+  if (!rows.length) return null;
+  return (
+    <div style={s.culturalAnalysis}>
+      <div style={s.culturalAnalysisHead}>
+        <strong>Cultural Performance Intelligence</strong>
+        <span>{Math.round(Number(analysis.confidence || 0) * 100)}% confidence</span>
+      </div>
+      {rows.map(([label, value]) => (
+        <div key={label} style={s.culturalRow}>
+          <span>{label}</span>
+          <p>{value}</p>
+        </div>
+      ))}
+      <small style={s.guardrail}>{analysis.interpretation_guardrail}</small>
+    </div>
+  );
+}
+
+function profileLabel(profile) {
+  return profile === 'cultural_performance' ? 'Cultural Performance Intelligence' : 'Standard Video Intelligence';
+}
+
+function profileDescription(profile) {
+  return profile === 'cultural_performance'
+    ? 'Analyzes short audio-video intervals for movement, music, observable expression, narrative, and cultural context.'
+    : 'Optimized for meetings, training, demonstrations, interviews, and general video knowledge extraction.';
+}
+
+function joinValues(value) {
+  return Array.isArray(value) ? value.filter(Boolean).join('; ') : String(value || '');
 }
 
 function buildProgress(status, selectedDoc) {
@@ -714,6 +802,12 @@ const s = {
   collapseTitle: { color:'var(--tx)', fontSize:13, fontWeight:850, letterSpacing:0 },
   collapseIcon: { width:24, height:24, borderRadius:7, border:'1px solid rgba(74,222,128,.22)', background:'rgba(74,222,128,.08)', color:'#86efac', display:'inline-flex', alignItems:'center', justifyContent:'center', flex:'0 0 auto', fontSize:18, lineHeight:1, fontWeight:900 },
   optionBox: { display:'flex', flexDirection:'column', gap:9, padding:10, border:0, borderTop:'1px solid var(--b2)', borderRadius:0, background:'rgba(255,255,255,.02)' },
+  profileControl: { display:'grid', gridTemplateColumns:'repeat(2,minmax(0,1fr))', gap:5, padding:3, borderRadius:8, border:'1px solid var(--b2)', background:'rgba(0,0,0,.18)' },
+  profileBtn: { minHeight:38, padding:'7px 8px', border:0, borderRadius:6, background:'transparent', color:'var(--muted2)', cursor:'pointer', fontSize:11.5, fontWeight:800, lineHeight:1.25 },
+  profileBtnActive: { minHeight:38, padding:'7px 8px', border:'1px solid rgba(96,165,250,.35)', borderRadius:6, background:'rgba(59,130,246,.18)', color:'#dbeafe', cursor:'pointer', fontSize:11.5, fontWeight:900, lineHeight:1.25 },
+  profileBtnCulturalActive: { minHeight:38, padding:'7px 8px', border:'1px solid rgba(251,191,36,.4)', borderRadius:6, background:'rgba(217,119,6,.2)', color:'#fef3c7', cursor:'pointer', fontSize:11.5, fontWeight:900, lineHeight:1.25 },
+  profileNote: { display:'flex', flexDirection:'column', gap:3, padding:8, borderRadius:7, background:'rgba(59,130,246,.08)', border:'1px solid rgba(96,165,250,.16)', color:'var(--tx2)', fontSize:11.5, lineHeight:1.4 },
+  culturalProfileNote: { display:'flex', flexDirection:'column', gap:3, padding:8, borderRadius:7, background:'rgba(217,119,6,.1)', border:'1px solid rgba(251,191,36,.25)', color:'#fef3c7', fontSize:11.5, lineHeight:1.4 },
   checkRow: { display:'flex', gap:8, alignItems:'center', color:'var(--tx)', fontSize:13, fontWeight:700 },
   primaryBtn: { padding:'9px 13px', borderRadius:8, border:'1px solid rgba(74,222,128,.35)', background:'#16a34a', color:'#fff', fontWeight:850, cursor:'pointer' },
   secondaryBtn: { padding:'7px 10px', borderRadius:8, border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx)', fontWeight:750, cursor:'pointer', fontSize:12 },
@@ -748,6 +842,10 @@ const s = {
   segment: { display:'grid', gridTemplateColumns:'110px minmax(0,1fr)', gap:10, padding:10, borderRadius:8, background:'var(--s2)', border:'1px solid var(--b2)' },
   time: { color:'#86efac', fontWeight:900, fontSize:12 },
   segmentBody: { minWidth:0, color:'var(--tx)', fontSize:13, lineHeight:1.45 },
+  culturalAnalysis: { marginTop:10, paddingTop:10, borderTop:'1px solid rgba(251,191,36,.25)', display:'flex', flexDirection:'column', gap:8 },
+  culturalAnalysisHead: { display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, flexWrap:'wrap', color:'#fef3c7', fontSize:12 },
+  culturalRow: { display:'grid', gridTemplateColumns:'120px minmax(0,1fr)', gap:8, alignItems:'start', fontSize:12 },
+  guardrail: { color:'#fde68a', fontSize:10.5, lineHeight:1.35 },
   frameGrid: { display:'grid', gridTemplateColumns:'repeat(3, minmax(0,1fr))', gap:10 },
   frameCard: { minWidth:0, padding:9, borderRadius:8, background:'var(--s2)', border:'1px solid var(--b2)', color:'var(--tx)', fontSize:12, lineHeight:1.4 },
   frameImg: { width:'100%', aspectRatio:'16/9', objectFit:'cover', borderRadius:6, border:'1px solid rgba(255,255,255,.08)', marginBottom:7 },
@@ -773,6 +871,7 @@ if (typeof window !== 'undefined') {
       .video-panel-options { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 7px !important; padding: 8px !important; }
       .video-panel-options label { min-width: 0 !important; }
       .video-panel-options button { grid-column: 1 / -1 !important; min-height: 40px !important; }
+      .video-panel-options [role="group"] button { grid-column: auto !important; min-height: 38px !important; }
       .video-panel-main { flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important; padding: 9px 10px 14px !important; gap: 9px !important; -webkit-overflow-scrolling: touch !important; }
       .video-panel-metrics { display: flex !important; gap: 8px !important; overflow-x: auto !important; padding-bottom: 2px !important; scroll-snap-type: x proximity !important; }
       .video-panel-metrics > div { flex: 0 0 132px !important; scroll-snap-align: start !important; }

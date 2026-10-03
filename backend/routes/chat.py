@@ -327,9 +327,26 @@ async def chat_stream_endpoint(
                         "and Restaurant ID. If the item spelling in document text differs from the Restaurant DB row "
                         "for the same restaurant and price, prefer the Restaurant DB IDs and mention the spelling "
                         "difference briefly only if needed. "
-                        "If the user asks to order an item, provide an Order Details table with Field "
-                        "and Value rows for Restaurant, Item, Price, Menu Item ID, Restaurant ID, Email, Phone, and "
-                        "Address, then tell the user to click the Add button and place the carryout order from the cart. "
+                        "If the user asks to order an item, or asks to add an item to their cart/order (phrasings "
+                        "like \"add biryani to my cart\", \"add it to cart\", \"put 2 of those in my order\"), treat this "
+                        "as the same ordering intent. "
+                        "First check whether the request names exactly one menu item unambiguously, meaning exactly one "
+                        "Restaurant DB Source row matches it: a specific dish at a specific restaurant already named or "
+                        "clearly established earlier in this conversation (do not require the user to repeat the "
+                        "restaurant name once it was already settled -- e.g. once they picked \"Spice House\" for "
+                        "biryani, \"add the naan too\" means naan at Spice House). "
+                        "If it is unambiguous, provide an Order Details table with Field and Value rows for Restaurant, "
+                        "Item, Price, Menu Item ID, Restaurant ID, Email, Phone, and Address, then tell the user it has "
+                        "been added to their cart (not merely that they can click Add) -- the app adds it automatically "
+                        "whenever exactly one item is identified this way. "
+                        "If the same dish name matches more than one Restaurant DB Source row (different restaurants, or "
+                        "different sizes/variants at the same restaurant) and nothing earlier in the conversation narrows "
+                        "it down, do NOT guess or pick one for the user: ask a short clarifying question naming each "
+                        "option (restaurant and price) and render them as a comparison table with the standard columns "
+                        "(Restaurant, Item, Price, Menu Item ID, Restaurant ID, Email, Phone, Address) covering every "
+                        "candidate, so the user can tap the one they want; say that tapping an option adds it to their "
+                        "cart. Once the user's next message answers which one (by restaurant name, \"the first one\", "
+                        "a size, etc.), resolve it the same unambiguous way above. "
                         "Do not say you cannot help place orders; explain that restaurant acceptance/cancellation happens "
                         "after submission. If document sources disagree with the restaurant DB rows, state the difference "
                         "briefly and prefer the DB row for ordering/contact fields."
@@ -352,7 +369,38 @@ async def chat_stream_endpoint(
                     restaurant_action_candidates,
                     question_for_model,
                     "".join(output_tokens),
+                    active_restaurant_ids=_active_restaurant_ids_from_history(req.history),
                 )
+                # "add to cart"/"order it" phrasing + exactly one resolved
+                # item = unambiguous: the app adds it for the user right
+                # away instead of waiting for a tap on a chip (see the
+                # RESTAURANT ORDERING RULE prompt above, which tells the
+                # model to say it was added, not just that the user can
+                # click Add, in this same case). Two or more resolved
+                # items is the ambiguous case -- the prompt asks the user
+                # a clarifying question and the chips stay tap-to-add, no
+                # auto_add flag.
+                if (
+                    restaurant_actions.get("restaurant_menu_items")
+                    and len(restaurant_actions["restaurant_menu_items"]) == 1
+                    and (
+                        # The model rendered a single "Order Details"
+                        # table, meaning it already judged this
+                        # unambiguous and told the user it was added --
+                        # that structural signal covers any phrasing
+                        # ("Order 2 goat dum biryani from Royal Biryani
+                        # House" has no "cart"/"add" in it at all), so it
+                        # takes priority over the narrower wording-based
+                        # regex, which stays as the fallback for the
+                        # non-table conversational-answer path.
+                        restaurant_actions.get("resolved_unambiguous")
+                        or _detect_cart_add_intent(question_for_model)
+                    )
+                ):
+                    restaurant_actions["auto_add"] = True
+                    qty = restaurant_actions.get("resolved_quantity") or _extract_cart_add_quantity(question_for_model)
+                    if qty:
+                        restaurant_actions["auto_add_quantity"] = qty
                 await finish_trace(trace_id, "success")
                 await queue.put(("done", {
                     "sources": _sanitise(chunks, redact_pii=req.redact_pii),
@@ -599,15 +647,41 @@ async def _restaurant_db_context(
             )
         )
     action_candidates = []
-    for score, row in scored_rows:
+    _seen_candidate_ids: set[str] = set()
+    # `selected` is exactly what the model sees and can render into its
+    # table/chips. _select_restaurant_db_context_rows applies an
+    # intent-bonus reorder (exact/strong dish-name match) that can rank a
+    # row ahead of items with a higher raw match score, so capping this
+    # pool to the top-N by raw score alone could silently exclude a row
+    # the model just told the user was added to their cart -- breaking
+    # auto_add and the "+Add" chip for that exact row. Guarantee every
+    # `selected` row is present first (unconditionally), then fill any
+    # remaining budget with the next highest-raw-score rows (used
+    # elsewhere for broader fuzzy matching / extra "+Add" coverage).
+    for row in selected:
+        row_id = str(row["id"])
+        if row_id in _seen_candidate_ids:
+            continue
+        _seen_candidate_ids.add(row_id)
         action_candidates.append({
             **_restaurant_menu_action_row(row),
-            "menu_item_id": str(row["id"]),
+            "menu_item_id": row_id,
+            "source": "restaurant_db_context",
+            "action_score": 999.0,
+        })
+    for score, row in scored_rows:
+        if len(action_candidates) >= 80:
+            break
+        row_id = str(row["id"])
+        if row_id in _seen_candidate_ids:
+            continue
+        _seen_candidate_ids.add(row_id)
+        action_candidates.append({
+            **_restaurant_menu_action_row(row),
+            "menu_item_id": row_id,
             "source": "restaurant_db_context",
             "action_score": score,
         })
-        if len(action_candidates) >= 60:
-            break
     return "\n".join(lines), {
         "enabled": True,
         "matched_rows": len(selected),
@@ -745,6 +819,94 @@ def _is_restaurant_ordering_question(question: str) -> bool:
     )
 
 
+_CART_ADD_INTENT_RE = re.compile(
+    r"\badd\b.{0,40}\b(cart|order|basket)\b"
+    r"|\b(cart|order|basket)\b.{0,40}\badd\b"
+    r"|\bput\b.{0,40}\b(cart|order|basket)\b"
+    r"|\b(order|get me|i'?ll (take|have|get)|i want)\b.{0,40}\b(it|this|that|one|those|these)\b"
+    r"|\border (it|this|that|one|those|these)\b"
+    r"|\byes,? add\b|\bgo ahead and add\b",
+    re.IGNORECASE,
+)
+
+
+def _detect_cart_add_intent(question: str) -> bool:
+    """Narrow, imperative-phrasing detector for "please put this in my
+    cart right now" -- distinct from the loose _is_restaurant_ordering_
+    question keyword check above (which just flags the topic as
+    ordering-related for prompt/context purposes). Only a question this
+    function flags as True can trigger auto_add (see the done-event
+    handler above): a casual "what's on the menu, I might order later"
+    mentions "order" but isn't an instruction to act on right now, so it
+    must NOT auto-add -- the user still taps a chip for that. This
+    deliberately stays conservative (regex over a fixed phrase shape)
+    rather than guessing from arbitrary wording, since a false positive
+    here silently adds something nobody asked for."""
+    q = (question or "").strip().lower()
+    if not q:
+        return False
+    return bool(_CART_ADD_INTENT_RE.search(q))
+
+
+_CART_ADD_QUANTITY_WORDS = {
+    "a": 1, "an": 1, "one": 1, "two": 2, "couple": 2, "a couple": 2,
+    "three": 3, "a few": 3, "few": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+}
+
+
+def _extract_cart_add_quantity(question: str) -> int | None:
+    """Best-effort quantity for a cart-add follow-up like "add 2 more
+    samosa to cart" or "add a couple more samosas" -- returns None (the
+    caller then defaults to 1) when no quantity phrasing is found,
+    rather than guessing. Digits win over number words when both somehow
+    appear; this is intentionally conservative (digits, then a short
+    fixed word list) rather than general number-word parsing, since an
+    over-eager match here would silently add the wrong quantity."""
+    q = (question or "").strip().lower()
+    if not q:
+        return None
+    digit_match = re.search(r"\b(\d{1,2})\b", q)
+    if digit_match:
+        try:
+            value = int(digit_match.group(1))
+            if 1 <= value <= 50:
+                return value
+        except ValueError:
+            pass
+    for phrase, value in sorted(_CART_ADD_QUANTITY_WORDS.items(), key=lambda kv: -len(kv[0])):
+        if re.search(rf"\b{re.escape(phrase)}\b", q):
+            return value
+    return None
+
+
+def _active_restaurant_ids_from_history(history: list[dict] | None) -> set[str]:
+    """Finds the restaurant(s) the conversation already settled on, from
+    the most recent assistant turn that rendered an ordering/comparison
+    table (see _extract_restaurant_table_ids) -- used as a tie-breaker in
+    _restaurant_actions_from_candidates so a context-free follow-up like
+    "add 2 more samosa to cart" (no restaurant name of its own) resolves
+    against the restaurant that prior "Order Details" table already
+    named, rather than staying ambiguous across every restaurant that
+    happens to sell the same dish (which is why the model could say
+    "added" -- it can read the whole conversation -- while the app added
+    nothing, since the candidate-scoring step only ever looked at the
+    current message). Only the single most recent assistant message is
+    considered: an older table is stale once a newer one (or a
+    plain-text reply) has superseded it, and if that latest table still
+    shows more than one restaurant (an unresolved comparison), no single
+    restaurant is "active" yet, so this returns an empty set and the
+    normal ambiguous-match handling applies."""
+    for turn in reversed(history or []):
+        if (turn.get("role") or "") != "assistant":
+            continue
+        pairs = _extract_restaurant_table_ids(str(turn.get("content") or ""))
+        if not pairs:
+            return set()
+        return {restaurant_id.lower() for restaurant_id, _ in pairs}
+    return set()
+
+
 def _merge_restaurant_answer_actions(items: list[dict], rows: list, restaurant_rows: list, answer_text: str) -> list[dict]:
     existing_keys = {
         (
@@ -803,9 +965,211 @@ def _merge_restaurant_answer_actions(items: list[dict], rows: list, restaurant_r
     return items[:10]
 
 
-def _restaurant_actions_from_candidates(candidates: list[dict], question: str, answer_text: str) -> dict:
+def _strip_md_inline(text: str) -> str:
+    """Strip inline markdown formatting (`code`, **bold**, __bold__,
+    *italic*, _italic_) the model commonly wraps a table cell's value in
+    -- e.g. rendering a Menu Item ID as `0737c2f5-...` or a restaurant
+    name as **Royal Biryani House Bothell**. The ids extracted from the
+    rendered table have to match the plain (unwrapped) ids on the
+    candidates list character-for-character, so any such wrapping must
+    be removed before comparing -- otherwise `` `0737c2f5-...` `` !=
+    "0737c2f5-..." and the lookup silently fails every time, even though
+    the table shows the correct, real id.
+    """
+    text = text.strip()
+    for _ in range(3):
+        new_text = re.sub(r"^(\*{1,3}|_{1,3}|`+)", "", text)
+        new_text = re.sub(r"(\*{1,3}|_{1,3}|`+)$", "", new_text)
+        new_text = new_text.strip()
+        if new_text == text:
+            break
+        text = new_text
+    return text
+
+
+def _extract_restaurant_table_ids(answer_text: str) -> list[tuple[str, str]]:
+    """Deterministically reads every row of the ordering/comparison
+    table the model is instructed to render (the RESTAURANT ORDERING
+    RULE prompt) and returns the (restaurant_id, menu_item_id) pair for
+    EVERY item/option shown -- so when the assistant actually displays
+    food item details as a table, "+Add" coverage for each row never
+    depends on the fuzzy relevance scoring in
+    _restaurant_actions_from_candidates below (which was only ever meant
+    to guess relevance for a plain conversational answer that doesn't
+    render a table, and caps/thresholds results accordingly).
+
+    Handles both table shapes the prompt asks for:
+      - a per-item comparison table (one row per restaurant/item, with
+        "Menu Item ID" and "Restaurant ID" columns), and
+      - a single "Order Details" Field/Value table (one row per field).
+    Returns an empty list if no recognizable table is found.
+    """
+    lines = [ln.strip() for ln in (answer_text or "").splitlines()]
+    table_blocks: list[list[str]] = []
+    current: list[str] = []
+    for line in lines:
+        if line.startswith("|") and line.endswith("|") and line.count("|") >= 2:
+            current.append(line)
+        else:
+            if current:
+                table_blocks.append(current)
+                current = []
+    if current:
+        table_blocks.append(current)
+
+    def split_row(line: str) -> list[str]:
+        return [cell.strip() for cell in line.strip("|").split("|")]
+
+    def is_separator(cells: list[str]) -> bool:
+        return bool(cells) and all(re.fullmatch(r":?-{2,}:?", cell) for cell in cells if cell)
+
+    pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for block in table_blocks:
+        if len(block) < 2:
+            continue
+        header = [c.lower() for c in split_row(block[0])]
+        data_rows = [split_row(r) for r in block[1:] if not is_separator(split_row(r))]
+        if "menu item id" in header and "restaurant id" in header:
+            mi_idx = header.index("menu item id")
+            r_idx = header.index("restaurant id")
+            for row in data_rows:
+                if len(row) <= max(mi_idx, r_idx):
+                    continue
+                menu_item_id = _strip_md_inline(row[mi_idx])
+                restaurant_id = _strip_md_inline(row[r_idx])
+                key = (restaurant_id.lower(), menu_item_id.lower())
+                if menu_item_id and restaurant_id and key not in seen:
+                    seen.add(key)
+                    pairs.append((restaurant_id, menu_item_id))
+        elif len(header) == 2 and "field" in header and "value" in header:
+            field_idx = header.index("field")
+            value_idx = header.index("value")
+            field_map: dict[str, str] = {}
+            for row in data_rows:
+                if len(row) <= max(field_idx, value_idx):
+                    continue
+                field_map[row[field_idx].strip().lower()] = row[value_idx].strip()
+            menu_item_id = _strip_md_inline(field_map.get("menu item id", ""))
+            restaurant_id = _strip_md_inline(field_map.get("restaurant id", ""))
+            key = (restaurant_id.lower(), menu_item_id.lower())
+            if menu_item_id and restaurant_id and key not in seen:
+                seen.add(key)
+                pairs.append((restaurant_id, menu_item_id))
+    return pairs
+
+
+def _extract_order_details_fields(answer_text: str) -> tuple[str, str, int | None] | None:
+    """Recognizes ONLY the single "Order Details" Field/Value table shape
+    (Restaurant/Item/Price/.../Menu Item ID/Restaurant ID rows) that the
+    RESTAURANT ORDERING RULE prompt renders specifically when it already
+    judged the request unambiguous -- never the multi-row comparison
+    table it renders instead to ask a clarifying question. Finding this
+    shape is a far more reliable "the app should actually add this now"
+    signal than trying to pattern-match every way a user might phrase an
+    order (see _detect_cart_add_intent, kept as a fallback for the
+    non-table conversational-answer path below): a user can ask to order
+    something by directly naming the dish and quantity ("Order 2 goat
+    dum biryani from Royal Biryani House") with no "cart"/"add" and no
+    pronoun in sight, which that regex alone does not catch, even though
+    the model already committed to a single resolved item and told the
+    user it was added. Returns (restaurant_id, menu_item_id, quantity)
+    -- quantity is None when the table has no Quantity row, so the
+    caller falls back to parsing the user's own wording for it."""
+    lines = [ln.strip() for ln in (answer_text or "").splitlines()]
+    table_blocks: list[list[str]] = []
+    current: list[str] = []
+    for line in lines:
+        if line.startswith("|") and line.endswith("|") and line.count("|") >= 2:
+            current.append(line)
+        else:
+            if current:
+                table_blocks.append(current)
+                current = []
+    if current:
+        table_blocks.append(current)
+
+    def split_row(line: str) -> list[str]:
+        return [cell.strip() for cell in line.strip("|").split("|")]
+
+    def is_separator(cells: list[str]) -> bool:
+        return bool(cells) and all(re.fullmatch(r":?-{2,}:?", cell) for cell in cells if cell)
+
+    for block in table_blocks:
+        if len(block) < 2:
+            continue
+        header = [c.lower() for c in split_row(block[0])]
+        if len(header) != 2 or "field" not in header or "value" not in header:
+            continue
+        field_idx = header.index("field")
+        value_idx = header.index("value")
+        field_map: dict[str, str] = {}
+        for raw_row in block[1:]:
+            row = split_row(raw_row)
+            if is_separator(row) or len(row) <= max(field_idx, value_idx):
+                continue
+            field_map[row[field_idx].strip().lower()] = row[value_idx].strip()
+        menu_item_id = _strip_md_inline(field_map.get("menu item id", ""))
+        restaurant_id = _strip_md_inline(field_map.get("restaurant id", ""))
+        if not (menu_item_id and restaurant_id):
+            continue
+        quantity: int | None = None
+        qty_digits = re.search(r"\d+", field_map.get("quantity", ""))
+        if qty_digits:
+            try:
+                quantity = int(qty_digits.group(0))
+            except ValueError:
+                quantity = None
+        return (restaurant_id, menu_item_id, quantity)
+    return None
+
+
+def _restaurant_actions_from_candidates(
+    candidates: list[dict],
+    question: str,
+    answer_text: str,
+    active_restaurant_ids: set[str] | None = None,
+) -> dict:
     if not candidates:
         return {}
+
+    order_details = _extract_order_details_fields(answer_text)
+    table_pairs = _extract_restaurant_table_ids(answer_text)
+    if table_pairs:
+        by_id = {
+            (
+                str(item.get("restaurant_id") or "").lower(),
+                str(item.get("menu_item_id") or item.get("id") or "").lower(),
+            ): item
+            for item in candidates
+        }
+        table_items: list[dict] = []
+        for restaurant_id, menu_item_id in table_pairs:
+            match = by_id.get((restaurant_id.lower(), menu_item_id.lower()))
+            if match:
+                table_items.append({**match, "action_score": 999.0})
+        if table_items:
+            resolved_unambiguous = (
+                len(table_items) == 1
+                and order_details is not None
+                and str(table_items[0].get("restaurant_id") or "").lower() == order_details[0].lower()
+                and str(table_items[0].get("menu_item_id") or table_items[0].get("id") or "").lower() == order_details[1].lower()
+            )
+            result = {
+                "type": "restaurant_menu_actions",
+                "source": "restaurant_table_rows",
+                "restaurant_menu_items": table_items[:30],
+                "resolved_unambiguous": resolved_unambiguous,
+            }
+            if resolved_unambiguous and order_details[2]:
+                result["resolved_quantity"] = order_details[2]
+            return result
+        # A table WAS rendered but none of its (restaurant_id,
+        # menu_item_id) pairs matched a known candidate row (e.g. the
+        # model mistyped or invented an id) -- fall through to the fuzzy
+        # scoring below rather than returning nothing.
+
     question_norm = _normalise_restaurant_text(question)
     answer_norm = _normalise_restaurant_text(answer_text)
     answer_raw = (answer_text or "").lower()
@@ -817,8 +1181,6 @@ def _restaurant_actions_from_candidates(candidates: list[dict], question: str, a
         restaurant_id = str(item.get("restaurant_id") or "")
         menu_item_id = str(item.get("menu_item_id") or item.get("id") or "")
         if not item_name or not restaurant_id or not menu_item_id:
-            continue
-        if menu_item_id.lower() not in answer_raw:
             continue
         item_tokens = set(_meaningful_restaurant_tokens(item_name))
         question_tokens = set(_meaningful_restaurant_tokens(question_norm))
@@ -833,7 +1195,7 @@ def _restaurant_actions_from_candidates(candidates: list[dict], question: str, a
             or item_answer_overlap >= 0.5
             or item_question_overlap >= 0.5
         )
-        if not item_relevant or restaurant_id.lower() not in answer_raw:
+        if not item_relevant:
             continue
         score = float(item.get("action_score") or 0)
         if item_name_in_answer:
@@ -853,6 +1215,20 @@ def _restaurant_actions_from_candidates(candidates: list[dict], question: str, a
             price_text = f"{float(price):.2f}".rstrip("0").rstrip(".")
             if price_text and price_text in answer_norm:
                 score += 10
+        # The model is told (RESTAURANT ORDERING RULE prompt) to echo the
+        # raw Menu Item ID / Restaurant ID when it renders an ordering
+        # table -- when it does, that's a strong extra signal this exact
+        # row is the one being discussed, so it's rewarded as a BONUS
+        # rather than required. Requiring it outright (as this used to)
+        # meant "+Add" chips only ever appeared for that narrow
+        # table-formatted answer, never for an ordinary conversational
+        # reply like "Chicken Biryani is $12.99 at Spice House" -- which
+        # is most of what diners actually ask, and was reported as
+        # "no item to add to cart from chat".
+        if menu_item_id and menu_item_id.lower() in answer_raw:
+            score += 60
+        if restaurant_id and restaurant_id.lower() in answer_raw:
+            score += 30
         if score >= 70:
             scored.append((score, item))
     if not scored:
@@ -868,6 +1244,24 @@ def _restaurant_actions_from_candidates(candidates: list[dict], question: str, a
         deduped.append({**item, "action_score": round(score, 3)})
         if len(deduped) >= 8:
             break
+    if len(deduped) != 1 and active_restaurant_ids and len(active_restaurant_ids) == 1:
+        # Disambiguate using the restaurant the PRIOR turn already
+        # settled on (see _active_restaurant_ids_from_history): narrow
+        # the already-scored candidates down to that one restaurant and
+        # see if that alone resolves the match to exactly one item.
+        pinned_id = next(iter(active_restaurant_ids))
+        pinned_seen: set[tuple[str, str]] = set()
+        pinned_deduped: list[dict] = []
+        for score, item in scored:
+            if str(item.get("restaurant_id") or "").lower() != pinned_id:
+                continue
+            key = (str(item.get("restaurant_id") or ""), _normalise_restaurant_text(str(item.get("item_name") or "")))
+            if key in pinned_seen:
+                continue
+            pinned_seen.add(key)
+            pinned_deduped.append({**item, "action_score": round(score, 3)})
+        if len(pinned_deduped) == 1:
+            deduped = pinned_deduped
     return {
         "type": "restaurant_menu_actions",
         "source": "restaurant_db_answer_filter",

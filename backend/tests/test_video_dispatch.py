@@ -68,6 +68,36 @@ async def test_create_video_job_resumes_failed_job_with_checkpoints():
 
 
 @pytest.mark.asyncio
+async def test_create_video_job_does_not_resume_checkpoints_from_another_profile():
+    conn = MagicMock()
+    conn.transaction.return_value = _Transaction()
+    conn.execute = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value={
+        "id": "failed-job",
+        "status": "error",
+        "stale": True,
+        "input_data": {"processing_profile": "standard"},
+    })
+    conn.fetchval = AsyncMock(return_value=True)
+    pool = MagicMock()
+    pool.acquire.return_value = _Acquire(conn)
+
+    with (
+        patch.object(video_dispatch, "get_pool", return_value=pool),
+        patch.object(video_dispatch, "uuid4", return_value="cultural-job"),
+    ):
+        job_id, reused = await video_dispatch.create_or_reuse_video_job(
+            document_id="doc-1",
+            user_id="user-1",
+            workspace_id=None,
+            payload={"filename": "v.mp4", "processing_profile": "cultural_performance"},
+        )
+
+    assert (job_id, reused) == ("cultural-job", False)
+    assert conn.fetchval.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_create_video_job_persists_payload_before_dispatch():
     conn = MagicMock()
     conn.transaction.return_value = _Transaction()

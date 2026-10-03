@@ -133,6 +133,10 @@ export const HELP_CENTER_ARTICLES = [
         body: 'Video Intelligence captures metadata, transcript, sampled frames, timeline segments, timestamped chunks, embeddings, and status progress. This lets users ask questions about what happened in a specific time range and receive answers grounded in transcript and visual context.',
       },
       {
+        heading: 'Choose a processing profile',
+        body: 'Use Standard Video Intelligence for meetings, training, interviews, demonstrations, and general recordings. Use Cultural Performance Intelligence for dance, song, theatre, ritual, and related performances. The cultural profile analyzes short audio-video intervals for movement, music, observable expressive cues, narrative, and cultural context while retaining timestamped evidence and uncertainty.',
+      },
+      {
         heading: 'Large video flow',
         body: 'Small videos can use the standard upload route. Large videos use direct browser-to-cloud upload to avoid proxy limits. Processing is staged so users can track upload, metadata extraction, frame sampling, transcription, segmentation, embedding, completion, and errors.',
       },
