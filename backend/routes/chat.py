@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 
 from auth.dependencies import CurrentUser
 from database.connection import get_db, get_pool
-from services.llm import embed_query, chat_stream, rag_system
+from services.llm import embed_query, chat_stream, rag_system, chat_json
 from services.vectordb import find_similar, TOP_K, RERANK_FETCH_K
 from services.usage import check_and_log_daily_event
 from services.reranker import rerank, RERANK_ENABLED
@@ -323,6 +323,14 @@ async def chat_stream_endpoint(
                         "or menu_item_id. For price comparisons, use a table "
                         "with these columns exactly when available: Restaurant, Item, Price, Menu Item ID, Restaurant ID, "
                         "Email, Phone, Address. These fields allow the UI to render an Add button for the carryout cart. "
+                        "ALWAYS write these column headers, and the \"Field\"/\"Value\" headers of the Order Details "
+                        "table described below, in English exactly as spelled here -- Restaurant, Item, Price, Menu Item ID, "
+                        "Restaurant ID, Email, Phone, Address, Field, Value -- even when the rest of your answer is in "
+                        "another language, because the app matches on these exact English labels to actually add the item "
+                        "to the cart; translating them silently breaks that match and the item never gets added even though "
+                        "you told the user it did. Only the surrounding prose and any plain-language explanation should be "
+                        "in the requested language -- restaurant names, dish names, and ID values stay exactly as given in "
+                        "the Restaurant DB Source rows regardless of language. "
                         "Every menu row shown from a Restaurant DB Source row must include that same row's Menu Item ID "
                         "and Restaurant ID. If the item spelling in document text differs from the Restaurant DB row "
                         "for the same restaurant and price, prefer the Restaurant DB IDs and mention the spelling "
@@ -383,24 +391,40 @@ async def chat_stream_endpoint(
                 if (
                     restaurant_actions.get("restaurant_menu_items")
                     and len(restaurant_actions["restaurant_menu_items"]) == 1
-                    and (
-                        # The model rendered a single "Order Details"
-                        # table, meaning it already judged this
-                        # unambiguous and told the user it was added --
-                        # that structural signal covers any phrasing
-                        # ("Order 2 goat dum biryani from Royal Biryani
-                        # House" has no "cart"/"add" in it at all), so it
-                        # takes priority over the narrower wording-based
-                        # regex, which stays as the fallback for the
-                        # non-table conversational-answer path.
-                        restaurant_actions.get("resolved_unambiguous")
-                        or _detect_cart_add_intent(question_for_model)
-                    )
                 ):
-                    restaurant_actions["auto_add"] = True
-                    qty = restaurant_actions.get("resolved_quantity") or _extract_cart_add_quantity(question_for_model)
-                    if qty:
-                        restaurant_actions["auto_add_quantity"] = qty
+                    # The model rendered a single "Order Details" table,
+                    # meaning it already judged this unambiguous and told
+                    # the user it was added -- that structural signal
+                    # covers any phrasing ("Order 2 goat dum biryani from
+                    # Royal Biryani House" has no "cart"/"add" in it at
+                    # all), so it takes priority and skips the extra call
+                    # below entirely.
+                    cart_add_signal = restaurant_actions.get("resolved_unambiguous")
+                    if not cart_add_signal:
+                        # Non-table conversational-answer path: ask the
+                        # model itself whether the user's question is an
+                        # instruction to add this item now, rather than
+                        # pattern-matching the question against a fixed
+                        # per-language phrase list -- that list only ever
+                        # covers phrasings someone already thought to add
+                        # (see _detect_cart_add_intent's docstring for the
+                        # repeated misses this caused), while the model
+                        # understands any language or script natively.
+                        # Only reached when there's exactly one resolved
+                        # item and the table heuristic didn't already
+                        # settle it, so this stays a bounded, occasional
+                        # extra call rather than one per chat message.
+                        semantic_intent = await _semantic_cart_add_intent(question_for_model)
+                        cart_add_signal = (
+                            semantic_intent
+                            if semantic_intent is not None
+                            else _detect_cart_add_intent(question_for_model)
+                        )
+                    if cart_add_signal:
+                        restaurant_actions["auto_add"] = True
+                        qty = restaurant_actions.get("resolved_quantity") or _extract_cart_add_quantity(question_for_model)
+                        if qty:
+                            restaurant_actions["auto_add_quantity"] = qty
                 await finish_trace(trace_id, "success")
                 await queue.put(("done", {
                     "sources": _sanitise(chunks, redact_pii=req.redact_pii),
@@ -466,6 +490,49 @@ RESTAURANT_TERMS = {
     "restaurant", "menu", "food", "dish", "item", "price", "prices", "order",
     "carryout", "pickup", "takeout", "compare", "biryani", "naan", "curry",
     "appetizer", "entree", "dessert", "beverage", "drink", "lunch", "dinner",
+    # Same gate, same English dish loanwords (biryani/naan/curry are
+    # already used as-is across languages), but the generic restaurant/
+    # menu/order/price words below were English-only -- a question typed
+    # or voice-transcribed entirely in one of apps/eats's other languages
+    # (i18n/languages.ts: es/hi/bn/fr) could contain NONE of the original
+    # terms, so _is_restaurant_context never turned on the restaurant DB
+    # lookup at all and the chat fell back to the generic "the provided
+    # documents don't contain this information" RAG answer -- not a
+    # cart-add-specific bug, any restaurant/menu question in these
+    # languages hit it. This is a cheap substring gate (not an exhaustive
+    # translation), so it only needs enough common words to catch typical
+    # phrasing, same granularity as the English set above.
+    # Spanish
+    "restaurante", "menú", "comida", "plato", "artículo", "precio", "precios",
+    "pedido", "pedir", "carrito", "cesta", "para llevar", "recoger", "comparar",
+    "entrante", "postre", "bebida", "almuerzo", "cena",
+    # French
+    "restaurant", "menu", "nourriture", "plat", "article", "prix", "commande",
+    "commander", "panier", "emporter", "comparer", "entrée", "dessert",
+    "boisson", "déjeuner", "dîner",
+    # Hindi (Devanagari)
+    "रेस्तराँ", "मेनू", "खाना", "खाने", "व्यंजन",
+    "कीमत", "दाम", "ऑर्डर", "कार्ट", "टोकरी",
+    "तुलना", "मिठाई", "पेय", "दोपहर का खाना", "रात का खाना",
+    # Hindi commonly code-switches into English loanwords written in
+    # Devanagari rather than using the formal word above (a speaker
+    # says/types "price" or "compare" transliterated far more often
+    # than "कीमत"/"तुलना") -- same failure shape as the Bengali case
+    # below, add the transliterated forms alongside the formal ones.
+    "प्राइस", "कम्पेयर", "कंपेयर",
+    # Bengali
+    "রেস্টুরেন্ট", "মেনু", "খাবার", "মূল্য", "দাম", "অর্ডার",
+    "কার্ট", "তুলনা", "মিঠাই", "পানীয়", "দুপুরের খাবার", "রাতের খাবার",
+    # Bengali speakers very commonly code-mix English commerce words
+    # phonetically into Bangla script ("প্রাইস কম্পেয়ার করে দেখাও" =
+    # "show me a price compare") rather than using the formal "মূল্য"/
+    # "তুলনা" above -- a real user message in exactly this shape was
+    # reported failing because neither transliterated word was in this
+    # set, so _is_restaurant_context never matched and the chat fell
+    # back to the generic "documents don't contain this information"
+    # answer even though the restaurant DB had the dish. Cover the
+    # common transliterated forms alongside the formal ones.
+    "প্রাইস", "কম্পেয়ার", "অ্যাড",
 }
 
 
@@ -623,6 +690,23 @@ async def _restaurant_db_context(
     ]
     scored_rows.sort(key=lambda item: (-item[0], item[1]["restaurant_name"] or "", item[1]["item_name"] or ""))
     selected = _select_restaurant_db_context_rows(scored_rows, question)
+    if not selected and rows and not re.search(r"[a-zA-Z]", question):
+        # _meaningful_restaurant_tokens (and therefore every score above)
+        # only tokenizes ASCII/Latin letters, so a question written
+        # entirely in a non-Latin script (Bengali, Hindi -- apps/eats's
+        # language picker offers both) extracts ZERO query tokens no
+        # matter what it says, every row scores 0.0, and `selected` comes
+        # back empty even though the menu plainly has the dish being
+        # asked about -- the model itself understands "বিরিয়ানি" means
+        # "biryani" just fine, our lexical overlap heuristic just can't
+        # compare across scripts to confirm it. Rather than handing the
+        # model NO menu data (which produces the generic "the provided
+        # documents don't contain this information" answer regardless of
+        # what was actually asked), hand it a bounded slice of the
+        # available marketplace menu and let its own multilingual
+        # understanding do the matching -- same row cap
+        # _select_restaurant_db_context_rows uses elsewhere.
+        selected = rows[:40]
     if not selected:
         return "", {"enabled": True, "matched_rows": 0, "available_rows": len(rows), "actions": {}}
 
@@ -815,6 +899,15 @@ def _is_restaurant_ordering_question(question: str) -> bool:
             "email",
             "phone",
             "address",
+            # Same multilingual-gate fix as RESTAURANT_TERMS above -- without
+            # these, a non-English ordering question that DID pass
+            # _is_restaurant_context still got its restaurant_context
+            # merged behind (rather than replacing) the regular doc
+            # context instead of cleanly replacing it.
+            "menú", "precio", "precios", "comparar", "pedido", "carrito",
+            "menu", "prix", "comparer", "commande", "panier",
+            "मेनू", "कीमत", "ऑर्डर", "कार्ट", "प्राइस", "कम्पेयर", "कंपेयर",
+            "মেনু", "মূল্য", "অর্ডার", "কার্ট", "প্রাইস", "কম্পেয়ার",
         )
     )
 
@@ -825,23 +918,97 @@ _CART_ADD_INTENT_RE = re.compile(
     r"|\bput\b.{0,40}\b(cart|order|basket)\b"
     r"|\b(order|get me|i'?ll (take|have|get)|i want)\b.{0,40}\b(it|this|that|one|those|these)\b"
     r"|\border (it|this|that|one|those|these)\b"
-    r"|\byes,? add\b|\bgo ahead and add\b",
+    r"|\byes,? add\b|\bgo ahead and add\b"
+    # Same narrow "add/put this in the cart" shape, for the other
+    # languages the Menu Assistant now answers in (apps/eats's language
+    # picker) -- a non-English voice/typed question never contained any
+    # of the English words above, so without these the table-header
+    # detection in _extract_order_details_fields/_extract_restaurant_
+    # table_ids was the ONLY thing that could trigger auto_add for a
+    # non-English request, and this stays as a second, independent
+    # signal for the non-table conversational-reply case.
+    # Spanish -- stem-prefix match (\w* rather than enumerating every
+    # conjugation/clitic form) so "añade", "añadir", and the
+    # accented clitic-attached imperative "añádelo/añádela" (the
+    # written accent shifts onto the stem when "lo"/"la" attaches, so it
+    # needs its own prefix, not just a suffix) all match alike, same for
+    # agrega/agregar/agrégalo and pon/ponlo/ponla.
+    r"|\b(añad\w*|añád\w*|agreg\w*|agrég\w*|pon\w*)\b.{0,40}\b(carrito|pedido|orden)\b"
+    r"|\b(carrito|pedido|orden)\b.{0,40}\b(añad\w*|añád\w*|agreg\w*|agrég\w*|pon\w*)\b"
+    r"|\bsí,? añad\w*\b|\bsí,? agreg\w*\b"
+    # French
+    r"|\b(ajoute[rz]?|mets?|mettre)\b.{0,40}\b(panier|commande)\b"
+    r"|\b(panier|commande)\b.{0,40}\b(ajoute[rz]?|mets?|mettre)\b"
+    r"|\boui,? ajoute\b"
+    # Hindi (Devanagari)
+    r"|(जोड़|डाल|ऐड|एड).{0,20}(कार्ट|ऑर्डर)"
+    r"|(कार्ट|ऑर्डर).{0,20}(जोड़|डाल|ऐड|एड)"
+    # Bengali -- "অ্যাড" is the transliterated "add", as commonly typed/
+    # spoken as the formal "যোগ করুন", same code-mixing pattern as the
+    # RESTAURANT_TERMS fix above.
+    r"|(যোগ|দিন|অ্যাড).{0,20}(কার্ট|অর্ডার)"
+    r"|(কার্ট|অর্ডার).{0,20}(যোগ|দিন|অ্যাড)",
     re.IGNORECASE,
 )
+
+
+async def _semantic_cart_add_intent(question: str) -> bool | None:
+    """LLM-based cart-add intent check, used ahead of the regex fallback
+    below. This file has repeatedly hit the same wall with keyword/regex
+    matching: it only recognizes the exact phrasings someone has already
+    enumerated per language (formal vs. transliterated Bengali/Hindi,
+    Spanish clitic pronouns like "agregalo", etc.), so every new phrasing
+    nobody anticipated silently falls through as a miss. Asking the model
+    directly understands intent in any language or script -- including
+    code-mixed/transliterated text -- without a maintained word list, so
+    this takes priority; the regex only serves as a fallback for when
+    this call itself fails (bad network, provider outage), never as a
+    replacement for actually understanding the message. Returns None on
+    failure so the caller knows to fall back rather than treating a
+    failed classification as a confident "no"."""
+    system_prompt = (
+        "Classify a single message sent to a restaurant marketplace chat "
+        "assistant. The message may be written in any language or script, "
+        "including informal transliterations (English words spelled out "
+        "phonetically in another script, e.g. Bengali প্রাইস for \"price\"). "
+        "Decide only this: is the user giving a clear, present-tense "
+        "instruction to add a specific item to their cart or order RIGHT "
+        "NOW (e.g. \"add this to my cart\", \"I'll take one\", \"order "
+        "it\", a direct imperative in any language) -- as opposed to "
+        "browsing, asking about price or availability, comparing items, "
+        "or a hypothetical (\"I might order later\"). "
+        "Return JSON only, exactly this shape: "
+        "{\"wants_cart_add\": true or false}"
+    )
+    try:
+        result = await chat_json(
+            [{"role": "user", "content": question}],
+            system_prompt,
+        )
+        value = result.get("wants_cart_add")
+        return value if isinstance(value, bool) else None
+    except Exception as exc:
+        log.warning(
+            "Semantic cart-add intent classification failed; falling back to regex: %s",
+            exc,
+        )
+        return None
 
 
 def _detect_cart_add_intent(question: str) -> bool:
     """Narrow, imperative-phrasing detector for "please put this in my
     cart right now" -- distinct from the loose _is_restaurant_ordering_
     question keyword check above (which just flags the topic as
-    ordering-related for prompt/context purposes). Only a question this
-    function flags as True can trigger auto_add (see the done-event
-    handler above): a casual "what's on the menu, I might order later"
-    mentions "order" but isn't an instruction to act on right now, so it
-    must NOT auto-add -- the user still taps a chip for that. This
-    deliberately stays conservative (regex over a fixed phrase shape)
-    rather than guessing from arbitrary wording, since a false positive
-    here silently adds something nobody asked for."""
+    ordering-related for prompt/context purposes). The primary signal
+    for auto_add is now _semantic_cart_add_intent (see the done-event
+    handler above), which asks the model itself rather than matching a
+    fixed phrase list; this regex only runs as ITS fallback, when that
+    call fails outright (network/provider error), so a false positive
+    here still matters -- a casual "what's on the menu, I might order
+    later" mentions "order" but isn't an instruction to act on right
+    now, and must NOT auto-add -- but it is no longer the only line of
+    defense against missing an unusual phrasing, which was the repeated
+    failure mode this file kept hitting one language at a time."""
     q = (question or "").strip().lower()
     if not q:
         return False

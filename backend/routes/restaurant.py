@@ -1885,45 +1885,80 @@ async def create_restaurant_order_checkout(
     stripe = _stripe()
     success_url = body.success_url or f"{APP_URL}?restaurant_payment=success&order_id={order_id}&session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = body.cancel_url or f"{APP_URL}?restaurant_payment=cancelled&order_id={order_id}"
-    session = stripe.checkout.Session.create(
-        mode="payment",
-        payment_method_types=["card"],
-        customer_email=order["customer_email"] or user_email or None,
-        line_items=line_items,
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata={
-            "kind": "restaurant_order",
-            "order_id": order_id,
-            "user_id": user_id,
-            "restaurant_id": str(order["restaurant_id"]),
-            "workspace_id": str(order["workspace_id"] or ""),
-        },
-        payment_intent_data={
-            "metadata": {
+    # Wrapped: the mobile app reported "Could not start payment checkout"
+    # with nothing but a bare 500 to go on -- this endpoint had no
+    # try/except around the Stripe call or the follow-up DB write, so any
+    # failure (a Stripe API error, or a DB error such as a column the
+    # 20260706_restaurant_order_payments_migration.sql migration adds not
+    # having been applied to this environment) fell through to FastAPI's
+    # generic unhandled-exception 500 with no detail. Surfacing the real
+    # exception here, logged and in the response, turns the next
+    # reproduction into a direct answer instead of another guessing round.
+    try:
+        session = stripe.checkout.Session.create(
+            mode="payment",
+            # NOT payment_method_types=["card"] -- this Stripe account's
+            # default API version rejects it on Checkout Sessions now
+            # ("The `payment_method_types` parameter is no longer
+            # supported when creating a Checkout Session. Payment methods
+            # are now managed from your Dashboard settings"), which is
+            # exactly the InvalidRequestError that turned into this
+            # endpoint's bare 500. Methods are governed by the Dashboard's
+            # Payment methods settings instead (card is on by default).
+            customer_email=order["customer_email"] or user_email or None,
+            line_items=line_items,
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata={
                 "kind": "restaurant_order",
                 "order_id": order_id,
                 "user_id": user_id,
                 "restaurant_id": str(order["restaurant_id"]),
+                "workspace_id": str(order["workspace_id"] or ""),
             },
-        },
-    )
-    await db.execute(
-        """
-        UPDATE restaurant_orders
-        SET status='payment_pending',
-            payment_status='payment_pending',
-            payment_provider='stripe',
-            stripe_checkout_session_id=$2,
-            payment_amount=$3,
-            updated_at=NOW()
-        WHERE id=$1::uuid
-        """,
-        order_id,
-        session["id"],
-        subtotal,
-    )
-    await _add_order_event(
+            payment_intent_data={
+                # Original design: the customer's card is authorized at
+                # checkout but only CHARGED when the restaurant owner
+                # accepts the order (see _capture_restaurant_order_payment,
+                # called from the /owner/orders/{id}/accept endpoint). A
+                # rejection cancels this authorization hold instead of
+                # refunding a charge that was never made (see
+                # _refund_restaurant_order_for_rejection). Without
+                # capture_method="manual" here, Stripe captures the charge
+                # immediately at checkout, which is the wrong order of
+                # operations for this flow.
+                "capture_method": "manual",
+                "metadata": {
+                    "kind": "restaurant_order",
+                    "order_id": order_id,
+                    "user_id": user_id,
+                    "restaurant_id": str(order["restaurant_id"]),
+                },
+            },
+        )
+    except Exception as e:
+        log.exception("Restaurant order checkout: Stripe session creation failed order_id=%s", order_id)
+        raise HTTPException(502, f"Could not create Stripe checkout session: {type(e).__name__}: {e}")
+    try:
+        await db.execute(
+            """
+            UPDATE restaurant_orders
+            SET status='payment_pending',
+                payment_status='payment_pending',
+                payment_provider='stripe',
+                stripe_checkout_session_id=$2,
+                payment_amount=$3,
+                updated_at=NOW()
+            WHERE id=$1::uuid
+            """,
+            order_id,
+            session["id"],
+            subtotal,
+        )
+    except Exception as e:
+        log.exception("Restaurant order checkout: DB update after Stripe session create failed order_id=%s session_id=%s", order_id, session["id"])
+        raise HTTPException(500, f"Checkout session {session['id']} was created but the order could not be updated: {type(e).__name__}: {e}")
+    await _safe_add_order_event(
         db,
         order_id,
         user_id,
@@ -2450,15 +2485,21 @@ async def _handle_restaurant_checkout_completed(db, session: dict) -> None:
 
     actor_id = metadata.get("user_id") or str(order["customer_user_id"])
     amount_total = Decimal(str(session.get("amount_total") or 0)) / Decimal("100")
+    # The Checkout Session completing means the card was AUTHORIZED, not
+    # charged -- the session is created with capture_method="manual" (see
+    # create_restaurant_order_checkout) specifically so nothing is taken
+    # from the customer until the restaurant owner accepts the order
+    # (_capture_restaurant_order_payment). payment_amount here is the
+    # authorized/estimated amount for display; paid_at is set only once
+    # the capture actually happens.
     await db.execute(
         """
         UPDATE restaurant_orders
-        SET payment_status='paid',
+        SET payment_status='authorized',
             payment_provider='stripe',
             stripe_checkout_session_id=COALESCE(stripe_checkout_session_id, $2),
             stripe_payment_intent_id=$3,
             payment_amount=COALESCE(payment_amount, $4),
-            paid_at=COALESCE(paid_at, NOW()),
             updated_at=NOW()
         WHERE id=$1::uuid
         """,
@@ -3325,9 +3366,20 @@ def _restaurant_manage_sql(alias: str, user_param: str = "$1") -> str:
 
 
 def _restaurant_order_manage_sql(alias: str, user_param: str = "$1", email_param: str = "$2") -> str:
+    # Mirrors _restaurant_catalog_manage_sql's ownership rule: a restaurant
+    # is manageable either by its registered contact email matching the
+    # caller's login email, OR by the caller being an 'owner' workspace
+    # member of the restaurant's workspace. Order management previously
+    # only checked the email match, which left workspace-owned restaurants
+    # (the normal case -- see list_restaurants/_restaurant_can_manage)
+    # unable to see or act on their own orders even though they could
+    # manage the restaurant's catalog/profile just fine.
     return (
-        f"(COALESCE({alias}.email, '') <> '' AND COALESCE({email_param}::text, '') <> '' "
-        f"AND LOWER({alias}.email)=LOWER({email_param}::text))"
+        f"((COALESCE({alias}.email, '') <> '' AND COALESCE({email_param}::text, '') <> '' "
+        f"AND LOWER({alias}.email)=LOWER({email_param}::text)) OR EXISTS ("
+        f"SELECT 1 FROM workspace_members wm WHERE wm.workspace_id={alias}.workspace_id "
+        f"AND wm.user_id={user_param}::uuid AND wm.role='owner'"
+        f"))"
     )
 
 
@@ -3644,6 +3696,8 @@ async def _owner_transition_order_endpoint(
     if order["status"] not in allowed.get(to_status, set()):
         raise HTTPException(400, f"Cannot change order from {order['status']} to {to_status}")
 
+    if to_status == "accepted":
+        await _capture_restaurant_order_payment(db, order, user_id)
     if to_status == "rejected":
         await _refund_restaurant_order_for_rejection(db, order, user_id)
 
@@ -3674,14 +3728,103 @@ async def _owner_transition_order_endpoint(
     return await _fetch_order_response(db, order_id, user_id, user_email, workspace_id)
 
 
-async def _refund_restaurant_order_for_rejection(db, order, actor_id: str) -> None:
+async def _capture_restaurant_order_payment(db, order, actor_id: str) -> None:
+    """Charges the customer's card when the restaurant owner accepts the
+    order. The Checkout Session was created with capture_method="manual"
+    (see create_restaurant_order_checkout), so up to this point the card
+    is only authorized -- nothing has actually been taken. This is the one
+    and only place a restaurant order's payment is captured."""
     order = _order_row(order)
     payment_status = str(order.get("payment_status") or "unpaid")
-    if payment_status == "refunded":
+    if payment_status == "paid":
+        return  # already captured -- e.g. a retried/duplicate accept request
+    if payment_status != "authorized":
+        raise HTTPException(
+            409,
+            f"Cannot accept order: payment is not authorized (payment_status={payment_status})",
+        )
+    payment_intent_id = str(order.get("stripe_payment_intent_id") or "").strip()
+    if not payment_intent_id:
+        raise HTTPException(409, "Cannot accept order: missing Stripe payment intent id")
+
+    stripe = _stripe()
+    try:
+        intent = stripe.PaymentIntent.capture(
+            payment_intent_id,
+            idempotency_key=f"restaurant-order-capture-{order['id']}",
+        )
+        intent = _stripe_to_plain(intent)
+    except Exception as exc:
+        await db.execute(
+            """
+            UPDATE restaurant_orders
+            SET payment_status='capture_failed',
+                refund_error=$2,
+                updated_at=NOW()
+            WHERE id=$1::uuid
+            """,
+            str(order["id"]),
+            str(exc)[:1000],
+        )
+        await _safe_add_order_event(
+            db,
+            str(order["id"]),
+            actor_id,
+            "capture_failed",
+            order.get("status"),
+            order.get("status"),
+            "Stripe capture failed while accepting restaurant order",
+            {"error": str(exc)[:1000], "stripe_payment_intent_id": payment_intent_id},
+        )
+        log.exception("Restaurant order payment capture failed order_id=%s payment_intent=%s", order["id"], payment_intent_id)
+        raise HTTPException(502, "Could not charge the customer's card; order was not accepted")
+
+    amount_raw = intent.get("amount_received") if isinstance(intent, dict) else None
+    if not amount_raw:
+        amount_raw = intent.get("amount") if isinstance(intent, dict) else None
+    amount = Decimal(str(amount_raw or 0)) / Decimal("100") if amount_raw else None
+    await db.execute(
+        """
+        UPDATE restaurant_orders
+        SET payment_status='paid',
+            payment_amount=COALESCE($2, payment_amount),
+            paid_at=NOW(),
+            refund_error=NULL,
+            updated_at=NOW()
+        WHERE id=$1::uuid
+        """,
+        str(order["id"]),
+        amount,
+    )
+    await _safe_add_order_event(
+        db,
+        str(order["id"]),
+        actor_id,
+        "payment_captured",
+        order.get("status"),
+        order.get("status"),
+        "Stripe payment captured on restaurant acceptance",
+        {"stripe_payment_intent_id": payment_intent_id},
+    )
+
+
+async def _refund_restaurant_order_for_rejection(db, order, actor_id: str) -> None:
+    """Releases the customer's payment when the restaurant owner rejects
+    the order. The normal path here is an "authorized" order -- the card
+    was never charged (see _capture_restaurant_order_payment, which only
+    runs on acceptance), so this CANCELS the authorization hold rather
+    than refunding a charge that doesn't exist. "paid"/"refund_failed" is
+    kept as a fallback real-refund path for any order that was somehow
+    already captured before being rejected (shouldn't happen given the
+    accepted/rejected transitions are mutually exclusive from "submitted",
+    but better to actually refund real money than silently do nothing)."""
+    order = _order_row(order)
+    payment_status = str(order.get("payment_status") or "unpaid")
+    if payment_status in {"refunded", "cancelled"}:
         return
     if payment_status == "refund_pending":
         raise HTTPException(409, "Refund is already pending for this order")
-    if payment_status not in {"paid", "refund_failed"}:
+    if payment_status not in {"authorized", "paid", "refund_failed", "cancel_failed"}:
         return
     payment_intent_id = str(order.get("stripe_payment_intent_id") or "").strip()
     if not payment_intent_id:
@@ -3689,7 +3832,7 @@ async def _refund_restaurant_order_for_rejection(db, order, actor_id: str) -> No
             """
             UPDATE restaurant_orders
             SET payment_status='refund_pending',
-                refund_error='Missing Stripe payment intent id for paid order rejection',
+                refund_error='Missing Stripe payment intent id for rejected order',
                 updated_at=NOW()
             WHERE id=$1::uuid
             """,
@@ -3702,11 +3845,68 @@ async def _refund_restaurant_order_for_rejection(db, order, actor_id: str) -> No
             "refund_pending",
             order.get("status"),
             order.get("status"),
-            "Refund could not be issued automatically because Stripe payment intent id is missing",
+            "Payment could not be released automatically because Stripe payment intent id is missing",
         )
-        raise HTTPException(409, "Refund could not be issued automatically because payment intent id is missing")
+        raise HTTPException(409, "Payment could not be released automatically because payment intent id is missing")
 
     stripe = _stripe()
+
+    if payment_status in {"authorized", "cancel_failed"}:
+        try:
+            stripe.PaymentIntent.cancel(
+                payment_intent_id,
+                idempotency_key=f"restaurant-order-cancel-{order['id']}",
+            )
+        except Exception as exc:
+            await db.execute(
+                """
+                UPDATE restaurant_orders
+                SET payment_status='cancel_failed',
+                    refund_error=$2,
+                    updated_at=NOW()
+                WHERE id=$1::uuid
+                """,
+                str(order["id"]),
+                str(exc)[:1000],
+            )
+            await _safe_add_order_event(
+                db,
+                str(order["id"]),
+                actor_id,
+                "payment_cancel_failed",
+                order.get("status"),
+                order.get("status"),
+                "Stripe authorization cancel failed while rejecting restaurant order",
+                {"error": str(exc)[:1000], "stripe_payment_intent_id": payment_intent_id},
+            )
+            log.exception("Restaurant order payment cancel failed order_id=%s payment_intent=%s", order["id"], payment_intent_id)
+            raise HTTPException(502, "Stripe could not release the payment hold; order was not rejected")
+
+        await db.execute(
+            """
+            UPDATE restaurant_orders
+            SET payment_status='cancelled',
+                refunded_at=NOW(),
+                refund_error=NULL,
+                updated_at=NOW()
+            WHERE id=$1::uuid
+            """,
+            str(order["id"]),
+        )
+        await _safe_add_order_event(
+            db,
+            str(order["id"]),
+            actor_id,
+            "payment_cancelled",
+            order.get("status"),
+            order.get("status"),
+            "Stripe authorization cancelled on restaurant rejection -- customer was not charged",
+            {"stripe_payment_intent_id": payment_intent_id},
+        )
+        return
+
+    # Fallback: this order was already captured somehow -- issue a real
+    # refund rather than silently leaving the customer charged.
     try:
         refund = stripe.Refund.create(
             payment_intent=payment_intent_id,
@@ -3764,7 +3964,7 @@ async def _refund_restaurant_order_for_rejection(db, order, actor_id: str) -> No
         "refunded",
         order.get("status"),
         order.get("status"),
-        "Stripe refund issued before restaurant rejected the order",
+        "Stripe refund issued for an already-captured order on rejection",
         {
             "stripe_refund_id": refund.get("id") if isinstance(refund, dict) else None,
             "stripe_payment_intent_id": payment_intent_id,
@@ -3777,6 +3977,18 @@ async def _require_restaurant_order_owner(db, order, user_id: str, user_email: s
     login_email = str(user_email or "").strip().lower()
     if restaurant_email and login_email and restaurant_email == login_email:
         return
+    # Same workspace-owner fallback as _restaurant_order_manage_sql -- a
+    # restaurant managed via workspace membership (role='owner') rather
+    # than an exact email match is still manageable by its owner.
+    workspace_id = _row_get(order, "restaurant_workspace_id")
+    if workspace_id:
+        role = await db.fetchval(
+            "SELECT role FROM workspace_members WHERE workspace_id=$1::uuid AND user_id=$2::uuid",
+            str(workspace_id),
+            user_id,
+        )
+        if role == "owner":
+            return
     raise HTTPException(403, "Only the restaurant owner can update this order")
 
 
@@ -3887,8 +4099,8 @@ async def _notify_restaurant_customer(db, order, actor_id: str, event_type: str,
     restaurant_name = order.get("restaurant_name") or "restaurant"
     messages = {
         "submitted": f"Your carryout order was submitted to {restaurant_name}.",
-        "accepted": f"{restaurant_name} accepted your carryout order.",
-        "rejected": f"{restaurant_name} could not accept your carryout order.",
+        "accepted": f"{restaurant_name} accepted your carryout order -- your payment has been confirmed.",
+        "rejected": f"{restaurant_name} could not accept your carryout order. You have not been charged.",
         "ready_for_pickup": f"Your carryout order is ready for pickup at {restaurant_name}.",
         "completed": f"Your carryout order at {restaurant_name} is complete.",
     }
