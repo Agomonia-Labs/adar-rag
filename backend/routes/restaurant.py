@@ -24,6 +24,7 @@ from services.llm import embed
 from services.restaurant_agent_tools import RESTAURANT_AGENT_TOOLS
 from services.restaurant_intelligence import RestaurantIntelligenceError
 from services.notifications import send_restaurant_order_email
+from services.push import send_expo_push
 from services.text_safety import sanitize_text_for_storage
 from services.usage import check_and_log_daily_event, check_document_limit, log_event
 from services.vectordb import delete_document_vectors, store_chunk
@@ -2125,6 +2126,15 @@ async def list_restaurant_owner_feedback(
     workspace_id: str | None = Query(None),
     db=Depends(get_db),
 ):
+    # BUG FIX: this used to pass user_email into BOTH halves of
+    # _restaurant_order_manage_sql (both bound to the same $1), but that
+    # function's workspace-ownership branch casts its user_param to
+    # ::uuid -- binding an email string there blew up every call with
+    # "invalid input syntax for type uuid: <email>", a 500 that made the
+    # owner's whole feedback list unreachable. user_id and user_email are
+    # now two distinct bound parameters, matching the one other call site
+    # that already did this correctly (line ~3640).
+    user_id = str(current_user["id"])
     user_email = str(current_user.get("email") or "")
     rows = await db.fetch(
         f"""
@@ -2134,12 +2144,13 @@ async def list_restaurant_owner_feedback(
         JOIN restaurants r ON r.id=f.restaurant_id
         LEFT JOIN restaurant_menu_items mi ON mi.id=f.menu_item_id
         LEFT JOIN users u ON u.id=f.customer_user_id
-        WHERE {_restaurant_order_manage_sql("r", "$1", "$1")}
-          AND ($2='' OR f.status=$2)
-          AND ($3::uuid IS NULL OR f.workspace_id=$3::uuid)
+        WHERE {_restaurant_order_manage_sql("r", "$1", "$2")}
+          AND ($3='' OR f.status=$3)
+          AND ($4::uuid IS NULL OR f.workspace_id=$4::uuid)
         ORDER BY f.created_at DESC
         LIMIT 150
         """,
+        user_id,
         user_email,
         status.strip(),
         workspace_id,
@@ -2165,10 +2176,11 @@ async def update_restaurant_feedback_status(
         FROM restaurant_feedback f
         JOIN restaurants r ON r.id=f.restaurant_id
         WHERE f.id=$1::uuid
-          AND {_restaurant_order_manage_sql("r", "$2", "$2")}
-          AND ($3::uuid IS NULL OR f.workspace_id=$3::uuid)
+          AND {_restaurant_order_manage_sql("r", "$2", "$3")}
+          AND ($4::uuid IS NULL OR f.workspace_id=$4::uuid)
         """,
         feedback_id,
+        user_id,
         user_email,
         body.workspace_id,
     )
@@ -2263,6 +2275,12 @@ async def list_restaurant_owner_orders(
     workspace_id: str | None = Query(None),
     db=Depends(get_db),
 ):
+    # Same bug/fix as list_restaurant_owner_feedback above: user_id and
+    # user_email need to be two distinct bound parameters, not both
+    # squeezed into $1 (that made this endpoint 500 for every owner --
+    # "invalid input syntax for type uuid: <email>" -- the owner's whole
+    # order list, which is exactly what this endpoint backs, was
+    # unreachable).
     user_id = str(current_user["id"])
     user_email = str(current_user.get("email") or "")
     rows = await db.fetch(
@@ -2290,14 +2308,15 @@ async def list_restaurant_owner_orders(
         FROM restaurant_orders o
         JOIN restaurants r ON r.id=o.restaurant_id
         LEFT JOIN restaurant_order_items oi ON oi.order_id=o.id
-        WHERE {_restaurant_order_manage_sql("r", "$1", "$1")}
+        WHERE {_restaurant_order_manage_sql("r", "$1", "$2")}
           AND o.status NOT IN ('draft', 'payment_pending', 'payment_failed')
-          AND ($2='' OR o.status=$2)
-          AND ($3::uuid IS NULL OR o.workspace_id=$3::uuid)
+          AND ($3='' OR o.status=$3)
+          AND ($4::uuid IS NULL OR o.workspace_id=$4::uuid)
         GROUP BY o.id, r.id
         ORDER BY o.created_at DESC
         LIMIT 150
         """,
+        user_id,
         user_email,
         status.strip(),
         workspace_id,
@@ -2347,6 +2366,61 @@ async def complete_restaurant_order(
     db=Depends(get_db),
 ):
     return await _owner_transition_order_endpoint(db, request, current_user, order_id, "completed", "completed", body.notes or "Order completed", "completed_at", body.workspace_id)
+
+
+class PushTokenRegisterRequest(BaseModel):
+    push_token: str
+    platform: str = ""
+
+
+@router.post("/push-token")
+async def register_push_token(
+    body: PushTokenRegisterRequest,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Register (or re-point) this device's Expo push token against the
+    signed-in user -- called once on sign-in / app start so
+    _notify_restaurant_owner/_notify_restaurant_customer below can reach
+    this device even when the app is backgrounded or closed, unlike the
+    in-app notification bell which only works while the app is open.
+    Keyed uniquely by push_token: if this install's token was previously
+    registered to a different account (e.g. someone signed out and a
+    different person signed in on the same phone), this repoints it
+    rather than leaving two rows for the same physical device."""
+    token = (body.push_token or "").strip()
+    if not token:
+        raise HTTPException(400, "push_token required")
+    await db.execute(
+        """
+        INSERT INTO user_push_tokens (user_id, push_token, platform, app)
+        VALUES ($1::uuid, $2, $3, 'eats')
+        ON CONFLICT (push_token) DO UPDATE
+          SET user_id=$1::uuid, platform=$3, app='eats', updated_at=NOW()
+        """,
+        str(current_user["id"]),
+        token,
+        (body.platform or "").strip(),
+    )
+    return {"ok": True}
+
+
+@router.delete("/push-token")
+async def unregister_push_token(
+    current_user: CurrentUser,
+    push_token: str = Query(..., description="The Expo push token to remove, e.g. on sign-out"),
+    db=Depends(get_db),
+):
+    """Best-effort cleanup on sign-out so a logged-out device stops
+    receiving this account's order notifications. Scoped to the caller's
+    own user_id -- deleting by token alone would let any signed-in user
+    remove another device's registration."""
+    await db.execute(
+        "DELETE FROM user_push_tokens WHERE push_token=$1 AND user_id=$2::uuid",
+        (push_token or "").strip(),
+        str(current_user["id"]),
+    )
+    return {"ok": True}
 
 
 @router.get("/notifications")
@@ -4073,6 +4147,20 @@ async def _notify_restaurant_owner(db, order, actor_id: str, event_type: str) ->
         },
         order=order,
     )
+    await _send_order_push_to_user(
+        db,
+        owner_id,
+        title=restaurant_name,
+        message=message,
+        data={
+            "type": "restaurant_order",
+            "order_id": str(order["id"]),
+            "restaurant_id": str(order["restaurant_id"]),
+            "event_type": event_type,
+            "audience": "restaurant_owner",
+        },
+        order=order,
+    )
 
 
 async def _safe_order_notification(notification, order, label: str) -> None:
@@ -4131,6 +4219,21 @@ async def _notify_restaurant_customer(db, order, actor_id: str, event_type: str,
         },
         order=order,
     )
+    await _send_order_push_to_user(
+        db,
+        customer_id,
+        title=restaurant_name,
+        message=message,
+        data={
+            "type": "restaurant_order",
+            "order_id": str(order["id"]),
+            "restaurant_id": str(order["restaurant_id"]),
+            "event_type": event_type,
+            "status": to_status,
+            "audience": "customer",
+        },
+        order=order,
+    )
 
 
 async def _record_restaurant_notification(
@@ -4157,6 +4260,42 @@ async def _record_restaurant_notification(
         status,
         message,
         json.dumps(metadata or {}),
+    )
+
+
+async def _send_order_push_to_user(
+    db,
+    user_id: str,
+    *,
+    title: str,
+    message: str,
+    data: dict,
+    order,
+) -> None:
+    """Real OS-level push (lock screen / banner), reaching the device even
+    when ADAR Eats is closed or backgrounded -- unlike the in_app row
+    _record_restaurant_notification above writes, which only surfaces
+    once the user opens the app. Silently a no-op for a user with no
+    registered device (push-token registration is still rolling out, or
+    they declined the OS permission prompt). Mirrors
+    _send_order_email_to_user's shape below -- same callers, same
+    (title/)message/data/order inputs, different delivery channel."""
+    rows = await db.fetch(
+        "SELECT push_token FROM user_push_tokens WHERE user_id=$1::uuid AND app='eats'",
+        user_id,
+    )
+    tokens = [row["push_token"] for row in rows if row["push_token"]]
+    if not tokens:
+        return
+    sent = await send_expo_push(tokens, title=title, body=message, data=data)
+    await _record_restaurant_notification(
+        db,
+        order,
+        user_id,
+        channel="push",
+        status="sent" if sent else "failed",
+        message=message,
+        metadata={**data, "token_count": len(tokens), "accepted": sent, "provider": "expo"},
     )
 
 

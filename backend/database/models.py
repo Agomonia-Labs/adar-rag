@@ -901,6 +901,69 @@ CREATE INDEX IF NOT EXISTS idx_restaurant_notifications_order ON restaurant_noti
 CREATE INDEX IF NOT EXISTS idx_restaurant_notifications_user  ON restaurant_notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_restaurant_notifications_status ON restaurant_notifications(status);
 
+-- Push-notification device tokens. Shared across ADAR's user-shaped mobile
+-- apps (Eats today) rather than restaurant-scoped like the table above --
+-- `app` disambiguates which app a token belongs to since a user could in
+-- principle have more than one ADAR app installed with the same account.
+-- Keyed uniquely by push_token (not user_id+token): a device's Expo push
+-- token is per-install, and if the signed-in account on that install
+-- changes, re-registering should repoint the existing row rather than
+-- accumulate stale duplicates for the same physical device.
+--
+-- NOTE: a table by this name already existed in production with an
+-- incomplete/different column set (from some earlier, unrelated, never
+-- finished attempt), so CREATE TABLE IF NOT EXISTS silently no-op'd and
+-- never added our columns (confirmed via a live 500:
+-- asyncpg.exceptions.UndefinedColumnError: column "push_token" of
+-- relation "user_push_tokens" does not exist). ADD COLUMN IF NOT EXISTS
+-- patches that up regardless of whatever the existing table looks like,
+-- instead of requiring a manual one-off migration against prod.
+CREATE TABLE IF NOT EXISTS user_push_tokens (
+    id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+-- Belt-and-suspenders: in case the pre-existing orphaned table didn't
+-- even have a user_id column (unknown, since its origin/purpose is
+-- unknown) -- nullable here (unlike the NOT NULL version in the base
+-- CREATE TABLE above, which only applies when this statement actually
+-- creates the table fresh) so this never fails against existing rows.
+ALTER TABLE user_push_tokens ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE user_push_tokens ADD COLUMN IF NOT EXISTS push_token TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_push_tokens ADD COLUMN IF NOT EXISTS platform   TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_push_tokens ADD COLUMN IF NOT EXISTS app        TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_push_tokens ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+-- A unique INDEX (rather than a table-level UNIQUE constraint, which
+-- Postgres has no "ADD CONSTRAINT IF NOT EXISTS" for) is what ON
+-- CONFLICT (push_token) in the register endpoint needs, and is just as
+-- idempotent-safe to re-run on every deploy.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_push_tokens_token ON user_push_tokens(push_token);
+CREATE INDEX IF NOT EXISTS idx_user_push_tokens_user ON user_push_tokens(user_id);
+-- The pre-existing orphaned table (see note above) turned out to carry its
+-- own legacy NOT NULL columns from whatever abandoned feature created it --
+-- confirmed live via a 500: asyncpg.exceptions.NotNullViolationError: null
+-- value in column "token" of relation "user_push_tokens" violates not-null
+-- constraint. That "token" column is unrelated to our "push_token" column
+-- above and our INSERT never populates it. Rather than special-case that
+-- one column (and risk hitting another legacy NOT NULL column we haven't
+-- seen yet), relax every NOT NULL constraint on this table except the
+-- primary key id, so nothing left over from that other attempt can ever
+-- block our inserts again.
+DO $$
+DECLARE
+    col RECORD;
+BEGIN
+    FOR col IN
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'user_push_tokens'
+          AND is_nullable = 'NO'
+          AND column_name <> 'id'
+    LOOP
+        EXECUTE format('ALTER TABLE user_push_tokens ALTER COLUMN %I DROP NOT NULL', col.column_name);
+    END LOOP;
+END $$;
+
 CREATE TABLE IF NOT EXISTS restaurant_feedback (
     id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     restaurant_id  UUID        NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
