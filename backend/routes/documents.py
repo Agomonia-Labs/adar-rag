@@ -329,6 +329,27 @@ async def view_source_url(doc_id: str, current_user: CurrentUser, db=Depends(get
     return {"url": url, "expires_in_seconds": int(os.getenv("GCS_SIGNED_URL_EXPIRY_SECONDS", "3600"))}
 
 
+@router.get("/{doc_id}/source-text")
+async def view_source_text(doc_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    """Same authorization as view-url above, but returns the source text
+    directly instead of a signed GCS URL -- used by ADAR Eats' owner
+    "Documents" tab (voice-scribe transcripts). A signed URL has to be
+    fetched straight from storage.googleapis.com by the browser, which
+    only works if that bucket's CORS config lists the calling origin;
+    that's an extra piece of GCP infra this app's deploy doesn't own or
+    verify, and nothing had ever actually exercised that path in
+    production before (the DocIntel web app's own view-url is defined
+    but never called from its UI either). Reading the bytes server-side
+    and handing back plain text sidesteps that entirely, the same way
+    get_chunk_content below already does for chunk content."""
+    row = await _get_owned(doc_id, current_user["id"], db)
+    try:
+        text = await gcs.download_text(row["gcs_source_path"])
+    except Exception as exc:
+        raise HTTPException(502, f"Could not read source file: {exc}")
+    return {"text": text}
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  View chunks — reads metadata + content from GCS
 # ══════════════════════════════════════════════════════════════════════════════

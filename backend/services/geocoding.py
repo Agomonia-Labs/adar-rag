@@ -85,3 +85,43 @@ async def geocode_address(address: str) -> dict | None:
     state = _extract_component(components, "administrative_area_level_1", short=True)
 
     return {"latitude": float(lat), "longitude": float(lng), "city": city, "state": state}
+
+
+async def reverse_geocode(lat: float, lng: float) -> dict | None:
+    """Returns {"city": str, "state": str, "formatted_address": str} for a
+    lat/lng pair, or None if it couldn't be resolved (no API key configured,
+    no results, or a request error). Used to show the customer what place
+    their browser's "use my location" button actually resolved to (e.g. the
+    ADAR Eats web app's Discover page), the same confirmation the mobile
+    app gets for free from expo-location's on-device reverseGeocodeAsync --
+    the browser has no equivalent, so this calls the same Google Maps
+    Geocoding API server-side instead."""
+    api_key = _api_key()
+    if not api_key:
+        logger.warning("Reverse geocoding skipped for (%s, %s): no Google Maps API key configured", lat, lng)
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(GEOCODE_URL, params={"latlng": f"{lat},{lng}", "key": api_key})
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception:
+        logger.warning("Reverse geocoding request failed for (%s, %s)", lat, lng, exc_info=True)
+        return None
+
+    status = data.get("status")
+    results = data.get("results") or []
+    if status != "OK" or not results:
+        logger.warning("Reverse geocoding found no result for (%s, %s) (status=%s)", lat, lng, status)
+        return None
+
+    result = results[0]
+    components = result.get("address_components") or []
+    city = (
+        _extract_component(components, "locality")
+        or _extract_component(components, "postal_town")
+        or _extract_component(components, "sublocality")
+        or _extract_component(components, "administrative_area_level_2")
+    )
+    state = _extract_component(components, "administrative_area_level_1", short=True)
+    return {"city": city, "state": state, "formatted_address": result.get("formatted_address") or ""}

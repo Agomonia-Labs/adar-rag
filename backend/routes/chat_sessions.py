@@ -28,6 +28,30 @@ def _parse_jsonb(value: Any, fallback=None):
     return value
 
 
+# A session is reachable either by its creator (user_id match, the
+# original/personal-session rule -- unchanged) OR, when the session lives in
+# a shared workspace (workspace_id IS NOT NULL), by anyone who is currently a
+# member of that same workspace. This mirrors the product's existing intent:
+# list_sessions/create_session already fully support workspace_id (both the
+# original DocIntel frontend and ADAR Eats pass it), but get/save/update/
+# delete only ever checked user_id -- a pre-existing gap across the whole
+# chat_sessions router, not something new introduced for Eats. Every
+# personal (workspace_id IS NULL) session keeps exactly its old behavior:
+# the EXISTS clause can never match a NULL workspace_id, so this is purely
+# additive.
+_ACCESS_CLAUSE = """(
+    user_id = $2
+    OR (
+        workspace_id IS NOT NULL
+        AND EXISTS (
+            SELECT 1 FROM workspace_members wm
+            WHERE wm.workspace_id = chat_sessions.workspace_id
+              AND wm.user_id = $2
+        )
+    )
+)"""
+
+
 class CreateSession(BaseModel):
     title:        str            = "New Chat"
     document_ids: list[str]      = []
@@ -44,13 +68,22 @@ class AppendMessage(BaseModel):
 async def list_sessions(request: Request, current_user: CurrentUser, db=Depends(get_db)):
     workspace_id = request.query_params.get("workspace_id")
     if workspace_id:
+        # Shared workspace view: any current member of the workspace sees
+        # every session filed under it (not just ones they personally
+        # created), matching how every other Eats feature treats the shared
+        # "Restaurant" workspace.
         rows = await db.fetch(
-            """SELECT id, title, document_ids,
-                      jsonb_array_length(messages) AS message_count,
-                      created_at, updated_at
-               FROM chat_sessions
-               WHERE user_id=$1 AND workspace_id=$2
-               ORDER BY updated_at DESC
+            """SELECT cs.id, cs.title, cs.document_ids,
+                      jsonb_array_length(cs.messages) AS message_count,
+                      cs.created_at, cs.updated_at
+               FROM chat_sessions cs
+               WHERE cs.workspace_id=$2
+                 AND EXISTS (
+                     SELECT 1 FROM workspace_members wm
+                     WHERE wm.workspace_id = cs.workspace_id
+                       AND wm.user_id = $1
+                 )
+               ORDER BY cs.updated_at DESC
                LIMIT 50""",
             str(current_user["id"]), workspace_id,
         )
@@ -112,9 +145,9 @@ async def get_session(
     db=Depends(get_db),
 ):
     row = await db.fetchrow(
-        """SELECT id, title, document_ids, messages, created_at, updated_at
+        f"""SELECT id, title, document_ids, messages, created_at, updated_at
            FROM chat_sessions
-           WHERE id=$1 AND user_id=$2""",
+           WHERE id=$1 AND {_ACCESS_CLAUSE}""",
         session_id, str(current_user["id"]),
     )
     if not row:
@@ -159,18 +192,18 @@ async def save_messages(
     if first_user:
         title_val = (first_user[:60] + "…") if len(first_user) > 60 else first_user
         result = await db.execute(
-            """UPDATE chat_sessions
+            f"""UPDATE chat_sessions
                SET messages=$1::jsonb,
                    updated_at=NOW(),
                    title=CASE WHEN title='New Chat' THEN $4 ELSE title END
-               WHERE id=$2 AND user_id=$3""",
+               WHERE id=$2 AND {_ACCESS_CLAUSE}""",
             messages_json, session_id, str(current_user["id"]), title_val,
         )
     else:
         result = await db.execute(
-            """UPDATE chat_sessions
+            f"""UPDATE chat_sessions
                SET messages=$1::jsonb, updated_at=NOW()
-               WHERE id=$2 AND user_id=$3""",
+               WHERE id=$2 AND {_ACCESS_CLAUSE}""",
             messages_json, session_id, str(current_user["id"]),
         )
 
@@ -198,7 +231,7 @@ async def update_session(
         return {"ok": True}
     sets.append("updated_at=NOW()")
     await db.execute(
-        f"UPDATE chat_sessions SET {','.join(sets)} WHERE id=$1 AND user_id=$2",
+        f"UPDATE chat_sessions SET {','.join(sets)} WHERE id=$1 AND {_ACCESS_CLAUSE}",
         *params,
     )
     return {"ok": True}
@@ -212,7 +245,7 @@ async def delete_session(
     db=Depends(get_db),
 ):
     result = await db.execute(
-        "DELETE FROM chat_sessions WHERE id=$1 AND user_id=$2",
+        f"DELETE FROM chat_sessions WHERE id=$1 AND {_ACCESS_CLAUSE}",
         session_id, str(current_user["id"]),
     )
     if result == "DELETE 0":

@@ -600,6 +600,26 @@ def _menu_geo_scope_sql(
     return sql, args
 
 
+@router.get("/geocode/reverse")
+async def reverse_geocode_location(
+    current_user: CurrentUser,
+    lat: float = Query(..., description="Latitude from the client's geolocation API"),
+    lng: float = Query(..., description="Longitude from the client's geolocation API"),
+):
+    """Resolves a lat/lng pair (typically straight from the browser's
+    navigator.geolocation) to a city/state label, so the web app's "Use my
+    location" picker can show what it actually resolved to instead of
+    silently applying raw coordinates -- the confirmation the mobile app
+    already gets for free from expo-location's on-device reverse geocoder.
+    Best-effort: returns empty strings (not an error) if it can't resolve,
+    since the coordinates themselves still work for radius filtering either
+    way (see services/geocoding.py's reverse_geocode)."""
+    result = await geocoding.reverse_geocode(lat, lng)
+    if not result:
+        return {"city": "", "state": "", "formatted_address": ""}
+    return result
+
+
 @router.get("/restaurants")
 async def list_restaurants(
     current_user: CurrentUser,
@@ -1757,7 +1777,7 @@ async def get_dine_in_availability(
 async def list_dine_in_bookings(
     restaurant_id: str,
     current_user: CurrentUser,
-    days_ahead: int = Query(14, ge=1, le=DINE_IN_MAX_ADVANCE_DAYS, description="How many days ahead to include, starting today"),
+    days_ahead: int = Query(DINE_IN_MAX_ADVANCE_DAYS, ge=1, le=DINE_IN_MAX_ADVANCE_DAYS, description="How many days ahead to include, starting today"),
     db=Depends(get_db),
 ):
     """Confirmed dine-in reservations for the owner's Manage screen, grouped
