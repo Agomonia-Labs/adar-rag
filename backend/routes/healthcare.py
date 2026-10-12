@@ -65,6 +65,16 @@ SUPPORTED_CLINICAL_AUDIO_TYPES = {
     "audio/x-wav",
     "audio/ogg",
 }
+# Same rationale as routes/voice.py's AUDIO_TYPE_ALIASES: a real iOS device's
+# networking layer reports an .m4a recording's multipart Content-Type using
+# one of these platform-specific aliases regardless of what the mobile app's
+# JS explicitly sets, so normalize rather than reject a perfectly valid
+# clinical recording.
+CLINICAL_AUDIO_TYPE_ALIASES = {
+    "audio/x-m4a": "audio/mp4",
+    "audio/m4a": "audio/mp4",
+    "audio/aac": "audio/mp4",
+}
 
 
 @router.get("/personas")
@@ -711,6 +721,7 @@ async def run_healthcare_transcription_workflow(
         raise HTTPException(400, "Consent is required before recording or uploading a clinical conversation")
     doc = await _get_accessible_doc(db, doc_id, user_id)
     content_type = (audio.content_type or "application/octet-stream").split(";")[0].strip().lower()
+    content_type = CLINICAL_AUDIO_TYPE_ALIASES.get(content_type, content_type)
     if content_type not in SUPPORTED_CLINICAL_AUDIO_TYPES:
         raise HTTPException(400, f"Unsupported audio format: {content_type}")
     audio_bytes = await audio.read()
@@ -803,6 +814,7 @@ async def run_new_visit_transcription_workflow(
     await check_document_limit(db, user_id, quantity=1)
 
     content_type = (audio.content_type or "application/octet-stream").split(";")[0].strip().lower()
+    content_type = CLINICAL_AUDIO_TYPE_ALIASES.get(content_type, content_type)
     if content_type not in SUPPORTED_CLINICAL_AUDIO_TYPES:
         raise HTTPException(400, f"Unsupported audio format: {content_type}")
     audio_bytes = await audio.read()

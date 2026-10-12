@@ -23,6 +23,7 @@ from services.telemetry import configure_telemetry, current_otel_ids, shutdown_t
 async def lifespan(app: FastAPI):
     observability_task = None
     webhook_task = None
+    dine_in_reminder_task = None
     log.info("═══════════════════════════════════")
     log.info("DocIntel starting up")
     log.info(f"  PORT         = {os.getenv('PORT', '8080')}")
@@ -53,6 +54,9 @@ async def lifespan(app: FastAPI):
         if os.getenv("WEBHOOK_DELIVERY_SCHEDULER_ENABLED", "true").lower() in {"1", "true", "yes"}:
             from services.webhook_scheduler import webhook_delivery_scheduler
             webhook_task = asyncio.create_task(webhook_delivery_scheduler())
+        if os.getenv("DINE_IN_REMINDER_SCHEDULER_ENABLED", "true").lower() in {"1", "true", "yes"}:
+            from services.dine_in_reminder_scheduler import dine_in_reminder_scheduler
+            dine_in_reminder_task = asyncio.create_task(dine_in_reminder_scheduler())
         log.info("✓ Schema ready")
     except Exception as e:
         log.exception(f"✗ Database startup failed: {e}")
@@ -69,6 +73,12 @@ async def lifespan(app: FastAPI):
         webhook_task.cancel()
         try:
             await webhook_task
+        except asyncio.CancelledError:
+            pass
+    if dine_in_reminder_task:
+        dine_in_reminder_task.cancel()
+        try:
+            await dine_in_reminder_task
         except asyncio.CancelledError:
             pass
     shutdown_telemetry()

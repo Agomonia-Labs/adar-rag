@@ -336,3 +336,209 @@ Status: {status}
     except Exception as e:
         log.warning("Restaurant order email failed for %s order_id=%s: %s", to_email, order_id, e)
         return False
+
+
+async def send_dine_in_owner_email(
+    to_email: str,
+    *,
+    restaurant_name: str,
+    restaurant_id: str,
+    table_name: str,
+    party_size: int,
+    start_time_formatted: str,
+    caller_name: str = "",
+    caller_phone: str = "",
+    caller_email: str = "",
+) -> bool:
+    """New dine-in reservation notification for the restaurant owner --
+    mirrors send_restaurant_order_email's shape/style. The owner already
+    gets an in-app bell row and an Expo push for this event (see
+    create_dine_in_reservation in routes/restaurant.py); this is the email
+    leg of that same event, so all three channels fire together."""
+    if not is_email_configured():
+        log.warning(
+            "Dine-in owner email not sent because GMAIL_USER/GMAIL_APP_PASSWORD are not configured restaurant_id=%s to=%s",
+            restaurant_id,
+            to_email,
+        )
+        return False
+    subject = f"New dine-in reservation — {restaurant_name}"
+    body = f"""A new dine-in reservation was just booked at {restaurant_name}.
+
+Table: {table_name}
+Party size: {party_size}
+When: {start_time_formatted}
+"""
+    if caller_name:
+        body += f"Guest: {caller_name}\n"
+    if caller_phone:
+        body += f"Phone: {caller_phone}\n"
+    if caller_email:
+        body += f"Email: {caller_email}\n"
+    body += "\nOpen ADAR Eats to see it on your Dine-In bookings screen.\n"
+    body += "\n— ADAR Eats\n"
+    try:
+        await send_email(to=to_email, subject=subject, body=body)
+        log.info("Dine-in owner email sent to %s restaurant_id=%s", to_email, restaurant_id)
+        return True
+    except Exception as e:
+        log.warning("Dine-in owner email failed for %s restaurant_id=%s: %s", to_email, restaurant_id, e)
+        return False
+
+
+async def send_dine_in_reminder_email(
+    to_email: str,
+    *,
+    restaurant_name: str,
+    restaurant_id: str,
+    table_name: str,
+    party_size: int,
+    start_time_formatted: str,
+) -> bool:
+    """Reminder email sent some hours ahead of a confirmed dine-in
+    reservation (see services/dine_in_reminder_scheduler.py). Written in
+    ADAR Eats' own restaurant-facing voice rather than adar-core's reused,
+    domain-neutral appointment-confirmation template (which renders a
+    table as "Provider" and the reservation as a "Visit type") -- this is
+    the one email in the dine-in flow that's purpose-written for a
+    restaurant guest, not borrowed scheduling-engine copy."""
+    if not is_email_configured():
+        log.warning(
+            "Dine-in reminder email not sent because GMAIL_USER/GMAIL_APP_PASSWORD are not configured restaurant_id=%s to=%s",
+            restaurant_id,
+            to_email,
+        )
+        return False
+    subject = f"Reminder: your table at {restaurant_name}"
+    body = f"""Just a reminder about your upcoming reservation.
+
+Restaurant: {restaurant_name}
+Table: {table_name}
+Party size: {party_size}
+When: {start_time_formatted}
+
+See you soon!
+
+— ADAR Eats
+"""
+    try:
+        await send_email(to=to_email, subject=subject, body=body)
+        log.info("Dine-in reminder email sent to %s restaurant_id=%s", to_email, restaurant_id)
+        return True
+    except Exception as e:
+        log.warning("Dine-in reminder email failed for %s restaurant_id=%s: %s", to_email, restaurant_id, e)
+        return False
+
+
+async def send_dine_in_cancelled_email(
+    to_email: str,
+    *,
+    audience: str,  # 'restaurant_owner' | 'customer'
+    restaurant_name: str,
+    restaurant_id: str,
+    table_name: str,
+    party_size: int,
+    start_time_formatted: str,
+    cancelled_by: str = "",  # 'restaurant_owner' | 'customer' | '' (unknown)
+    reason: str = "",
+    caller_name: str = "",
+) -> bool:
+    """Dine-in cancellation notification, audience-parameterized like
+    send_restaurant_order_email. When the CUSTOMER initiated the cancel,
+    adar-core's own cancel_booking already emails them directly
+    (send_appointment_cancelled_email, fired whenever caller_email was set
+    on the original booking) -- callers should only invoke this for the
+    customer leg of an OWNER-initiated cancel, to avoid a duplicate email;
+    the owner has no adar-core-side email of their own, so this is always
+    used for the owner leg regardless of who initiated it."""
+    if not is_email_configured():
+        log.warning(
+            "Dine-in cancellation email not sent because GMAIL_USER/GMAIL_APP_PASSWORD are not configured restaurant_id=%s to=%s audience=%s",
+            restaurant_id, to_email, audience,
+        )
+        return False
+    subject = f"Dine-in reservation cancelled — {restaurant_name}"
+    if audience == "restaurant_owner":
+        who = "by the guest" if cancelled_by == "customer" else ""
+        body = f"""A dine-in reservation at {restaurant_name} was cancelled{(' ' + who) if who else ''}.
+
+Table: {table_name}
+Party size: {party_size}
+Was scheduled for: {start_time_formatted}
+"""
+        if caller_name:
+            body += f"Guest: {caller_name}\n"
+    else:
+        who = "by the restaurant" if cancelled_by == "restaurant_owner" else ""
+        body = f"""Your dine-in reservation at {restaurant_name} has been cancelled{(' ' + who) if who else ''}.
+
+Table: {table_name}
+Party size: {party_size}
+Was scheduled for: {start_time_formatted}
+"""
+    if reason:
+        body += f"Reason: {reason}\n"
+    body += "\n— ADAR Eats\n"
+    try:
+        await send_email(to=to_email, subject=subject, body=body)
+        log.info("Dine-in cancellation email sent to %s restaurant_id=%s audience=%s", to_email, restaurant_id, audience)
+        return True
+    except Exception as e:
+        log.warning("Dine-in cancellation email failed for %s restaurant_id=%s: %s", to_email, restaurant_id, e)
+        return False
+
+
+async def send_dine_in_rescheduled_email(
+    to_email: str,
+    *,
+    audience: str,  # 'restaurant_owner' | 'customer'
+    restaurant_name: str,
+    restaurant_id: str,
+    table_name: str,
+    party_size: int,
+    start_time_formatted: str,
+    old_start_time_formatted: str = "",
+    rescheduled_by: str = "",  # 'restaurant_owner' | 'customer' | ''
+    caller_name: str = "",
+) -> bool:
+    """Dine-in reschedule notification, audience-parameterized. A
+    reschedule is implemented as cancel-old + create-new (adar-core has no
+    atomic reschedule primitive), so the customer's own inbox will also
+    show adar-core's two separate emails for that pair of calls when they
+    initiated it themselves -- this purpose-written email is what tells
+    whichever party did NOT initiate the change, phrased as one single
+    "moved" event rather than a cancellation followed by a new booking."""
+    if not is_email_configured():
+        log.warning(
+            "Dine-in reschedule email not sent because GMAIL_USER/GMAIL_APP_PASSWORD are not configured restaurant_id=%s to=%s audience=%s",
+            restaurant_id, to_email, audience,
+        )
+        return False
+    subject = f"Dine-in reservation moved — {restaurant_name}"
+    if audience == "restaurant_owner":
+        who = "by the guest" if rescheduled_by == "customer" else ""
+        body = f"""A dine-in reservation at {restaurant_name} was moved to a new time{(' ' + who) if who else ''}.
+
+Table: {table_name}
+Party size: {party_size}
+"""
+        if caller_name:
+            body += f"Guest: {caller_name}\n"
+    else:
+        who = "by the restaurant" if rescheduled_by == "restaurant_owner" else ""
+        body = f"""Your dine-in reservation at {restaurant_name} has been moved to a new time{(' ' + who) if who else ''}.
+
+Table: {table_name}
+Party size: {party_size}
+"""
+    if old_start_time_formatted:
+        body += f"Previously: {old_start_time_formatted}\n"
+    body += f"Now: {start_time_formatted}\n"
+    body += "\n— ADAR Eats\n"
+    try:
+        await send_email(to=to_email, subject=subject, body=body)
+        log.info("Dine-in reschedule email sent to %s restaurant_id=%s audience=%s", to_email, restaurant_id, audience)
+        return True
+    except Exception as e:
+        log.warning("Dine-in reschedule email failed for %s restaurant_id=%s: %s", to_email, restaurant_id, e)
+        return False

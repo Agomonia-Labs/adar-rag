@@ -104,6 +104,14 @@ SECRETS=(
   "GCS_BUCKET_NAME=docintel-gcs-bucket:latest"
   "GOOGLE_AI_KEY=docintel-gemini-key:latest"
   "MCP_INTROSPECTION_SECRET=docintel-mcp-introspection-secret:latest"
+  # Same Secret Manager secrets adar-core's own infra/deploy-scheduling.sh
+  # uses for its admin account -- reused here so docintel-backend can mint
+  # its own server-to-server admin JWT against adar-core's scheduling API
+  # (see backend/services/scheduling_client.py). Without these, every
+  # dine-in admin call fails instantly with "not configured" (flattened to
+  # a bare 502 by the client's error mapping).
+  "SCHEDULING_ADMIN_EMAIL=scheduling-admin-email:latest"
+  "SCHEDULING_ADMIN_PASSWORD=scheduling-admin-password:latest"
 )
 
 if ! gcloud secrets describe docintel-webhook-worker-token --project="$PROJECT_ID" &>/dev/null; then
@@ -127,6 +135,26 @@ if gcloud secrets describe docintel-google-speech-key --project="$PROJECT_ID" &>
   echo "  Video STT    : enabled (docintel-google-speech-key)"
 else
   echo "  Video STT    : ⚠ docintel-google-speech-key not found; GOOGLE_AI_KEY fallback will be used"
+fi
+
+# Restaurant-location geocoding (services/geocoding.py) -- turns a
+# restaurant's free-text address into lat/lng/city/state for ADAR Eats'
+# distance/radius browsing and menu comparison. Google Maps Platform's
+# Geocoding API needs its OWN key with that API specifically enabled and a
+# billing account on the project -- GOOGLE_AI_KEY (created for Gemini) will
+# almost certainly NOT have it enabled, so geocoding silently fails (logged,
+# never surfaced to the owner) until a dedicated key exists here. Create one
+# in Cloud Console (APIs & Services > Credentials), enable "Geocoding API"
+# on it, store it as the docintel-google-maps-key secret, then re-run this
+# script -- no code change needed, services/geocoding.py already checks
+# GOOGLE_MAPS_API_KEY before falling back to GOOGLE_AI_KEY.
+if gcloud secrets describe docintel-google-maps-key --project="$PROJECT_ID" &>/dev/null; then
+  gcloud secrets add-iam-policy-binding docintel-google-maps-key \
+    --project="$PROJECT_ID" --member="serviceAccount:$SA_EMAIL" --role="roles/secretmanager.secretAccessor" --quiet >/dev/null
+  SECRETS+=("GOOGLE_MAPS_API_KEY=docintel-google-maps-key:latest")
+  echo "  Geocoding    : enabled (docintel-google-maps-key)"
+else
+  echo "  Geocoding    : ⚠ docintel-google-maps-key not found; falling back to GOOGLE_AI_KEY, which likely does NOT have the Geocoding API enabled -- restaurant addresses will not geocode until this secret exists"
 fi
 
 # Text-to-speech uses the SAME Secret Manager secret adar-core's Geetabitan
@@ -318,6 +346,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="VIDEO_DISPATCH_MODE=cloud_run_job" \
   --set-env-vars="VIDEO_WORKER_JOB_NAME=docintel-video-worker" \
   --set-env-vars="VIDEO_WORKER_REGION=$REGION" \
+  --set-env-vars="SCHEDULING_ADMIN_BASE_URL=https://api.scheduling.adar.agomoniai.com" \
   --set-env-vars="EMBEDDING_DIM=$EMBEDDING_DIM" \
   --set-env-vars="GEMINI_EMBED_MODEL=gemini-embedding-2" \
   --set-env-vars="GEMINI_CHAT_MODEL=gemini-2.5-flash" \

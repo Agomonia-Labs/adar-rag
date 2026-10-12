@@ -374,6 +374,7 @@ async def trigger_embedding(
     if row.get("workspace_id"):
         from routes.workspaces import _require_role
         await _require_role(db, str(row["workspace_id"]), str(current_user["id"]), "editor")
+    _require_restaurant_doc_creator(row, str(current_user["id"]))
     if row["status"] != "chunked":
         raise HTTPException(400, f"Document must be in 'chunked' state (current: {row['status']})")
 
@@ -402,6 +403,7 @@ async def delete_document(doc_id: str, current_user: CurrentUser, db=Depends(get
     if row.get("workspace_id"):
         from routes.workspaces import _require_role
         await _require_role(db, str(row["workspace_id"]), str(current_user["id"]), "editor")
+    _require_restaurant_doc_creator(row, str(current_user["id"]))
     user_id = str(row["user_id"])
     warnings = []
 
@@ -660,6 +662,22 @@ async def _embed_document(doc_id: str, user_id: str, workspace_id: str | None = 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Helpers
 # ══════════════════════════════════════════════════════════════════════════════
+def _require_restaurant_doc_creator(row: dict, user_id: str) -> None:
+    """Restaurant-vertical documents (menu-scribe recordings/transcripts)
+    stay creator-editable only, even inside a shared workspace -- a
+    workspace editor can see every restaurant document (handled by
+    _get_owned/list_workspace_documents, unchanged), but can mutate
+    (delete, re-embed, reclassify) only the ones they personally
+    recorded. This mirrors the same rule already enforced for the scribe
+    transcript itself (get_own_vertical_run in
+    services/vertical_agent_runs.py) and is intentionally scoped to
+    doc_domain='restaurant' only -- every other vertical keeps DocIntel's
+    original any-workspace-editor-can-mutate model, which callers of this
+    function have relied on since before this rule existed."""
+    if row.get("doc_domain") == "restaurant" and str(row.get("user_id")) != user_id:
+        raise HTTPException(403, "Only the person who recorded this can edit it.")
+
+
 async def _get_owned(doc_id: str, user_id: str, db) -> dict:
     """Return doc if owned by user OR if user is a member of the doc's workspace."""
     row = await db.fetchrow(
@@ -730,6 +748,7 @@ async def reclassify_document(doc_id: str, current_user: CurrentUser, db=Depends
     row = await _get_owned(doc_id, str(current_user["id"]), db)
     if not row:
         raise HTTPException(404, "Document not found")
+    _require_restaurant_doc_creator(row, str(current_user["id"]))
 
     # Download text from GCS and re-classify
     import tempfile, os

@@ -59,6 +59,67 @@ async def get_accessible_vertical_run(db, run_id: str, user_id: str) -> dict[str
     return dict(row)
 
 
+async def get_own_vertical_run(db, run_id: str, user_id: str) -> dict[str, Any]:
+    """Like get_accessible_vertical_run, but WITHOUT the shared-workspace
+    broadening -- only the user who actually created the run can fetch or
+    act on it. Used for the restaurant scribe workflow, where a transcript
+    must stay editable/approvable only by whoever recorded it, even though
+    other editors in the same workspace can see the restaurant it produces
+    once approved."""
+    row = await db.fetchrow(
+        "SELECT r.* FROM vertical_agent_runs r WHERE r.id=$1 AND r.user_id=$2",
+        run_id,
+        user_id,
+    )
+    if not row:
+        raise HTTPException(404, "Agent run not found")
+    return dict(row)
+
+
+async def list_pending_vertical_runs(
+    db,
+    *,
+    vertical: str,
+    user_id: str,
+    workspace_id: str | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Runs THIS user recorded themselves (never someone else's, even a
+    fellow workspace editor's) that are still awaiting review -- i.e. the
+    transcript/extraction finished (status='pending_approval') or is still
+    in flight (status='running'), but nobody has approved or rejected it
+    yet. Without this, a run that outlives the single in-memory screen
+    session that created it (app backgrounded mid-transcription, owner
+    navigated away, the review screen never got re-opened) becomes
+    permanently unreachable from the client -- the recording and
+    transcript exist in the database, but there is no way back to the
+    edit/approve screen for it. The main restaurant-list screen polls this
+    so a pending run always has a way back to review.
+
+    Scoped to exactly one workspace context (pass None for "personal",
+    workspace_id IS NULL) rather than every workspace the caller happens
+    to belong to -- a recording made in one workspace must only ever
+    surface there, never bleed into a different workspace the same person
+    is also a member of."""
+    rows = await db.fetch(
+        """
+        SELECT r.*
+        FROM vertical_agent_runs r
+        WHERE r.vertical=$1
+          AND r.status IN ('running', 'pending_approval')
+          AND r.user_id=$2
+          AND ( ($3::uuid IS NULL AND r.workspace_id IS NULL) OR r.workspace_id=$3::uuid )
+        ORDER BY r.created_at DESC
+        LIMIT $4
+        """,
+        vertical,
+        user_id,
+        workspace_id,
+        limit,
+    )
+    return [dict(row) for row in rows]
+
+
 async def latest_vertical_run(
     db,
     *,

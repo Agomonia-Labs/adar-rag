@@ -38,6 +38,60 @@ async def _require_role(db, workspace_id: str, user_id: str, min_role: str) -> s
     return m["role"]
 
 
+RESTAURANT_WORKSPACE_NAME = "Restaurant"
+
+
+async def ensure_default_workspace_membership(db, user_id: str) -> str | None:
+    """adar-eats mobile never operates in a personal (workspace_id=NULL)
+    context -- every owner and staff account always acts inside the one
+    shared restaurant workspace, exactly like the desktop app
+    (adar-web's RestaurantPanel.jsx).
+
+    Resolved by NAME ("Restaurant"), not by "oldest workspace this user
+    belongs to" -- a single ADAR account routinely holds memberships
+    across many unrelated verticals' workspaces (LearnIntel, Audio,
+    Video, Finance_Tax, Clinic, ...), so picking whichever one the user
+    happened to join first could land mobile in a workspace that has
+    nothing to do with restaurants at all. A real account with 7
+    workspaces -- only one of them named "Restaurant" -- confirmed
+    exactly that failure mode.
+
+    If the caller isn't already a member of the "Restaurant" workspace,
+    silently add them as a viewer of it. Returns the resolved
+    workspace_id, or None only in the bootstrap case where no workspace
+    named "Restaurant" exists anywhere yet (an owner needs to create one
+    from desktop first, named exactly that)."""
+    row = await db.fetchrow(
+        """SELECT w.id FROM workspaces w
+           JOIN workspace_members wm ON wm.workspace_id = w.id
+           WHERE wm.user_id=$1 AND LOWER(w.name)=LOWER($2)
+           ORDER BY wm.joined_at ASC LIMIT 1""",
+        user_id, RESTAURANT_WORKSPACE_NAME,
+    )
+    if row:
+        return str(row["id"])
+    default_ws = await db.fetchrow(
+        "SELECT id FROM workspaces WHERE LOWER(name)=LOWER($1) ORDER BY created_at ASC LIMIT 1",
+        RESTAURANT_WORKSPACE_NAME,
+    )
+    if not default_ws:
+        return None
+    workspace_id = str(default_ws["id"])
+    # Viewer, not editor: a brand-new mobile account can see everything in
+    # the restaurant workspace (documents, restaurants, orders, feedback)
+    # from the moment they log in, but recording/approving a menu and
+    # managing orders stays gated behind an explicit editor promotion an
+    # owner grants by hand (PATCH /{workspace_id}/members/{user_id}) --
+    # least-privilege by default, per product decision.
+    await db.execute(
+        """INSERT INTO workspace_members (workspace_id, user_id, role)
+           VALUES ($1,$2,'viewer')
+           ON CONFLICT (workspace_id, user_id) DO NOTHING""",
+        workspace_id, user_id,
+    )
+    return workspace_id
+
+
 async def _fmt_workspace(db, ws: dict, user_id: str) -> dict:
     members = await db.fetch(
         """SELECT wm.user_id, wm.role, wm.joined_at, u.email, u.full_name
@@ -240,8 +294,14 @@ async def update_member_role(
     db=Depends(get_db),
 ):
     await _require_role(db, workspace_id, str(current_user["id"]), "owner")
-    if body.role not in ("viewer", "editor"):
-        raise HTTPException(400, "role must be viewer or editor (owner cannot be changed)")
+    # An owner can promote a member all the way to owner -- e.g. the
+    # mobile account that auto-joined as viewer at signup and has since
+    # been doing the actual day-to-day recording for a restaurant becomes
+    # its owner from here, workspaces can have more than one owner, and
+    # ROLE_ORDER already treats owner as the top tier everywhere else that
+    # checks it.
+    if body.role not in ("viewer", "editor", "owner"):
+        raise HTTPException(400, "role must be viewer, editor, or owner")
     if user_id == str(current_user["id"]):
         raise HTTPException(400, "Cannot change your own role")
 

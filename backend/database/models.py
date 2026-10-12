@@ -761,6 +761,30 @@ CREATE INDEX IF NOT EXISTS idx_restaurants_user      ON restaurants(user_id);
 CREATE INDEX IF NOT EXISTS idx_restaurants_workspace ON restaurants(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_restaurants_name      ON restaurants(LOWER(name));
 
+-- Structured location, geocoded from the free-text `address` column above
+-- (see services/geocoding.py) so the customer-facing marketplace can filter
+-- and sort restaurants by distance (default 50-mile radius) and let a
+-- customer search by city/state directly, instead of only by name. A
+-- restaurant with an address but no coordinates yet (geocoding failed, or
+-- hasn't run) still appears in name search -- it just won't appear in
+-- radius-based browsing until backfilled (scripts/backfill_restaurant_locations.py).
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'restaurants' AND column_name = 'latitude'
+    ) THEN
+        ALTER TABLE restaurants ADD COLUMN latitude DOUBLE PRECISION;
+        ALTER TABLE restaurants ADD COLUMN longitude DOUBLE PRECISION;
+        ALTER TABLE restaurants ADD COLUMN city TEXT NOT NULL DEFAULT '';
+        ALTER TABLE restaurants ADD COLUMN state TEXT NOT NULL DEFAULT '';
+    END IF;
+END;
+$$;
+CREATE INDEX IF NOT EXISTS idx_restaurants_lat_lng ON restaurants(latitude, longitude);
+CREATE INDEX IF NOT EXISTS idx_restaurants_city    ON restaurants(LOWER(city));
+CREATE INDEX IF NOT EXISTS idx_restaurants_state   ON restaurants(LOWER(state));
+
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -772,6 +796,19 @@ BEGIN
 END;
 $$;
 CREATE INDEX IF NOT EXISTS idx_restaurants_marketplace ON restaurants(marketplace_visible) WHERE marketplace_visible;
+
+-- Dine-in table reservations. The actual booking engine lives in adar-core's
+-- Firestore-backed "scheduling" domain (the same one powering ADAR Front
+-- Desk) -- a restaurant maps to one scheduling "practice" there, and each
+-- physical table maps to one "provider". These three columns are all we
+-- store on our side: a link to that practice, whether the owner has turned
+-- dine-in on, and a long-lived practice_staff JWT (minted once at enable
+-- time via adar-core's admin API) so this backend can manage the practice's
+-- tables/hours and read its bookings on the owner's behalf -- the mobile
+-- app never sees this token or talks to adar-core directly.
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS scheduling_practice_id  TEXT NOT NULL DEFAULT '';
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS dine_in_enabled         BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS scheduling_staff_token  TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS restaurant_menu_items (
     id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -900,6 +937,54 @@ CREATE TABLE IF NOT EXISTS restaurant_notifications (
 CREATE INDEX IF NOT EXISTS idx_restaurant_notifications_order ON restaurant_notifications(order_id);
 CREATE INDEX IF NOT EXISTS idx_restaurant_notifications_user  ON restaurant_notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_restaurant_notifications_status ON restaurant_notifications(status);
+-- order_id was NOT NULL (every notification used to be order-related), but
+-- dine-in reservation notifications (see routes/restaurant.py's
+-- create_dine_in_reservation) have no restaurant_orders row to point at --
+-- the actual booking record lives in adar-core's scheduling_appointments.
+-- Relax it rather than minting a fake placeholder order row.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'restaurant_notifications' AND column_name = 'order_id' AND is_nullable = 'NO'
+    ) THEN
+        ALTER TABLE restaurant_notifications ALTER COLUMN order_id DROP NOT NULL;
+    END IF;
+END;
+$$;
+
+-- Local cache of dine-in reservations created via create_dine_in_reservation
+-- (routes/restaurant.py), keyed by adar-core's scheduling appointment id.
+-- adar-core's Firestore-backed booking engine has no reminder concept and
+-- no durable link back to our own users table, so this table is what makes
+-- the scheduled reminder job (services/dine_in_reminder_scheduler.py)
+-- possible without re-deriving restaurant/table/customer details from
+-- adar-core on every cycle, and without ever sending the same reminder
+-- twice (reminder_sent_at is set exactly once, inside the same query that
+-- selects the row to remind).
+CREATE TABLE IF NOT EXISTS dine_in_reservations (
+    booking_id       TEXT        PRIMARY KEY,
+    restaurant_id    UUID        NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+    customer_user_id UUID        REFERENCES users(id) ON DELETE SET NULL,
+    customer_email   TEXT        NOT NULL DEFAULT '',
+    table_id         TEXT        NOT NULL DEFAULT '',
+    table_name       TEXT        NOT NULL DEFAULT '',
+    party_size       INTEGER     NOT NULL DEFAULT 0,
+    start_time       TIMESTAMPTZ NOT NULL,
+    reminder_sent_at TIMESTAMPTZ,
+    created_at       TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_dine_in_reservations_reminder   ON dine_in_reservations(start_time) WHERE reminder_sent_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_dine_in_reservations_restaurant ON dine_in_reservations(restaurant_id);
+
+-- 'confirmed' | 'cancelled'. Added for cancel/reschedule support -- a
+-- reschedule is modeled as cancelling this row (status='cancelled') and
+-- inserting a fresh one for the new booking_id/start_time (adar-core's
+-- scheduling engine has no atomic reschedule primitive, only cancel +
+-- create), so this table needs its own cancelled marker to stop surfacing
+-- a superseded row in the customer's reservation list or the reminder job.
+ALTER TABLE dine_in_reservations ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'confirmed';
+CREATE INDEX IF NOT EXISTS idx_dine_in_reservations_customer ON dine_in_reservations(customer_user_id, start_time) WHERE customer_user_id IS NOT NULL;
 
 -- Push-notification device tokens. Shared across ADAR's user-shaped mobile
 -- apps (Eats today) rather than restaurant-scoped like the table above --

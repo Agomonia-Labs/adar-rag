@@ -5,7 +5,11 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import date as date_cls
+from datetime import datetime, timedelta, timezone
+from datetime import time as time_cls
+from zoneinfo import ZoneInfo
+import math
 from decimal import Decimal
 from difflib import SequenceMatcher
 from typing import Any, Optional
@@ -23,8 +27,16 @@ from services.chunker import chunk_text
 from services.llm import embed
 from services.restaurant_agent_tools import RESTAURANT_AGENT_TOOLS
 from services.restaurant_intelligence import RestaurantIntelligenceError
-from services.notifications import send_restaurant_order_email
+from services.notifications import (
+    send_restaurant_order_email,
+    send_dine_in_owner_email,
+    send_dine_in_cancelled_email,
+    send_dine_in_rescheduled_email,
+)
 from services.push import send_expo_push
+import services.scheduling_client as scheduling_client
+from services.scheduling_client import compute_table_slots
+from services import geocoding
 from services.text_safety import sanitize_text_for_storage
 from services.usage import check_and_log_daily_event, check_document_limit, log_event
 from services.vectordb import delete_document_vectors, store_chunk
@@ -33,7 +45,8 @@ from services.vertical_agent_runs import (
     complete_vertical_run,
     create_vertical_run,
     fail_vertical_run,
-    get_accessible_vertical_run,
+    get_own_vertical_run,
+    list_pending_vertical_runs,
     run_vertical_step,
     vertical_run_response,
 )
@@ -58,6 +71,17 @@ SUPPORTED_RESTAURANT_AUDIO_TYPES = {
     "audio/wav",
     "audio/x-wav",
     "audio/ogg",
+}
+# Same rationale as routes/voice.py's AUDIO_TYPE_ALIASES: a real iOS device's
+# networking layer reports an .m4a recording's multipart Content-Type using
+# one of these platform-specific aliases regardless of what the mobile app's
+# JS explicitly sets, so a menu walkthrough recorded on iPhone (OwnerDashboardScreen.tsx)
+# arrived here as "audio/x-m4a" and was rejected outright even though it's the
+# same MPEG-4/AAC audio Gemini already accepts as "audio/mp4".
+RESTAURANT_AUDIO_TYPE_ALIASES = {
+    "audio/x-m4a": "audio/mp4",
+    "audio/m4a": "audio/mp4",
+    "audio/aac": "audio/mp4",
 }
 MAX_RESTAURANT_IMAGE_BYTES = int(os.getenv("RESTAURANT_MENU_PHOTO_MAX_MB", "8")) * 1024 * 1024
 SUPPORTED_RESTAURANT_IMAGE_TYPES = {
@@ -201,6 +225,7 @@ async def run_restaurant_scribe_workflow(
     total_audio_bytes = 0
     for index, upload in enumerate(uploads):
         content_type = (upload.content_type or "application/octet-stream").split(";")[0].strip().lower()
+        content_type = RESTAURANT_AUDIO_TYPE_ALIASES.get(content_type, content_type)
         if content_type not in SUPPORTED_RESTAURANT_AUDIO_TYPES:
             raise HTTPException(400, f"Unsupported audio format: {content_type}")
         content = await upload.read()
@@ -325,9 +350,67 @@ async def run_restaurant_scribe_workflow(
     return response
 
 
+@router.get("/workspace")
+async def get_restaurant_workspace(current_user: CurrentUser, db=Depends(get_db)):
+    """adar-eats mobile never lets an owner or staff member operate in a
+    personal (workspace_id=NULL) context -- everybody is auto-connected to
+    the one shared restaurant workspace instead, same as desktop. Mobile
+    calls this once at startup (via WorkspaceContext) and uses the
+    returned workspace_id for every owner-side call from then on, instead
+    of picking a workspace itself or ever falling back to personal."""
+    from routes.workspaces import ensure_default_workspace_membership
+    workspace_id = await ensure_default_workspace_membership(db, str(current_user["id"]))
+    if not workspace_id:
+        raise HTTPException(
+            409,
+            "No restaurant workspace exists yet. Ask an owner to create one from the desktop app first.",
+        )
+    ws = await db.fetchrow("SELECT name FROM workspaces WHERE id=$1", workspace_id)
+    return {"workspace_id": workspace_id, "workspace_name": ws["name"] if ws else ""}
+
+
+@router.get("/agent-runs")
+async def list_pending_restaurant_agent_runs(
+    current_user: CurrentUser,
+    workspace_id: str | None = Query(None),
+    db=Depends(get_db),
+):
+    """Scribe recordings THIS user recorded themselves that are still
+    awaiting review/approval -- the recording may have been made in a
+    session that's long gone (app closed, backgrounded through the whole
+    transcription, or the owner just navigated away before it finished), so
+    this is the only way back to it without the run_id the client happened
+    to be holding at the time. The owner-side restaurant list screen calls
+    this so a pending run always has a visible "finish reviewing" entry
+    point instead of silently becoming unreachable.
+
+    Scoped to the caller's current workspace (or personal, when
+    workspace_id is omitted) and to runs they created themselves -- a
+    recording only ever shows up in the workspace it was actually made in,
+    and only the person who recorded it sees (and can act on) it here."""
+    runs = await list_pending_vertical_runs(
+        db, vertical=RESTAURANT_VERTICAL, user_id=str(current_user["id"]), workspace_id=workspace_id,
+    )
+    summaries = []
+    for run in runs:
+        result = _json(run.get("result_data")) or {}
+        packet = _restaurant_packet_from_result(result)
+        profile = (packet or {}).get("restaurant_profile") or {}
+        summaries.append({
+            "run_id": str(run["id"]),
+            "status": run.get("status"),
+            "created_at": run["created_at"].isoformat() if run.get("created_at") else None,
+            "restaurant_name": profile.get("name") or "",
+            "menu_item_count": len((packet or {}).get("menu_items") or []),
+        })
+    return {"runs": summaries}
+
+
 @router.get("/agent-runs/{run_id}")
 async def get_restaurant_agent_run(run_id: str, current_user: CurrentUser, db=Depends(get_db)):
-    run = await get_accessible_vertical_run(db, run_id, str(current_user["id"]))
+    # Creator-only: editing/approving a scribe transcript is restricted to
+    # whoever recorded it, same login only -- not any workspace editor.
+    run = await get_own_vertical_run(db, run_id, str(current_user["id"]))
     if run.get("vertical") != RESTAURANT_VERTICAL:
         raise HTTPException(404, "Restaurant agent run not found")
     return await vertical_run_response(db, run)
@@ -342,14 +425,15 @@ async def approve_restaurant_agent_run(
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
-    run = await get_accessible_vertical_run(db, run_id, user_id)
+    # Creator-only: approving (and the editing that precedes it) is
+    # restricted to whoever recorded the transcript, same login only --
+    # not any other editor in the workspace, even though the resulting
+    # restaurant is visible to the whole workspace once saved below.
+    run = await get_own_vertical_run(db, run_id, user_id)
     if run.get("vertical") != RESTAURANT_VERTICAL:
         raise HTTPException(404, "Restaurant agent run not found")
     workspace_id = str(run["workspace_id"]) if run.get("workspace_id") else None
     workflow_owner_id = str(run["user_id"])
-    if workspace_id:
-        from routes.workspaces import _require_role
-        await _require_role(db, workspace_id, user_id, "editor")
     result_data = _json(run.get("result_data")) or {}
     approved_packet = body.approved_packet or result_data.get("approved_packet")
     if not approved_packet:
@@ -370,46 +454,44 @@ async def approve_restaurant_agent_run(
         ip_address=ip_from(request),
         user_agent=ua_from(request),
     )
-    fresh = await get_accessible_vertical_run(db, run_id, user_id)
+    fresh = await get_own_vertical_run(db, run_id, user_id)
     response = await vertical_run_response(db, fresh)
     response["restaurant_id"] = restaurant_id
     return response
 
 
 @router.get("/documents")
-async def list_restaurant_documents(current_user: CurrentUser, db=Depends(get_db)):
-    """List this owner's restaurant-menu-scribe recordings/transcripts --
-    the ADAR Eats mobile "Documents" tab, mirroring DocIntel's own
-    Documents screen (GET /api/documents/) but, unlike that endpoint,
-    visible across any workspace the caller belongs to (not just
-    personal, workspace_id-less rows) -- same broadened-access rule used
-    elsewhere in this file for restaurants themselves (see
-    list_restaurants/get_restaurant).
+async def list_restaurant_documents(
+    current_user: CurrentUser,
+    workspace_id: str | None = Query(None),
+    db=Depends(get_db),
+):
+    """List documents in the caller's restaurant workspace -- the ADAR Eats
+    mobile "Documents" tab. Deliberately uses the EXACT SAME row-selection
+    rule as adar-web's generic workspace Documents tab
+    (list_workspace_documents in routes/workspaces.py: `d.workspace_id=$1
+    AND d.status!='deleted'`, no doc_domain filter) so the two surfaces
+    can never show a different document set for the same workspace --
+    mobile previously used a narrower, restaurant-specific rule
+    (doc_domain='restaurant' OR reachable via a restaurant's
+    source_run_id) that silently hid any document whose workspace
+    membership should have made it visible, which is exactly how two
+    already-approved restaurants' transcripts (visible on web) went
+    missing from mobile. The only difference from web's endpoint is
+    additive: each row gets a `restaurant_name` label for display, same
+    as before, which doesn't change which rows are returned.
 
-    A document counts as "this owner's restaurant transcript" either way:
-    (a) doc_domain='restaurant' -- set by this file's own voice-scribe
-        submission (_persist_workflow_transcript et al), the normal case
-        for a menu recorded from the Eats mobile app, including one still
-        pending_approval (not yet turned into a restaurant row); or
-    (b) reachable via restaurants.source_run_id -> vertical_agent_runs.
-        document_id for one of the caller's restaurants -- covers a menu
-        that was instead recorded/uploaded through DocIntel's generic
-        desktop document flow and only became a restaurant at approval
-        time. The GENERIC classifier (services/classifier.py) has no
-        "restaurant" domain at all -- its DOMAINS list is legal/finance/
-        hr/medical/research/operations/general -- so a document ingested
-        that way is classified doc_domain='general' and branch (a) alone
-        would silently never show it, which is exactly the bug reported:
-        a restaurant recorded from DocIntel's desktop UI had a real menu
-        and real restaurant row, but its transcript never appeared in the
-        Eats Documents tab. _restaurant_source_transcript() below already
-        resolves a restaurant's transcript the same way for other
-        purposes (e.g. chat context); this mirrors that resolution path
-        for the document list instead of a single restaurant's text."""
+    workspace_id is required in practice -- adar-eats mobile always has
+    one resolved via GET /api/restaurant/workspace (no personal/
+    workspace_id=NULL mode here) -- but stays optional at the type level
+    so an old, not-yet-rebuilt client doesn't 422 outright; omitting it
+    returns nothing rather than silently falling back to a broader scope."""
     from routes.documents import _doc_row
 
     user_id = str(current_user["id"])
-    user_email = str(current_user.get("email") or "")
+    if workspace_id:
+        from routes.workspaces import _require_role
+        await _require_role(db, workspace_id, user_id, "viewer")
     rows = await db.fetch(
         f"""
         SELECT d.id, d.user_id, d.original_name, d.filename, d.file_type, d.file_size,
@@ -420,26 +502,15 @@ async def list_restaurant_documents(current_user: CurrentUser, db=Depends(get_db
                  SELECT r.name FROM restaurants r
                  JOIN vertical_agent_runs run ON run.id = r.source_run_id
                  WHERE run.document_id = d.id
-                   AND {_restaurant_catalog_manage_sql('r', '$1', '$2')}
+                   AND r.workspace_id=$1::uuid
                  LIMIT 1
                ) AS restaurant_name
         FROM documents d
-        LEFT JOIN workspace_members wm ON wm.workspace_id=d.workspace_id AND wm.user_id=$1::uuid
-        WHERE d.status != 'deleted'
-          AND (
-                (d.doc_domain='restaurant' AND (d.user_id=$1::uuid OR wm.role IS NOT NULL))
-             OR EXISTS (
-                  SELECT 1 FROM restaurants r
-                  JOIN vertical_agent_runs run ON run.id = r.source_run_id
-                  WHERE run.document_id = d.id
-                    AND {_restaurant_catalog_manage_sql('r', '$1', '$2')}
-                )
-          )
+        WHERE d.workspace_id=$1::uuid AND d.status != 'deleted'
         ORDER BY d.created_at DESC
         LIMIT 200
         """,
-        user_id,
-        user_email,
+        workspace_id,
     )
     documents = []
     for row in rows:
@@ -451,11 +522,95 @@ async def list_restaurant_documents(current_user: CurrentUser, db=Depends(get_db
     return {"documents": documents}
 
 
+def _bounding_box(lat: float, lng: float, radius_miles: float) -> tuple[float, float, float, float]:
+    """Cheap pre-filter box around (lat, lng) sized to `radius_miles`, so the
+    exact (and more expensive) haversine distance below only has to run
+    against a small, index-prunable set of rows instead of the whole table.
+    1 degree latitude is ~69 miles everywhere; 1 degree longitude shrinks
+    toward the poles by cos(latitude), so it's computed per-request rather
+    than assumed constant."""
+    lat_delta = radius_miles / 69.0
+    lng_denom = 69.0 * max(0.000001, math.cos(math.radians(lat)))
+    lng_delta = radius_miles / lng_denom
+    return lat - lat_delta, lat + lat_delta, lng - lng_delta, lng + lng_delta
+
+
+# Haversine great-circle distance in miles between (r.latitude, r.longitude)
+# and a query point, as a raw SQL expression. GREATEST/LEAST clamp the acos
+# argument into [-1, 1] -- floating point rounding can push it a hair outside
+# that range for two points that are (near) identical, which would otherwise
+# make acos() return NaN for a restaurant essentially at the query point.
+_DISTANCE_MILES_SQL = """(
+    3959 * acos(
+        GREATEST(-1.0, LEAST(1.0,
+            cos(radians($LAT::float8)) * cos(radians(r.latitude)) * cos(radians(r.longitude) - radians($LNG::float8))
+            + sin(radians($LAT::float8)) * sin(radians(r.latitude))
+        ))
+    )
+)"""
+
+
+def _menu_distance_sql(lat_param: str, lng_param: str) -> str:
+    """Display-only distance_miles column for a menu-item row's restaurant,
+    NULL whenever either side of the comparison is missing."""
+    distance = _DISTANCE_MILES_SQL.replace("$LAT", lat_param).replace("$LNG", lng_param)
+    return f"""CASE WHEN {lat_param}::float8 IS NOT NULL AND {lng_param}::float8 IS NOT NULL
+                    AND r.latitude IS NOT NULL AND r.longitude IS NOT NULL
+                    THEN {distance} END"""
+
+
+def _menu_geo_scope_sql(
+    start_idx: int, city: str, lat: float | None, lng: float | None, radius_miles: float,
+) -> tuple[str, list]:
+    """The cross-restaurant menu comparison/search/recommend location rule:
+    a restaurant is in scope if it's in the SAME city the customer gave
+    (even if that city happens to span more than radius_miles -- a big city
+    shouldn't exclude its own far side), OR it's within radius_miles of the
+    customer's point. With neither a city nor a point given, no restriction
+    is applied at all, so internal/workspace callers that never pass these
+    params keep their old, unrestricted behavior.
+
+    Returns (sql_fragment, args): the fragment references exactly 8
+    positional placeholders starting at $<start_idx> in this fixed order --
+    city, lat, lng, radius_miles, lat_min, lat_max, lng_min, lng_max -- and
+    `args` holds the matching Python values in that same order. The caller
+    splices `args` onto the end of its own positional args, in the same
+    order it numbered them, before executing."""
+    p = lambda offset: f"${start_idx + offset}"
+    city_p, lat_p, lng_p, radius_p = p(0), p(1), p(2), p(3)
+    latmin_p, latmax_p, lngmin_p, lngmax_p = p(4), p(5), p(6), p(7)
+    have_point = lat is not None and lng is not None
+    if have_point:
+        lat_min, lat_max, lng_min, lng_max = _bounding_box(lat, lng, radius_miles)
+    else:
+        lat_min = lat_max = lng_min = lng_max = None
+    distance = _DISTANCE_MILES_SQL.replace("$LAT", lat_p).replace("$LNG", lng_p)
+    sql = f"""(
+        ({city_p}='' AND {lat_p}::float8 IS NULL)
+        OR ({city_p}<>'' AND r.city ILIKE {city_p})
+        OR (
+            {lat_p}::float8 IS NOT NULL AND {lng_p}::float8 IS NOT NULL
+            AND r.latitude IS NOT NULL AND r.longitude IS NOT NULL
+            AND r.latitude BETWEEN {latmin_p}::float8 AND {latmax_p}::float8
+            AND r.longitude BETWEEN {lngmin_p}::float8 AND {lngmax_p}::float8
+            AND {distance} <= {radius_p}::float8
+        )
+    )"""
+    args = [city.strip(), lat, lng, radius_miles, lat_min, lat_max, lng_min, lng_max]
+    return sql, args
+
+
 @router.get("/restaurants")
 async def list_restaurants(
     current_user: CurrentUser,
     workspace_id: str | None = Query(None),
     marketplace: bool = Query(False, description="If true, ignore workspace_id and return restaurants opted into the public marketplace"),
+    name: str = Query("", description="Filter by restaurant name (partial, case-insensitive)"),
+    city: str = Query("", description="Filter by city (partial, case-insensitive)"),
+    state: str = Query("", description="Filter by state (partial, case-insensitive, e.g. 'CA')"),
+    lat: float | None = Query(None, description="Customer's latitude -- enables radius filtering/sorting by distance"),
+    lng: float | None = Query(None, description="Customer's longitude -- required alongside lat"),
+    radius_miles: float = Query(50.0, gt=0, le=500, description="Radius around (lat, lng) to include, in miles. Default 50."),
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
@@ -463,8 +618,12 @@ async def list_restaurants(
     restored_count = 0
     if await _can_restore_restaurants(db, user_id, workspace_id):
         restored_count = await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
-    rows = await db.fetch(
-        f"""
+
+    have_point = lat is not None and lng is not None
+    location_requested = bool(city.strip() or state.strip() or have_point)
+    distance_sql = _DISTANCE_MILES_SQL.replace("$LAT", "$8").replace("$LNG", "$9")
+
+    sql = f"""
         SELECT r.*,
                wm.role AS viewer_role,
                COUNT(mi.id)::int AS menu_count,
@@ -472,7 +631,10 @@ async def list_restaurants(
                MAX(mi.price) FILTER (WHERE mi.price IS NOT NULL) AS max_price,
                COALESCE(fb.rating_count, 0)::int AS rating_count,
                fb.avg_rating AS avg_rating,
-               COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count
+               COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count,
+               CASE WHEN $8::float8 IS NOT NULL AND $9::float8 IS NOT NULL
+                    AND r.latitude IS NOT NULL AND r.longitude IS NOT NULL
+                    THEN {distance_sql} END AS distance_miles
         FROM restaurants r
         LEFT JOIN restaurant_menu_items mi ON mi.restaurant_id=r.id
         LEFT JOIN workspace_members wm ON wm.workspace_id=r.workspace_id AND wm.user_id=$1::uuid
@@ -488,7 +650,17 @@ async def list_restaurants(
         WHERE (
           ($3 AND r.marketplace_visible = TRUE)
           OR (NOT $3 AND (
-                $2::uuid IS NOT NULL AND r.workspace_id=$2::uuid
+                -- A workspace_id filter narrows to "that workspace's
+                -- restaurants" but must never hide the caller's own
+                -- personal ones (workspace_id IS NULL, their own
+                -- user_id) -- otherwise an owner who's also in a
+                -- workspace loses visibility into restaurants they
+                -- recorded before joining it, or in parallel with it,
+                -- the moment a client starts passing workspace_id.
+                ($2::uuid IS NOT NULL AND (
+                      r.workspace_id=$2::uuid
+                      OR (r.workspace_id IS NULL AND r.user_id=$1::uuid)
+                    ))
                 OR ($2::uuid IS NULL AND (
                       r.workspace_id IS NULL
                       OR r.user_id=$1::uuid
@@ -496,20 +668,69 @@ async def list_restaurants(
                     ))
               ))
         )
+        AND ($4='' OR r.name ILIKE '%' || $4 || '%')
+        AND ($5='' OR r.city ILIKE '%' || $5 || '%')
+        AND ($6='' OR r.state ILIKE '%' || $6 || '%')
+        AND (
+          $8::float8 IS NULL OR $9::float8 IS NULL
+          OR (
+            r.latitude IS NOT NULL AND r.longitude IS NOT NULL
+            AND r.latitude BETWEEN $10::float8 AND $11::float8
+            AND r.longitude BETWEEN $12::float8 AND $13::float8
+            AND {distance_sql} <= $7::float8
+          )
+        )
         GROUP BY r.id, wm.role, fb.rating_count, fb.avg_rating, fb.verified_rating_count
-        ORDER BY r.workspace_id NULLS LAST, r.updated_at DESC
+        ORDER BY distance_miles ASC NULLS LAST, r.workspace_id NULLS LAST, r.updated_at DESC
         LIMIT 200
-        """,
-        user_id,
-        workspace_id,
-        marketplace,
-    )
+    """
+
+    def _build_args(relax_location: bool) -> list:
+        # relax_location=True drops city/state/lat/lng entirely (keeps name)
+        # -- used as a fallback below, never on the first attempt.
+        if relax_location:
+            r_lat = r_lng = None
+            r_lat_min = r_lat_max = r_lng_min = r_lng_max = None
+            r_city = r_state = ""
+        else:
+            r_lat, r_lng = lat, lng
+            r_lat_min = r_lat_max = r_lng_min = r_lng_max = None
+            if have_point:
+                r_lat_min, r_lat_max, r_lng_min, r_lng_max = _bounding_box(lat, lng, radius_miles)
+            r_city, r_state = city.strip(), state.strip()
+        return [
+            user_id, workspace_id, marketplace, name.strip(), r_city, r_state, radius_miles,
+            r_lat, r_lng, r_lat_min, r_lat_max, r_lng_min, r_lng_max,
+        ]
+
+    rows = await db.fetch(sql, *_build_args(relax_location=False))
+    location_relaxed = False
+    if not rows and location_requested:
+        # A city/state typed as "my location" (or a GPS point) that happens
+        # to match zero restaurants is almost always because those
+        # restaurants' address hasn't been geocoded yet (see
+        # services/geocoding.py -- it only runs when an address is saved,
+        # never retroactively) rather than there truly being nothing
+        # marketplace-visible anywhere. Rather than leave the customer
+        # looking at a cold empty screen, fall back to every restaurant the
+        # marketplace/workspace visibility rule above already allows, and
+        # tell the mobile client so it can say so instead of implying
+        # there's genuinely nothing nearby.
+        rows = await db.fetch(sql, *_build_args(relax_location=True))
+        location_relaxed = True
+
     restaurant_rows = []
     for row in rows:
         data = _restaurant_row(row)
         data["can_manage"] = _restaurant_can_manage(dict(row), user_id, user_email)
+        if row.get("distance_miles") is not None:
+            data["distance_miles"] = round(float(row["distance_miles"]), 1)
         restaurant_rows.append(data)
-    return {"restaurants": restaurant_rows, "restored_count": restored_count}
+    return {
+        "restaurants": restaurant_rows,
+        "restored_count": restored_count,
+        "location_relaxed": location_relaxed,
+    }
 
 
 @router.get("/debug/restore-status")
@@ -740,6 +961,7 @@ async def update_restaurant(
             json.dumps({"source": "manual_update"}),
             item.get("image_gcs_path") or None,
         )
+    await _geocode_and_store_location(db, restaurant_id, profile.get("address") or "")
     await audit(
         db,
         user_id=user_id,
@@ -802,6 +1024,1151 @@ async def set_restaurant_marketplace_visibility(
         metadata={"visible": body.visible},
     )
     return {"id": restaurant_id, "marketplace_visible": body.visible}
+
+
+# ── Dine-in table reservations ──────────────────────────────────────────────
+# The booking engine lives in adar-core's Firestore-backed "scheduling"
+# domain (the same engine that powers ADAR Front Desk) -- see
+# services/scheduling_client.py. A restaurant maps 1:1 to a scheduling
+# "practice"; each physical table maps to one "provider" there, since that
+# engine has no native seats/capacity field (one provider == exactly one
+# concurrent booking) -- same-seat tables are grouped into a "tier" only as
+# a display label here, by parsing each provider's `role` field
+# ("<seats>-top"). Hours are stored per-table/provider in that engine, but a
+# restaurant opens the same hours for every table in practice, so the owner
+# sets hours once (PUT .../dine-in/hours) and we fan it out to every table.
+
+DINE_IN_MAX_ADVANCE_DAYS = 7
+DINE_IN_SLOT_STEP_MINUTES = 60  # hour-aligned dine-in slots, vs Front Desk's 15-minute default
+DINE_IN_APPOINTMENT_TYPE_NAME = "Dine-in reservation"
+DINE_IN_APPOINTMENT_DURATION_MINUTES = 90
+DINE_IN_APPOINTMENT_BUFFER_MINUTES = 15
+DINE_IN_REMINDER_LEAD_MINUTES = 120  # how far ahead of a reservation the reminder scheduler fires -- see services/dine_in_reminder_scheduler.py
+
+
+def _role_for_seats(seats: int) -> str:
+    return f"{seats}-top"
+
+
+def _seats_from_role(role: str) -> int:
+    m = re.match(r"^(\d+)-top$", (role or "").strip())
+    return int(m.group(1)) if m else 0
+
+
+async def _geocode_and_store_location(db, restaurant_id: str, address: str) -> None:
+    """Best-effort: geocode `address` and persist latitude/longitude/city/state
+    on the restaurant row. Never raises -- a geocoding failure (no API key,
+    network error, address not found) just leaves the existing/blank location
+    columns alone, so the restaurant stays visible in name search while
+    staying out of radius-based browsing until it's geocoded successfully
+    (see services/geocoding.py and scripts/backfill_restaurant_locations.py)."""
+    if not (address or "").strip():
+        return
+    try:
+        location = await geocoding.geocode_address(address)
+    except Exception:
+        log.warning("Geocoding raised unexpectedly for restaurant %s", restaurant_id, exc_info=True)
+        return
+    if not location:
+        return
+    await db.execute(
+        "UPDATE restaurants SET latitude=$2, longitude=$3, city=$4, state=$5 WHERE id=$1",
+        restaurant_id, location["latitude"], location["longitude"], location["city"], location["state"],
+    )
+
+
+class DineInEnableRequest(BaseModel):
+    notification_email: str = ""
+    timezone: str = "UTC"
+    lead_time_minutes: int = 120
+
+
+class DineInTableRequest(BaseModel):
+    id: Optional[str] = None  # adar-core provider id; omit to create a new table
+    name: str
+    seats: int
+
+
+class DineInTablesRequest(BaseModel):
+    tables: list[DineInTableRequest]
+
+
+class DineInWorkingHour(BaseModel):
+    weekday: int  # 0=Monday .. 6=Sunday, matches adar-core's convention
+    start: str    # "HH:MM"
+    end: str      # "HH:MM"
+
+
+class DineInHoursRequest(BaseModel):
+    working_hours: list[DineInWorkingHour]
+    lead_time_minutes: Optional[int] = None
+    timezone: Optional[str] = None
+
+
+class DineInReservationRequest(BaseModel):
+    table_id: Optional[str] = None  # omit to auto-pick a table that fits party_size
+    seats: Optional[int] = None     # the table-tier the customer selected on the
+    # availability screen (e.g. tapped a time under "Tables for 4") -- when
+    # table_id is omitted, booking prefers this exact tier before falling
+    # back to the next size up, so the reservation matches what the
+    # customer actually chose rather than whichever table happens to be
+    # smallest/free.
+    party_size: int
+    start_time: str  # ISO 8601
+    caller_name: str
+    caller_phone: str = ""
+    caller_email: str = ""
+    reason: str = ""
+
+
+class DineInCancelRequest(BaseModel):
+    reason: str = ""
+
+
+class DineInRescheduleRequest(BaseModel):
+    start_time: str  # ISO 8601, the new time
+    table_id: Optional[str] = None  # omit to keep auto-picking by seats/party_size
+    seats: Optional[int] = None
+    reason: str = ""
+
+
+async def _dine_in_restaurant_for_owner(db, restaurant_id: str, current_user) -> Any:
+    user_id = str(current_user["id"])
+    user_email = str(current_user.get("email") or "")
+    row = await db.fetchrow(
+        f"""
+        SELECT r.* FROM restaurants r
+        WHERE r.id=$1 AND {_restaurant_catalog_manage_sql('r', '$2', '$3')}
+        """,
+        restaurant_id, user_id, user_email,
+    )
+    if not row:
+        raise HTTPException(403, "Only a matching restaurant email or workspace owner/editor can manage dine-in settings")
+    return row
+
+
+async def _dine_in_appointment_type_id(practice_id: str) -> str:
+    types = await scheduling_client.list_appointment_types(practice_id)
+    for t in types:
+        if t.get("name") == DINE_IN_APPOINTMENT_TYPE_NAME:
+            return t["id"]
+    created = await scheduling_client.create_appointment_type(
+        practice_id, name=DINE_IN_APPOINTMENT_TYPE_NAME,
+        duration_minutes=DINE_IN_APPOINTMENT_DURATION_MINUTES,
+        buffer_minutes=DINE_IN_APPOINTMENT_BUFFER_MINUTES,
+    )
+    return created["id"]
+
+
+def _dine_in_scheduling_error(exc: "scheduling_client.SchedulingClientError") -> HTTPException:
+    return HTTPException(exc.status_code if exc.status_code < 500 else 502, exc.detail)
+
+
+async def _book_dine_in_table(
+    practice_id: str, appt_type_id: str, providers: list[dict], *,
+    table_id: Optional[str], seats: Optional[int], party_size: int,
+    start_dt: datetime, caller_name: str, caller_phone: str = "",
+    caller_email: str = "", reason: str = "",
+) -> tuple[dict, dict]:
+    """Candidate-table selection + create_booking retry loop -- the same
+    logic create_dine_in_reservation used inline before reschedule needed
+    it too, now shared by both. Tries the requested table (table_id) or
+    exact seats-tier first, falling back to the next size up, retrying on
+    a 409 (another booking just took that slot) until a table accepts it
+    or the candidates are exhausted."""
+    if table_id:
+        candidates = [p for p in providers if p["id"] == table_id and p.get("active") is not False]
+    elif seats:
+        exact = [
+            p for p in providers
+            if p.get("active") is not False and _seats_from_role(p.get("role") or "") == seats
+        ]
+        rest = sorted(
+            (
+                p for p in providers
+                if p.get("active") is not False
+                and _seats_from_role(p.get("role") or "") >= party_size
+                and _seats_from_role(p.get("role") or "") != seats
+            ),
+            key=lambda p: _seats_from_role(p.get("role") or ""),
+        )
+        candidates = exact + rest
+    else:
+        candidates = sorted(
+            (p for p in providers if p.get("active") is not False and _seats_from_role(p.get("role") or "") >= party_size),
+            key=lambda p: _seats_from_role(p.get("role") or ""),
+        )
+    if not candidates:
+        raise HTTPException(409, "No table available for that party size")
+
+    last_error: Optional["scheduling_client.SchedulingClientError"] = None
+    for table in candidates:
+        try:
+            booking = await scheduling_client.create_booking(
+                practice_id, provider_id=table["id"], appointment_type_id=appt_type_id,
+                start_time=start_dt.isoformat(), caller_name=caller_name,
+                caller_phone=caller_phone, caller_email=caller_email, reason=reason,
+            )
+        except scheduling_client.SchedulingClientError as exc:
+            last_error = exc
+            if exc.status_code == 409:
+                continue
+            raise _dine_in_scheduling_error(exc)
+        return booking, table
+    raise HTTPException(409, f"That time just got booked — try another table or time ({last_error.detail if last_error else ''})")
+
+
+async def _dine_in_booking_access(db, restaurant_id: str, booking_id: str, current_user) -> tuple[Any, Any, str]:
+    """Authorizes either the restaurant owner/manager OR the customer who
+    made this specific reservation to act on it (cancel/reschedule), and
+    returns (restaurant_row, reservation_row, actor) with actor being
+    whichever role granted access. The owner dashboard and the customer's
+    own reservation list both end up calling the same cancel/reschedule
+    endpoints -- this is the one access check both paths share."""
+    user_id = str(current_user["id"])
+    user_email = str(current_user.get("email") or "")
+    restaurant_row = await db.fetchrow("SELECT * FROM restaurants WHERE id=$1", restaurant_id)
+    if not restaurant_row:
+        raise HTTPException(404, "Restaurant not found")
+    reservation_row = await db.fetchrow(
+        "SELECT * FROM dine_in_reservations WHERE booking_id=$1 AND restaurant_id=$2::uuid",
+        booking_id, restaurant_id,
+    )
+    if not reservation_row:
+        raise HTTPException(404, "Reservation not found")
+    is_owner_row = await db.fetchrow(
+        f"SELECT 1 FROM restaurants r WHERE r.id=$1 AND {_restaurant_catalog_manage_sql('r', '$2', '$3')}",
+        restaurant_id, user_id, user_email,
+    )
+    if is_owner_row:
+        return restaurant_row, reservation_row, "restaurant_owner"
+    if reservation_row.get("customer_user_id") and str(reservation_row["customer_user_id"]) == user_id:
+        return restaurant_row, reservation_row, "customer"
+    raise HTTPException(403, "You don't have access to this reservation")
+
+
+async def _dine_in_display_timezone(restaurant_row) -> "ZoneInfo":
+    practice_id = restaurant_row.get("scheduling_practice_id")
+    tz_raw = "UTC"
+    if practice_id:
+        try:
+            tz_raw = (await scheduling_client.get_practice(practice_id)).get("timezone") or "UTC"
+        except Exception:
+            tz_raw = "UTC"
+    try:
+        return ZoneInfo(tz_raw)
+    except Exception:
+        return ZoneInfo("UTC")
+
+
+async def _notify_dine_in_cancellation(db, restaurant_row, reservation_row, *, cancelled_by: str, reason: str = "") -> None:
+    """Notifies both parties of a dine-in cancellation -- in-app + push to
+    both, plus email, consistent with the 'push+email everywhere, no gaps'
+    standard applied to the rest of this feature. The customer's email is
+    skipped here when THEY initiated the cancel, since adar-core's own
+    cancel_booking already emailed them directly in that case (see
+    scheduling_client.cancel_booking's docstring); every other
+    channel/party combination fires from here."""
+    restaurant_id = str(restaurant_row["id"])
+    restaurant_name = restaurant_row.get("name") or "the restaurant"
+    table_name = reservation_row.get("table_name") or "the table"
+    party_size = reservation_row.get("party_size") or 0
+    booking_id = reservation_row["booking_id"]
+    display_tz = await _dine_in_display_timezone(restaurant_row)
+    start_time_formatted = reservation_row["start_time"].astimezone(display_tz).strftime("%A, %B %-d at %-I:%M %p")
+
+    owner_id = str(restaurant_row["user_id"]) if restaurant_row.get("user_id") else None
+    customer_user_id = str(reservation_row["customer_user_id"]) if reservation_row.get("customer_user_id") else None
+    customer_email = (reservation_row.get("customer_email") or "").strip()
+
+    owner_message = (
+        f"A dine-in reservation for {party_size} — {table_name} at {start_time_formatted} was cancelled"
+        + (" by the guest." if cancelled_by == "customer" else ".")
+    )
+    customer_message = (
+        f"Your reservation for {party_size} at {restaurant_name} ({start_time_formatted}) was cancelled"
+        + (" by the restaurant." if cancelled_by == "restaurant_owner" else ".")
+    )
+
+    if owner_id:
+        try:
+            await db.execute(
+                """
+                INSERT INTO restaurant_notifications (restaurant_id, user_id, channel, status, message, metadata)
+                VALUES ($1::uuid, $2::uuid, 'in_app', 'unread', $3, $4::jsonb)
+                """,
+                restaurant_id, owner_id, owner_message,
+                json.dumps({
+                    "event_type": "dine_in_reservation_cancelled", "audience": "restaurant_owner",
+                    "booking_id": booking_id, "cancelled_by": cancelled_by,
+                }),
+            )
+        except Exception:
+            log.warning("Failed to record in-app cancellation notification for owner, restaurant %s booking %s", restaurant_id, booking_id, exc_info=True)
+        try:
+            tokens_rows = await db.fetch("SELECT push_token FROM user_push_tokens WHERE user_id=$1::uuid AND app='eats'", owner_id)
+            tokens = [r["push_token"] for r in tokens_rows if r["push_token"]]
+            if tokens:
+                await send_expo_push(tokens, title=restaurant_name, body=owner_message, data={"type": "dine_in", "restaurant_id": restaurant_id})
+        except Exception:
+            log.warning("Failed to push-notify owner of dine-in cancellation, restaurant %s booking %s", restaurant_id, booking_id, exc_info=True)
+        owner_email = str(restaurant_row.get("email") or "").strip()
+        if owner_email:
+            try:
+                await send_dine_in_cancelled_email(
+                    owner_email, audience="restaurant_owner", restaurant_name=restaurant_name, restaurant_id=restaurant_id,
+                    table_name=table_name, party_size=party_size, start_time_formatted=start_time_formatted,
+                    cancelled_by=cancelled_by, reason=reason,
+                )
+            except Exception:
+                log.warning("Failed to email owner of dine-in cancellation, restaurant %s booking %s", restaurant_id, booking_id, exc_info=True)
+
+    if customer_user_id:
+        try:
+            await db.execute(
+                """
+                INSERT INTO restaurant_notifications (restaurant_id, user_id, channel, status, message, metadata)
+                VALUES ($1::uuid, $2::uuid, 'in_app', 'unread', $3, $4::jsonb)
+                """,
+                restaurant_id, customer_user_id, customer_message,
+                json.dumps({
+                    "event_type": "dine_in_reservation_cancelled", "audience": "customer",
+                    "booking_id": booking_id, "cancelled_by": cancelled_by,
+                }),
+            )
+        except Exception:
+            log.warning("Failed to record in-app cancellation notification for customer, restaurant %s booking %s", restaurant_id, booking_id, exc_info=True)
+        try:
+            tokens_rows = await db.fetch("SELECT push_token FROM user_push_tokens WHERE user_id=$1::uuid AND app='eats'", customer_user_id)
+            tokens = [r["push_token"] for r in tokens_rows if r["push_token"]]
+            if tokens:
+                await send_expo_push(tokens, title=restaurant_name, body=customer_message, data={"type": "dine_in", "restaurant_id": restaurant_id})
+        except Exception:
+            log.warning("Failed to push-notify customer of dine-in cancellation, restaurant %s booking %s", restaurant_id, booking_id, exc_info=True)
+    if customer_email and cancelled_by == "restaurant_owner":
+        try:
+            await send_dine_in_cancelled_email(
+                customer_email, audience="customer", restaurant_name=restaurant_name, restaurant_id=restaurant_id,
+                table_name=table_name, party_size=party_size, start_time_formatted=start_time_formatted,
+                cancelled_by=cancelled_by, reason=reason,
+            )
+        except Exception:
+            log.warning("Failed to email customer of dine-in cancellation, restaurant %s booking %s", restaurant_id, booking_id, exc_info=True)
+
+
+async def _notify_dine_in_reschedule(db, restaurant_row, old_reservation_row, *, new_start_dt: datetime, table_name: str, rescheduled_by: str) -> None:
+    """Notifies both parties that a dine-in reservation moved to a new
+    time. The customer already gets TWO automatic emails from adar-core
+    itself for this action (a cancellation email for the old booking and
+    a confirmation email for the new one -- both fire because
+    customer_email is always passed as caller_email on these calls), so
+    this only adds in-app + push for the customer, never a third email;
+    the owner gets the full in-app + push + email treatment, since they
+    have no adar-core-side email leg at all."""
+    restaurant_id = str(restaurant_row["id"])
+    restaurant_name = restaurant_row.get("name") or "the restaurant"
+    party_size = old_reservation_row.get("party_size") or 0
+    display_tz = await _dine_in_display_timezone(restaurant_row)
+    old_time_formatted = old_reservation_row["start_time"].astimezone(display_tz).strftime("%A, %B %-d at %-I:%M %p")
+    new_time_formatted = new_start_dt.astimezone(display_tz).strftime("%A, %B %-d at %-I:%M %p")
+
+    owner_id = str(restaurant_row["user_id"]) if restaurant_row.get("user_id") else None
+    customer_user_id = str(old_reservation_row["customer_user_id"]) if old_reservation_row.get("customer_user_id") else None
+
+    owner_message = (
+        f"A dine-in reservation for {party_size} — {table_name} was moved from {old_time_formatted} to {new_time_formatted}"
+        + (" by the guest." if rescheduled_by == "customer" else ".")
+    )
+    customer_message = (
+        f"Your reservation for {party_size} at {restaurant_name} was moved to {new_time_formatted}"
+        + (" by the restaurant." if rescheduled_by == "restaurant_owner" else ".")
+    )
+
+    if owner_id:
+        try:
+            await db.execute(
+                """
+                INSERT INTO restaurant_notifications (restaurant_id, user_id, channel, status, message, metadata)
+                VALUES ($1::uuid, $2::uuid, 'in_app', 'unread', $3, $4::jsonb)
+                """,
+                restaurant_id, owner_id, owner_message,
+                json.dumps({"event_type": "dine_in_reservation_rescheduled", "audience": "restaurant_owner", "rescheduled_by": rescheduled_by}),
+            )
+        except Exception:
+            log.warning("Failed to record in-app reschedule notification for owner, restaurant %s", restaurant_id, exc_info=True)
+        try:
+            tokens_rows = await db.fetch("SELECT push_token FROM user_push_tokens WHERE user_id=$1::uuid AND app='eats'", owner_id)
+            tokens = [r["push_token"] for r in tokens_rows if r["push_token"]]
+            if tokens:
+                await send_expo_push(tokens, title=restaurant_name, body=owner_message, data={"type": "dine_in", "restaurant_id": restaurant_id})
+        except Exception:
+            log.warning("Failed to push-notify owner of dine-in reschedule, restaurant %s", restaurant_id, exc_info=True)
+        owner_email = str(restaurant_row.get("email") or "").strip()
+        if owner_email:
+            try:
+                await send_dine_in_rescheduled_email(
+                    owner_email, audience="restaurant_owner", restaurant_name=restaurant_name, restaurant_id=restaurant_id,
+                    table_name=table_name, party_size=party_size, start_time_formatted=new_time_formatted,
+                    old_start_time_formatted=old_time_formatted, rescheduled_by=rescheduled_by,
+                )
+            except Exception:
+                log.warning("Failed to email owner of dine-in reschedule, restaurant %s", restaurant_id, exc_info=True)
+
+    if customer_user_id:
+        try:
+            await db.execute(
+                """
+                INSERT INTO restaurant_notifications (restaurant_id, user_id, channel, status, message, metadata)
+                VALUES ($1::uuid, $2::uuid, 'in_app', 'unread', $3, $4::jsonb)
+                """,
+                restaurant_id, customer_user_id, customer_message,
+                json.dumps({"event_type": "dine_in_reservation_rescheduled", "audience": "customer", "rescheduled_by": rescheduled_by}),
+            )
+        except Exception:
+            log.warning("Failed to record in-app reschedule notification for customer, restaurant %s", restaurant_id, exc_info=True)
+        try:
+            tokens_rows = await db.fetch("SELECT push_token FROM user_push_tokens WHERE user_id=$1::uuid AND app='eats'", customer_user_id)
+            tokens = [r["push_token"] for r in tokens_rows if r["push_token"]]
+            if tokens:
+                await send_expo_push(tokens, title=restaurant_name, body=customer_message, data={"type": "dine_in", "restaurant_id": restaurant_id})
+        except Exception:
+            log.warning("Failed to push-notify customer of dine-in reschedule, restaurant %s", restaurant_id, exc_info=True)
+
+
+# Common US abbreviations a non-technical owner is far more likely to type
+# into the free-text Time zone field (see DineInManageScreen.tsx) than a
+# proper IANA name like "America/Los_Angeles" -- ZoneInfo doesn't accept
+# any of these (ZoneInfoNotFoundError), and every downstream consumer that
+# safely falls back to UTC on an unparseable value (availability_tools.py's
+# chat tools, get_dine_in_availability) would then silently compute in UTC
+# while this screen just echoes the typed string back, so the owner keeps
+# seeing "PST" while customers/chat see UTC times -- a several-hour
+# mismatch, not just a label difference. Normalize at the one place this
+# gets saved so every reader downstream only ever sees a real IANA zone.
+_TZ_ABBREVIATION_MAP = {
+    "PST": "America/Los_Angeles", "PDT": "America/Los_Angeles",
+    "MST": "America/Denver", "MDT": "America/Denver",
+    "CST": "America/Chicago", "CDT": "America/Chicago",
+    "EST": "America/New_York", "EDT": "America/New_York",
+    "AKST": "America/Anchorage", "AKDT": "America/Anchorage",
+    "HST": "Pacific/Honolulu",
+}
+
+
+def _normalize_timezone(tz_name: str) -> str:
+    """Returns a real IANA zone name for whatever the owner typed, or
+    raises a 400 with a clear, actionable message instead of letting a
+    bad value quietly reach Firestore (where nothing validates it again)."""
+    candidate = (tz_name or "").strip()
+    mapped = _TZ_ABBREVIATION_MAP.get(candidate.upper())
+    if mapped:
+        return mapped
+    try:
+        ZoneInfo(candidate)
+    except Exception:
+        raise HTTPException(
+            400,
+            f"\"{tz_name}\" isn't a time zone we recognize. Use a full name like "
+            f"\"America/Los_Angeles\" (Pacific), \"America/Denver\" (Mountain), "
+            f"\"America/Chicago\" (Central), or \"America/New_York\" (Eastern).",
+        )
+    return candidate
+
+
+@router.post("/restaurants/{restaurant_id}/dine-in/enable")
+async def enable_dine_in(
+    restaurant_id: str,
+    body: DineInEnableRequest,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """One-time setup: creates this restaurant's scheduling practice in
+    adar-core (idempotent -- a second call just re-patches the existing
+    practice instead of creating a duplicate) and turns dine-in on."""
+    row = await _dine_in_restaurant_for_owner(db, restaurant_id, current_user)
+    tz_name = _normalize_timezone(body.timezone)
+    try:
+        if row.get("scheduling_practice_id"):
+            practice = await scheduling_client.update_practice(
+                row["scheduling_practice_id"],
+                timezone=tz_name,
+                lead_time_minutes=body.lead_time_minutes,
+                max_advance_days=DINE_IN_MAX_ADVANCE_DAYS,
+                notification_email=body.notification_email,
+                slot_step_minutes=DINE_IN_SLOT_STEP_MINUTES,
+            )
+        else:
+            practice = await scheduling_client.create_practice(
+                name=row["name"],
+                timezone=tz_name,
+                lead_time_minutes=body.lead_time_minutes,
+                max_advance_days=DINE_IN_MAX_ADVANCE_DAYS,
+                notification_email=body.notification_email or row.get("email") or "",
+                slot_step_minutes=DINE_IN_SLOT_STEP_MINUTES,
+            )
+    except scheduling_client.SchedulingClientError as exc:
+        raise _dine_in_scheduling_error(exc)
+    practice_id = practice.get("id") or practice.get("practice_id")
+    await db.execute(
+        "UPDATE restaurants SET scheduling_practice_id=$2, dine_in_enabled=TRUE, updated_at=NOW() WHERE id=$1",
+        restaurant_id, practice_id,
+    )
+    return {"id": restaurant_id, "dine_in_enabled": True, "scheduling_practice_id": practice_id}
+
+
+@router.get("/restaurants/{restaurant_id}/dine-in/tables")
+async def list_dine_in_tables(restaurant_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    row = await _dine_in_restaurant_for_owner(db, restaurant_id, current_user)
+    if not row.get("scheduling_practice_id"):
+        return {"tables": []}
+    try:
+        providers = await scheduling_client.list_providers(row["scheduling_practice_id"])
+    except scheduling_client.SchedulingClientError as exc:
+        raise _dine_in_scheduling_error(exc)
+    return {"tables": [
+        {"id": p["id"], "name": p.get("name", ""), "seats": _seats_from_role(p.get("role") or ""), "active": p.get("active", True)}
+        for p in providers
+    ]}
+
+
+@router.put("/restaurants/{restaurant_id}/dine-in/tables")
+async def update_dine_in_tables(
+    restaurant_id: str,
+    body: DineInTablesRequest,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Full-replace semantics: a table with an id is updated, one without is
+    created, and any existing table missing from this payload is
+    deactivated (not deleted, so its booking history stays intact)."""
+    row = await _dine_in_restaurant_for_owner(db, restaurant_id, current_user)
+    practice_id = row.get("scheduling_practice_id")
+    if not practice_id:
+        raise HTTPException(400, "Enable dine-in for this restaurant first")
+    try:
+        appt_type_id = await _dine_in_appointment_type_id(practice_id)
+        existing = await scheduling_client.list_providers(practice_id)
+        kept_ids = set()
+        out = []
+        for t in body.tables:
+            if t.id:
+                updated = await scheduling_client.update_provider(
+                    t.id, name=t.name, role=_role_for_seats(t.seats), active=True,
+                )
+                out.append(updated)
+                kept_ids.add(t.id)
+            else:
+                created = await scheduling_client.create_provider(
+                    practice_id, name=t.name, role=_role_for_seats(t.seats),
+                    appointment_type_ids=[appt_type_id],
+                )
+                out.append(created)
+                kept_ids.add(created["id"])
+        for p in existing:
+            if p["id"] not in kept_ids and p.get("active") is not False:
+                await scheduling_client.update_provider(p["id"], active=False)
+    except scheduling_client.SchedulingClientError as exc:
+        raise _dine_in_scheduling_error(exc)
+    return {"tables": [
+        {"id": p["id"], "name": p.get("name", ""), "seats": _seats_from_role(p.get("role") or ""), "active": p.get("active", True)}
+        for p in out
+    ]}
+
+
+@router.get("/restaurants/{restaurant_id}/dine-in/hours")
+async def get_dine_in_hours(restaurant_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    row = await _dine_in_restaurant_for_owner(db, restaurant_id, current_user)
+    if not row.get("scheduling_practice_id"):
+        return {"working_hours": [], "lead_time_minutes": 120}
+    try:
+        practice = await scheduling_client.get_practice(row["scheduling_practice_id"])
+        providers = await scheduling_client.list_providers(row["scheduling_practice_id"])
+    except scheduling_client.SchedulingClientError as exc:
+        raise _dine_in_scheduling_error(exc)
+    working_hours = providers[0].get("working_hours", []) if providers else []
+    return {
+        "working_hours": working_hours,
+        "lead_time_minutes": practice.get("lead_time_minutes", 120),
+        "timezone": practice.get("timezone") or "UTC",
+    }
+
+
+@router.put("/restaurants/{restaurant_id}/dine-in/hours")
+async def update_dine_in_hours(
+    restaurant_id: str,
+    body: DineInHoursRequest,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    row = await _dine_in_restaurant_for_owner(db, restaurant_id, current_user)
+    practice_id = row.get("scheduling_practice_id")
+    if not practice_id:
+        raise HTTPException(400, "Enable dine-in for this restaurant first")
+    hours_payload = [wh.model_dump() for wh in body.working_hours]
+    normalized_tz = _normalize_timezone(body.timezone) if body.timezone else None
+    try:
+        practice_patch = {}
+        if body.lead_time_minutes is not None:
+            practice_patch["lead_time_minutes"] = body.lead_time_minutes
+        if normalized_tz:
+            practice_patch["timezone"] = normalized_tz
+        if practice_patch:
+            await scheduling_client.update_practice(practice_id, **practice_patch)
+        providers = await scheduling_client.list_providers(practice_id)
+        for p in providers:
+            await scheduling_client.update_provider(p["id"], working_hours=hours_payload)
+    except scheduling_client.SchedulingClientError as exc:
+        raise _dine_in_scheduling_error(exc)
+    return {"working_hours": hours_payload, "timezone": normalized_tz}
+
+
+@router.get("/restaurants/{restaurant_id}/dine-in/config")
+async def get_dine_in_config(restaurant_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    """Public-ish read for the customer booking screen -- same visibility
+    rule as GET /restaurants/{id} (marketplace-visible, or any viewer who
+    can otherwise see this restaurant). Exposes only aggregate table-tier
+    counts, never adar-core ids or credentials."""
+    user_id = str(current_user["id"])
+    row = await db.fetchrow(
+        f"SELECT * FROM restaurants r WHERE r.id=$1 AND (r.marketplace_visible=TRUE OR {_restaurant_access_sql('r', '$2')})",
+        restaurant_id, user_id,
+    )
+    if not row:
+        raise HTTPException(404, "Restaurant not found")
+    if not row.get("dine_in_enabled") or not row.get("scheduling_practice_id"):
+        return {"dine_in_enabled": False}
+    try:
+        practice = await scheduling_client.get_practice(row["scheduling_practice_id"])
+        providers = await scheduling_client.list_providers(row["scheduling_practice_id"])
+    except scheduling_client.SchedulingClientError as exc:
+        raise _dine_in_scheduling_error(exc)
+    tiers: dict[int, int] = {}
+    for p in providers:
+        if p.get("active") is False:
+            continue
+        seats = _seats_from_role(p.get("role") or "")
+        if seats:
+            tiers[seats] = tiers.get(seats, 0) + 1
+    return {
+        "dine_in_enabled": True,
+        "max_advance_days": DINE_IN_MAX_ADVANCE_DAYS,
+        "duration_minutes": DINE_IN_APPOINTMENT_DURATION_MINUTES,
+        "timezone": practice.get("timezone") or "UTC",
+        "tiers": [{"seats": s, "table_count": c} for s, c in sorted(tiers.items())],
+    }
+
+
+@router.get("/restaurants/{restaurant_id}/dine-in/availability")
+async def get_dine_in_availability(
+    restaurant_id: str,
+    current_user: CurrentUser,
+    date: str = Query(..., description="YYYY-MM-DD"),
+    party_size: int = Query(..., ge=1),
+    db=Depends(get_db),
+):
+    """Advisory availability preview (grouped by table-tier) for the Eats
+    booking UI -- see compute_table_slots's docstring for why this is a
+    preview, not the authoritative check."""
+    user_id = str(current_user["id"])
+    row = await db.fetchrow(
+        f"SELECT * FROM restaurants r WHERE r.id=$1 AND (r.marketplace_visible=TRUE OR {_restaurant_access_sql('r', '$2')})",
+        restaurant_id, user_id,
+    )
+    if not row or not row.get("dine_in_enabled") or not row.get("scheduling_practice_id"):
+        raise HTTPException(404, "Dine-in isn't available for this restaurant")
+    practice_id = row["scheduling_practice_id"]
+    try:
+        target_date = datetime.strptime(date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+    today = datetime.now(timezone.utc).date()
+    if target_date < today or (target_date - today).days > DINE_IN_MAX_ADVANCE_DAYS - 1:
+        return {"date": date, "party_size": party_size, "tiers": []}
+    # (timezone is re-read below once we have the practice doc anyway --
+    # see the final return.)
+    try:
+        practice = await scheduling_client.get_practice(practice_id)
+        providers = await scheduling_client.list_providers(practice_id)
+    except scheduling_client.SchedulingClientError as exc:
+        raise _dine_in_scheduling_error(exc)
+    # practice.get("timezone") is free text the owner saved on the Dine-In
+    # Hours screen (or the Intl default at enable-time) -- ZoneInfo raises
+    # ZoneInfoNotFoundError on anything that isn't a full IANA name (e.g. a
+    # bare abbreviation like "PST"), and that's an *unhandled* exception
+    # here (unlike the chat assistant's own _get_practice_tz in
+    # availability_tools.py, which already guards exactly this and falls
+    # back to UTC with a warning log) -- it was crashing every single call
+    # to this endpoint with a raw 500, which the Eats app's own date picker
+    # had no detail text to show, hence "Could not load availability for
+    # that day" on every date. Match availability_tools.py's fallback here
+    # too instead of letting it take the whole request down.
+    try:
+        tz = ZoneInfo(practice.get("timezone") or "UTC")
+    except Exception:
+        log.warning("Unknown timezone %r for practice %s; defaulting to UTC", practice.get("timezone"), practice_id)
+        tz = ZoneInfo("UTC")
+    lead_time_minutes = int(practice.get("lead_time_minutes") or 120)
+    now = datetime.now(tz)
+    day_start = datetime.combine(target_date, time_cls(0, 0), tzinfo=tz)
+    day_end = day_start + timedelta(days=1)
+    tiers: dict[int, dict] = {}
+    for p in providers:
+        if p.get("active") is False:
+            continue
+        seats = _seats_from_role(p.get("role") or "")
+        if seats < party_size:
+            continue
+        try:
+            bookings = await scheduling_client.list_bookings(
+                practice_id, start=day_start.isoformat(), end=day_end.isoformat(),
+                provider_id=p["id"], status="confirmed",
+            )
+        except scheduling_client.SchedulingClientError:
+            bookings = []
+        busy = []
+        for b in bookings:
+            try:
+                busy.append((datetime.fromisoformat(b["start_time"]), datetime.fromisoformat(b["end_time"])))
+            except Exception:
+                continue
+        slots = compute_table_slots(
+            working_hours=p.get("working_hours") or [], busy_intervals=busy, target_date=target_date,
+            duration_minutes=DINE_IN_APPOINTMENT_DURATION_MINUTES, buffer_minutes=DINE_IN_APPOINTMENT_BUFFER_MINUTES,
+            now=now, lead_time_minutes=lead_time_minutes, tz=tz,
+        )
+        if not slots:
+            continue
+        tier = tiers.setdefault(seats, {"tables_available": 0, "slot_times": set()})
+        tier["tables_available"] += 1
+        tier["slot_times"].update(s.isoformat() for s in slots)
+    result = [
+        {"seats": seats, "tables_available": t["tables_available"], "slots": sorted(t["slot_times"])}
+        for seats, t in sorted(tiers.items())
+    ]
+    return {
+        "date": date,
+        "party_size": party_size,
+        "timezone": practice.get("timezone") or "UTC",
+        "tiers": result,
+    }
+
+
+@router.get("/restaurants/{restaurant_id}/dine-in/bookings")
+async def list_dine_in_bookings(
+    restaurant_id: str,
+    current_user: CurrentUser,
+    days_ahead: int = Query(14, ge=1, le=DINE_IN_MAX_ADVANCE_DAYS, description="How many days ahead to include, starting today"),
+    db=Depends(get_db),
+):
+    """Confirmed dine-in reservations for the owner's Manage screen, grouped
+    by calendar day in the restaurant's own timezone. Before this, a
+    confirmed booking was visible to the owner for exactly one moment --
+    the in-app/push notification fired when it was made (see the
+    restaurant_notifications insert in create_dine_in_reservation above) --
+    with nothing to look at afterward. This is that missing view."""
+    row = await _dine_in_restaurant_for_owner(db, restaurant_id, current_user)
+    practice_id = row.get("scheduling_practice_id")
+    if not practice_id:
+        return {"timezone": "UTC", "days": []}
+    try:
+        practice = await scheduling_client.get_practice(practice_id)
+        providers = await scheduling_client.list_providers(practice_id)
+    except scheduling_client.SchedulingClientError as exc:
+        raise _dine_in_scheduling_error(exc)
+    # Same fallback as get_dine_in_availability just above -- an
+    # unparseable stored timezone must not take the whole request down.
+    try:
+        tz = ZoneInfo(practice.get("timezone") or "UTC")
+    except Exception:
+        log.warning("Unknown timezone %r for practice %s; defaulting to UTC", practice.get("timezone"), practice_id)
+        tz = ZoneInfo("UTC")
+    seats_by_provider_id = {p["id"]: _seats_from_role(p.get("role") or "") for p in providers}
+
+    now_local = datetime.now(tz)
+    window_start = datetime.combine(now_local.date(), time_cls(0, 0), tzinfo=tz)
+    window_end = window_start + timedelta(days=days_ahead)
+    try:
+        bookings = await scheduling_client.list_bookings(
+            practice_id, start=window_start.isoformat(), end=window_end.isoformat(), status="confirmed",
+        )
+    except scheduling_client.SchedulingClientError as exc:
+        raise _dine_in_scheduling_error(exc)
+
+    # adar-core's bookings query returns start_time/end_time as UTC-aware
+    # ISO strings (Firestore always round-trips a stored timestamp as UTC
+    # regardless of the zone it was written in -- the same fact that bit
+    # confirm_booking/list_my_appointments earlier this build) -- convert
+    # to the practice's own zone before grouping, or "today" here and
+    # "today" on the owner's screen can disagree right around midnight.
+    days: dict[str, dict] = {}
+    for b in bookings:
+        try:
+            start_dt = datetime.fromisoformat(b["start_time"]).astimezone(tz)
+        except Exception:
+            continue
+        day_key = start_dt.date().isoformat()
+        day = days.setdefault(day_key, {
+            "date": day_key,
+            "label": start_dt.strftime("%A, %B %-d"),
+            "bookings": [],
+        })
+        day["bookings"].append({
+            "id": b.get("id"),
+            "start_time": start_dt.isoformat(),
+            "start_label": start_dt.strftime("%-I:%M %p"),
+            "table_name": b.get("provider_name") or "",
+            "seats": seats_by_provider_id.get(b.get("provider_id"), 0),
+            "caller_name": b.get("caller_name") or "",
+            "caller_phone": b.get("caller_phone") or "",
+        })
+
+    out_days = sorted(days.values(), key=lambda d: d["date"])
+    for d in out_days:
+        d["bookings"].sort(key=lambda bk: bk["start_time"])
+
+    return {"timezone": practice.get("timezone") or "UTC", "days": out_days}
+
+
+@router.post("/restaurants/{restaurant_id}/dine-in/reservations")
+async def create_dine_in_reservation(
+    restaurant_id: str,
+    body: DineInReservationRequest,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    row = await db.fetchrow(
+        f"SELECT * FROM restaurants r WHERE r.id=$1 AND (r.marketplace_visible=TRUE OR {_restaurant_access_sql('r', '$2')})",
+        restaurant_id, user_id,
+    )
+    if not row or not row.get("dine_in_enabled") or not row.get("scheduling_practice_id"):
+        raise HTTPException(404, "Dine-in isn't available for this restaurant")
+    practice_id = row["scheduling_practice_id"]
+
+    try:
+        start_dt = datetime.fromisoformat(body.start_time)
+    except ValueError:
+        raise HTTPException(400, "start_time must be ISO 8601")
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if start_dt <= now:
+        raise HTTPException(400, "Reservation time must be in the future")
+    if start_dt > now + timedelta(days=DINE_IN_MAX_ADVANCE_DAYS):
+        raise HTTPException(400, f"Dine-in reservations can only be made up to {DINE_IN_MAX_ADVANCE_DAYS} days in advance")
+
+    try:
+        appt_type_id = await _dine_in_appointment_type_id(practice_id)
+        providers = await scheduling_client.list_providers(practice_id)
+    except scheduling_client.SchedulingClientError as exc:
+        raise _dine_in_scheduling_error(exc)
+
+    booking, table = await _book_dine_in_table(
+        practice_id, appt_type_id, providers,
+        table_id=body.table_id, seats=body.seats, party_size=body.party_size,
+        start_dt=start_dt, caller_name=body.caller_name, caller_phone=body.caller_phone,
+        caller_email=body.caller_email, reason=body.reason,
+    )
+    owner_id = str(row["user_id"]) if row.get("user_id") else None
+    try:
+        practice_tz_raw = (await scheduling_client.get_practice(practice_id)).get("timezone") or "UTC"
+    except Exception:
+        practice_tz_raw = "UTC"
+    try:
+        display_tz = ZoneInfo(practice_tz_raw)
+    except Exception:
+        display_tz = ZoneInfo("UTC")
+    start_time_formatted = start_dt.astimezone(display_tz).strftime("%A, %B %-d at %-I:%M %p")
+    table_name = table.get("name") or "your table"
+    notify_message = f"New dine-in reservation for {body.party_size} — {table_name} at {start_dt.isoformat()}"
+    if owner_id:
+        try:
+            # channel MUST be 'in_app' -- that's what the owner's
+            # notification bell (GET /api/restaurant/notifications)
+            # actually filters on; this used to be written as
+            # 'dine_in' (never matched by the bell's query) and keyed
+            # to the CUSTOMER's user_id instead of the owner's, so it
+            # silently never reached the owner either way.
+            await db.execute(
+                """
+                INSERT INTO restaurant_notifications (restaurant_id, user_id, channel, status, message, metadata)
+                VALUES ($1::uuid, $2::uuid, 'in_app', 'unread', $3, $4::jsonb)
+                """,
+                restaurant_id, owner_id, notify_message,
+                json.dumps({
+                    "event_type": "dine_in_reservation", "audience": "restaurant_owner",
+                    "booking_id": booking.get("id"), "table_id": table["id"],
+                    "start_time": start_dt.isoformat(), "party_size": body.party_size,
+                }),
+            )
+        except Exception:
+            log.warning("Failed to record in-app notification for new dine-in reservation, restaurant %s", restaurant_id, exc_info=True)
+        try:
+            tokens_rows = await db.fetch(
+                "SELECT push_token FROM user_push_tokens WHERE user_id=$1::uuid AND app='eats'",
+                owner_id,
+            )
+            tokens = [r["push_token"] for r in tokens_rows if r["push_token"]]
+            if tokens:
+                await send_expo_push(
+                    tokens, title=row.get("name") or "New reservation",
+                    body=notify_message, data={"type": "dine_in", "restaurant_id": restaurant_id},
+                )
+        except Exception:
+            log.warning("Failed to push-notify owner of new dine-in reservation for restaurant %s", restaurant_id, exc_info=True)
+        # Email is the one channel the owner was missing here (carryout
+        # orders already email the owner via _notify_restaurant_owner;
+        # dine-in only had in-app + push until now).
+        owner_email = str(row.get("email") or "").strip()
+        if owner_email:
+            try:
+                await send_dine_in_owner_email(
+                    owner_email,
+                    restaurant_name=row.get("name") or "your restaurant",
+                    restaurant_id=restaurant_id,
+                    table_name=table_name,
+                    party_size=body.party_size,
+                    start_time_formatted=start_time_formatted,
+                    caller_name=body.caller_name,
+                    caller_phone=body.caller_phone,
+                    caller_email=body.caller_email,
+                )
+            except Exception:
+                log.warning("Failed to email-notify owner of new dine-in reservation for restaurant %s", restaurant_id, exc_info=True)
+
+    # Customer-facing in-app + push. The customer already gets an email
+    # confirmation as a side effect of adar-core's own booking engine
+    # (scheduling_admin.py's create_booking sends one whenever
+    # caller_email is set), so this adds the other two channels rather
+    # than a second, duplicate confirmation email.
+    customer_message = f"Your table for {body.party_size} at {row.get('name') or 'the restaurant'} is booked for {start_time_formatted}."
+    try:
+        await db.execute(
+            """
+            INSERT INTO restaurant_notifications (restaurant_id, user_id, channel, status, message, metadata)
+            VALUES ($1::uuid, $2::uuid, 'in_app', 'unread', $3, $4::jsonb)
+            """,
+            restaurant_id, user_id, customer_message,
+            json.dumps({
+                "event_type": "dine_in_reservation_confirmed", "audience": "customer",
+                "booking_id": booking.get("id"), "table_id": table["id"],
+                "start_time": start_dt.isoformat(), "party_size": body.party_size,
+            }),
+        )
+    except Exception:
+        log.warning("Failed to record in-app notification for customer's new dine-in reservation, restaurant %s", restaurant_id, exc_info=True)
+    try:
+        tokens_rows = await db.fetch(
+            "SELECT push_token FROM user_push_tokens WHERE user_id=$1::uuid AND app='eats'",
+            user_id,
+        )
+        tokens = [r["push_token"] for r in tokens_rows if r["push_token"]]
+        if tokens:
+            await send_expo_push(
+                tokens, title=row.get("name") or "Reservation confirmed",
+                body=customer_message, data={"type": "dine_in", "restaurant_id": restaurant_id},
+            )
+    except Exception:
+        log.warning("Failed to push-notify customer of their new dine-in reservation, restaurant %s", restaurant_id, exc_info=True)
+
+    # Local tracking row for the reminder scheduler (see
+    # services/dine_in_reminder_scheduler.py) -- best-effort; a failure
+    # here only means this one reservation won't get a reminder, never
+    # that the booking itself is at risk (it's already confirmed above).
+    try:
+        await db.execute(
+            """
+            INSERT INTO dine_in_reservations
+              (booking_id, restaurant_id, customer_user_id, customer_email, table_id, table_name, party_size, start_time)
+            VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8)
+            ON CONFLICT (booking_id) DO NOTHING
+            """,
+            str(booking.get("id")), restaurant_id, user_id,
+            body.caller_email or str(current_user.get("email") or ""),
+            table["id"], table_name, body.party_size, start_dt,
+        )
+    except Exception:
+        log.warning("Failed to record dine_in_reservations tracking row for reminder scheduling, restaurant %s", restaurant_id, exc_info=True)
+
+    return {"reservation": booking, "table": {"id": table["id"], "name": table.get("name")}}
+
+
+@router.get("/restaurants/{restaurant_id}/dine-in/my-reservations")
+async def list_my_dine_in_reservations(
+    restaurant_id: str,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Customer-facing reservation list for THIS restaurant -- the
+    counterpart to the owner's list_dine_in_bookings above, scoped to the
+    caller's own reservations. Backed by our local dine_in_reservations
+    cache (not a live adar-core query) since that's the one place we keep
+    a durable link from a booking back to a user_id; it's populated at
+    booking time and kept in sync by the cancel/reschedule endpoints
+    below."""
+    user_id = str(current_user["id"])
+    restaurant_row = await db.fetchrow("SELECT * FROM restaurants WHERE id=$1", restaurant_id)
+    if not restaurant_row:
+        raise HTTPException(404, "Restaurant not found")
+    rows = await db.fetch(
+        """
+        SELECT * FROM dine_in_reservations
+        WHERE restaurant_id=$1::uuid AND customer_user_id=$2::uuid
+        ORDER BY start_time DESC
+        """,
+        restaurant_id, user_id,
+    )
+    display_tz = await _dine_in_display_timezone(restaurant_row)
+    reservations = []
+    for r in rows:
+        start_dt = r["start_time"]
+        reservations.append({
+            "booking_id": r["booking_id"],
+            "status": r.get("status") or "confirmed",
+            "table_name": r.get("table_name") or "",
+            "party_size": r.get("party_size") or 0,
+            "start_time": start_dt.isoformat(),
+            "start_time_formatted": start_dt.astimezone(display_tz).strftime("%A, %B %-d at %-I:%M %p"),
+            "can_cancel": (r.get("status") or "confirmed") == "confirmed" and start_dt > datetime.now(timezone.utc),
+            "can_reschedule": (r.get("status") or "confirmed") == "confirmed" and start_dt > datetime.now(timezone.utc),
+        })
+    return {"restaurant_id": restaurant_id, "restaurant_name": restaurant_row.get("name") or "", "reservations": reservations}
+
+
+@router.post("/restaurants/{restaurant_id}/dine-in/bookings/{booking_id}/cancel")
+async def cancel_dine_in_booking(
+    restaurant_id: str,
+    booking_id: str,
+    body: DineInCancelRequest,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Cancels a confirmed dine-in reservation. Either the restaurant
+    owner/manager (from their bookings screen) or the customer who made
+    the reservation (from their own reservation list) can call this --
+    see _dine_in_booking_access for the shared authorization check."""
+    restaurant_row, reservation_row, actor = await _dine_in_booking_access(db, restaurant_id, booking_id, current_user)
+    if (reservation_row.get("status") or "confirmed") == "cancelled":
+        raise HTTPException(400, "This reservation is already cancelled")
+
+    try:
+        await scheduling_client.cancel_booking(booking_id, reason=body.reason)
+    except scheduling_client.SchedulingClientError as exc:
+        already_cancelled = exc.status_code == 400 and "already cancelled" in (exc.detail or "").lower()
+        if exc.status_code == 404:
+            # adar-core already has no record of it (e.g. removed directly
+            # in its own admin console) -- still let the local cache catch
+            # up to cancelled rather than leaving the customer stuck unable
+            # to cancel at all.
+            log.warning("cancel_booking 404 from adar-core for booking %s restaurant %s; marking local row cancelled anyway", booking_id, restaurant_id)
+        elif not already_cancelled:
+            raise _dine_in_scheduling_error(exc)
+
+    await db.execute("UPDATE dine_in_reservations SET status='cancelled' WHERE booking_id=$1", booking_id)
+    await _notify_dine_in_cancellation(db, restaurant_row, reservation_row, cancelled_by=actor, reason=body.reason)
+    return {"booking_id": booking_id, "status": "cancelled"}
+
+
+@router.post("/restaurants/{restaurant_id}/dine-in/bookings/{booking_id}/reschedule")
+async def reschedule_dine_in_booking(
+    restaurant_id: str,
+    booking_id: str,
+    body: DineInRescheduleRequest,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Moves a confirmed dine-in reservation to a new time. adar-core's
+    scheduling engine has no atomic reschedule primitive (only cancel +
+    create -- see scheduling_client.cancel_booking's docstring and the
+    plan notes above), so this books the NEW slot first and only cancels
+    the OLD one once that succeeds -- a reschedule that finds no
+    availability at the new time leaves the customer's existing
+    reservation untouched instead of losing it."""
+    restaurant_row, reservation_row, actor = await _dine_in_booking_access(db, restaurant_id, booking_id, current_user)
+    if (reservation_row.get("status") or "confirmed") == "cancelled":
+        raise HTTPException(400, "This reservation is already cancelled")
+    practice_id = restaurant_row.get("scheduling_practice_id")
+    if not practice_id:
+        raise HTTPException(400, "Dine-in isn't configured for this restaurant")
+
+    try:
+        new_start_dt = datetime.fromisoformat(body.start_time)
+    except ValueError:
+        raise HTTPException(400, "start_time must be ISO 8601")
+    if new_start_dt.tzinfo is None:
+        new_start_dt = new_start_dt.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if new_start_dt <= now:
+        raise HTTPException(400, "Reservation time must be in the future")
+    if new_start_dt > now + timedelta(days=DINE_IN_MAX_ADVANCE_DAYS):
+        raise HTTPException(400, f"Dine-in reservations can only be made up to {DINE_IN_MAX_ADVANCE_DAYS} days in advance")
+
+    party_size = reservation_row.get("party_size") or 0
+    try:
+        appt_type_id = await _dine_in_appointment_type_id(practice_id)
+        providers = await scheduling_client.list_providers(practice_id)
+    except scheduling_client.SchedulingClientError as exc:
+        raise _dine_in_scheduling_error(exc)
+
+    # Our local cache only keeps customer_email, not the caller's name/
+    # phone -- pull those from the still-live old adar-core booking
+    # (best-effort) so the new booking carries the same contact details
+    # rather than losing them or making the customer retype them.
+    caller_name = ""
+    caller_phone = ""
+    caller_email = reservation_row.get("customer_email") or ""
+    try:
+        old_bookings = await scheduling_client.list_bookings(
+            practice_id,
+            start=(now - timedelta(days=1)).isoformat(),
+            end=(now + timedelta(days=DINE_IN_MAX_ADVANCE_DAYS + 1)).isoformat(),
+        )
+        old_booking = next((b for b in old_bookings if str(b.get("id")) == booking_id), None)
+        if old_booking:
+            caller_name = old_booking.get("caller_name") or caller_name
+            caller_phone = old_booking.get("caller_phone") or caller_phone
+            caller_email = old_booking.get("caller_email") or caller_email
+    except Exception:
+        log.warning("Could not look up original booking %s for caller details before reschedule", booking_id, exc_info=True)
+
+    new_booking, table = await _book_dine_in_table(
+        practice_id, appt_type_id, providers,
+        table_id=body.table_id, seats=body.seats, party_size=party_size,
+        start_dt=new_start_dt, caller_name=caller_name, caller_phone=caller_phone,
+        caller_email=caller_email, reason=body.reason,
+    )
+
+    try:
+        await scheduling_client.cancel_booking(booking_id, reason="Rescheduled to a new time")
+    except scheduling_client.SchedulingClientError as exc:
+        log.warning(
+            "Failed to cancel old booking %s after rescheduling to new booking %s (restaurant %s): %s",
+            booking_id, new_booking.get("id"), restaurant_id, exc.detail,
+        )
+
+    await db.execute("UPDATE dine_in_reservations SET status='cancelled' WHERE booking_id=$1", booking_id)
+
+    table_name = table.get("name") or "your table"
+    try:
+        await db.execute(
+            """
+            INSERT INTO dine_in_reservations
+              (booking_id, restaurant_id, customer_user_id, customer_email, table_id, table_name, party_size, start_time, status)
+            VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, 'confirmed')
+            ON CONFLICT (booking_id) DO NOTHING
+            """,
+            str(new_booking.get("id")), restaurant_id,
+            str(reservation_row["customer_user_id"]) if reservation_row.get("customer_user_id") else None,
+            caller_email, table["id"], table_name, party_size, new_start_dt,
+        )
+    except Exception:
+        log.warning("Failed to record rescheduled dine_in_reservations tracking row, restaurant %s new booking %s", restaurant_id, new_booking.get("id"), exc_info=True)
+
+    await _notify_dine_in_reschedule(
+        db, restaurant_row, reservation_row, new_start_dt=new_start_dt, table_name=table_name, rescheduled_by=actor,
+    )
+
+    return {"old_booking_id": booking_id, "reservation": new_booking, "table": {"id": table["id"], "name": table.get("name")}}
 
 
 @router.post("/restaurants/{restaurant_id}/menu-items/{item_id}/photo")
@@ -1364,6 +2731,10 @@ async def search_menu(
     max_price: float | None = Query(None),
     workspace_id: str | None = Query(None),
     marketplace: bool = Query(False, description="If true, ignore workspace_id and search across restaurants opted into the public marketplace"),
+    city: str = Query("", description="Customer's current city -- a restaurant in this city is included even if outside radius_miles"),
+    lat: float | None = Query(None, description="Customer's latitude -- scopes results to within radius_miles (or same city)"),
+    lng: float | None = Query(None, description="Customer's longitude -- required alongside lat"),
+    radius_miles: float = Query(50.0, gt=0, le=500),
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
@@ -1372,14 +2743,19 @@ async def search_menu(
     raw_query = query.strip()
     normalized_query = _normalize_menu_search_query(raw_query)
     q = f"%{normalized_query}%" if normalized_query else "%"
+    geo_sql, geo_args = _menu_geo_scope_sql(8, city, lat, lng, radius_miles)
+    relaxed_geo_args = ["", None, None, radius_miles, None, None, None, None]
+    location_requested = bool(city.strip() or (lat is not None and lng is not None))
 
-    sql = """
+    sql = f"""
         SELECT mi.*, r.name AS restaurant_name, r.address, r.address AS restaurant_address,
                r.phone AS restaurant_phone, r.email AS restaurant_email, r.cuisine_type,
+               r.city AS restaurant_city, r.state AS restaurant_state,
                COALESCE(fb.rating_count, 0)::int AS rating_count,
                fb.avg_rating AS avg_rating,
                COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count,
-               COALESCE(fb.feedback_signals, '[]'::jsonb) AS feedback_signals
+               COALESCE(fb.feedback_signals, '[]'::jsonb) AS feedback_signals,
+               {_menu_distance_sql("$9", "$10")} AS distance_miles
         FROM restaurant_menu_items mi
         JOIN restaurants r ON r.id=mi.restaurant_id
         LEFT JOIN (
@@ -1387,7 +2763,7 @@ async def search_menu(
                    COUNT(*)::int AS rating_count,
                    ROUND(AVG(rating)::numeric, 2) AS avg_rating,
                    COUNT(*) FILTER (WHERE verified_order)::int AS verified_rating_count,
-                   COALESCE(jsonb_agg(signals) FILTER (WHERE signals <> '{}'::jsonb), '[]'::jsonb) AS feedback_signals
+                   COALESCE(jsonb_agg(signals) FILTER (WHERE signals <> '{{}}'::jsonb), '[]'::jsonb) AS feedback_signals
             FROM restaurant_feedback
             WHERE status <> 'dismissed' AND menu_item_id IS NOT NULL
             GROUP BY menu_item_id
@@ -1404,39 +2780,40 @@ async def search_menu(
             ($7 AND r.marketplace_visible = TRUE)
             OR (NOT $7 AND ($6::uuid IS NULL OR r.workspace_id=$6::uuid OR r.workspace_id IS NULL))
           )
-        ORDER BY r.workspace_id NULLS LAST, mi.price NULLS LAST, r.name, mi.item_name
+          AND {geo_sql}
+        ORDER BY distance_miles ASC NULLS LAST, r.workspace_id NULLS LAST, mi.price NULLS LAST, r.name, mi.item_name
         LIMIT 100
     """
-    rows = await db.fetch(
-        sql,
-        normalized_query,
-        q,
-        cuisine_type.strip(),
-        dietary_tag.strip(),
-        max_price,
-        workspace_id,
-        marketplace,
-    )
+    args = [normalized_query, q, cuisine_type.strip(), dietary_tag.strip(), max_price, workspace_id, marketplace, *geo_args]
+    rows = await db.fetch(sql, *args)
     if not rows and raw_query:
         # The exact (even alias-normalized) ILIKE search found nothing --
-        # broaden to every row the same cuisine/dietary/price/marketplace
+        # broaden to every row the same cuisine/dietary/price/marketplace/geo
         # scoping would otherwise allow, then fuzzy-match the original
         # query against it in Python (_fuzzy_filter_menu_rows). Keeps a
         # typo or an unlisted transliteration variant from being a dead
         # end, the same tolerance routes/chat.py already has for the
         # same underlying data.
-        broad_rows = await db.fetch(
-            sql,
-            "",
-            "%",
-            cuisine_type.strip(),
-            dietary_tag.strip(),
-            max_price,
-            workspace_id,
-            marketplace,
-        )
+        broad_args = ["", "%", cuisine_type.strip(), dietary_tag.strip(), max_price, workspace_id, marketplace, *geo_args]
+        broad_rows = await db.fetch(sql, *broad_args)
         rows = _fuzzy_filter_menu_rows(broad_rows, raw_query, limit=100)
-    return {"items": [await _menu_search_row(row) for row in rows]}
+    location_relaxed = False
+    if not rows and location_requested:
+        # Still nothing even after the text-search broaden above -- a city/
+        # point that matches zero menu items is almost always because
+        # those restaurants haven't been geocoded yet (geocoding only runs
+        # when an address is saved, never retroactively -- see
+        # services/geocoding.py), not that there's truly nothing anywhere.
+        # Retry once with no location restriction at all rather than
+        # leaving the customer looking at a cold empty result.
+        relaxed_args = [normalized_query, q, cuisine_type.strip(), dietary_tag.strip(), max_price, workspace_id, marketplace, *relaxed_geo_args]
+        rows = await db.fetch(sql, *relaxed_args)
+        if not rows and raw_query:
+            broad_relaxed_args = ["", "%", cuisine_type.strip(), dietary_tag.strip(), max_price, workspace_id, marketplace, *relaxed_geo_args]
+            broad_rows = await db.fetch(sql, *broad_relaxed_args)
+            rows = _fuzzy_filter_menu_rows(broad_rows, raw_query, limit=100)
+        location_relaxed = True
+    return {"items": [await _menu_search_row(row) for row in rows], "location_relaxed": location_relaxed}
 
 
 @router.get("/menu/compare")
@@ -1446,6 +2823,10 @@ async def compare_menu_prices(
     cuisine_type: str = Query(""),
     workspace_id: str | None = Query(None),
     marketplace: bool = Query(False, description="If true, ignore workspace_id and compare across restaurants opted into the public marketplace"),
+    city: str = Query("", description="Customer's current city -- a restaurant in this city is included even if outside radius_miles"),
+    lat: float | None = Query(None, description="Customer's latitude -- scopes the comparison to within radius_miles (or same city)"),
+    lng: float | None = Query(None, description="Customer's longitude -- required alongside lat"),
+    radius_miles: float = Query(50.0, gt=0, le=500),
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
@@ -1454,14 +2835,19 @@ async def compare_menu_prices(
     raw_query = query.strip()
     normalized_query = _normalize_menu_search_query(raw_query)
     q = f"%{normalized_query}%"
+    geo_sql, geo_args = _menu_geo_scope_sql(5, city, lat, lng, radius_miles)
+    relaxed_geo_args = ["", None, None, radius_miles, None, None, None, None]
+    location_requested = bool(city.strip() or (lat is not None and lng is not None))
 
-    sql = """
+    sql = f"""
         SELECT mi.*, r.name AS restaurant_name, r.address, r.address AS restaurant_address,
                r.phone AS restaurant_phone, r.email AS restaurant_email, r.cuisine_type,
+               r.city AS restaurant_city, r.state AS restaurant_state,
                COALESCE(fb.rating_count, 0)::int AS rating_count,
                fb.avg_rating AS avg_rating,
                COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count,
-               COALESCE(fb.feedback_signals, '[]'::jsonb) AS feedback_signals
+               COALESCE(fb.feedback_signals, '[]'::jsonb) AS feedback_signals,
+               {_menu_distance_sql("$6", "$7")} AS distance_miles
         FROM restaurant_menu_items mi
         JOIN restaurants r ON r.id=mi.restaurant_id
         LEFT JOIN (
@@ -1469,7 +2855,7 @@ async def compare_menu_prices(
                    COUNT(*)::int AS rating_count,
                    ROUND(AVG(rating)::numeric, 2) AS avg_rating,
                    COUNT(*) FILTER (WHERE verified_order)::int AS verified_rating_count,
-                   COALESCE(jsonb_agg(signals) FILTER (WHERE signals <> '{}'::jsonb), '[]'::jsonb) AS feedback_signals
+                   COALESCE(jsonb_agg(signals) FILTER (WHERE signals <> '{{}}'::jsonb), '[]'::jsonb) AS feedback_signals
             FROM restaurant_feedback
             WHERE status <> 'dismissed' AND menu_item_id IS NOT NULL
             GROUP BY menu_item_id
@@ -1481,29 +2867,32 @@ async def compare_menu_prices(
             ($4 AND r.marketplace_visible = TRUE)
             OR (NOT $4 AND ($3::uuid IS NULL OR r.workspace_id=$3::uuid OR r.workspace_id IS NULL))
           )
-        ORDER BY r.workspace_id NULLS LAST, mi.price NULLS LAST, r.name, mi.item_name
+          AND {geo_sql}
+        ORDER BY distance_miles ASC NULLS LAST, r.workspace_id NULLS LAST, mi.price NULLS LAST, r.name, mi.item_name
         LIMIT 100
     """
-    rows = await db.fetch(
-        sql,
-        q,
-        cuisine_type.strip(),
-        workspace_id,
-        marketplace,
-    )
+    args = [q, cuisine_type.strip(), workspace_id, marketplace, *geo_args]
+    rows = await db.fetch(sql, *args)
     if not rows:
         # Same exact-search-found-nothing fallback as /menu/search: widen
-        # to every row the cuisine/marketplace scoping would otherwise
+        # to every row the cuisine/marketplace/geo scoping would otherwise
         # allow (item_name/description ILIKE '%' matches everything) and
         # fuzzy-match the original query against it.
-        broad_rows = await db.fetch(
-            sql,
-            "%",
-            cuisine_type.strip(),
-            workspace_id,
-            marketplace,
-        )
+        broad_args = ["%", cuisine_type.strip(), workspace_id, marketplace, *geo_args]
+        broad_rows = await db.fetch(sql, *broad_args)
         rows = _fuzzy_filter_menu_rows(broad_rows, raw_query, limit=100)
+    location_relaxed = False
+    if not rows and location_requested:
+        # Same reasoning as /menu/search's fallback: don't let an
+        # ungeocoded restaurant make a real comparison look like there's
+        # nothing nearby. Retry once with no location restriction.
+        relaxed_args = [q, cuisine_type.strip(), workspace_id, marketplace, *relaxed_geo_args]
+        rows = await db.fetch(sql, *relaxed_args)
+        if not rows:
+            broad_relaxed_args = ["%", cuisine_type.strip(), workspace_id, marketplace, *relaxed_geo_args]
+            broad_rows = await db.fetch(sql, *broad_relaxed_args)
+            rows = _fuzzy_filter_menu_rows(broad_rows, raw_query, limit=100)
+        location_relaxed = True
     items = [await _menu_search_row(row) for row in rows]
     prices = [item["price"] for item in items if item.get("price") is not None]
     return {
@@ -1512,6 +2901,7 @@ async def compare_menu_prices(
         "lowest_price": min(prices) if prices else None,
         "highest_price": max(prices) if prices else None,
         "items": items,
+        "location_relaxed": location_relaxed,
     }
 
 
@@ -1523,19 +2913,28 @@ async def recommend_restaurant_menu(
     max_price: float | None = Query(None),
     workspace_id: str | None = Query(None),
     marketplace: bool = Query(False, description="If true, ignore workspace_id and recommend across restaurants opted into the public marketplace"),
+    city: str = Query("", description="Customer's current city -- a restaurant in this city is included even if outside radius_miles"),
+    lat: float | None = Query(None, description="Customer's latitude -- scopes recommendations to within radius_miles (or same city)"),
+    lng: float | None = Query(None, description="Customer's longitude -- required alongside lat"),
+    radius_miles: float = Query(50.0, gt=0, le=500),
     db=Depends(get_db),
 ):
     user_id = str(current_user["id"])
     if await _can_restore_restaurants(db, user_id, workspace_id):
         await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
     q = f"%{query.strip()}%" if query.strip() else "%"
-    rows = await db.fetch(
-        f"""
+    geo_sql, geo_args = _menu_geo_scope_sql(7, city, lat, lng, radius_miles)
+    relaxed_geo_args = ["", None, None, radius_miles, None, None, None, None]
+    location_requested = bool(city.strip() or (lat is not None and lng is not None))
+
+    sql = f"""
         SELECT mi.*, r.name AS restaurant_name, r.address, r.address AS restaurant_address,
                r.phone AS restaurant_phone, r.email AS restaurant_email, r.cuisine_type,
+               r.city AS restaurant_city, r.state AS restaurant_state,
                COALESCE(fb.rating_count, 0)::int AS rating_count,
                fb.avg_rating AS avg_rating,
-               COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count
+               COALESCE(fb.verified_rating_count, 0)::int AS verified_rating_count,
+               {_menu_distance_sql("$8", "$9")} AS distance_miles
         FROM restaurant_menu_items mi
         JOIN restaurants r ON r.id=mi.restaurant_id
         LEFT JOIN (
@@ -1556,15 +2955,19 @@ async def recommend_restaurant_menu(
             OR (NOT $6 AND ($5::uuid IS NULL OR r.workspace_id=$5::uuid OR r.workspace_id IS NULL))
           )
           AND LOWER(COALESCE(mi.availability, 'available')) <> 'unavailable'
+          AND {geo_sql}
         LIMIT 150
-        """,
-        query.strip(),
-        q,
-        cuisine_type.strip(),
-        max_price,
-        workspace_id,
-        marketplace,
-    )
+    """
+    base_args = [query.strip(), q, cuisine_type.strip(), max_price, workspace_id, marketplace]
+    rows = await db.fetch(sql, *base_args, *geo_args)
+    location_relaxed = False
+    if not rows and location_requested:
+        # Same reasoning as /menu/search and /menu/compare: an ungeocoded
+        # restaurant (or one geocoded to a slightly different city string)
+        # shouldn't make a real recommendation request look like there's
+        # nothing available nearby. Retry once with no location restriction.
+        rows = await db.fetch(sql, *base_args, *relaxed_geo_args)
+        location_relaxed = True
     items = []
     prices = [float(row["price"]) for row in rows if row["price"] is not None]
     max_seen_price = max(prices) if prices else None
@@ -1574,7 +2977,7 @@ async def recommend_restaurant_menu(
         item["recommendation_reason"] = _restaurant_recommendation_reason(item)
         items.append(item)
     items.sort(key=lambda item: (-float(item.get("recommendation_score") or 0), item.get("price") is None, item.get("price") or 0, item.get("restaurant_name") or ""))
-    return {"query": query, "count": len(items), "items": items[:50]}
+    return {"query": query, "count": len(items), "items": items[:50], "location_relaxed": location_relaxed}
 
 
 @router.post("/orders/draft")
@@ -2822,6 +4225,7 @@ async def _save_restaurant_packet(
             json.dumps(profile.get("payment_options") if isinstance(profile.get("payment_options"), list) else []),
             json.dumps({"source": "restaurant_menu_scribe", "approved_at": datetime.utcnow().isoformat() + "Z"}),
         )
+    await _geocode_and_store_location(db, restaurant_id, address)
     for item in menu_items:
         if not isinstance(item, dict) or not str(item.get("item_name") or "").strip():
             continue
@@ -3562,6 +4966,11 @@ async def _restaurant_source_transcript(db, restaurant: dict[str, Any], user_id:
 
 def _restaurant_row(row) -> dict[str, Any]:
     data = dict(row)
+    # Never echo the server-to-server adar-core admin credential back to any
+    # client -- unused today (we hold one platform-admin credential rather
+    # than minting a per-restaurant staff token, see services/
+    # scheduling_client.py), but drop it defensively regardless.
+    data.pop("scheduling_staff_token", None)
     return {key: _clean(value) for key, value in data.items()}
 
 
