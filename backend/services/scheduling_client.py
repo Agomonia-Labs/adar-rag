@@ -149,6 +149,10 @@ async def create_appointment_type(
     })
 
 
+async def update_appointment_type(type_id: str, **fields: Any) -> dict:
+    return await _request("PATCH", f"/admin/scheduling/appointment-types/{type_id}", json=fields)
+
+
 async def list_bookings(
     practice_id: str, *, start: str, end: str, provider_id: str = "", status: str = "",
 ) -> list[dict]:

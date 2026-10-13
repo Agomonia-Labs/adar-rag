@@ -22,7 +22,29 @@ const LANGUAGES = [
   { value:'ar', label:'Arabic' },
 ];
 
+// Same breakpoint/approach as App.jsx's own useIsMobile -- duplicated
+// locally rather than shared, since this is the only other place in the
+// app that needs it.
+function useIsMobile(breakpoint = 760) {
+  const get = () => typeof window !== 'undefined' && window.innerWidth <= breakpoint;
+  const [mobile, setMobile] = useState(get);
+  useEffect(() => {
+    const onResize = () => setMobile(get());
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return mobile;
+}
+
 export default function ChatPage({ cart, onAddToCart }) {
+  const isMobile = useIsMobile();
+  // On mobile the conversation history list used to permanently occupy
+  // its own column, squeezing the actual chat into a narrow strip --
+  // collapsed by default there, and a tap on the "Conversation history"
+  // header opens it (another tap, or picking a conversation, closes it
+  // again). Desktop is unaffected: the sidebar there stays always-visible,
+  // this state is simply unused.
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [sessions, setSessions] = useState([]);
   const [sessionId, setSessionId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -33,6 +55,15 @@ export default function ChatPage({ cart, onAddToCart }) {
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const bottomRef = useRef(null);
+  const topRef = useRef(null);
+  // Normally every messages update should auto-scroll to the newest
+  // reply (the usual live-chat behavior, below). But opening a SAVED
+  // conversation from history replaces the whole thread at once --
+  // scrolling straight to its last message hid the very question/
+  // answer turns the customer re-opened it to read, with no obvious
+  // affordance that there was more above. Set just before loading a
+  // stored session so that one update scrolls to the top instead.
+  const skipBottomScrollRef = useRef(false);
   const mediaRef = useRef(null);
   const chunksRef = useRef([]);
   const streamRef = useRef(null);
@@ -73,15 +104,24 @@ export default function ChatPage({ cart, onAddToCart }) {
   // DESC), so this is just a display cap, not a re-sort.
   const loadSessions = () => listChatSessions(workspaceId).then(data => setSessions((data || []).slice(0, 10))).catch(() => {});
   useEffect(() => { if (workspaceId) loadSessions(); }, [workspaceId]);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:'smooth' }); }, [messages]);
+  useEffect(() => {
+    if (skipBottomScrollRef.current) {
+      skipBottomScrollRef.current = false;
+      topRef.current?.scrollIntoView({ behavior:'auto', block:'start' });
+    } else {
+      bottomRef.current?.scrollIntoView({ behavior:'smooth' });
+    }
+  }, [messages]);
 
   async function openSession(id) {
     const data = await getChatSession(id);
+    skipBottomScrollRef.current = true;
     setSessionId(data.id);
     setMessages(data.messages || []);
+    setHistoryOpen(false); // collapse back down on mobile once a conversation is picked
   }
 
-  function newChat() { setSessionId(null); setMessages([]); setInput(''); setError(''); }
+  function newChat() { setSessionId(null); setMessages([]); setInput(''); setError(''); setHistoryOpen(false); }
 
   async function send(questionOverride) {
     const question = (questionOverride ?? input).trim();
@@ -205,29 +245,57 @@ export default function ChatPage({ cart, onAddToCart }) {
     </div>
   );
 
+  const sessionListEl = (
+    <div style={s.sessionList}>
+      {!sessions.length && <p style={{ ...s.muted, padding: isMobile ? '0 2px 2px' : 0 }}>No conversations yet.</p>}
+      {sessions.map(sess => (
+        <button key={sess.id} style={{ ...s.sessionItem, ...(sess.id === sessionId ? s.sessionItemActive : {}) }} onClick={() => openSession(sess.id)}>
+          <span style={s.sessionTitle}>{sess.title}</span>
+          <span style={s.removeBtn} onClick={(e) => removeSession(sess.id, e)}>×</span>
+        </button>
+      ))}
+    </div>
+  );
+
   return (
-    <div style={s.wrap}>
-      <aside style={s.sidebar}>
-        <button style={s.newBtn} onClick={newChat}>+ New chat</button>
-        <label style={s.langField}>
-          Language
-          <select value={language} onChange={e => setLanguage(e.target.value)}>
-            {LANGUAGES.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
-          </select>
-        </label>
-        <div style={s.sessionList}>
-          {sessions.map(sess => (
-            <button key={sess.id} style={{ ...s.sessionItem, ...(sess.id === sessionId ? s.sessionItemActive : {}) }} onClick={() => openSession(sess.id)}>
-              <span style={s.sessionTitle}>{sess.title}</span>
-              <span style={s.removeBtn} onClick={(e) => removeSession(sess.id, e)}>×</span>
+    <div style={{ ...s.wrap, ...(isMobile ? s.wrapMobile : {}) }}>
+      {isMobile ? (
+        <div style={s.historyMobile}>
+          {/* New chat, language and the history toggle used to be two
+              rows -- folded into one so the actual conversation starts
+              that much higher on the screen. Each piece shrinks to make
+              room: "+ New chat" drops its last word, the language picker
+              is a bare (already-compact) select, and the history toggle
+              is the one that flexes to fill whatever's left. */}
+          <div style={s.mobileTopRow}>
+            <button style={s.newBtn} onClick={newChat}>+ New</button>
+            <select value={language} onChange={e => setLanguage(e.target.value)} style={s.langSelectMobile}>
+              {LANGUAGES.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+            </select>
+            <button style={s.historyToggle} onClick={() => setHistoryOpen(o => !o)}>
+              <span style={s.historyToggleLabel}>History{sessions.length ? ` (${sessions.length})` : ''}</span>
+              <span style={s.navCaret}>{historyOpen ? '▲' : '▾'}</span>
             </button>
-          ))}
+          </div>
+          {historyOpen && <div style={s.historyPanel}>{sessionListEl}</div>}
         </div>
-      </aside>
-      <section style={s.main}>
-        <h2 style={s.title}>Ask about any restaurant's menu</h2>
-        <p style={s.muted}>e.g. "Who has the cheapest chicken biryani nearby?" or "Recommend a vegetarian entree under $15." Works in your chosen language, by text or voice.</p>
-        <div style={s.messages}>
+      ) : (
+        <aside style={s.sidebar}>
+          <button style={s.newBtn} onClick={newChat}>+ New chat</button>
+          <label style={s.langField}>
+            Language
+            <select value={language} onChange={e => setLanguage(e.target.value)}>
+              {LANGUAGES.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+            </select>
+          </label>
+          {sessionListEl}
+        </aside>
+      )}
+      <section style={{ ...s.main, ...(isMobile ? s.mainMobile : {}) }}>
+        <h2 style={{ ...s.title, ...(isMobile ? s.titleMobile : {}) }}>Ask about any restaurant's menu</h2>
+        <p style={{ ...s.muted, ...(isMobile ? s.introMobile : {}) }}>e.g. "Who has the cheapest chicken biryani nearby?" or "Recommend a vegetarian entree under $15." Works in your chosen language, by text or voice.</p>
+        <div style={{ ...s.messages, ...(isMobile ? s.messagesMobile : {}) }}>
+          <div ref={topRef} />
           {!messages.length && <p style={s.muted}>Start a conversation below.</p>}
           {messages.map(m => (
             <div key={m.id} style={{ ...s.bubbleRow, ...(m.role === 'user' ? s.bubbleRowUser : {}) }}>
@@ -276,8 +344,36 @@ export default function ChatPage({ cart, onAddToCart }) {
 
 const s = {
   wrap: { display:'grid', gridTemplateColumns:'220px 1fr', gap:16, height:'calc(100vh - 140px)' },
+  // Mobile stacks everything in one column instead of the two-column
+  // grid -- the history list becomes a collapsible section above the
+  // chat rather than its own permanent, space-eating sidebar column.
+  // height:'auto' (the old value) left the whole wrap sized to its own
+  // content instead of the viewport, so the "main" section below never
+  // had a bounded height to grow into -- the answer area ended up only
+  // as tall as whatever text happened to be in it. A real height here
+  // lets mainMobile's flex:1 actually claim the leftover space. The
+  // first attempt at this subtracted 180px as an over-cautious guess at
+  // the sticky mobile header + page padding -- the mobile header is
+  // actually a bit SHORTER than desktop's (smaller padding, same single
+  // row), so 180 left a large unused gap at the bottom of the screen.
+  // Reusing the desktop wrap's own already-correct 140px matches the
+  // real chrome far more closely.
+  wrapMobile: { display:'flex', flexDirection:'column', gap:6, height:'calc(100vh - 140px)' },
   sidebar: { display:'flex', flexDirection:'column', gap:10, borderRight:'1px solid var(--b1)', paddingRight:12 },
-  newBtn: { background:'var(--gold)', color:'#fff', border:'none', borderRadius:8, padding:'8px 10px', fontWeight:700, fontSize:12.5 },
+  historyMobile: { display:'flex', flexDirection:'column', gap:6 },
+  mobileTopRow: { display:'flex', gap:6, alignItems:'center', flexWrap:'nowrap' },
+  // Fixed, modest width rather than the select's own natural sizing --
+  // some browsers size a <select> to its longest option ("Spanish"),
+  // which alone could eat a third of the row.
+  langSelectMobile: { flexShrink:0, width:72, padding:'7px 6px', fontSize:11.5 },
+  // flex:1 so this is the one element that absorbs whatever room "+ New"
+  // and the language picker don't need -- same flexible-trigger pattern
+  // as the header nav / owner tabs dropdowns.
+  historyToggle: { display:'flex', alignItems:'center', justifyContent:'space-between', gap:4, flex:'1 1 auto', minWidth:0, background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:8, padding:'8px 10px', color:'var(--tx)', fontSize:12, fontWeight:700 },
+  historyToggleLabel: { overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', minWidth:0 },
+  navCaret: { color:'var(--muted2)', fontSize:10, flexShrink:0 },
+  historyPanel: { border:'1px solid var(--b2)', borderRadius:8, padding:8, maxHeight:220, overflowY:'auto' },
+  newBtn: { background:'var(--gold)', color:'#fff', border:'none', borderRadius:8, padding:'8px 10px', fontWeight:700, fontSize:12.5, whiteSpace:'nowrap' },
   langField: { display:'flex', flexDirection:'column', gap:4, fontSize:11, color:'var(--muted)', fontWeight:700 },
   sessionList: { display:'flex', flexDirection:'column', gap:4, overflowY:'auto' },
   sessionItem: { display:'flex', justifyContent:'space-between', alignItems:'center', background:'transparent', border:'1px solid transparent', borderRadius:8, padding:'7px 9px', color:'var(--muted2)', fontSize:12, textAlign:'left' },
@@ -285,9 +381,24 @@ const s = {
   sessionTitle: { overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', flex:1 },
   removeBtn: { color:'var(--red)', marginLeft:6, cursor:'pointer' },
   main: { display:'flex', flexDirection:'column', minHeight:0 },
+  // Without this, main sizes to its content inside wrapMobile's flex
+  // column -- same reason wrapMobile itself needed a real height instead
+  // of 'auto'. flex:1 is what lets it actually claim the space wrapMobile
+  // now has, so messages (flex:1 inside main) has real room to fill.
+  mainMobile: { flex:'1 1 auto', minHeight:0 },
   title: { fontSize:18, color:'var(--tx)', marginBottom:4 },
+  // Smaller and tighter on mobile -- this intro (title + the example-
+  // prompts line below it) sits above EVERY conversation, not just the
+  // empty state, so shrinking it hands that space back to the actual
+  // chat on every screen, not just the first one.
+  titleMobile: { fontSize:14, marginBottom:1 },
   muted: { color:'var(--muted2)', fontSize:12.5 },
+  introMobile: { fontSize:11, lineHeight:1.4, marginBottom:2 },
   messages: { flex:1, overflowY:'auto', display:'flex', flexDirection:'column', gap:10, padding:'14px 0' },
+  // Every bit of the chrome above the messages area got tighter this
+  // round -- the top padding here is the last easy win, since it's pure
+  // whitespace before the first bubble rather than space between bubbles.
+  messagesMobile: { padding:'6px 0 14px' },
   bubbleRow: { display:'flex', flexDirection:'column', alignItems:'flex-start' },
   bubbleRowUser: { alignItems:'flex-end' },
   bubble: { maxWidth:'72%', padding:'10px 13px', borderRadius:12, fontSize:13.5, lineHeight:1.5 },

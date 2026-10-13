@@ -1,6 +1,6 @@
 // src/pages/OrdersPage.jsx -- customer's own order history + status.
 import React, { useEffect, useState } from 'react';
-import { listMyRestaurantOrders, submitRestaurantFeedback } from '../services/api.js';
+import { listMyRestaurantOrders, submitRestaurantFeedback, listMyRestaurantFeedback } from '../services/api.js';
 
 const STATUS_LABEL = {
   draft:'Draft', payment_pending:'Payment pending', payment_failed:'Payment failed',
@@ -15,17 +15,40 @@ export default function OrdersPage() {
   const [rating, setRating] = useState(5);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [justRated, setJustRated] = useState('');
+  // The submitted rating never showed up anywhere after "Rate this
+  // order" -- GET /restaurant/orders has no feedback join at all, so the
+  // only way to see what you rated an order is the separate
+  // GET /restaurant/feedback list (the customer's own feedback history).
+  // Fetch it alongside orders and key it by order_id so each completed
+  // order can show its own rating instead of just re-offering the
+  // "Rate this order" button every time.
+  const [feedbackByOrder, setFeedbackByOrder] = useState({});
 
   const load = () => {
     listMyRestaurantOrders().then(d => setOrders(d.orders || [])).catch(e => setError(e.message || 'Could not load orders.'));
+    listMyRestaurantFeedback().then(d => {
+      const byOrder = {};
+      for (const f of (d.feedback || [])) {
+        // Ordered newest-first by the backend; keep only the first
+        // (most recent) entry per order in case of a re-rate.
+        if (f.order_id && !byOrder[f.order_id]) byOrder[f.order_id] = f;
+      }
+      setFeedbackByOrder(byOrder);
+    }).catch(() => {});
   };
   useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, []);
 
   async function submitFeedback() {
     setBusy(true);
+    setError('');
     try {
       await submitRestaurantFeedback({ restaurantId: feedbackFor.restaurant_id, orderId: feedbackFor.id, rating, feedbackText: text });
+      const restaurantName = feedbackFor.restaurant_name;
       setFeedbackFor(null); setText(''); setRating(5);
+      load(); // refresh so the page visibly reflects the submission
+      setJustRated(`Thanks for rating ${restaurantName}!`);
+      setTimeout(() => setJustRated(''), 4000);
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
@@ -33,6 +56,7 @@ export default function OrdersPage() {
   return (
     <div style={{ maxWidth:720 }}>
       <h2 style={s.title}>My Orders</h2>
+      {justRated && <div style={s.success}>{justRated}</div>}
       {error && <div style={s.error}>{error}</div>}
       {!orders.length && <p style={s.muted}>No orders yet -- discover a restaurant to place one.</p>}
       {orders.map(o => (
@@ -46,7 +70,19 @@ export default function OrdersPage() {
             {(o.order_items || []).map(it => <div key={it.id} style={s.muted}>{it.quantity} × {it.item_name}</div>)}
           </div>
           {o.status === 'completed' && (
-            <button style={s.linkBtn} onClick={() => setFeedbackFor(o)}>Rate this order</button>
+            feedbackByOrder[o.id] ? (
+              <div style={s.yourRating}>
+                <span style={s.yourRatingBadge}>
+                  <span style={s.yourRatingStars}>
+                    {'★'.repeat(feedbackByOrder[o.id].rating)}{'☆'.repeat(5 - feedbackByOrder[o.id].rating)}
+                  </span>
+                  Your rating
+                </span>
+                {feedbackByOrder[o.id].feedback_text && <p style={s.muted}>{feedbackByOrder[o.id].feedback_text}</p>}
+              </div>
+            ) : (
+              <button style={s.linkBtn} onClick={() => setFeedbackFor(o)}>Rate this order</button>
+            )
           )}
         </div>
       ))}
@@ -76,6 +112,13 @@ const s = {
   title: { fontSize:18, color:'var(--tx)', marginBottom:16 },
   muted: { color:'var(--muted2)', fontSize:12.5 },
   error: { background:'rgba(248,113,113,.1)', color:'var(--red)', border:'1px solid rgba(248,113,113,.25)', borderRadius:8, padding:'10px 12px', fontSize:13, marginBottom:16 },
+  success: { background:'rgba(34,197,94,.1)', color:'#15803d', border:'1px solid rgba(34,197,94,.3)', borderRadius:8, padding:'10px 12px', fontSize:13, marginBottom:16, fontWeight:600 },
+  yourRating: { marginTop:8, display:'flex', flexDirection:'column', gap:4 },
+  // Distinct green highlight (not the brand gold used for prices/CTAs
+  // everywhere else) so "you already rated this" visually stands apart
+  // from the rest of the card instead of blending in.
+  yourRatingBadge: { alignSelf:'flex-start', display:'flex', alignItems:'center', gap:6, background:'rgba(34,197,94,.12)', border:'1px solid rgba(34,197,94,.3)', borderRadius:999, padding:'4px 10px', color:'#15803d', fontSize:12, fontWeight:700 },
+  yourRatingStars: { color:'#15803d', fontSize:14, letterSpacing:1 },
   card: { background:'var(--s1)', border:'1px solid var(--b2)', borderRadius:12, padding:14, marginBottom:10 },
   cardTop: { display:'flex', justifyContent:'space-between', color:'var(--tx)', fontSize:14.5, marginBottom:4 },
   status: { color:'var(--gold-h)', fontSize:12, fontWeight:700 },

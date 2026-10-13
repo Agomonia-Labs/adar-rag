@@ -47,7 +47,7 @@ export default function RestaurantPage({ restaurant, cart, onAddToCart, onBack, 
   const r = detail?.restaurant || restaurant;
 
   return (
-    <div>
+    <div style={s.page}>
       <button style={s.back} onClick={onBack}>← Back to Discover</button>
       <div style={s.headRow}>
         <div>
@@ -63,13 +63,12 @@ export default function RestaurantPage({ restaurant, cart, onAddToCart, onBack, 
       {grouped.map(([category, items]) => (
         <section key={category} style={{ marginBottom:22 }}>
           <h3 style={s.h3}>{category}</h3>
-          <div style={s.grid}>
+          <div style={s.list}>
             {items.map(item => (
               <div key={item.id} style={s.item}>
-                {item.image_url && <img src={item.image_url} alt={item.item_name} style={s.itemImg} />}
                 <div style={s.itemBody}>
                   <div style={s.itemTop}>
-                    <strong>{item.item_name}</strong>
+                    <strong style={s.itemName}>{item.item_name}</strong>
                     {item.price != null && <span style={s.price}>${Number(item.price).toFixed(2)}</span>}
                   </div>
                   {item.description && <p style={s.desc}>{item.description}</p>}
@@ -78,6 +77,9 @@ export default function RestaurantPage({ restaurant, cart, onAddToCart, onBack, 
                     {added === item.id ? 'Added ✓' : '+ Add to cart'}
                   </button>
                 </div>
+                {item.image_url
+                  ? <img src={item.image_url} alt={item.item_name} style={s.itemImg} />
+                  : <div style={s.itemImgPlaceholder} aria-hidden="true">🍽</div>}
               </div>
             ))}
           </div>
@@ -95,13 +97,16 @@ const s = {
   restaurantDesc: { color:'var(--tx2)', fontSize:13, marginTop:8, maxWidth:560, lineHeight:1.5 },
   dineInBtn: { background:'var(--gold)', color:'#fff', border:'none', borderRadius:8, padding:'9px 16px', fontWeight:700, fontSize:13 },
   error: { background:'rgba(248,113,113,.1)', color:'var(--red)', border:'1px solid rgba(248,113,113,.25)', borderRadius:8, padding:'10px 12px', fontSize:13, marginBottom:16 },
+  page: { maxWidth:680, margin:'0 auto' },
   h3: { fontSize:15, color:'var(--gold-h)', marginBottom:10, textTransform:'uppercase', letterSpacing:'.4px', fontWeight:700 },
-  grid: { display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(260px, 1fr))', gap:12 },
-  item: { background:'var(--s1)', border:'1px solid var(--b2)', borderRadius:12, overflow:'hidden', display:'flex', flexDirection:'column' },
-  itemImg: { width:'100%', height:130, objectFit:'cover' },
-  itemBody: { padding:12, display:'flex', flexDirection:'column', gap:6 },
-  itemTop: { display:'flex', justifyContent:'space-between', color:'var(--tx)', fontSize:14 },
-  price: { color:'var(--gold-h)', fontWeight:700 },
-  desc: { color:'var(--muted2)', fontSize:12, lineHeight:1.5 },
-  addBtn: { marginTop:4, background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:8, padding:'7px 10px', color:'var(--tx)', fontSize:12.5, fontWeight:600 },
+  list: { display:'flex', flexDirection:'column' },
+  item: { display:'flex', flexDirection:'row', justifyContent:'space-between', alignItems:'flex-start', gap:16, padding:'16px 0', borderBottom:'1px solid var(--b2)' },
+  itemBody: { flex:1, minWidth:0, display:'flex', flexDirection:'column', gap:6 },
+  itemTop: { display:'flex', justifyContent:'flex-start', alignItems:'baseline', gap:14, color:'var(--tx)', fontSize:14.5 },
+  itemName: { flex:'0 1 auto' },
+  price: { color:'var(--gold-h)', fontWeight:700, whiteSpace:'nowrap' },
+  desc: { color:'var(--muted2)', fontSize:12.5, lineHeight:1.5 },
+  addBtn: { marginTop:4, alignSelf:'flex-start', background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:8, padding:'7px 10px', color:'var(--tx)', fontSize:12.5, fontWeight:600 },
+  itemImg: { width:96, height:96, objectFit:'cover', borderRadius:12, flexShrink:0 },
+  itemImgPlaceholder: { width:96, height:96, borderRadius:12, flexShrink:0, background:'var(--s1)', border:'1px solid var(--b2)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:26, color:'var(--muted2)' },
 };

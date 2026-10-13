@@ -1171,6 +1171,29 @@ async def _dine_in_appointment_type_id(practice_id: str) -> str:
     types = await scheduling_client.list_appointment_types(practice_id)
     for t in types:
         if t.get("name") == DINE_IN_APPOINTMENT_TYPE_NAME:
+            # A restaurant that enabled dine-in before
+            # DINE_IN_APPOINTMENT_DURATION_MINUTES was raised to 90 (every
+            # reservation must hold a table for at least 1.5 hours, never
+            # less) has its "Dine-in reservation" appointment type sitting
+            # in adar-core with whatever shorter duration was in force back
+            # then -- this function only ever looked it up by name and
+            # reused it forever, so the code-level constant changing never
+            # retroactively fixed already-provisioned restaurants. Same
+            # self-healing approach as the assistant-booking reservation
+            # sync: patch it back in line on the next read, with no manual
+            # per-restaurant fix-up and no frontend change required.
+            if (
+                t.get("duration_minutes") != DINE_IN_APPOINTMENT_DURATION_MINUTES
+                or t.get("buffer_minutes") != DINE_IN_APPOINTMENT_BUFFER_MINUTES
+            ):
+                try:
+                    await scheduling_client.update_appointment_type(
+                        t["id"],
+                        duration_minutes=DINE_IN_APPOINTMENT_DURATION_MINUTES,
+                        buffer_minutes=DINE_IN_APPOINTMENT_BUFFER_MINUTES,
+                    )
+                except scheduling_client.SchedulingClientError:
+                    log.warning("Failed to update dine-in appointment type %s to the current duration", t["id"], exc_info=True)
             return t["id"]
     created = await scheduling_client.create_appointment_type(
         practice_id, name=DINE_IN_APPOINTMENT_TYPE_NAME,
@@ -1790,6 +1813,14 @@ async def list_dine_in_bookings(
     practice_id = row.get("scheduling_practice_id")
     if not practice_id:
         return {"timezone": "UTC", "days": []}
+    # Keeps the owner's Cancel button (cancel_dine_in_booking, which goes
+    # through _dine_in_booking_access) working even for an assistant-made
+    # booking the customer never opened "My reservations" for -- that's
+    # the only other place this same sync runs, and without it here too,
+    # an owner-only reconciliation never happens, leaving
+    # _dine_in_booking_access 404ing on any such booking until a customer
+    # happens to look first.
+    await _sync_assistant_dine_in_reservations(db, row)
     try:
         practice = await scheduling_client.get_practice(practice_id)
         providers = await scheduling_client.list_providers(practice_id)
@@ -2013,6 +2044,84 @@ async def create_dine_in_reservation(
     return {"reservation": booking, "table": {"id": table["id"], "name": table.get("name")}}
 
 
+async def _sync_assistant_dine_in_reservations(db, restaurant_row: dict) -> None:
+    """Reconciles adar-core's live bookings into our local
+    dine_in_reservations cache for confirmed reservations our own
+    create_dine_in_reservation endpoint never saw -- specifically, ones
+    made through "Ask the assistant" (DineInAssistant.jsx), which talks
+    straight to adar-core's guest-chat scheduling endpoint and was never
+    routed through this backend at all. Without this, an assistant-made
+    reservation: (1) never appeared in the customer's "My reservations"
+    list (sourced only from this local table, per its own docstring
+    below), and (2) couldn't be cancelled by EITHER the customer or the
+    restaurant owner, since _dine_in_booking_access requires a local row
+    to exist no matter which side is acting -- the structured "Book a
+    table" flow inserts that row itself right after booking; the
+    assistant flow had nothing playing that role at all.
+
+    confirm_booking (adar-core's availability_tools.py) tags an
+    appointment with guest_id = the signed-in customer's own account id
+    whenever the chat carried a valid X-Customer-Token -- the SAME JWT
+    this backend already treats as that user's id elsewhere, since
+    DineInAssistant.jsx passes localStorage's own eats_token verbatim as
+    customerAccessToken. We sync every confirmed booking for this
+    practice in a generous window regardless of whether it's tagged
+    (an anonymous/untagged "Ask the assistant" booking still needs a row
+    so the OWNER can see/cancel it, even though no customer account can
+    claim it); ON CONFLICT DO NOTHING makes repeat calls cheap and safe,
+    and any failure here is best-effort -- it must never take down the
+    reservations list itself.
+
+    party_size is not something adar-core's generic appointment engine
+    tracks at all (only adar-rag's own structured booking flow collects
+    it, and stores it directly without ever reading it back from
+    adar-core) -- there is no real number to recover for an assistant-made
+    booking, so we fall back to the table's own seat count as the closest
+    available approximation rather than showing a misleading "0 guests"."""
+    practice_id = restaurant_row.get("scheduling_practice_id")
+    if not practice_id:
+        return
+    try:
+        providers = await scheduling_client.list_providers(practice_id)
+    except scheduling_client.SchedulingClientError:
+        return
+    seats_by_provider_id = {p["id"]: _seats_from_role(p.get("role") or "") for p in providers}
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(days=30)
+    window_end = now + timedelta(days=DINE_IN_MAX_ADVANCE_DAYS)
+    try:
+        bookings = await scheduling_client.list_bookings(
+            practice_id, start=window_start.isoformat(), end=window_end.isoformat(), status="confirmed",
+        )
+    except scheduling_client.SchedulingClientError:
+        return
+    restaurant_id = str(restaurant_row["id"])
+    for b in bookings:
+        booking_id = str(b.get("id") or "")
+        if not booking_id:
+            continue
+        try:
+            start_dt = datetime.fromisoformat(b["start_time"])
+        except Exception:
+            continue
+        guest_id = (b.get("guest_id") or "").strip() or None
+        seats = seats_by_provider_id.get(b.get("provider_id"), 0)
+        try:
+            await db.execute(
+                """
+                INSERT INTO dine_in_reservations
+                  (booking_id, restaurant_id, customer_user_id, customer_email, table_id, table_name, party_size, start_time)
+                VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8)
+                ON CONFLICT (booking_id) DO NOTHING
+                """,
+                booking_id, restaurant_id, guest_id,
+                b.get("caller_email") or "", b.get("provider_id") or "", b.get("provider_name") or "",
+                seats, start_dt,
+            )
+        except Exception:
+            log.warning("Failed to sync assistant-made dine-in booking %s for restaurant %s", booking_id, restaurant_id, exc_info=True)
+
+
 @router.get("/restaurants/{restaurant_id}/dine-in/my-reservations")
 async def list_my_dine_in_reservations(
     restaurant_id: str,
@@ -2025,11 +2134,13 @@ async def list_my_dine_in_reservations(
     cache (not a live adar-core query) since that's the one place we keep
     a durable link from a booking back to a user_id; it's populated at
     booking time and kept in sync by the cancel/reschedule endpoints
-    below."""
+    below, and reconciled against assistant-made bookings by
+    _sync_assistant_dine_in_reservations just above."""
     user_id = str(current_user["id"])
     restaurant_row = await db.fetchrow("SELECT * FROM restaurants WHERE id=$1", restaurant_id)
     if not restaurant_row:
         raise HTTPException(404, "Restaurant not found")
+    await _sync_assistant_dine_in_reservations(db, restaurant_row)
     rows = await db.fetch(
         """
         SELECT * FROM dine_in_reservations
@@ -2385,6 +2496,62 @@ async def update_menu_item(
     return await _menu_row(dict(row))
 
 
+@router.delete("/restaurants/{restaurant_id}/menu-items/{item_id}")
+async def delete_menu_item(
+    restaurant_id: str,
+    item_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Removes a single menu item -- the owner-requested counterpart to
+    the PATCH edit endpoint above (mobile and web could edit a typo'd
+    item but never actually remove one; a mis-recorded or discontinued
+    item had no way off the menu short of re-recording the whole thing
+    via voice scribe). Same catalog-management permission as PATCH.
+    restaurant_order_items.menu_item_id and restaurant_feedback.menu_item_id
+    both reference this row with ON DELETE SET NULL, so past orders/
+    feedback keep their own stored snapshot and just lose the live link,
+    not the whole record. Also schedules the same background transcript
+    resync as PATCH/the Transcript panel's edit path, so a deleted item
+    drops out of the embedded document too instead of lingering there."""
+    user_id = str(current_user["id"])
+    user_email = str(current_user.get("email") or "")
+    row = await db.fetchrow(
+        f"""
+        SELECT r.*
+        FROM restaurants r
+        WHERE r.id=$1 AND {_restaurant_catalog_manage_sql('r', '$2', '$3')}
+        """,
+        restaurant_id,
+        user_id,
+        user_email,
+    )
+    if not row:
+        raise HTTPException(403, "Only a matching restaurant email or workspace owner/editor can update this restaurant's menu")
+    restaurant_owner_id = str(row["user_id"])
+    restaurant_workspace_id = str(row["workspace_id"]) if row["workspace_id"] else None
+    item_row = await db.fetchrow(
+        "SELECT id FROM restaurant_menu_items WHERE id=$1::uuid AND restaurant_id=$2::uuid",
+        item_id,
+        restaurant_id,
+    )
+    if not item_row:
+        raise HTTPException(404, "Menu item not found")
+
+    await db.execute("DELETE FROM restaurant_menu_items WHERE id=$1::uuid", item_id)
+    await audit(
+        db,
+        user_id=user_id,
+        action="restaurant_menu_item_delete",
+        resource_type="restaurant_menu_item",
+        resource_id=item_id,
+        metadata={"restaurant_id": restaurant_id},
+    )
+    background_tasks.add_task(_resync_restaurant_document_task, restaurant_id, restaurant_owner_id, restaurant_workspace_id)
+    return {"item_id": item_id, "deleted": True}
+
+
 class RestaurantTranscriptUpdateRequest(BaseModel):
     text: str
 
@@ -2539,13 +2706,24 @@ async def update_restaurant_transcript(
        the owner/customer menu screens read) never moved, which was the
        reported bug ("when I updates menu price it updates transcript...
        [but editing the transcript didn't update the menu]").
-    2. The document text is then REBUILT from the now-updated DB
-       (_build_restaurant_packet_from_db + _restaurant_document_text_
-       from_packet) and re-embedded via _reembed_restaurant_document --
-       the exact chunk/embed pipeline scribe approval and the menu-item-
-       edit resync both use. This is what makes the two directions
-       (edit menu -> transcript resyncs; edit transcript -> menu syncs)
-       converge on the same canonical text instead of drifting apart."""
+    2. The owner's OWN edited text (not a regenerated copy) is what gets
+       re-embedded via _reembed_restaurant_document -- the exact
+       chunk/embed pipeline scribe approval and the menu-item-edit resync
+       both use. Earlier this rebuilt+returned a canonical version from
+       the DB instead (_build_restaurant_packet_from_db +
+       _restaurant_document_text_from_packet), which silently discarded
+       anything the owner typed that the strict "- name: price; qty;
+       description" parser didn't recognize (free-form notes, rewording,
+       extra formatting) -- the save call succeeded and reported items
+       synced, but the text shown afterward reverted to that regenerated
+       version instead of what was actually saved ("it said it saved the
+       edited text but it didn't"). Saving the owner's own text instead
+       means the transcript box always reflects exactly what was saved;
+       only the structured menu-item sync is best-effort. The menu-edit
+       -> transcript direction (resync_restaurant_document_task /
+       approve_restaurant_agent_run) is unaffected and still regenerates
+       canonical text there, since there's no owner-typed free text to
+       preserve in that path."""
     restaurant = await _restaurant_transcript_permission(db, restaurant_id, current_user)
     user_id = str(current_user["id"])
     doc_id = await _resolve_restaurant_document_id(db, restaurant_id)
@@ -2560,19 +2738,15 @@ async def update_restaurant_transcript(
         db, restaurant_id, str(restaurant["user_id"]), restaurant_workspace_id, text
     )
 
-    packet = await _build_restaurant_packet_from_db(db, restaurant_id)
-    canonical_text = _restaurant_document_text_from_packet(packet)
-    profile = packet.get("restaurant_profile") or {}
-
     try:
         await _reembed_restaurant_document(
             db,
             str(doc_id),
             str(restaurant["user_id"]),
             restaurant_workspace_id,
-            canonical_text,
+            text,
             restaurant_id,
-            filename=f"{profile.get('name') or restaurant['name'] or 'Restaurant'} Menu",
+            filename=f"{restaurant['name'] or 'Restaurant'} Menu",
         )
     except Exception as exc:
         raise HTTPException(500, f"Menu items were updated, but re-embedding the transcript failed: {exc}")
@@ -2593,7 +2767,7 @@ async def update_restaurant_transcript(
     )
     return {
         "document_id": str(doc_id),
-        "text": canonical_text,
+        "text": text,
         "status": "embedded",
         "menu_items_updated": sync_result["updated"],
         "menu_items_inserted": sync_result["inserted"],

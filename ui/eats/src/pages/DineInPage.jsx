@@ -146,7 +146,7 @@ function DineInBooking({ restaurant: restaurantProp, onChangeRestaurant }) {
       <div style={s.tabs}>
         <button style={{ ...s.tab, ...(view === 'book' ? s.tabActive : {}) }} onClick={() => setView('book')}>Book a table</button>
         <button style={{ ...s.tab, ...(view === 'mine' ? s.tabActive : {}) }} onClick={() => setView('mine')}>My reservations</button>
-        <button style={{ ...s.tab, ...(view === 'assistant' ? s.tabActive : {}) }} onClick={() => setView('assistant')}>Ask the assistant</button>
+        <button style={{ ...s.tab, ...(view === 'assistant' ? s.tabActive : {}) }} onClick={() => setView('assistant')}>Dine-in Assistant</button>
       </div>
       {error && <div style={s.error}>{error}</div>}
 

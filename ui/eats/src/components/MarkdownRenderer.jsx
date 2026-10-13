@@ -37,19 +37,50 @@ function Block({ block }) {
   }
 }
 
+// A markdown table arrives as a strict grid -- every column repeated
+// for every row, even when most rows leave half those columns blank or
+// "-"/"N/A" for that particular item. Squeezed into a chat bubble
+// (maxWidth 72%, narrower still on a phone) that grid either wraps into
+// an unreadable mess or forces a sideways scroll to see the far
+// columns. Key-value cards instead show the first column as each
+// row's title and every OTHER column only when that row actually has
+// something to say for it -- the whole point being that not every
+// column is relevant to every row.
+function isMeaningfulValue(v) {
+  if (v == null) return false;
+  const t = String(v).trim();
+  if (!t) return false;
+  return !/^(-+|—|n\/?a|null|none|tbd)$/i.test(t);
+}
+
 function TableBlock({ headers, rows }) {
+  const [, ...restHeaders] = headers; // first column becomes each card's title, unlabeled
+  const items = rows.map(row => {
+    const [titleValue, ...restValues] = row;
+    const details = restHeaders
+      .map((h, i) => ({ key: h, value: restValues[i] }))
+      .filter(p => isMeaningfulValue(p.value));
+    return { title: isMeaningfulValue(titleValue) ? titleValue : '', details, row };
+  });
   return (
     <div style={s.tableWrap}>
-      <table style={s.table}>
-        {headers.length > 0 && <thead><tr>{headers.map((h, i) => <th key={i} style={s.th}>{inline(h)}</th>)}</tr></thead>}
-        <tbody>
-          {rows.map((row, ri) => (
-            <tr key={ri} style={ri % 2 === 0 ? s.trEven : s.trOdd}>
-              {row.map((cell, ci) => <td key={ci} style={s.td}>{inline(cell)}</td>)}
-            </tr>
+      {items.map((item, ri) => (
+        <div key={ri} style={{ ...s.tableRowCard, ...(ri % 2 === 1 ? s.tableRowCardAlt : {}), ...(ri === items.length - 1 ? { borderBottom:'none' } : {}) }}>
+          {item.title && <div style={s.tableRowTitle}>{inline(item.title)}</div>}
+          {item.details.map((p, pi) => (
+            <div key={pi} style={s.tableRowLine}>
+              {p.key && <span style={s.tableRowKey}>{inline(p.key)}</span>}
+              <span style={s.tableRowValue}>{inline(p.value)}</span>
+            </div>
           ))}
-        </tbody>
-      </table>
+          {/* Defensive fallback only -- a row that's entirely blank/
+              placeholder values in every column (title included) still
+              shows *something* rather than a blank card. */}
+          {!item.title && item.details.length === 0 && (
+            <div style={s.tableRowLine}><span style={s.tableRowValue}>{inline(item.row.find(isMeaningfulValue) ?? '—')}</span></div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -201,10 +232,11 @@ const s = {
   hr: { border:'none', borderTop:'1px solid var(--b1)', margin:'.75rem 0' },
   inlineCode: { background:'rgba(58,40,24,.06)', border:'1px solid var(--b2)', padding:'1px 5px', borderRadius:4, fontSize:'0.88em', fontFamily:'monospace', color:'var(--tx2)' },
   link: { color:'var(--blue)', textDecoration:'underline' },
-  tableWrap: { overflowX:'auto', margin:'0 0 .75rem', borderRadius:8, border:'1px solid var(--b2)' },
-  table: { width:'100%', borderCollapse:'collapse', fontSize:13 },
-  th: { padding:'9px 14px', textAlign:'left', fontWeight:600, fontSize:12, background:'rgba(58,40,24,.04)', color:'var(--muted)', borderBottom:'1.5px solid var(--b2)', whiteSpace:'nowrap', letterSpacing:'.2px' },
-  td: { padding:'8px 14px', color:'var(--tx)', borderBottom:'1px solid var(--b1)', verticalAlign:'top', lineHeight:1.55 },
-  trEven: { background:'transparent' },
-  trOdd: { background:'rgba(58,40,24,.02)' },
+  tableWrap: { margin:'0 0 .75rem', borderRadius:8, border:'1px solid var(--b2)', overflow:'hidden' },
+  tableRowCard: { padding:'9px 14px', borderBottom:'1px solid var(--b1)', background:'transparent' },
+  tableRowCardAlt: { background:'rgba(58,40,24,.02)' },
+  tableRowTitle: { fontWeight:700, color:'var(--tx)', fontSize:13.5, marginBottom:3 },
+  tableRowLine: { display:'flex', flexWrap:'wrap', gap:5, fontSize:12.5, lineHeight:1.5, marginTop:2 },
+  tableRowKey: { color:'var(--muted)', fontWeight:600, flexShrink:0 },
+  tableRowValue: { color:'var(--tx)' },
 };

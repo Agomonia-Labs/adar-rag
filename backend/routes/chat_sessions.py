@@ -189,6 +189,19 @@ async def save_messages(
         None,
     )
 
+    # _ACCESS_CLAUSE is shared verbatim across this router's endpoints and
+    # hardcodes its "current user" placeholder as $2 -- true everywhere
+    # else (id is always $1, user is always $2), but THIS query also binds
+    # messages_json as $1, which pushes session_id to $2 and the user id
+    # to $3. Passing them in the old (messages_json, session_id, user_id)
+    # order silently compared user_id to the SESSION's own id instead of
+    # the caller's -- a condition that (almost) never matches, so every
+    # save here has been failing its "UPDATE 0" check and raising 404
+    # ever since _ACCESS_CLAUSE was introduced, with the frontend's
+    # `.catch(() => {})` swallowing it. Reordering so the user id really
+    # is $2, with session_id moved to $3, makes {_ACCESS_CLAUSE} (and the
+    # id=$3 match) reference the right values again.
+    user_id = str(current_user["id"])
     if first_user:
         title_val = (first_user[:60] + "…") if len(first_user) > 60 else first_user
         result = await db.execute(
@@ -196,15 +209,15 @@ async def save_messages(
                SET messages=$1::jsonb,
                    updated_at=NOW(),
                    title=CASE WHEN title='New Chat' THEN $4 ELSE title END
-               WHERE id=$2 AND {_ACCESS_CLAUSE}""",
-            messages_json, session_id, str(current_user["id"]), title_val,
+               WHERE id=$3 AND {_ACCESS_CLAUSE}""",
+            messages_json, user_id, session_id, title_val,
         )
     else:
         result = await db.execute(
             f"""UPDATE chat_sessions
                SET messages=$1::jsonb, updated_at=NOW()
-               WHERE id=$2 AND {_ACCESS_CLAUSE}""",
-            messages_json, session_id, str(current_user["id"]),
+               WHERE id=$3 AND {_ACCESS_CLAUSE}""",
+            messages_json, user_id, session_id,
         )
 
     if result == "UPDATE 0":

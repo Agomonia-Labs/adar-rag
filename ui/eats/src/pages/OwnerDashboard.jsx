@@ -9,13 +9,14 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   runRestaurantScribeWorkflow, fetchRestaurantAgentRun, approveRestaurantAgentRun,
   listRestaurants, fetchRestaurant, updateRestaurant, deleteRestaurant, setMarketplaceVisibility,
-  uploadMenuItemPhoto, deleteMenuItemPhoto,
+  uploadMenuItemPhoto, deleteMenuItemPhoto, updateMenuItem, deleteMenuItem,
   listRestaurantOwnerOrders, updateRestaurantOwnerOrder,
   listRestaurantOwnerFeedback, updateRestaurantFeedbackStatus,
   getRestaurantWorkspace,
   listRestaurantDocuments, fetchDocumentSourceText,
   getRestaurantTranscript, updateRestaurantTranscript, getRestaurantTranscriptChunks, getRestaurantTranscriptChunkContent,
   enableDineIn, listOwnerTables, updateOwnerTables, getOwnerDineInHours, getOwnerDineInBookings, updateOwnerDineInHours,
+  cancelDineInReservation,
 } from '../services/api.js';
 
 const LANGUAGES = [
@@ -76,6 +77,19 @@ class TabErrorBoundary extends React.Component {
   }
 }
 
+// Same breakpoint/approach as App.jsx's own useIsMobile -- duplicated
+// locally rather than shared, same as ChatPage.jsx already does.
+function useIsMobile(breakpoint = 760) {
+  const get = () => typeof window !== 'undefined' && window.innerWidth <= breakpoint;
+  const [mobile, setMobile] = useState(get);
+  useEffect(() => {
+    const onResize = () => setMobile(get());
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return mobile;
+}
+
 export default function OwnerDashboard() {
   // Same contract as the mobile app's WorkspaceContext.tsx: an owner or
   // staff member never operates in a personal (workspace_id=null)
@@ -90,6 +104,14 @@ export default function OwnerDashboard() {
   const [wsLoading, setWsLoading] = useState(true);
   const [wsError, setWsError] = useState('');
   const [tab, setTab] = useState('scribe');
+  const isMobile = useIsMobile();
+  // Six tabs wrapping onto 2-3 rows (the old flexWrap behavior) ate a
+  // large chunk of a phone screen before any actual tab content was
+  // visible -- same fix as the header nav and the Order Assistant's
+  // conversation history: collapse the picker itself into a dropdown,
+  // closed by default, so the whole screen is available for whichever
+  // tab's content the owner actually wants to look at.
+  const [tabMenuOpen, setTabMenuOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,9 +137,45 @@ export default function OwnerDashboard() {
     return () => { cancelled = true; };
   }, []);
 
+  const ready = !wsLoading && !wsError && !!workspaceId;
+  const tabDropdownEl = (
+    <div style={s.tabDropdownWrap}>
+      <button style={s.tabDropdownTrigger} onClick={() => setTabMenuOpen(o => !o)}>
+        <span style={s.tabDropdownTriggerLabel}>{(TABS.find(([key]) => key === tab) || [])[1] || tab}</span>
+        <span style={s.tabCaret}>{tabMenuOpen ? '▲' : '▾'}</span>
+      </button>
+      {tabMenuOpen && (
+        <>
+          <div style={s.tabDropdownBackdrop} onClick={() => setTabMenuOpen(false)} />
+          <div style={s.tabDropdownPanel}>
+            {TABS.map(([key, label], i) => (
+              <button key={key}
+                style={{ ...s.tabDropdownItem, ...(i === TABS.length - 1 ? { borderBottom:'none' } : {}), ...(tab === key ? s.tabDropdownItemActive : {}) }}
+                onClick={() => { setTab(key); setTabMenuOpen(false); }}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+
   return (
     <div>
-      <h2 style={s.pageTitle}>For Restaurant Owners</h2>
+      {/* Title, workspace name and the tab picker used to be three
+          separate stacked lines -- that alone could push the actual tab
+          content (Voice Scribe Intake etc.) below the fold before the
+          owner had scrolled at all. One row, on every screen size: the
+          title shrinks to a short label, the workspace name becomes a
+          small pill (ellipsizing rather than wrapping), and the tab
+          dropdown is the one element that flexes to take whatever room
+          is left -- same flexible-trigger pattern as the header nav. */}
+      <div style={s.ownerHeaderMobile}>
+        <span style={s.pageTitleMobile}>Owners</span>
+        {ready && workspaceName && <span style={{ ...s.wsNameMobile, maxWidth: isMobile ? 90 : 220 }}>{workspaceName}</span>}
+        {ready && tabDropdownEl}
+      </div>
 
       {wsLoading && <p style={s.muted}>Connecting to your restaurant workspace…</p>}
 
@@ -128,14 +186,8 @@ export default function OwnerDashboard() {
         </div>
       )}
 
-      {!wsLoading && !wsError && workspaceId && (
+      {ready && (
         <>
-          {workspaceName && <p style={s.wsName}>Workspace: {workspaceName}</p>}
-          <nav style={s.tabs}>
-            {TABS.map(([key, label]) => (
-              <button key={key} style={{ ...s.tab, ...(tab === key ? s.tabActive : {}) }} onClick={() => setTab(key)}>{label}</button>
-            ))}
-          </nav>
           <TabErrorBoundary key={tab} tabLabel={(TABS.find(([key]) => key === tab) || [])[1] || tab}>
             {tab === 'scribe' && <ScribeTab workspaceId={workspaceId} onApproved={() => setTab('restaurants')} />}
             {tab === 'restaurants' && <RestaurantsTab workspaceId={workspaceId} />}
@@ -173,6 +225,7 @@ function ScribeTab({ workspaceId, onApproved }) {
   const segmentTimerRef = useRef(null);
   const recordingActiveRef = useRef(false);
 
+  const isMobile = useIsMobile();
   const steps = run?.steps || [];
   const profile = packet?.restaurant_profile || {};
   const menuItems = packet?.menu_items || [];
@@ -300,20 +353,26 @@ function ScribeTab({ workspaceId, onApproved }) {
 
   return (
     <div style={s.body}>
-      <div style={s.status}>{statusText}</div>
-      <div style={s.grid2}>
-        <label style={s.field}>Intake title<input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Optional restaurant/menu title" /></label>
-        <label style={s.field}>Spoken language<select value={language} onChange={e=>setLanguage(e.target.value)}>{LANGUAGES.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}</select></label>
+      <div style={isMobile ? s.statusMobile : s.status}>{statusText}</div>
+      <div style={isMobile ? s.infoRowMobile : s.grid2}>
+        <label style={isMobile ? s.fieldMobileTitle : s.field}>{!isMobile && 'Intake title'}<input style={isMobile ? s.inputMobile : undefined} value={title} onChange={e=>setTitle(e.target.value)} placeholder={isMobile ? 'Intake title' : 'Optional restaurant/menu title'} /></label>
+        <label style={isMobile ? s.fieldMobileLang : s.field}>{!isMobile && 'Spoken language'}<select style={isMobile ? s.inputMobile : undefined} value={language} onChange={e=>setLanguage(e.target.value)}>{LANGUAGES.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}</select></label>
+        <label style={isMobile ? s.checkMobile : s.check}><input type="checkbox" checked={authorized} onChange={e=>setAuthorized(e.target.checked)} /> {isMobile ? 'Authorized to publish/update menu' : 'I am authorized to publish or update this restaurant menu.'}</label>
       </div>
-      <label style={s.check}><input type="checkbox" checked={authorized} onChange={e=>setAuthorized(e.target.checked)} /> I am authorized to publish or update this restaurant menu.</label>
       {error && <div style={s.error}>{error}</div>}
-      <div style={s.actions}>
-        {!recording ? <button style={s.primary} onClick={startRecording}>🎙 Record</button> : <button style={s.danger} onClick={stopRecording}>■ Stop</button>}
-        <label style={s.secondaryLabel}>Upload audio<input type="file" accept="audio/*" hidden onChange={e => { const f=e.target.files?.[0]; if (f) { setAudioBlob(f); setAudioSegments([{ blob:f, filename:f.name }]); setAudioName(f.name); } }} /></label>
-        <button style={s.primary} disabled={busy || !audioBlob} onClick={runWorkflow}>{busy ? 'Running...' : 'Run agent workflow'}</button>
-        {audioName && <span style={s.muted}>{audioName}</span>}
-        {audioSegments.length > 1 && <span style={s.muted}>{audioSegments.length} recording segments</span>}
+      <div style={isMobile ? s.actionsMobile : s.actions}>
+        {!recording ? <button style={isMobile ? s.primaryMobile : s.primary} onClick={startRecording}>🎙 {isMobile ? '' : 'Record'}</button> : <button style={isMobile ? s.dangerMobile : s.danger} onClick={stopRecording}>■ {isMobile ? '' : 'Stop'}</button>}
+        <label style={isMobile ? s.secondaryLabelMobile : s.secondaryLabel}>{isMobile ? 'Upload' : 'Upload audio'}<input type="file" accept="audio/*" hidden onChange={e => { const f=e.target.files?.[0]; if (f) { setAudioBlob(f); setAudioSegments([{ blob:f, filename:f.name }]); setAudioName(f.name); } }} /></label>
+        <button style={isMobile ? s.primaryMobile : s.primary} disabled={busy || !audioBlob} onClick={runWorkflow}>{busy ? 'Running...' : (isMobile ? 'Run workflow' : 'Run agent workflow')}</button>
+        {!isMobile && audioName && <span style={s.muted}>{audioName}</span>}
+        {!isMobile && audioSegments.length > 1 && <span style={s.muted}>{audioSegments.length} recording segments</span>}
       </div>
+      {isMobile && (audioName || audioSegments.length > 1) && (
+        <div style={s.audioInfoMobile}>
+          {audioName && <span style={s.mutedMobile}>{audioName}</span>}
+          {audioSegments.length > 1 && <span style={s.mutedMobile}>{audioSegments.length} segments</span>}
+        </div>
+      )}
 
       {steps.length > 0 && (
         <ol style={s.steps}>
@@ -375,6 +434,8 @@ function RestaurantsTab({ workspaceId }) {
 
   async function open(id) { setSelected(id); setDetail(await fetchRestaurant(id, workspaceId).catch(e => { setError(e.message); return null; })); }
   const [photoBusyId, setPhotoBusyId] = useState(null);
+  const [editingItem, setEditingItem] = useState(null);
+  const [deletingItemId, setDeletingItemId] = useState(null);
   async function uploadPhoto(itemId, file) {
     if (!file || !detail) return;
     setPhotoBusyId(itemId); setError('');
@@ -389,6 +450,14 @@ function RestaurantsTab({ workspaceId }) {
     catch (e) { setError(e.message || 'Could not remove photo.'); }
     finally { setPhotoBusyId(null); }
   }
+  async function removeMenuItem(item) {
+    if (!detail) return;
+    if (!window.confirm(`Delete "${item.item_name || 'this item'}" from the menu? This cannot be undone.`)) return;
+    setDeletingItemId(item.id); setError('');
+    try { await deleteMenuItem(detail.restaurant.id, item.id); await open(detail.restaurant.id); }
+    catch (e) { setError(e.message || 'Could not delete menu item.'); }
+    finally { setDeletingItemId(null); }
+  }
   async function toggleVisibility(r) {
     setBusy(true);
     try { await setMarketplaceVisibility(r.id, !r.marketplace_visible); load(); if (selected === r.id) open(r.id); }
@@ -401,59 +470,94 @@ function RestaurantsTab({ workspaceId }) {
     catch (e) { setError(e.message); } finally { setBusy(false); }
   }
 
+  const [listOpen, setListOpen] = useState(true);
+  const selectedRestaurant = restaurants.find(r => r.id === selected);
+  const menuByCategory = useMemo(() => {
+    const map = new Map();
+    for (const item of (detail?.menu_items || [])) {
+      const cat = (item.category && item.category.trim()) || 'Other';
+      if (!map.has(cat)) map.set(cat, []);
+      map.get(cat).push(item);
+    }
+    return Array.from(map.entries());
+  }, [detail]);
+  const listEl = (
+    <>
+      {restaurants.map(r => (
+        <button key={r.id} style={{ ...s.restaurantRow, ...(selected===r.id?s.selected:{}) }} onClick={()=>{ open(r.id); setListOpen(false); }}>
+          <strong>{r.name}</strong>
+          <span style={s.muted}>{r.cuisine_type || 'Cuisine not set'} · {r.menu_count || 0} items · {r.marketplace_visible ? 'Public' : 'Hidden'}</span>
+        </button>
+      ))}
+      {!restaurants.length && <p style={s.muted}>No restaurants yet -- use Voice Scribe Intake to add one.</p>}
+    </>
+  );
+
   return (
     <div style={s.body}>
       {error && <div style={s.error}>{error}</div>}
-      <div style={s.restaurantGrid}>
-        <div style={s.list}>
-          {restaurants.map(r => (
-            <button key={r.id} style={{ ...s.restaurantRow, ...(selected===r.id?s.selected:{}) }} onClick={()=>open(r.id)}>
-              <strong>{r.name}</strong>
-              <span style={s.muted}>{r.cuisine_type || 'Cuisine not set'} · {r.menu_count || 0} items · {r.marketplace_visible ? 'Public' : 'Hidden'}</span>
-            </button>
-          ))}
-          {!restaurants.length && <p style={s.muted}>No restaurants yet -- use Voice Scribe Intake to add one.</p>}
+      <div style={s.restaurantGridMobile}>
+        <div>
+          <button style={s.listToggleMobile} onClick={() => setListOpen(o => !o)}>
+            <span style={s.listToggleLabelMobile}>{selectedRestaurant ? selectedRestaurant.name : `Restaurants (${restaurants.length})`}</span>
+            <span>{listOpen ? '▲' : '▼'}</span>
+          </button>
+          {listOpen && <div style={s.listMobile}>{listEl}</div>}
         </div>
         <div style={s.detail}>
           {detail ? (
             <div>
               <h3 style={s.h3}>{detail.restaurant.name}</h3>
               <p style={s.muted}>{detail.restaurant.cuisine_type} · {detail.restaurant.address}</p>
-              <div style={s.actions}>
-                <button style={s.secondaryBtn} disabled={busy} onClick={() => toggleVisibility(detail.restaurant)}>
-                  {detail.restaurant.marketplace_visible ? 'Hide from marketplace' : 'Publish to marketplace'}
+              <div style={s.actionsMobile}>
+                <button style={s.secondaryBtnMobile} disabled={busy} onClick={() => toggleVisibility(detail.restaurant)}>
+                  {detail.restaurant.marketplace_visible ? 'Hide' : 'Publish'}
                 </button>
-                <button style={s.secondaryBtn} disabled={busy} onClick={() => setShowTranscript(true)}>Transcript</button>
-                <button style={s.danger} disabled={busy} onClick={() => remove(detail.restaurant.id)}>Delete restaurant</button>
+                <button style={s.secondaryBtnMobile} disabled={busy} onClick={() => setShowTranscript(true)}>Transcript</button>
+                <button style={s.dangerMobile} disabled={busy} onClick={() => remove(detail.restaurant.id)}>Delete</button>
               </div>
               <h4 style={{ ...s.h3, fontSize:13, marginTop:16 }}>Menu ({detail.menu_items.length})</h4>
               <div style={s.tableWrap}>
                 <table style={s.table}>
-                  <thead><tr><th>Photo</th><th>Item</th><th>Category</th><th>Price</th></tr></thead>
+                  <thead><tr><th>Photo</th><th>Item</th><th>Price</th><th></th></tr></thead>
                   <tbody>
-                    {detail.menu_items.map(item => (
-                      <tr key={item.id}>
-                        <td>
-                          <div style={s.photoCell}>
-                            {item.image_url
-                              ? <img src={item.image_url} alt={item.item_name} style={s.menuThumb} />
-                              : <div style={s.menuThumbEmpty}>No photo</div>}
-                            <div style={s.photoActions}>
-                              <label style={s.photoUploadLabel}>
-                                {photoBusyId === item.id ? '…' : item.image_url ? 'Replace' : 'Upload'}
-                                <input type="file" accept="image/*" hidden disabled={photoBusyId === item.id}
-                                  onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(item.id, f); e.target.value = ''; }} />
-                              </label>
-                              {item.image_url && (
-                                <button style={s.photoRemoveBtn} disabled={photoBusyId === item.id} onClick={() => removePhoto(item.id)}>Remove</button>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                        <td>{item.item_name}</td>
-                        <td>{item.category}</td>
-                        <td>{item.price != null ? `$${Number(item.price).toFixed(2)}` : '—'}</td>
-                      </tr>
+                    {menuByCategory.map(([category, items]) => (
+                      <React.Fragment key={category}>
+                        <tr>
+                          <td colSpan={4} style={s.menuCategoryRow}>{category}</td>
+                        </tr>
+                        {items.map(item => (
+                          <tr key={item.id}>
+                            <td style={{ verticalAlign:'middle', textAlign:'center' }}>
+                              <div style={s.photoCell}>
+                                {item.image_url
+                                  ? <img src={item.image_url} alt={item.item_name} style={s.menuThumb} />
+                                  : <div style={s.menuThumbEmpty}>No photo</div>}
+                                <div style={s.photoActions}>
+                                  {item.image_url ? (
+                                    <button style={s.photoRemoveBtn} disabled={photoBusyId === item.id} onClick={() => removePhoto(item.id)}>Remove</button>
+                                  ) : (
+                                    <label style={s.photoUploadLabel}>
+                                      {photoBusyId === item.id ? '…' : 'Upload'}
+                                      <input type="file" accept="image/*" hidden disabled={photoBusyId === item.id}
+                                        onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(item.id, f); e.target.value = ''; }} />
+                                    </label>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+                            <td style={{ verticalAlign:'middle', textAlign:'center' }}>{item.item_name}</td>
+                            <td style={{ verticalAlign:'middle', textAlign:'center' }}>{item.price != null ? `$${Number(item.price).toFixed(2)}` : '—'}</td>
+                            <td style={{ verticalAlign:'middle', textAlign:'center' }}>
+                              <button style={s.linkBtn} onClick={() => setEditingItem(item)} disabled={deletingItemId === item.id}>Edit</button>
+                              {' '}
+                              <button style={s.photoRemoveBtn} onClick={() => removeMenuItem(item)} disabled={deletingItemId === item.id}>
+                                {deletingItemId === item.id ? 'Deleting…' : 'Delete'}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -463,8 +567,97 @@ function RestaurantsTab({ workspaceId }) {
         </div>
       </div>
       {showTranscript && detail && (
-        <TranscriptPanel restaurantId={detail.restaurant.id} onClose={() => setShowTranscript(false)} />
+        <TranscriptPanel restaurantId={detail.restaurant.id} onClose={() => setShowTranscript(false)} onMenuSynced={() => open(detail.restaurant.id)} />
       )}
+      {editingItem && detail && (
+        <MenuItemEditModal
+          restaurantId={detail.restaurant.id}
+          item={editingItem}
+          onClose={() => setEditingItem(null)}
+          onSaved={() => { setEditingItem(null); open(detail.restaurant.id); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Full-detail edit form for one already-saved menu item -- name, category,
+// price, quantity, spice level, availability, dietary tags, description.
+// Mirrors adar-mobile's MenuItemDetailModal edit mode (same fields, same
+// PATCH-only-what-changed semantics via updateMenuItem/update_menu_item);
+// saving here also triggers the backend's background transcript resync,
+// so a menu edit here shows up in the Transcript panel too, and vice
+// versa -- both directions go through the same restaurant_menu_items row.
+function MenuItemEditModal({ restaurantId, item, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    item_name: item.item_name || '',
+    category: item.category || '',
+    price: item.price != null ? String(item.price) : '',
+    quantity: item.quantity || '',
+    spice_level: item.spice_level || '',
+    availability: item.availability || '',
+    dietary_tags: Array.isArray(item.dietary_tags) ? item.dietary_tags.join(', ') : '',
+    description: item.description || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  function set(key, value) { setForm(f => ({ ...f, [key]: value })); }
+
+  async function save() {
+    let price = null;
+    if (form.price.trim()) {
+      const parsed = Number(form.price.trim());
+      if (Number.isNaN(parsed)) { setError('Price must be a number.'); return; }
+      price = parsed;
+    }
+    setSaving(true); setError('');
+    try {
+      await updateMenuItem(restaurantId, item.id, {
+        item_name: form.item_name.trim(),
+        category: form.category.trim(),
+        price,
+        quantity: form.quantity.trim(),
+        spice_level: form.spice_level.trim(),
+        availability: form.availability.trim(),
+        dietary_tags: form.dietary_tags.split(',').map(t => t.trim()).filter(Boolean),
+        description: form.description.trim(),
+      });
+      onSaved?.();
+    } catch (e) {
+      setError(e.message || 'Could not save changes. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={s.modalOverlay} onClick={onClose}>
+      <div style={s.modalPanel} onClick={e => e.stopPropagation()}>
+        <div style={s.modalHeader}>
+          <h3 style={s.h3}>Edit menu item</h3>
+          <button style={s.secondaryBtn} onClick={onClose}>Close</button>
+        </div>
+        <div style={s.modalBody}>
+          <label style={s.field}>Item name<input value={form.item_name} onChange={e => set('item_name', e.target.value)} placeholder="e.g. Chicken Biryani" /></label>
+          <div style={s.grid2}>
+            <label style={s.field}>Category<input value={form.category} onChange={e => set('category', e.target.value)} placeholder="e.g. Entree" /></label>
+            <label style={s.field}>Price (USD)<input value={form.price} onChange={e => set('price', e.target.value)} placeholder="e.g. 14.99" /></label>
+          </div>
+          <div style={s.grid2}>
+            <label style={s.field}>Quantity<input value={form.quantity} onChange={e => set('quantity', e.target.value)} placeholder="e.g. 1 lb" /></label>
+            <label style={s.field}>Spice level<input value={form.spice_level} onChange={e => set('spice_level', e.target.value)} placeholder="e.g. Medium" /></label>
+          </div>
+          <label style={s.field}>Availability<input value={form.availability} onChange={e => set('availability', e.target.value)} placeholder="available / seasonal / limited" /></label>
+          <label style={s.field}>Dietary tags (comma separated)<input value={form.dietary_tags} onChange={e => set('dietary_tags', e.target.value)} placeholder="e.g. vegetarian, gluten-free" /></label>
+          <label style={s.field}>Description<textarea rows={3} value={form.description} onChange={e => set('description', e.target.value)} placeholder="What's in it, how it's served..." /></label>
+          {error && <div style={s.error}>{error}</div>}
+        </div>
+        <div style={s.modalFooter}>
+          <button style={s.secondaryBtn} disabled={saving} onClick={onClose}>Cancel</button>
+          <button style={s.primary} disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save'}</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -489,7 +682,7 @@ function TranscriptStatusBadge({ status }) {
 // two-way-sync explanation copy, status badge, chunk viewer, and silent
 // polling while a background re-embed (triggered by a menu-item edit
 // elsewhere) is in flight.
-function TranscriptPanel({ restaurantId, onClose }) {
+function TranscriptPanel({ restaurantId, onClose, onMenuSynced }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -559,6 +752,14 @@ function TranscriptPanel({ restaurantId, onClose }) {
       if (result.menu_items_inserted) parts.push(`${result.menu_items_inserted} item(s) added`);
       setNotice(parts.length ? `Transcript saved. Menu synced: ${parts.join(', ')}.` : 'Transcript saved. Re-embedding complete.');
       load();
+      // The Menu table below this panel (RestaurantsTab's own `detail`
+      // state) doesn't know a transcript save just changed menu rows --
+      // without this, a price/description change synced from the
+      // transcript edit was correctly written to the DB but kept
+      // showing the restaurant's OLD menu data until the owner closed
+      // this panel and reopened the restaurant, which looked exactly
+      // like "the transcript saved but the menu item didn't change".
+      if ((result.menu_items_updated || result.menu_items_inserted)) onMenuSynced?.();
     } catch (e) {
       setErrorMessage(e.message || 'Could not save transcript. Please try again.');
     } finally {
@@ -774,12 +975,27 @@ function DineInTab({ workspaceId }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [enableForm, setEnableForm] = useState({ notificationEmail:'', timezone:'America/New_York', leadTimeMinutes:120 });
+  // The owner's "Manage reservations" list only ever rendered bookings
+  // read-only -- there was no way for the restaurant to cancel on a
+  // customer's behalf (a no-show call, a phoned-in change), even though
+  // the backend's cancel endpoint already supports the owner/manager as
+  // a caller (see cancel_dine_in_booking's _dine_in_booking_access check)
+  // and adar-mobile's OwnerDashboardScreen already wires this up.
+  const [cancelBusyId, setCancelBusyId] = useState(null);
 
   useEffect(() => { listRestaurants(workspaceId).then(d => { const rs = (d.restaurants || []).filter(r => r.can_manage); setRestaurants(rs); if (rs.length && !restaurantId) setRestaurantId(rs[0].id); }).catch(e => setError(e.message)); }, [workspaceId]);
 
   const restaurant = restaurants.find(r => r.id === restaurantId);
 
   function loadBookings() { getOwnerDineInBookings(restaurantId).then(setBookings).catch(() => {}); }
+
+  async function cancelBooking(bookingId) {
+    if (!window.confirm('Cancel this reservation? The customer will be notified.')) return;
+    setCancelBusyId(bookingId); setError('');
+    try { await cancelDineInReservation(restaurantId, bookingId); loadBookings(); }
+    catch (e) { setError(e.message || 'Could not cancel that reservation.'); }
+    finally { setCancelBusyId(null); }
+  }
 
   useEffect(() => {
     if (!restaurantId || !restaurant?.dine_in_enabled) return;
@@ -906,6 +1122,9 @@ function DineInTab({ workspaceId }) {
                     <span style={s.bookingTime}>{b.start_label}</span>
                     <span>{b.table_name}{b.seats ? ` (seats ${b.seats})` : ''}</span>
                     <span style={s.muted}>{b.caller_name}{b.caller_phone ? ` · ${b.caller_phone}` : ''}</span>
+                    <button style={s.dangerLink} disabled={cancelBusyId === b.id} onClick={() => cancelBooking(b.id)}>
+                      {cancelBusyId === b.id ? 'Cancelling…' : 'Cancel'}
+                    </button>
                   </div>
                 ))}
               </div>
@@ -926,6 +1145,8 @@ function DocumentsTab({ workspaceId }) {
   const [open, setOpen] = useState(null);
   const [text, setText] = useState('');
   const [loadingText, setLoadingText] = useState(false);
+  const isMobile = useIsMobile();
+  const [listOpen, setListOpen] = useState(true);
 
   useEffect(() => { listRestaurantDocuments(workspaceId).then(setDocs).catch(e => setError(e.message)); }, [workspaceId]);
 
@@ -933,25 +1154,40 @@ function DocumentsTab({ workspaceId }) {
     setOpen(doc);
     setText('');
     setLoadingText(true);
+    if (isMobile) setListOpen(false);
     try {
       setText(await fetchDocumentSourceText(doc.id));
     } catch (e) { setText(`Could not load transcript: ${e.message}`); }
     finally { setLoadingText(false); }
   }
 
+  const docListEl = (
+    <>
+      {docs.map(d => (
+        <button key={d.id} style={{ ...s.restaurantRow, ...(open?.id === d.id ? s.selected : {}) }} onClick={() => view(d)}>
+          <strong>{d.restaurant_name || d.original_name}</strong>
+          <span style={s.muted}>{d.status} · {new Date(d.created_at).toLocaleDateString()}</span>
+        </button>
+      ))}
+    </>
+  );
+
   return (
     <div style={s.body}>
       {error && <div style={s.error}>{error}</div>}
       {!docs.length && <p style={s.muted}>No scribe recordings yet -- use Voice Scribe Intake to create one.</p>}
-      <div style={s.restaurantGrid}>
-        <div style={s.list}>
-          {docs.map(d => (
-            <button key={d.id} style={{ ...s.restaurantRow, ...(open?.id === d.id ? s.selected : {}) }} onClick={() => view(d)}>
-              <strong>{d.restaurant_name || d.original_name}</strong>
-              <span style={s.muted}>{d.status} · {new Date(d.created_at).toLocaleDateString()}</span>
+      <div style={isMobile ? s.restaurantGridMobile : s.restaurantGrid}>
+        {isMobile ? (
+          <div>
+            <button style={s.listToggleMobile} onClick={() => setListOpen(o => !o)}>
+              <span style={s.listToggleLabelMobile}>{open ? (open.restaurant_name || open.original_name) : `Recordings (${docs.length})`}</span>
+              <span>{listOpen ? '▲' : '▼'}</span>
             </button>
-          ))}
-        </div>
+            {listOpen && <div style={s.listMobile}>{docListEl}</div>}
+          </div>
+        ) : (
+          <div style={s.list}>{docListEl}</div>
+        )}
         <div style={s.detail}>
           {!open && <p style={s.muted}>Select a recording to view its transcript.</p>}
           {open && (
@@ -990,8 +1226,16 @@ const s = {
   transcriptInput: { width:'100%', minHeight:320, resize:'vertical', background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:8, color:'var(--tx)', fontSize:13, lineHeight:1.6, padding:10, fontFamily:'inherit' },
   transcriptText: { whiteSpace:'pre-wrap', fontSize:13, color:'var(--tx2)', lineHeight:1.6, margin:0 },
   linkBtn: { background:'none', border:'none', color:'var(--gold-h)', fontSize:13, fontWeight:600, padding:0, cursor:'pointer' },
+  dangerLink: { marginLeft:'auto', background:'none', border:'none', color:'var(--red)', fontSize:12, fontWeight:700, padding:0, cursor:'pointer', flexShrink:0 },
   chunkContentBox: { background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:8, padding:12, marginTop:10 },
   pageTitle: { fontSize:18, color:'var(--tx)', marginBottom:14 },
+  // Title, workspace pill and tab dropdown all share one row on mobile --
+  // nowrap forces that, and each child below is sized so the three
+  // actually fit: the dropdown is the one that flexes, the other two
+  // are fixed/shrink-to-fit.
+  ownerHeaderMobile: { display:'flex', alignItems:'center', gap:6, marginBottom:10, flexWrap:'nowrap' },
+  pageTitleMobile: { fontSize:13, fontWeight:700, color:'var(--tx)', flexShrink:0 },
+  wsNameMobile: { color:'var(--muted2)', fontSize:11, fontWeight:600, background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:999, padding:'3px 9px', flexShrink:0, maxWidth:90, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' },
   wsBlock: { background:'rgba(248,113,113,.08)', border:'1px solid rgba(248,113,113,.25)', borderRadius:10, padding:'16px 18px', maxWidth:520 },
   wsTitle: { color:'var(--red)', fontSize:14.5, fontWeight:700, marginBottom:6 },
   wsMessage: { color:'var(--tx2)', fontSize:13, margin:0 },
@@ -999,6 +1243,18 @@ const s = {
   tabs: { display:'flex', gap:6, marginBottom:18, flexWrap:'wrap' },
   tab: { background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:8, padding:'8px 14px', color:'var(--muted2)', fontSize:13 },
   tabActive: { background:'var(--gold-soft)', color:'var(--gold-h)', borderColor:'var(--gold-mid)' },
+  // flex:1/minWidth:0 (was width:'100%' in its own standalone row) --
+  // this now lives inline in ownerHeaderMobile alongside the title and
+  // workspace pill, so it needs to flex to fill whatever's left rather
+  // than claim the full row.
+  tabDropdownWrap: { position:'relative', flex:'0 1 auto', minWidth:0, maxWidth:'100%' },
+  tabDropdownTrigger: { boxSizing:'border-box', display:'inline-flex', alignItems:'center', justifyContent:'space-between', gap:6, background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:8, padding:'7px 10px', color:'var(--tx)', fontSize:12.5, fontWeight:700, minWidth:0, maxWidth:'100%' },
+  tabDropdownTriggerLabel: { overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', minWidth:0 },
+  tabCaret: { color:'var(--muted2)', fontSize:11, flexShrink:0 },
+  tabDropdownBackdrop: { position:'fixed', inset:0, zIndex:49, background:'transparent' },
+  tabDropdownPanel: { position:'absolute', top:'calc(100% + 6px)', left:0, width:'min(280px, calc(100vw - 24px))', zIndex:50, background:'var(--s2)', border:'1px solid var(--b2)', borderRadius:10, overflow:'hidden', boxShadow:'0 8px 24px rgba(0,0,0,.18)', display:'flex', flexDirection:'column' },
+  tabDropdownItem: { width:'100%', boxSizing:'border-box', textAlign:'left', background:'transparent', border:'none', borderBottom:'1px solid var(--b2)', padding:'12px 14px', color:'var(--tx2)', fontSize:14, fontWeight:600 },
+  tabDropdownItemActive: { background:'var(--gold-soft)', color:'var(--gold-h)' },
   body: { maxWidth:860 },
   status: { color:'var(--gold-h)', fontSize:13, marginBottom:14, fontWeight:600 },
   grid2: { display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:10 },
@@ -1012,6 +1268,20 @@ const s = {
   secondaryLabel: { background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:8, padding:'10px 16px', color:'var(--tx)', fontSize:13, cursor:'pointer' },
   danger: { background:'rgba(248,113,113,.12)', border:'1px solid rgba(248,113,113,.3)', borderRadius:8, padding:'8px 14px', color:'var(--red)', fontSize:13 },
   muted: { color:'var(--muted2)', fontSize:12.5 },
+  // Voice Scribe Intake -- mobile: buttons on one line, title/language/checkbox compacted
+  statusMobile: { color:'var(--gold-h)', fontSize:11.5, marginBottom:8, fontWeight:600 },
+  infoRowMobile: { display:'flex', flexWrap:'wrap', gap:8, alignItems:'center', marginBottom:8 },
+  fieldMobileTitle: { display:'flex', flex:'3 1 0%', minWidth:0, marginBottom:0 },
+  fieldMobileLang: { display:'flex', flex:'1 1 0%', minWidth:0, marginBottom:0 },
+  inputMobile: { width:'100%', fontSize:12, padding:'6px 8px', boxSizing:'border-box' },
+  checkMobile: { display:'flex', alignItems:'center', gap:6, fontSize:11, color:'var(--muted2)', flex:'1 1 100%', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' },
+  actionsMobile: { display:'flex', gap:6, alignItems:'center', flexWrap:'nowrap', overflowX:'auto', marginTop:6, paddingBottom:2 },
+  primaryMobile: { background:'var(--gold)', color:'#fff', border:'none', borderRadius:7, padding:'7px 10px', fontWeight:700, fontSize:11.5, whiteSpace:'nowrap', flexShrink:0 },
+  dangerMobile: { background:'rgba(248,113,113,.12)', border:'1px solid rgba(248,113,113,.3)', borderRadius:7, padding:'7px 10px', color:'var(--red)', fontSize:11.5, whiteSpace:'nowrap', flexShrink:0 },
+  secondaryLabelMobile: { background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:7, padding:'7px 10px', color:'var(--tx)', fontSize:11.5, cursor:'pointer', whiteSpace:'nowrap', flexShrink:0 },
+  secondaryBtnMobile: { background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:7, padding:'7px 10px', color:'var(--tx)', fontSize:11.5, whiteSpace:'nowrap', flexShrink:0 },
+  audioInfoMobile: { display:'flex', gap:8, flexWrap:'wrap', marginTop:4 },
+  mutedMobile: { color:'var(--muted2)', fontSize:10.5 },
   steps: { margin:'14px 0', paddingLeft:20, fontSize:12.5, color:'var(--muted2)' },
   stepItem: { marginBottom:3 },
   review: { marginTop:18, borderTop:'1px solid var(--b1)', paddingTop:16 },
@@ -1024,10 +1294,17 @@ const s = {
   restaurantRow: { textAlign:'left', background:'var(--s1)', border:'1px solid var(--b2)', borderRadius:10, padding:10, display:'flex', flexDirection:'column', gap:3 },
   selected: { borderColor:'var(--gold-mid)', background:'var(--gold-soft)' },
   detail: { background:'var(--s1)', border:'1px solid var(--b2)', borderRadius:10, padding:16, minHeight:200 },
+  // My Restaurants -- mobile: left panel collapses to a toggle so the
+  // right-side menu detail gets the full screen width.
+  restaurantGridMobile: { display:'flex', flexDirection:'column', gap:10 },
+  listToggleMobile: { width:'100%', display:'flex', justifyContent:'space-between', alignItems:'center', background:'var(--s1)', border:'1px solid var(--b2)', borderRadius:10, padding:'10px 12px', color:'var(--tx)', fontSize:13, fontWeight:600 },
+  listToggleLabelMobile: { overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', minWidth:0, textAlign:'left' },
+  listMobile: { display:'flex', flexDirection:'column', gap:6, marginTop:8, maxHeight:280, overflowY:'auto' },
   card: { background:'var(--s1)', border:'1px solid var(--b2)', borderRadius:12, padding:14, marginBottom:12 },
   cardTop: { display:'flex', justifyContent:'space-between', color:'var(--tx)' },
   statusPill: { color:'var(--gold-h)', fontSize:11, fontWeight:700, textTransform:'uppercase' },
-  photoCell: { display:'flex', flexDirection:'column', gap:5, alignItems:'flex-start' },
+  photoCell: { display:'flex', flexDirection:'column', gap:5, alignItems:'center' },
+  menuCategoryRow: { background:'var(--s2)', color:'var(--gold-h)', fontWeight:700, fontSize:12, padding:'6px 8px', textTransform:'uppercase', letterSpacing:0.3 },
   menuThumb: { width:48, height:48, objectFit:'cover', borderRadius:6, border:'1px solid var(--b2)' },
   menuThumbEmpty: { width:48, height:48, borderRadius:6, border:'1px dashed var(--b2)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:9.5, color:'var(--muted2)', textAlign:'center' },
   photoActions: { display:'flex', gap:6 },

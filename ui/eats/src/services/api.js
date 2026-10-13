@@ -222,6 +222,12 @@ export async function updateMenuItem(restaurantId, itemId, edits) {
   }));
 }
 
+export async function deleteMenuItem(restaurantId, itemId) {
+  return handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}/menu-items/${itemId}`, {
+    method: 'DELETE', headers: authHdr(),
+  }));
+}
+
 export async function uploadMenuItemPhoto(restaurantId, itemId, file) {
   const form = new FormData();
   form.append('photo', file);
@@ -349,11 +355,32 @@ export async function analyzeRestaurantFeedback({ feedbackText = '', language = 
   }));
 }
 
-export async function submitRestaurantFeedback(feedback) {
+// Backend's RestaurantFeedbackRequest is a strict Pydantic model requiring
+// snake_case keys (restaurant_id, order_id, feedback_text, ...) -- this was
+// previously a bare pass-through (`JSON.stringify(feedback)`), so the
+// camelCase keys OrdersPage.jsx's "Rate this order" modal sends
+// (restaurantId/orderId/feedbackText) went straight over the wire unchanged
+// and 422'd with "restaurant_id: Field required". Translate here, the same
+// way analyzeRestaurantFeedback (above) already does for its own call.
+export async function submitRestaurantFeedback({
+  restaurantId, menuItemId = null, orderId = null, rating, feedbackText = '',
+  language = '', sourceType = 'text', tags = [], signals = {}, metadata = {},
+} = {}) {
   return handleRes(await fetch(`${BASE}/restaurant/feedback`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHdr() },
-    body: JSON.stringify(feedback),
+    body: JSON.stringify({
+      restaurant_id: restaurantId,
+      menu_item_id: menuItemId,
+      order_id: orderId,
+      rating,
+      feedback_text: feedbackText,
+      language,
+      source_type: sourceType,
+      tags,
+      signals,
+      metadata,
+    }),
   }));
 }
 
