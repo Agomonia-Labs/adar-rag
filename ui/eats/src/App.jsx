@@ -2,7 +2,6 @@
 // between customer and owner experiences. No router library -- mirrors
 // the DocIntel web app's own state-based tab pattern.
 import React, { useEffect, useState, useCallback } from 'react';
-import { AuthFlow } from './pages/AuthPages.jsx';
 import DiscoverPage from './pages/DiscoverPage.jsx';
 import RestaurantPage from './pages/RestaurantPage.jsx';
 import CartPage from './pages/CartPage.jsx';
@@ -12,6 +11,7 @@ import ChatPage from './pages/ChatPage.jsx';
 import OwnerDashboard from './pages/OwnerDashboard.jsx';
 import AccountPage from './pages/AccountPage.jsx';
 import NotificationsBell from './components/NotificationsBell.jsx';
+import RequireAuth from './components/RequireAuth.jsx';
 
 function useIsMobile(breakpoint = 760) {
   const get = () => typeof window !== 'undefined' && window.innerWidth <= breakpoint;
@@ -37,6 +37,16 @@ export default function App() {
   const [tab, setTab] = useState('discover'); // discover | restaurant | cart | orders | dinein | owner | account
   const [activeRestaurant, setActiveRestaurant] = useState(null); // {id,name,...}
   const [cart, setCart] = useState({ restaurant_id: null, restaurant_name: '', items: [] });
+  // ADAR Eats is open to everybody without signing in (Discover, a
+  // restaurant's menu, and the Order Assistant all work for a guest) -- a
+  // sign-in/sign-up prompt now only shows up where an actual session is
+  // needed (My Orders, Dine-In, For Owners, Account, and the checkout step
+  // of Cart -- see RequireAuth.jsx and each of those pages), rather than
+  // the whole app refusing to render at all without a token the way it
+  // used to. authScreen picks which of RequireAuth's embedded AuthFlow
+  // starts on -- 'login' normally, 'register' when the header's own
+  // "Sign Up" button is what sent the guest to the Account tab.
+  const [authScreen, setAuthScreen] = useState('login');
   const isMobile = useIsMobile();
   // On a phone-width screen, five nav buttons in a horizontal scroller
   // left some of them permanently off-screen with no indication there
@@ -58,6 +68,18 @@ export default function App() {
     setTokenState(localStorage.getItem('eats_token'));
   }, []);
 
+  useEffect(() => {
+    // api.js's handleRes clears a stale/expired eats_token and fires this
+    // the moment any authenticated call 401s -- dropping token to null
+    // here is what makes RequireAuth (and DineInPage's own "My
+    // reservations" gate) fall back to a friendly embedded sign-in prompt
+    // on the very next render, instead of whatever page was mid-request
+    // showing the backend's raw "Invalid or expired token" text itself.
+    const onExpired = () => setTokenState(null);
+    window.addEventListener('eats:auth-expired', onExpired);
+    return () => window.removeEventListener('eats:auth-expired', onExpired);
+  }, []);
+
   const logout = () => {
     localStorage.removeItem('eats_token');
     localStorage.removeItem('eats_role');
@@ -65,7 +87,7 @@ export default function App() {
     setTab('discover');
   };
 
-  if (!token) return <AuthFlow onLogin={onLogin} />;
+  const openSignIn = (screen) => { setAuthScreen(screen); setTab('account'); };
 
   const openRestaurant = (restaurant) => { setActiveRestaurant(restaurant); setTab('restaurant'); };
 
@@ -130,9 +152,21 @@ export default function App() {
           </nav>
         )}
         <div style={s.headerRight}>
-          <NotificationsBell />
+          {token && <NotificationsBell />}
           <button style={s.cartBtn} onClick={() => setTab('cart')}>🛒 {cartCount > 0 && <span style={s.cartBadge}>{cartCount}</span>}</button>
-          <button style={isMobile ? s.accountBtnMobile : s.accountBtn} onClick={() => setTab('account')}>{isMobile ? '👤' : 'Account'}</button>
+          {token ? (
+            <button style={isMobile ? s.accountBtnMobile : s.accountBtn} onClick={() => setTab('account')}>{isMobile ? '👤' : 'Account'}</button>
+          ) : (
+            // Signed out: Discover/the menu/Order Assistant all work with
+            // no account at all (see App()'s own comment above and
+            // RequireAuth.jsx), but Sign In/Sign Up stay one tap away --
+            // this is what makes rewards worth it for a customer who
+            // wants them, without forcing everyone through a gate first.
+            <div style={s.authBtns}>
+              <button style={isMobile ? s.signInBtnMobile : s.signInBtn} onClick={() => openSignIn('login')}>Sign In</button>
+              {!isMobile && <button style={s.signUpBtn} onClick={() => openSignIn('register')}>Sign Up</button>}
+            </div>
+          )}
         </div>
       </header>
 
@@ -143,13 +177,28 @@ export default function App() {
             onBack={() => setTab('discover')} onDineIn={() => setTab('dinein')} />
         )}
         {tab === 'cart' && (
-          <CartPage cart={cart} setCart={setCart} onPlaced={() => setTab('orders')} onBack={() => setTab('discover')} />
+          <CartPage cart={cart} setCart={setCart} token={token} onLogin={onLogin}
+            onPlaced={() => setTab('orders')} onBack={() => setTab('discover')} />
         )}
-        {tab === 'orders' && <OrdersPage />}
-        {tab === 'dinein' && <DineInPage restaurant={activeRestaurant} onPickRestaurant={() => setTab('discover')} />}
-        {tab === 'chat' && <ChatPage cart={cart} onAddToCart={addToCart} />}
-        {tab === 'owner' && <OwnerDashboard />}
-        {tab === 'account' && <AccountPage onLogout={logout} />}
+        {tab === 'orders' && (
+          <RequireAuth token={token} onLogin={onLogin} prompt="Sign in to see your order history.">
+            <OrdersPage />
+          </RequireAuth>
+        )}
+        {tab === 'dinein' && (
+          <DineInPage restaurant={activeRestaurant} onPickRestaurant={() => setTab('discover')} token={token} onLogin={onLogin} />
+        )}
+        {tab === 'chat' && <ChatPage cart={cart} onAddToCart={addToCart} token={token} onLogin={onLogin} />}
+        {tab === 'owner' && (
+          <RequireAuth token={token} onLogin={onLogin} prompt="You must sign in as a restaurant owner to open the owner workspace.">
+            <OwnerDashboard />
+          </RequireAuth>
+        )}
+        {tab === 'account' && (
+          <RequireAuth token={token} onLogin={onLogin} initialScreen={authScreen} prompt="Sign in or create an account -- it's what makes rewards possible.">
+            <AccountPage onLogout={logout} />
+          </RequireAuth>
+        )}
       </main>
     </div>
   );
@@ -199,5 +248,11 @@ const s = {
   // loses nothing by becoming a glyph, which is what makes room for the
   // brand to stay full-size and the nav trigger to stay usable.
   accountBtnMobile: { background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:8, padding:'7px 9px', color:'var(--tx)', fontSize:15, flexShrink:0 },
+  authBtns: { display:'flex', alignItems:'center', gap:8, flexShrink:0 },
+  signInBtn: { background:'transparent', border:'1px solid var(--b2)', borderRadius:8, padding:'7px 12px', color:'var(--tx)', fontSize:13, fontWeight:600, whiteSpace:'nowrap' },
+  // Mobile keeps only "Sign In" (same squeeze as accountBtnMobile above) --
+  // Sign Up is still one tap away from there (LoginScreen's "Create one").
+  signInBtnMobile: { background:'var(--s3)', border:'1px solid var(--b2)', borderRadius:8, padding:'7px 10px', color:'var(--tx)', fontSize:12.5, fontWeight:700, flexShrink:0, whiteSpace:'nowrap' },
+  signUpBtn: { background:'var(--gold)', border:'none', borderRadius:8, padding:'7px 14px', color:'#fff', fontSize:13, fontWeight:700, whiteSpace:'nowrap' },
   main: { flex:1, padding:'20px 22px 60px' },
 };

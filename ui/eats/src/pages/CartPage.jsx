@@ -3,8 +3,9 @@
 // CarryoutCart + createOrderDraft/placeOrder flow.
 import React, { useState } from 'react';
 import { createRestaurantOrderDraft, createRestaurantOrderCheckout } from '../services/api.js';
+import { AuthFlow } from './AuthPages.jsx';
 
-export default function CartPage({ cart, setCart, onPlaced, onBack }) {
+export default function CartPage({ cart, setCart, onPlaced, onBack, token, onLogin }) {
   const [customer, setCustomer] = useState({ name:'', phone:'', email:'', pickup_time_request:'', special_instructions:'' });
   const [draftOrder, setDraftOrder] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -106,17 +107,28 @@ export default function CartPage({ cart, setCart, onPlaced, onBack }) {
       <div style={s.subtotal}>Subtotal: ${subtotal.toFixed(2)}</div>
 
       {!draftOrder ? (
-        <>
-          <h3 style={s.h3}>Your details</h3>
-          <div style={s.grid2}>
-            <label style={s.field}>Name<input value={customer.name} onChange={e => setCustomer(c => ({ ...c, name:e.target.value }))} /></label>
-            <label style={s.field}>Phone<input value={customer.phone} onChange={e => setCustomer(c => ({ ...c, phone:e.target.value }))} /></label>
-            <label style={s.field}>Email<input type="email" value={customer.email} onChange={e => setCustomer(c => ({ ...c, email:e.target.value }))} /></label>
-            <label style={s.field}>Pickup time<input value={customer.pickup_time_request} onChange={e => setCustomer(c => ({ ...c, pickup_time_request:e.target.value }))} placeholder="ASAP or e.g. 7:30 PM" /></label>
+        token ? (
+          <>
+            <h3 style={s.h3}>Your details</h3>
+            <div style={s.grid2}>
+              <label style={s.field}>Name<input value={customer.name} onChange={e => setCustomer(c => ({ ...c, name:e.target.value }))} /></label>
+              <label style={s.field}>Phone<input value={customer.phone} onChange={e => setCustomer(c => ({ ...c, phone:e.target.value }))} /></label>
+              <label style={s.field}>Email<input type="email" value={customer.email} onChange={e => setCustomer(c => ({ ...c, email:e.target.value }))} /></label>
+              <label style={s.field}>Pickup time<input value={customer.pickup_time_request} onChange={e => setCustomer(c => ({ ...c, pickup_time_request:e.target.value }))} placeholder="ASAP or e.g. 7:30 PM" /></label>
+            </div>
+            <label style={s.field}>Special instructions<textarea rows={2} value={customer.special_instructions} onChange={e => setCustomer(c => ({ ...c, special_instructions:e.target.value }))} /></label>
+            <button style={s.primary} disabled={busy} onClick={createDraft}>{busy ? 'Reviewing…' : 'Review order →'}</button>
+          </>
+        ) : (
+          // The cart itself (above) is visible and editable without an
+          // account -- placing the actual order is the "session needed"
+          // moment, so that's the one step that asks for sign-in, right
+          // here instead of bouncing the customer off this page.
+          <div style={{ marginTop:14 }}>
+            <p style={s.signInPrompt}>Sign in or create an account to place this order -- it's what makes rewards possible.</p>
+            <AuthFlow onLogin={onLogin} embedded />
           </div>
-          <label style={s.field}>Special instructions<textarea rows={2} value={customer.special_instructions} onChange={e => setCustomer(c => ({ ...c, special_instructions:e.target.value }))} /></label>
-          <button style={s.primary} disabled={busy} onClick={createDraft}>{busy ? 'Reviewing…' : 'Review order →'}</button>
-        </>
+        )
       ) : (
         <div style={s.confirm}>
           <p style={s.muted}>
@@ -151,4 +163,5 @@ const s = {
   field: { display:'flex', flexDirection:'column', gap:4, fontSize:12, color:'var(--muted)', fontWeight:600, marginBottom:4 },
   primary: { background:'var(--gold)', color:'#fff', border:'none', borderRadius:8, padding:'11px 18px', fontWeight:700, fontSize:14, marginTop:8 },
   confirm: { background:'var(--s1)', border:'1px solid var(--b2)', borderRadius:10, padding:16 },
+  signInPrompt: { color:'var(--muted2)', fontSize:13.5, textAlign:'center', maxWidth:420, margin:'0 auto 10px' },
 };

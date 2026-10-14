@@ -36,7 +36,7 @@ function useIsMobile(breakpoint = 760) {
   return mobile;
 }
 
-export default function ChatPage({ cart, onAddToCart }) {
+export default function ChatPage({ cart, onAddToCart, token, onLogin }) {
   const isMobile = useIsMobile();
   // On mobile the conversation history list used to permanently occupy
   // its own column, squeezing the actual chat into a narrow strip --
@@ -81,6 +81,15 @@ export default function ChatPage({ cart, onAddToCart }) {
   const [wsError, setWsError] = useState('');
 
   useEffect(() => {
+    // Connects to the one shared "Restaurant" workspace by default --
+    // regardless of sign-in -- the same way a signed-in customer always
+    // has (getRestaurantWorkspace is guest-open on the backend now: a
+    // guest just resolves it read-only instead of auto-joining as a
+    // member). A guest still gets an ephemeral, unsaved conversation --
+    // no persisted session, no history list (see sessionListEl and
+    // send()'s session-creation guard below) -- but the Order Assistant
+    // itself isn't blocked on signing in just to find out which
+    // workspace it's scoped to.
     let cancelled = false;
     setWsLoading(true);
     setWsError('');
@@ -92,12 +101,12 @@ export default function ChatPage({ cart, onAddToCart }) {
         setWsError(
           err?.status === 409
             ? 'No restaurant workspace set up yet. Ask an owner to create one first.'
-            : 'Could not connect to your restaurant workspace. Please try again.'
+            : 'Could not connect to the restaurant workspace. Please try again.'
         );
       })
       .finally(() => { if (!cancelled) setWsLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [token]);
 
   // Only the 10 most recent conversations in the sidebar -- the
   // backend already returns them newest-first (ORDER BY updated_at
@@ -134,7 +143,11 @@ export default function ChatPage({ cart, onAddToCart }) {
     setStreaming(true);
 
     let activeSessionId = sessionId;
-    if (!activeSessionId) {
+    // Guests get an ephemeral, unsaved conversation -- no workspace to
+    // create a session under, and no account to list it back to them
+    // later, so there's nothing to persist here at all (see the
+    // workspace-bootstrap effect above and sessionListEl below).
+    if (!activeSessionId && token) {
       try { const sess = await createChatSession(question.slice(0, 60), workspaceId); activeSessionId = sess.id; setSessionId(sess.id); loadSessions(); }
       catch { /* fall back to ephemeral chat if session create fails */ }
     }
@@ -245,7 +258,14 @@ export default function ChatPage({ cart, onAddToCart }) {
     </div>
   );
 
-  const sessionListEl = (
+  const sessionListEl = !token ? (
+    // A guest's conversation is ephemeral (see the workspace-bootstrap
+    // effect above) -- there's genuinely no history to list, so this
+    // explains why rather than just showing a permanently-empty list.
+    <div style={s.sessionList}>
+      <p style={{ ...s.muted, padding: isMobile ? '0 2px 2px' : 0 }}>Sign in to save and revisit your conversations.</p>
+    </div>
+  ) : (
     <div style={s.sessionList}>
       {!sessions.length && <p style={{ ...s.muted, padding: isMobile ? '0 2px 2px' : 0 }}>No conversations yet.</p>}
       {sessions.map(sess => (

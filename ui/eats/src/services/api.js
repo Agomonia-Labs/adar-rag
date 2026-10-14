@@ -7,7 +7,15 @@
 const BASE = '/api';
 
 function token()   { return localStorage.getItem('eats_token'); }
-function authHdr()  { return { Authorization: `Bearer ${token()}` }; }
+// Omits the header entirely when signed out -- ADAR Eats is now open to
+// guests for browsing, menu search, and the Order Assistant (see
+// App.jsx), and several backend endpoints treat "no Authorization header"
+// as an anonymous guest while treating "a present-but-garbage token" as a
+// real auth failure. Sending the literal string "Bearer null" (the old
+// behavior, since template-interpolating a null token() still produces
+// text) would have hit the latter path instead of being recognized as a
+// guest.
+function authHdr()  { const t = token(); return t ? { Authorization: `Bearer ${t}` } : {}; }
 
 async function handleRes(res) {
   if (res.ok) {
@@ -17,9 +25,29 @@ async function handleRes(res) {
   }
   const e = await res.json().catch(() => ({}));
   const detail = e.detail || e.message;
-  const message = typeof detail === 'string'
+  let message = typeof detail === 'string'
     ? detail
     : detail?.message || detail?.code || (detail ? JSON.stringify(detail) : `HTTP ${res.status}`);
+  // A stale/expired eats_token in localStorage still passes every page's
+  // own "is there a token" check (RequireAuth.jsx, DineInPage.jsx,
+  // ChatPage.jsx all just check truthiness) -- the FIRST place that
+  // actually learns the session is dead is the API call that then 401s.
+  // Only react this way when there WAS a token: a guest-open endpoint
+  // that genuinely requires sign-in (no token sent at all) should keep
+  // surfacing its own backend message ("Sign in required") instead of
+  // this "your session expired" wording, which would be misleading for
+  // someone who was never signed in to begin with.
+  if (res.status === 401 && token()) {
+    localStorage.removeItem('eats_token');
+    localStorage.removeItem('eats_role');
+    // App.jsx listens for this to drop its `token` state to null, which
+    // makes every RequireAuth-gated tab (My Orders, Dine-In's "My
+    // reservations", For Owners, Account) fall back to its own friendly
+    // embedded sign-in prompt on the next render instead of whatever
+    // page was mid-request showing this raw error text itself.
+    window.dispatchEvent(new CustomEvent('eats:auth-expired'));
+    message = 'Your session has expired. Please sign in again.';
+  }
   const err = new Error(message);
   // Preserve the HTTP status so callers can branch on it (e.g.
   // getRestaurantWorkspace's 409 "no Restaurant workspace exists yet"
@@ -33,7 +61,7 @@ async function handleRes(res) {
 export async function registerUser(email, password, fullName) {
   return handleRes(await fetch(`${BASE}/auth/register`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Client-App': 'eats' },
     body: JSON.stringify({ email: email.trim().toLowerCase(), password, full_name: fullName.trim() }),
   }));
 }
@@ -41,7 +69,7 @@ export async function registerUser(email, password, fullName) {
 export async function login(email, password) {
   return handleRes(await fetch(`${BASE}/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Client-App': 'eats' },
     body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
   }));
 }
@@ -57,7 +85,7 @@ export async function verifyOtp(mfaToken, otp) {
 export async function resendOtp(mfaToken) {
   return handleRes(await fetch(`${BASE}/auth/resend-otp`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Client-App': 'eats' },
     body: JSON.stringify({ mfa_token: mfaToken }),
   }));
 }
@@ -68,7 +96,7 @@ export async function getMe() {
 
 export async function forgotPassword(email) {
   return handleRes(await fetch(`${BASE}/auth/forgot-password`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Client-App': 'eats' },
     body: JSON.stringify({ email: email.trim().toLowerCase() }),
   }));
 }
@@ -90,7 +118,7 @@ export async function verifyEmail(verifyToken) {
 
 export async function resendVerification(email) {
   return handleRes(await fetch(`${BASE}/auth/resend-verification`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Client-App': 'eats' },
     body: JSON.stringify({ email: email.trim().toLowerCase() }),
   }));
 }
@@ -102,7 +130,7 @@ export async function getAccountDeletionImpact() {
 export async function deleteAccount(password) {
   return handleRes(await fetch(`${BASE}/auth/account`, {
     method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    headers: { 'Content-Type': 'application/json', 'X-Client-App': 'eats', ...authHdr() },
     body: JSON.stringify({ password }),
   }));
 }

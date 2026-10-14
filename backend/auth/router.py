@@ -16,9 +16,35 @@ import services.storage as gcs
 
 router   = APIRouter()
 APP_URL  = os.getenv("APP_URL", "http://localhost:5173")
+# Per-product frontend URLs for emailed links (verification, etc.) -- this
+# one /api/auth/register + /resend-verification pair is shared by every
+# ADAR web frontend (DocIntel, Eats, ...), and APP_URL alone only ever
+# pointed at DocIntel's domain, so an Eats signup's verification email
+# linked to docintel.adar.agomoniai.com instead of eats.agomoniai.com.
+# Each web frontend's register()/resend-verification() call sends an
+# `X-Client-App` header identifying itself (see adar-rag/ui/eats/src/
+# services/api.js); _app_url_for() below maps that to the right domain,
+# falling back to APP_URL (DocIntel's own frontend doesn't send the
+# header at all, so it's unaffected).
+CLIENT_APP_URLS = {
+    "eats": os.getenv("EATS_APP_URL", "https://eats.agomoniai.com"),
+}
 OTP_EXPIRE_MINUTES = 5
 OTP_MAX_ATTEMPTS = 3
 OTP_RESEND_COOLDOWN_SECONDS = 60
+
+
+def _app_url_for(request: Request) -> str:
+    client_app = request.headers.get("x-client-app", "").strip().lower()
+    return CLIENT_APP_URLS.get(client_app, APP_URL)
+
+
+def _client_app(request: Request) -> str:
+    """The requesting web frontend's own `X-Client-App` header (e.g.
+    "eats"), used to brand transactional emails (see services/branding.py)
+    under the product that actually triggered them instead of always
+    showing DocIntel's own name/icon."""
+    return request.headers.get("x-client-app", "").strip().lower()
 
 
 def _token_hash(tok: str) -> str:
@@ -90,7 +116,7 @@ async def _ensure_mfa_table(db) -> None:
     """)
 
 
-async def _send_mfa_challenge(db, row) -> dict:
+async def _send_mfa_challenge(db, row, client_app: str = "") -> dict:
     await _ensure_mfa_table(db)
     user_id = str(row["id"])
     email = row["email"]
@@ -116,7 +142,7 @@ async def _send_mfa_challenge(db, row) -> dict:
     )
 
     from services.email import send_otp_email
-    sent = await send_otp_email(email, full_name, otp)
+    sent = await send_otp_email(email, full_name, otp, client_app=client_app)
     if not sent:
         raise HTTPException(500, "Could not send login code. Please try again.")
 
@@ -202,7 +228,7 @@ async def register(
 
     if not auto_verify:
         try:
-            await send_verification_email(body.email, token, APP_URL)
+            await send_verification_email(body.email, token, _app_url_for(request), client_app=_client_app(request))
         except Exception:
             pass   # don't block registration if email fails
 
@@ -247,7 +273,7 @@ class ResendRequest(BaseModel):
     email: EmailStr
 
 @router.post("/resend-verification")
-async def resend_verification(body: ResendRequest, db=Depends(get_db), _rl=Depends(ip_3_per_min)):
+async def resend_verification(body: ResendRequest, request: Request, db=Depends(get_db), _rl=Depends(ip_3_per_min)):
     row = await db.fetchrow(
         "SELECT id, email, is_verified FROM users WHERE email = $1", body.email
     )
@@ -265,7 +291,7 @@ async def resend_verification(body: ResendRequest, db=Depends(get_db), _rl=Depen
         token_h, token_exp, row["id"],
     )
     try:
-        await send_verification_email(row["email"], token, APP_URL)
+        await send_verification_email(row["email"], token, _app_url_for(request), client_app=_client_app(request))
     except Exception:
         pass
     return {"message": "If that email is registered and unverified, a new link has been sent"}
@@ -298,7 +324,7 @@ async def login(
             )
 
     if _mfa_enabled() and row["email"].lower() not in _mfa_bypass_emails():
-        return await _send_mfa_challenge(db, row)
+        return await _send_mfa_challenge(db, row, client_app=_client_app(request))
 
     return await _complete_login(db, row, request)
 
@@ -357,6 +383,7 @@ async def verify_otp(
 @router.post("/resend-otp")
 async def resend_otp(
     body: OTPResendRequest,
+    request: Request,
     db=Depends(get_db),
     _rl=Depends(ip_10_per_min),
 ):
@@ -402,7 +429,7 @@ async def resend_otp(
     )
 
     from services.email import send_otp_email
-    sent = await send_otp_email(row["email"], row["full_name"] or row["email"], otp)
+    sent = await send_otp_email(row["email"], row["full_name"] or row["email"], otp, client_app=_client_app(request))
     if not sent:
         raise HTTPException(500, "Could not resend code. Please try again.")
     return {"message": "New code sent to your email."}
@@ -478,7 +505,7 @@ async def delete_own_account(
     await db.execute("DELETE FROM users WHERE id = $1", user_id)
     # Best-effort confirmation email -- the account is already gone at this
     # point, so a failure here must never surface as a deletion failure.
-    await send_account_deleted_email(user_email)
+    await send_account_deleted_email(user_email, client_app=_client_app(request))
     return {"deleted": True}
 
 async def _sync_stripe_on_login(db, user_id: str) -> None:

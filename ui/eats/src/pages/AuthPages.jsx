@@ -16,7 +16,7 @@ const Brand = () => (
   </div>
 );
 
-export function AuthFlow({ onLogin }) {
+export function AuthFlow({ onLogin, embedded = false, initialScreen = 'login' }) {
   const [pendingEmail, setPendingEmail] = useState('');
   const [resendMsg, setResendMsg] = useState('');
   const [screen, setScreen] = useState(() => {
@@ -24,19 +24,19 @@ export function AuthFlow({ onLogin }) {
     const path = window.location.pathname;
     if (path === '/verify-email' && p.get('token')) return 'verify-email';
     if (p.get('token') && !path.includes('verify')) return 'reset';
-    return 'login';
+    return initialScreen;
   });
   const [resetToken] = useState(() => new URLSearchParams(window.location.search).get('token') || '');
 
   if (screen === 'verify-email')
     return <VerifyEmailScreen token={new URLSearchParams(window.location.search).get('token') || ''} />;
   if (screen === 'reset')
-    return <ResetPasswordScreen token={resetToken} onDone={() => { window.history.replaceState({}, '', '/'); setScreen('login'); }} />;
+    return <ResetPasswordScreen token={resetToken} embedded={embedded} onDone={() => { window.history.replaceState({}, '', '/'); setScreen('login'); }} />;
   if (screen === 'forgot')
-    return <ForgotPasswordScreen onBack={() => setScreen('login')} />;
+    return <ForgotPasswordScreen embedded={embedded} onBack={() => setScreen('login')} />;
   if (screen === 'verify-pending')
     return (
-      <div style={s.page}>
+      <div style={embedded ? s.pageEmbedded : s.page}>
         <div style={s.card}>
           <Brand />
           <h2 style={{ fontSize:19, fontWeight:700, color:'var(--tx)', marginBottom:8, textAlign:'center' }}>Verify your email</h2>
@@ -54,11 +54,11 @@ export function AuthFlow({ onLogin }) {
       </div>
     );
   if (screen === 'register')
-    return <RegisterScreen onSwitch={() => setScreen('login')} onNeedsVerify={email => { setPendingEmail(email); setScreen('verify-pending'); }} onLogin={onLogin} />;
-  return <LoginScreen onLogin={onLogin} onSwitch={() => setScreen('register')} onForgot={() => setScreen('forgot')} />;
+    return <RegisterScreen embedded={embedded} onSwitch={() => setScreen('login')} onNeedsVerify={email => { setPendingEmail(email); setScreen('verify-pending'); }} onLogin={onLogin} />;
+  return <LoginScreen embedded={embedded} onLogin={onLogin} onSwitch={() => setScreen('register')} onForgot={() => setScreen('forgot')} />;
 }
 
-function LoginScreen({ onLogin, onSwitch, onForgot }) {
+function LoginScreen({ onLogin, onSwitch, onForgot, embedded = false }) {
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
   const [error, setError] = useState('');
@@ -114,7 +114,7 @@ function LoginScreen({ onLogin, onSwitch, onForgot }) {
 
   if (mfaToken) {
     return (
-      <div style={s.page}>
+      <div style={embedded ? s.pageEmbedded : s.page}>
         <div style={s.card}>
           <Brand />
           <h1 style={s.title}>Check your email</h1>
@@ -138,7 +138,7 @@ function LoginScreen({ onLogin, onSwitch, onForgot }) {
   }
 
   return (
-    <div style={s.page}>
+    <div style={embedded ? s.pageEmbedded : s.page}>
       <div style={s.card}>
         <Brand />
         <h1 style={s.title}>Welcome back</h1>
@@ -160,7 +160,7 @@ function LoginScreen({ onLogin, onSwitch, onForgot }) {
   );
 }
 
-function RegisterScreen({ onSwitch, onNeedsVerify, onLogin }) {
+function RegisterScreen({ onSwitch, onNeedsVerify, onLogin, embedded = false }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
@@ -192,7 +192,7 @@ function RegisterScreen({ onSwitch, onNeedsVerify, onLogin }) {
   };
 
   return (
-    <div style={s.page}>
+    <div style={embedded ? s.pageEmbedded : s.page}>
       <div style={s.card}>
         <Brand />
         <h1 style={s.title}>Create your account</h1>
@@ -215,7 +215,7 @@ function RegisterScreen({ onSwitch, onNeedsVerify, onLogin }) {
   );
 }
 
-function ForgotPasswordScreen({ onBack }) {
+function ForgotPasswordScreen({ onBack, embedded = false }) {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -230,7 +230,7 @@ function ForgotPasswordScreen({ onBack }) {
   };
 
   return (
-    <div style={s.page}>
+    <div style={embedded ? s.pageEmbedded : s.page}>
       <div style={s.card}>
         <Brand />
         <h1 style={s.title}>Reset your password</h1>
@@ -253,7 +253,7 @@ function ForgotPasswordScreen({ onBack }) {
   );
 }
 
-function ResetPasswordScreen({ token, onDone }) {
+function ResetPasswordScreen({ token, onDone, embedded = false }) {
   const [pass, setPass] = useState('');
   const [pass2, setPass2] = useState('');
   const [busy, setBusy] = useState(false);
@@ -277,7 +277,7 @@ function ResetPasswordScreen({ token, onDone }) {
   };
 
   return (
-    <div style={s.page}>
+    <div style={embedded ? s.pageEmbedded : s.page}>
       <div style={s.card}>
         <Brand />
         <h1 style={s.title}>Choose a new password</h1>
@@ -339,6 +339,11 @@ function VerifyEmailScreen({ token }) {
 
 const s = {
   page: { minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:'linear-gradient(135deg,#faf6ee 0%,#f0e0c8 100%)', padding:'1.5rem' },
+  // Used wherever AuthFlow renders in place, mid-page (a guest hitting a
+  // sign-in-required action in Cart/Orders/Dine-In/Owner/Account) rather
+  // than as the whole app's one and only screen -- no 100vh/gradient
+  // backdrop, since the surrounding page already has its own.
+  pageEmbedded: { display:'flex', alignItems:'center', justifyContent:'center', padding:'8px 0' },
   card: { width:'100%', maxWidth:420, background:'#fffcf6', borderRadius:'var(--rll)', padding:'2.5rem 2rem', border:'1px solid rgba(192,70,46,.22)', boxShadow:'0 24px 64px rgba(58,40,24,.12), 0 0 0 1px rgba(192,70,46,.05)' },
   title: { fontSize:19, fontWeight:700, textAlign:'center', color:'var(--tx)', marginBottom:4 },
   sub: { fontSize:12.5, color:'var(--muted2)', textAlign:'center', marginBottom:'1.5rem' },

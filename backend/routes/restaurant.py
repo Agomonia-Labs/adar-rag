@@ -19,7 +19,7 @@ import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel
 
-from auth.dependencies import CurrentUser
+from auth.dependencies import CurrentUser, OptionalUser
 from database.connection import get_db, get_pool
 from services.adk_workflow import WorkflowConfigError, load_workflow_config, run_multi_agent_workflow
 from services.audit import audit, ip_from, ua_from
@@ -351,15 +351,25 @@ async def run_restaurant_scribe_workflow(
 
 
 @router.get("/workspace")
-async def get_restaurant_workspace(current_user: CurrentUser, db=Depends(get_db)):
+async def get_restaurant_workspace(current_user: OptionalUser, db=Depends(get_db)):
     """adar-eats mobile never lets an owner or staff member operate in a
     personal (workspace_id=NULL) context -- everybody is auto-connected to
     the one shared restaurant workspace instead, same as desktop. Mobile
     calls this once at startup (via WorkspaceContext) and uses the
     returned workspace_id for every owner-side call from then on, instead
-    of picking a workspace itself or ever falling back to personal."""
-    from routes.workspaces import ensure_default_workspace_membership
-    workspace_id = await ensure_default_workspace_membership(db, str(current_user["id"]))
+    of picking a workspace itself or ever falling back to personal.
+
+    A guest (no account) can't be added as a MEMBER of the workspace --
+    there's no user_id to join -- but the workspace itself isn't a
+    per-user resource, it's the one shared "Restaurant" workspace, so a
+    guest's Order Assistant and Dine-in booking still need its id to
+    behave the same as a signed-in customer's. Resolve it read-only
+    instead of skipping this call for guests entirely."""
+    from routes.workspaces import ensure_default_workspace_membership, get_default_workspace_id_readonly
+    if current_user:
+        workspace_id = await ensure_default_workspace_membership(db, str(current_user["id"]))
+    else:
+        workspace_id = await get_default_workspace_id_readonly(db)
     if not workspace_id:
         raise HTTPException(
             409,
@@ -602,7 +612,7 @@ def _menu_geo_scope_sql(
 
 @router.get("/geocode/reverse")
 async def reverse_geocode_location(
-    current_user: CurrentUser,
+    current_user: OptionalUser,
     lat: float = Query(..., description="Latitude from the client's geolocation API"),
     lng: float = Query(..., description="Longitude from the client's geolocation API"),
 ):
@@ -622,7 +632,7 @@ async def reverse_geocode_location(
 
 @router.get("/restaurants")
 async def list_restaurants(
-    current_user: CurrentUser,
+    current_user: OptionalUser,
     workspace_id: str | None = Query(None),
     marketplace: bool = Query(False, description="If true, ignore workspace_id and return restaurants opted into the public marketplace"),
     name: str = Query("", description="Filter by restaurant name (partial, case-insensitive)"),
@@ -633,10 +643,16 @@ async def list_restaurants(
     radius_miles: float = Query(50.0, gt=0, le=500, description="Radius around (lat, lng) to include, in miles. Default 50."),
     db=Depends(get_db),
 ):
-    user_id = str(current_user["id"])
-    user_email = str(current_user.get("email") or "")
+    # ADAR Eats is open to guest browsing (see App.jsx): marketplace=True is
+    # the public "Discover" listing, so it works with no account at all.
+    # Anything else here is an owner looking at their own/workspace
+    # restaurants, which still needs a real signed-in identity.
+    if not marketplace and not current_user:
+        raise HTTPException(401, "Sign in required", headers={"WWW-Authenticate": "Bearer"})
+    user_id = str(current_user["id"]) if current_user else None
+    user_email = str(current_user.get("email") or "") if current_user else ""
     restored_count = 0
-    if await _can_restore_restaurants(db, user_id, workspace_id):
+    if current_user and await _can_restore_restaurants(db, user_id, workspace_id):
         restored_count = await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
 
     have_point = lat is not None and lng is not None
@@ -832,12 +848,18 @@ async def restaurant_restore_status(current_user: CurrentUser, workspace_id: str
 @router.get("/restaurants/{restaurant_id}")
 async def get_restaurant(
     restaurant_id: str,
-    current_user: CurrentUser,
+    current_user: OptionalUser,
     workspace_id: str | None = Query(None),
     db=Depends(get_db),
 ):
-    user_id = str(current_user["id"])
-    user_email = str(current_user.get("email") or "")
+    # Guest-open: a marketplace-visible restaurant's menu is exactly what
+    # Discover/RestaurantPage.jsx need to show an unsigned-in visitor (see
+    # App.jsx). The WHERE clause below already requires either
+    # marketplace_visible=TRUE or a real ownership/workspace match, so a
+    # guest (user_id/user_email both empty) simply never matches the
+    # ownership branches and only ever sees what's actually public.
+    user_id = str(current_user["id"]) if current_user else None
+    user_email = str(current_user.get("email") or "") if current_user else ""
     row = await db.fetchrow(
         """
         SELECT r.*, wm.role AS viewer_role,
@@ -1666,12 +1688,14 @@ async def update_dine_in_hours(
 
 
 @router.get("/restaurants/{restaurant_id}/dine-in/config")
-async def get_dine_in_config(restaurant_id: str, current_user: CurrentUser, db=Depends(get_db)):
+async def get_dine_in_config(restaurant_id: str, current_user: OptionalUser, db=Depends(get_db)):
     """Public-ish read for the customer booking screen -- same visibility
     rule as GET /restaurants/{id} (marketplace-visible, or any viewer who
     can otherwise see this restaurant). Exposes only aggregate table-tier
-    counts, never adar-core ids or credentials."""
-    user_id = str(current_user["id"])
+    counts, never adar-core ids or credentials. A guest can browse and
+    book a table without an account (see create_dine_in_reservation
+    below), so this has to resolve for them too."""
+    user_id = str(current_user["id"]) if current_user else None
     row = await db.fetchrow(
         f"SELECT * FROM restaurants r WHERE r.id=$1 AND (r.marketplace_visible=TRUE OR {_restaurant_access_sql('r', '$2')})",
         restaurant_id, user_id,
@@ -1704,15 +1728,17 @@ async def get_dine_in_config(restaurant_id: str, current_user: CurrentUser, db=D
 @router.get("/restaurants/{restaurant_id}/dine-in/availability")
 async def get_dine_in_availability(
     restaurant_id: str,
-    current_user: CurrentUser,
+    current_user: OptionalUser,
     date: str = Query(..., description="YYYY-MM-DD"),
     party_size: int = Query(..., ge=1),
     db=Depends(get_db),
 ):
     """Advisory availability preview (grouped by table-tier) for the Eats
     booking UI -- see compute_table_slots's docstring for why this is a
-    preview, not the authoritative check."""
-    user_id = str(current_user["id"])
+    preview, not the authoritative check. Guest-open, same as
+    get_dine_in_config above -- a visitor can check open tables before
+    ever signing in."""
+    user_id = str(current_user["id"]) if current_user else None
     row = await db.fetchrow(
         f"SELECT * FROM restaurants r WHERE r.id=$1 AND (r.marketplace_visible=TRUE OR {_restaurant_access_sql('r', '$2')})",
         restaurant_id, user_id,
@@ -1884,10 +1910,17 @@ async def list_dine_in_bookings(
 async def create_dine_in_reservation(
     restaurant_id: str,
     body: DineInReservationRequest,
-    current_user: CurrentUser,
+    current_user: OptionalUser,
     db=Depends(get_db),
 ):
-    user_id = str(current_user["id"])
+    # Guest-open: "customer can book an available table even if they
+    # don't sign in" -- booking already requires a name/phone/email in
+    # the request body regardless of account, so there's no real gap in
+    # who to notify/confirm with. user_id stays None for a guest and the
+    # customer-facing in-app/push block below (which needs a real
+    # account) is skipped for them; the reminder-scheduler tracking row
+    # still records the booking against their email instead.
+    user_id = str(current_user["id"]) if current_user else None
     row = await db.fetchrow(
         f"SELECT * FROM restaurants r WHERE r.id=$1 AND (r.marketplace_visible=TRUE OR {_restaurant_access_sql('r', '$2')})",
         restaurant_id, user_id,
@@ -1993,34 +2026,39 @@ async def create_dine_in_reservation(
     # caller_email is set), so this adds the other two channels rather
     # than a second, duplicate confirmation email.
     customer_message = f"Your table for {body.party_size} at {row.get('name') or 'the restaurant'} is booked for {start_time_formatted}."
-    try:
-        await db.execute(
-            """
-            INSERT INTO restaurant_notifications (restaurant_id, user_id, channel, status, message, metadata)
-            VALUES ($1::uuid, $2::uuid, 'in_app', 'unread', $3, $4::jsonb)
-            """,
-            restaurant_id, user_id, customer_message,
-            json.dumps({
-                "event_type": "dine_in_reservation_confirmed", "audience": "customer",
-                "booking_id": booking.get("id"), "table_id": table["id"],
-                "start_time": start_dt.isoformat(), "party_size": body.party_size,
-            }),
-        )
-    except Exception:
-        log.warning("Failed to record in-app notification for customer's new dine-in reservation, restaurant %s", restaurant_id, exc_info=True)
-    try:
-        tokens_rows = await db.fetch(
-            "SELECT push_token FROM user_push_tokens WHERE user_id=$1::uuid AND app='eats'",
-            user_id,
-        )
-        tokens = [r["push_token"] for r in tokens_rows if r["push_token"]]
-        if tokens:
-            await send_expo_push(
-                tokens, title=row.get("name") or "Reservation confirmed",
-                body=customer_message, data={"type": "dine_in", "restaurant_id": restaurant_id},
+    # A guest has no account to attach an in-app notification or a push
+    # token to -- their own confirmation is the email adar-core's booking
+    # engine already sends (see the comment above) plus the confirmation
+    # screen this response drives.
+    if user_id:
+        try:
+            await db.execute(
+                """
+                INSERT INTO restaurant_notifications (restaurant_id, user_id, channel, status, message, metadata)
+                VALUES ($1::uuid, $2::uuid, 'in_app', 'unread', $3, $4::jsonb)
+                """,
+                restaurant_id, user_id, customer_message,
+                json.dumps({
+                    "event_type": "dine_in_reservation_confirmed", "audience": "customer",
+                    "booking_id": booking.get("id"), "table_id": table["id"],
+                    "start_time": start_dt.isoformat(), "party_size": body.party_size,
+                }),
             )
-    except Exception:
-        log.warning("Failed to push-notify customer of their new dine-in reservation, restaurant %s", restaurant_id, exc_info=True)
+        except Exception:
+            log.warning("Failed to record in-app notification for customer's new dine-in reservation, restaurant %s", restaurant_id, exc_info=True)
+        try:
+            tokens_rows = await db.fetch(
+                "SELECT push_token FROM user_push_tokens WHERE user_id=$1::uuid AND app='eats'",
+                user_id,
+            )
+            tokens = [r["push_token"] for r in tokens_rows if r["push_token"]]
+            if tokens:
+                await send_expo_push(
+                    tokens, title=row.get("name") or "Reservation confirmed",
+                    body=customer_message, data={"type": "dine_in", "restaurant_id": restaurant_id},
+                )
+        except Exception:
+            log.warning("Failed to push-notify customer of their new dine-in reservation, restaurant %s", restaurant_id, exc_info=True)
 
     # Local tracking row for the reminder scheduler (see
     # services/dine_in_reminder_scheduler.py) -- best-effort; a failure
@@ -2035,7 +2073,7 @@ async def create_dine_in_reservation(
             ON CONFLICT (booking_id) DO NOTHING
             """,
             str(booking.get("id")), restaurant_id, user_id,
-            body.caller_email or str(current_user.get("email") or ""),
+            body.caller_email or (str(current_user.get("email") or "") if current_user else ""),
             table["id"], table_name, body.party_size, start_dt,
         )
     except Exception:
@@ -2918,7 +2956,7 @@ def _fuzzy_filter_menu_rows(rows: list, query: str, limit: int = 100) -> list:
 
 @router.get("/menu/search")
 async def search_menu(
-    current_user: CurrentUser,
+    current_user: OptionalUser,
     query: str = Query(""),
     cuisine_type: str = Query(""),
     dietary_tag: str = Query(""),
@@ -2931,8 +2969,12 @@ async def search_menu(
     radius_miles: float = Query(50.0, gt=0, le=500),
     db=Depends(get_db),
 ):
-    user_id = str(current_user["id"])
-    if await _can_restore_restaurants(db, user_id, workspace_id):
+    # Same guest-open rule as list_restaurants above -- menu search is part
+    # of ADAR Eats' open browsing surface when marketplace=True.
+    if not marketplace and not current_user:
+        raise HTTPException(401, "Sign in required", headers={"WWW-Authenticate": "Bearer"})
+    user_id = str(current_user["id"]) if current_user else None
+    if current_user and await _can_restore_restaurants(db, user_id, workspace_id):
         await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
     raw_query = query.strip()
     normalized_query = _normalize_menu_search_query(raw_query)
@@ -3012,7 +3054,7 @@ async def search_menu(
 
 @router.get("/menu/compare")
 async def compare_menu_prices(
-    current_user: CurrentUser,
+    current_user: OptionalUser,
     query: str = Query(..., min_length=1),
     cuisine_type: str = Query(""),
     workspace_id: str | None = Query(None),
@@ -3023,8 +3065,10 @@ async def compare_menu_prices(
     radius_miles: float = Query(50.0, gt=0, le=500),
     db=Depends(get_db),
 ):
-    user_id = str(current_user["id"])
-    if await _can_restore_restaurants(db, user_id, workspace_id):
+    if not marketplace and not current_user:
+        raise HTTPException(401, "Sign in required", headers={"WWW-Authenticate": "Bearer"})
+    user_id = str(current_user["id"]) if current_user else None
+    if current_user and await _can_restore_restaurants(db, user_id, workspace_id):
         await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
     raw_query = query.strip()
     normalized_query = _normalize_menu_search_query(raw_query)
@@ -3101,7 +3145,7 @@ async def compare_menu_prices(
 
 @router.get("/menu/recommend")
 async def recommend_restaurant_menu(
-    current_user: CurrentUser,
+    current_user: OptionalUser,
     query: str = Query("", description="Menu item, cuisine, craving, or dietary preference"),
     cuisine_type: str = Query(""),
     max_price: float | None = Query(None),
@@ -3113,8 +3157,10 @@ async def recommend_restaurant_menu(
     radius_miles: float = Query(50.0, gt=0, le=500),
     db=Depends(get_db),
 ):
-    user_id = str(current_user["id"])
-    if await _can_restore_restaurants(db, user_id, workspace_id):
+    if not marketplace and not current_user:
+        raise HTTPException(401, "Sign in required", headers={"WWW-Authenticate": "Bearer"})
+    user_id = str(current_user["id"]) if current_user else None
+    if current_user and await _can_restore_restaurants(db, user_id, workspace_id):
         await _restore_approved_restaurants_if_needed(db, user_id, workspace_id)
     q = f"%{query.strip()}%" if query.strip() else "%"
     geo_sql, geo_args = _menu_geo_scope_sql(7, city, lat, lng, radius_miles)

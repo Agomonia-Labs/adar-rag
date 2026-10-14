@@ -8,6 +8,7 @@ import {
   listMyDineInReservations, cancelDineInReservation, rescheduleDineInReservation, fetchRestaurant,
 } from '../services/api.js';
 import DineInAssistant from '../components/DineInAssistant.jsx';
+import RequireAuth from '../components/RequireAuth.jsx';
 
 function nextDays(n) {
   const out = [];
@@ -29,7 +30,7 @@ function formatSlot(iso, tz) {
   catch { return new Date(iso).toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' }); }
 }
 
-export default function DineInPage({ restaurant, onPickRestaurant }) {
+export default function DineInPage({ restaurant, onPickRestaurant, token, onLogin }) {
   const [picking, setPicking] = useState(!restaurant);
   const [candidates, setCandidates] = useState([]);
   const [chosen, setChosen] = useState(restaurant || null);
@@ -54,10 +55,10 @@ export default function DineInPage({ restaurant, onPickRestaurant }) {
     );
   }
 
-  return <DineInBooking restaurant={chosen} onChangeRestaurant={() => setPicking(true)} />;
+  return <DineInBooking restaurant={chosen} onChangeRestaurant={() => setPicking(true)} token={token} onLogin={onLogin} />;
 }
 
-function DineInBooking({ restaurant: restaurantProp, onChangeRestaurant }) {
+function DineInBooking({ restaurant: restaurantProp, onChangeRestaurant, token, onLogin }) {
   const [view, setView] = useState('book'); // book | mine | assistant
   const [restaurant, setRestaurant] = useState(restaurantProp);
   const [config, setConfig] = useState(null);
@@ -106,7 +107,7 @@ function DineInBooking({ restaurant: restaurantProp, onChangeRestaurant }) {
   function loadReservations() {
     listMyDineInReservations(restaurant.id).then(d => setReservations(d.reservations || [])).catch(e => setError(e.message));
   }
-  useEffect(() => { if (view === 'mine') loadReservations(); }, [view]);
+  useEffect(() => { if (view === 'mine' && token) loadReservations(); }, [view, token]);
 
   async function confirm() {
     if (!selectedSlot || !form.name.trim()) { setError('Pick a time and enter your name.'); return; }
@@ -206,25 +207,27 @@ function DineInBooking({ restaurant: restaurantProp, onChangeRestaurant }) {
       )}
 
       {view === 'mine' && (
-        <div>
-          {!reservations.length && <p style={s.muted}>No reservations at {restaurant.name} yet.</p>}
-          {reservations.map(r => (
-            <div key={r.booking_id} style={s.resCard}>
-              <div style={s.cardTop}>
-                <strong>{r.table_name} · {r.party_size} guests</strong>
-                <span style={{ ...s.statusPill, ...(r.status === 'cancelled' ? s.statusPillCancelled : {}) }}>{r.status}</span>
+        <RequireAuth token={token} onLogin={onLogin} prompt="Sign in to see your reservations.">
+          <div>
+            {!reservations.length && <p style={s.muted}>No reservations at {restaurant.name} yet.</p>}
+            {reservations.map(r => (
+              <div key={r.booking_id} style={s.resCard}>
+                <div style={s.cardTop}>
+                  <strong>{r.table_name} · {r.party_size} guests</strong>
+                  <span style={{ ...s.statusPill, ...(r.status === 'cancelled' ? s.statusPillCancelled : {}) }}>{r.status}</span>
+                </div>
+                <div style={s.muted}>{r.start_time_formatted}</div>
+                <div style={{ display:'flex', gap:8, marginTop:8 }}>
+                  {r.can_reschedule && <button style={s.secondary} onClick={() => setRescheduling(r)}>Reschedule</button>}
+                  {r.can_cancel && <button style={s.danger} onClick={() => cancel(r.booking_id)}>Cancel</button>}
+                </div>
+                {rescheduling?.booking_id === r.booking_id && (
+                  <RescheduleForm restaurant={restaurant} reservation={r} onDone={() => { setRescheduling(null); loadReservations(); }} onCancel={() => setRescheduling(null)} />
+                )}
               </div>
-              <div style={s.muted}>{r.start_time_formatted}</div>
-              <div style={{ display:'flex', gap:8, marginTop:8 }}>
-                {r.can_reschedule && <button style={s.secondary} onClick={() => setRescheduling(r)}>Reschedule</button>}
-                {r.can_cancel && <button style={s.danger} onClick={() => cancel(r.booking_id)}>Cancel</button>}
-              </div>
-              {rescheduling?.booking_id === r.booking_id && (
-                <RescheduleForm restaurant={restaurant} reservation={r} onDone={() => { setRescheduling(null); loadReservations(); }} onCancel={() => setRescheduling(null)} />
-              )}
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </RequireAuth>
       )}
     </div>
   );

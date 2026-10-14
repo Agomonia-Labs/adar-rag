@@ -10,8 +10,9 @@ from pydantic import BaseModel, Field, model_validator
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 
-from auth.dependencies import CurrentUser
+from auth.dependencies import CurrentUser, OptionalUser
 from database.connection import get_db, get_pool
+from services.limiter import ip_12_per_min
 from services.llm import embed_query, chat_stream, rag_system, chat_json
 from services.vectordb import find_similar, TOP_K, RERANK_FETCH_K
 from services.usage import check_and_log_daily_event
@@ -81,7 +82,7 @@ class ChatRequest(BaseModel):
 async def chat_stream_endpoint(
     request: Request,
     req: ChatRequest,
-    current_user: CurrentUser,
+    current_user: OptionalUser,
     db=Depends(get_db),
 ):
     if not req.question.strip():
@@ -89,7 +90,20 @@ async def chat_stream_endpoint(
     if not req.document_ids and not req.marketplace:
         raise HTTPException(400, "Select at least one embedded document to query")
 
-    user_id = str(current_user["id"])
+    # ADAR Eats' marketplace-wide Order Assistant is the one caller of this
+    # shared endpoint that's open to a guest (see App.jsx/ChatPage.jsx) --
+    # every other use (a DocIntel document chat, an owner's personal Eats
+    # workspace chat) still needs a real account, exactly as before
+    # OptionalUser replaced CurrentUser here.
+    if not current_user:
+        if not req.marketplace:
+            raise HTTPException(401, "Sign in required", headers={"WWW-Authenticate": "Bearer"})
+        # No per-user daily quota to draw from below (check_and_log_daily_
+        # event needs a real user row) -- IP rate limiting takes its place,
+        # the same limiter routes/website_assistant.py's public chat uses.
+        ip_12_per_min(request)
+
+    user_id = str(current_user["id"]) if current_user else None
     rows = await db.fetch(
         """SELECT d.id, d.status, d.doc_language, d.doc_type, d.doc_domain,
                   d.original_name, d.workspace_id
@@ -149,15 +163,19 @@ async def chat_stream_endpoint(
             try:
                 question_for_model = redact_text(req.question, req.redact_pii).text
                 # ── Atomically reserve daily query usage before expensive model calls ──
-                async with span("usage_limit", trace_id=trace_id, metadata={"event_type": "query"}):
-                    async with get_pool().acquire() as _conn:
-                        await check_and_log_daily_event(
-                            _conn,
-                            user_id,
-                            "query",
-                            "max_queries_day",
-                            metadata={"doc_count": len(req.document_ids)},
-                        )
+                # Guests (marketplace chat, no account) have no per-user
+                # usage row to reserve against -- they were already
+                # IP-rate-limited above instead, before this task started.
+                if user_id:
+                    async with span("usage_limit", trace_id=trace_id, metadata={"event_type": "query"}):
+                        async with get_pool().acquire() as _conn:
+                            await check_and_log_daily_event(
+                                _conn,
+                                user_id,
+                                "query",
+                                "max_queries_day",
+                                metadata={"doc_count": len(req.document_ids)},
+                            )
 
                 # ── Stage 1: Embed query ──────────────────────────────────
                 async with span("query_embedding", trace_id=trace_id, metadata={"input_hash": "sha256"}) as sp:

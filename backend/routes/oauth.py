@@ -671,7 +671,12 @@ async def authorize_login(request: Request, db=Depends(get_db)):
     if not row["is_verified"]:
         return _page("Authorization failed", '<h1>Authorization failed</h1><p class=error>Email verification is required.</p>')
     if _mfa_enabled():
-        challenge = await _send_mfa_challenge(db, row)
+        # Brand the OTP email under whichever product's OAuth client this
+        # hosted login page was reached through, same as the direct
+        # /auth/login endpoint in auth/router.py -- falls back to
+        # DocIntel's own branding when the header is absent, which is the
+        # same behavior this had before client_app existed.
+        challenge = await _send_mfa_challenge(db, row, client_app=request.headers.get("x-client-app", "").strip().lower())
         fields = {**values, "mfa_token": challenge["mfa_token"]}
         return _page("Verify sign-in", f"""
 <h1>Verify sign-in</h1><p>Enter the code sent to {html.escape(challenge['email_hint'])}.</p>

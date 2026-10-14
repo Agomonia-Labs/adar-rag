@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 
 from database.connection import get_db
@@ -14,6 +14,17 @@ from services.limiter import ip_5_per_min, ip_10_per_min
 router = APIRouter()
 
 RESET_EXPIRE_HOURS = int(os.getenv("RESET_TOKEN_EXPIRE_HOURS", "1"))
+
+# Per-product reset-link domain -- same env var and shared-endpoint pattern
+# as auth/router.py's CLIENT_APP_URLS (this /forgot-password endpoint is,
+# like /auth/register, shared by every ADAR web frontend).
+CLIENT_APP_URLS = {
+    "eats": os.getenv("EATS_APP_URL", "https://eats.agomoniai.com"),
+}
+
+
+def _client_app(request: Request) -> str:
+    return request.headers.get("x-client-app", "").strip().lower()
 
 
 class ForgotRequest(BaseModel):
@@ -29,6 +40,7 @@ class ResetRequest(BaseModel):
 @router.post("/forgot-password")
 async def forgot_password(
     body: ForgotRequest,
+    request: Request,
     db=Depends(get_db),
     _rl=Depends(ip_5_per_min),          # 5 requests / min / IP
 ):
@@ -49,8 +61,13 @@ async def forgot_password(
             user["id"], hashed, expires_at,
         )
         try:
+            client_app = _client_app(request)
             name = user["full_name"] or user["email"].split("@")[0]
-            await send_reset_email(user["email"], name, reset_url(raw))
+            await send_reset_email(
+                user["email"], name,
+                reset_url(raw, CLIENT_APP_URLS.get(client_app, "")),
+                client_app=client_app,
+            )
         except Exception:
             pass
 

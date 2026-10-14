@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 from services.email import is_email_configured, send_email
+from services.branding import brand_for
 
 log = logging.getLogger("docintel.notifications")
 
@@ -160,11 +161,16 @@ async def send_learning_question_notification(
         return False
 
 
-async def send_verification_email(user_email: str, token: str, app_url: str) -> None:
-    """Send email address verification link."""
+async def send_verification_email(user_email: str, token: str, app_url: str, client_app: str = "") -> None:
+    """Send email address verification link.
+
+    `client_app` (the requesting web frontend's `X-Client-App` header, e.g.
+    "eats") selects the brand this email is sent under, so an Eats signup
+    sees "ADAR Eats" throughout rather than DocIntel's own name."""
+    brand = brand_for(client_app)
     link = f"{app_url.rstrip('/')}/verify-email?token={token}"
-    subject = "Verify your আদর DocIntel email address"
-    body = f"""Welcome to আদর DocIntel!
+    subject = f"Verify your {brand['name']} email address"
+    body = f"""Welcome to {brand['name']}!
 
 Please verify your email address by clicking the link below:
 
@@ -172,9 +178,9 @@ Please verify your email address by clicking the link below:
 
 This link expires in 24 hours. If you didn't create an account, you can ignore this email.
 
-— আদর DocIntel
+— {brand['name']}
 """
-    await send_email(to=user_email, subject=subject, body=body)
+    await send_email(to=user_email, subject=subject, body=body, client_app=client_app)
 
 
 async def send_workspace_invite(
@@ -200,25 +206,29 @@ You can access this workspace by logging in to আদর DocIntel:
         log.warning(f"Workspace invite notification failed for {invitee_email}: {e}")
 
 
-async def send_account_deleted_email(user_email: str) -> None:
+async def send_account_deleted_email(user_email: str, client_app: str = "") -> None:
     """Confirms a self-service account deletion (auth/router.py's
     delete_own_account) actually went through -- sent to the email address
     captured before the user row was deleted, since by the time this runs
     the account no longer exists to look it up again. Best-effort: a failed
     send here must never undo or block the deletion itself, so exceptions
-    are caught and logged, same as send_workspace_invite above."""
-    subject = "Your আদর DocIntel account has been cancelled"
-    body = """Your আদর DocIntel account has been permanently deleted, along with your
+    are caught and logged, same as send_workspace_invite above.
+
+    `client_app` brands this under the product the deleted account actually
+    belonged to (e.g. "eats"), same as send_verification_email."""
+    brand = brand_for(client_app)
+    subject = f"Your {brand['name']} account has been cancelled"
+    body = f"""Your {brand['name']} account has been permanently deleted, along with your
 personal documents, videos, and conversations, at your request.
 
 If you didn't request this, or you believe this was a mistake, please
 contact support right away -- this action cannot be reversed and a deleted
 account cannot be restored.
 
-— আদর DocIntel
+— {brand['name']}
 """
     try:
-        await send_email(to=user_email, subject=subject, body=body)
+        await send_email(to=user_email, subject=subject, body=body, client_app=client_app)
     except Exception as e:
         log.warning(f"Account-deleted confirmation email failed for {user_email}: {e}")
 
@@ -321,10 +331,14 @@ Status: {status}
             if instructions:
                 body += f"  Notes: {instructions}\n"
     if app_url:
-        body += f"\nOpen DocIntel:\n{app_url}\n"
-    body += "\n— আদর DocIntel\n"
+        body += f"\nOpen ADAR Eats:\n{app_url}\n"
+    body += "\n— ADAR Eats\n"
     try:
-        await send_email(to=to_email, subject=subject, body=body)
+        # Always "eats" -- this function is only ever called from the ADAR
+        # Eats restaurant-order flow (see routes/restaurant.py), so there's
+        # no ambiguity to resolve via a client_app header the way the
+        # shared auth emails above need to.
+        await send_email(to=to_email, subject=subject, body=body, client_app="eats")
         log.info(
             "Restaurant order email sent to %s restaurant_id=%s order_id=%s audience=%s",
             to_email,
@@ -378,7 +392,7 @@ When: {start_time_formatted}
     body += "\nOpen ADAR Eats to see it on your Dine-In bookings screen.\n"
     body += "\n— ADAR Eats\n"
     try:
-        await send_email(to=to_email, subject=subject, body=body)
+        await send_email(to=to_email, subject=subject, body=body, client_app="eats")
         log.info("Dine-in owner email sent to %s restaurant_id=%s", to_email, restaurant_id)
         return True
     except Exception as e:
@@ -422,7 +436,7 @@ See you soon!
 — ADAR Eats
 """
     try:
-        await send_email(to=to_email, subject=subject, body=body)
+        await send_email(to=to_email, subject=subject, body=body, client_app="eats")
         log.info("Dine-in reminder email sent to %s restaurant_id=%s", to_email, restaurant_id)
         return True
     except Exception as e:
@@ -480,7 +494,7 @@ Was scheduled for: {start_time_formatted}
         body += f"Reason: {reason}\n"
     body += "\n— ADAR Eats\n"
     try:
-        await send_email(to=to_email, subject=subject, body=body)
+        await send_email(to=to_email, subject=subject, body=body, client_app="eats")
         log.info("Dine-in cancellation email sent to %s restaurant_id=%s audience=%s", to_email, restaurant_id, audience)
         return True
     except Exception as e:
@@ -536,7 +550,7 @@ Party size: {party_size}
     body += f"Now: {start_time_formatted}\n"
     body += "\n— ADAR Eats\n"
     try:
-        await send_email(to=to_email, subject=subject, body=body)
+        await send_email(to=to_email, subject=subject, body=body, client_app="eats")
         log.info("Dine-in reschedule email sent to %s restaurant_id=%s audience=%s", to_email, restaurant_id, audience)
         return True
     except Exception as e:

@@ -52,5 +52,41 @@ async def get_admin_user(current_user: Annotated[dict, Depends(get_current_user)
     return current_user
 
 
-CurrentUser = Annotated[dict, Depends(get_current_user)]
-AdminUser   = Annotated[dict, Depends(get_admin_user)]
+# A second OAuth2PasswordBearer with auto_error=False -- the default scheme
+# above raises 401 on its own the moment a request has no Authorization
+# header at all, before get_current_user ever runs, so there was no way to
+# accept "signed in or not" short of a second scheme. Used by ADAR Eats'
+# guest-open endpoints (marketplace browsing/search, the public menu
+# assistant) so a visitor without an account gets treated as an anonymous
+# guest instead of a 401 -- while a present-but-invalid/expired token still
+# resolves to None rather than silently pretending to be a valid session.
+_oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+
+
+async def get_optional_user(
+    request: Request,
+    token: Annotated[str | None, Depends(_oauth2_scheme_optional)],
+    db=Depends(get_db),
+) -> dict | None:
+    if not token:
+        return None
+    try:
+        payload = decode_token(token)
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+    except JWTError:
+        return None
+    row = await db.fetchrow(
+        "SELECT id, email, full_name, role, created_at FROM users WHERE id = $1",
+        user_id,
+    )
+    if not row:
+        return None
+    request.state.user_id = str(row["id"])
+    return dict(row)
+
+
+CurrentUser  = Annotated[dict, Depends(get_current_user)]
+AdminUser    = Annotated[dict, Depends(get_admin_user)]
+OptionalUser = Annotated[dict | None, Depends(get_optional_user)]

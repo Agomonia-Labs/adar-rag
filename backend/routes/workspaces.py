@@ -92,6 +92,23 @@ async def ensure_default_workspace_membership(db, user_id: str) -> str | None:
     return workspace_id
 
 
+async def get_default_workspace_id_readonly(db) -> str | None:
+    """Same resolved workspace as ensure_default_workspace_membership
+    above, for a caller with no account to add as a member of it -- a
+    guest browsing ADAR Eats without signing in. Looked up by name only,
+    with no membership side effect (there's no user_id to join anyone
+    to the workspace with). Used by GET /restaurant/workspace when
+    current_user is None, so a guest's Order Assistant / Dine-in
+    booking can resolve the one shared "Restaurant" workspace too,
+    instead of either feature looking broken just because nobody signed
+    in."""
+    row = await db.fetchrow(
+        "SELECT id FROM workspaces WHERE LOWER(name)=LOWER($1) ORDER BY created_at ASC LIMIT 1",
+        RESTAURANT_WORKSPACE_NAME,
+    )
+    return str(row["id"]) if row else None
+
+
 async def _fmt_workspace(db, ws: dict, user_id: str) -> dict:
     members = await db.fetch(
         """SELECT wm.user_id, wm.role, wm.joined_at, u.email, u.full_name
