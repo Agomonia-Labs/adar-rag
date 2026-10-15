@@ -17,6 +17,8 @@ import {
   getRestaurantTranscript, updateRestaurantTranscript, getRestaurantTranscriptChunks, getRestaurantTranscriptChunkContent,
   enableDineIn, listOwnerTables, updateOwnerTables, getOwnerDineInHours, getOwnerDineInBookings, updateOwnerDineInHours,
   cancelDineInReservation,
+  listAvailableEvents, listMyStalls, requestStall, getMyStall, updateMyStall,
+  listStallMenuItems, createStallMenuItem, updateStallMenuItem, deleteStallMenuItem,
 } from '../services/api.js';
 
 const LANGUAGES = [
@@ -49,7 +51,7 @@ function defaultWeeklyHours() {
   return WEEKDAY_LABELS.map((_, weekday) => ({ weekday, start:'11:00', end:'21:00', enabled: weekday < 6 }));
 }
 
-const TABS = [['scribe','Voice Scribe Intake'], ['restaurants','My Restaurants'], ['orders','Orders'], ['dinein','Dine-In'], ['feedback','Feedback'], ['documents','Documents']];
+const TABS = [['scribe','Voice Scribe Intake'], ['restaurants','My Restaurants'], ['orders','Orders'], ['dinein','Dine-In'], ['events','Events'], ['feedback','Feedback'], ['documents','Documents']];
 
 // Guards against exactly the "page goes black" failure mode: before
 // this, an uncaught render-time exception in ANY one tab (e.g. a
@@ -193,6 +195,7 @@ export default function OwnerDashboard() {
             {tab === 'restaurants' && <RestaurantsTab workspaceId={workspaceId} />}
             {tab === 'orders' && <OrdersTab workspaceId={workspaceId} />}
             {tab === 'dinein' && <DineInTab workspaceId={workspaceId} />}
+            {tab === 'events' && <EventsTab workspaceId={workspaceId} />}
             {tab === 'feedback' && <FeedbackTab workspaceId={workspaceId} />}
             {tab === 'documents' && <DocumentsTab workspaceId={workspaceId} />}
           </TabErrorBoundary>
@@ -913,7 +916,13 @@ function OrdersTab({ workspaceId }) {
       {!orders.length && <p style={s.muted}>No orders match this filter.</p>}
       {orders.map(o => (
         <div key={o.id} style={s.card}>
-          <div style={s.cardTop}><strong>{o.customer_name || o.restaurant_name}</strong><span style={s.statusPill}>{o.status}</span></div>
+          <div style={s.cardTop}><strong>{o.customer_name || 'Order'}</strong><span style={s.statusPill}>{o.status}</span></div>
+          <div style={s.muted}>{o.restaurant_name}</div>
+          {o.event_id && (
+            <div style={s.eventTag}>
+              🎪 {o.metadata?.event_name || 'Event order'}{o.metadata?.stall_name ? ` · ${o.metadata.stall_name}` : ''}
+            </div>
+          )}
           <div style={s.muted}>{new Date(o.created_at).toLocaleString()} · ${Number(o.subtotal || 0).toFixed(2)}</div>
           {(o.order_items || []).map(it => <div key={it.id} style={s.muted}>{it.quantity} × {it.item_name}</div>)}
           <div style={s.actions}>
@@ -1202,6 +1211,326 @@ function DocumentsTab({ workspaceId }) {
   );
 }
 
+// ── Events tab -- owner-side stall onboarding + per-stall event menu
+// management. Mirrors DineInTab's restaurant-picker pattern and
+// RestaurantsTab/DocumentsTab's list/detail layout, built entirely on
+// the new Events & Stalls endpoints (routes/restaurant_events.py).
+function EventsTab({ workspaceId }) {
+  const [restaurants, setRestaurants] = useState([]);
+  const [restaurantId, setRestaurantId] = useState('');
+  const [availableEvents, setAvailableEvents] = useState([]);
+  const [myStalls, setMyStalls] = useState([]);
+  const [selectedStallId, setSelectedStallId] = useState(null);
+  const [stallDetail, setStallDetail] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const isMobile = useIsMobile();
+  const [listOpen, setListOpen] = useState(true);
+
+  const [reqEventId, setReqEventId] = useState('');
+  const [reqStallName, setReqStallName] = useState('');
+  const [reqZone, setReqZone] = useState('');
+  const [reqPower, setReqPower] = useState('');
+
+  useEffect(() => {
+    listRestaurants(workspaceId).then(d => {
+      const rs = (d.restaurants || []).filter(r => r.can_manage);
+      setRestaurants(rs);
+      if (rs.length && !restaurantId) setRestaurantId(rs[0].id);
+    }).catch(e => setError(e.message));
+    listAvailableEvents().then(setAvailableEvents).catch(() => {});
+  }, [workspaceId]);
+
+  function loadMyStalls() {
+    if (!restaurantId) return;
+    listMyStalls(restaurantId).then(setMyStalls).catch(e => setError(e.message));
+  }
+  useEffect(() => { loadMyStalls(); setSelectedStallId(null); setStallDetail(null); }, [restaurantId]);
+
+  async function openStall(stallId) {
+    setSelectedStallId(stallId); setError('');
+    try { setStallDetail(await getMyStall(restaurantId, stallId)); }
+    catch (e) { setError(e.message); }
+    if (isMobile) setListOpen(false);
+  }
+
+  async function refreshStall() {
+    if (!selectedStallId) return;
+    try { setStallDetail(await getMyStall(restaurantId, selectedStallId)); } catch (e) { setError(e.message); }
+    loadMyStalls();
+  }
+
+  async function submitStallRequest() {
+    if (!reqEventId) { setError('Pick an event first.'); return; }
+    setBusy(true); setError('');
+    try {
+      await requestStall(restaurantId, { eventId: reqEventId, stallName: reqStallName, locationZone: reqZone, spacePowerNeeds: reqPower });
+      setReqEventId(''); setReqStallName(''); setReqZone(''); setReqPower('');
+      loadMyStalls();
+    } catch (e) { setError(e.message || 'Could not request a stall at this event.'); }
+    finally { setBusy(false); }
+  }
+
+  if (!restaurants.length) return <div style={s.body}><p style={s.muted}>No restaurants yet -- add one via Voice Scribe Intake first.</p></div>;
+
+  const requestedEventIds = new Set(myStalls.map(st => st.event_id));
+  const requestableEvents = availableEvents.filter(ev => !requestedEventIds.has(ev.id));
+
+  return (
+    <div style={s.body}>
+      <label style={s.field}>Restaurant
+        <select value={restaurantId} onChange={e => setRestaurantId(e.target.value)} style={{ maxWidth: 320 }}>
+          {restaurants.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+        </select>
+      </label>
+      {error && <div style={s.error}>{error}</div>}
+
+      <div style={s.card}>
+        <h3 style={s.h3}>Request a stall at an event</h3>
+        {!requestableEvents.length && <p style={s.muted}>No events are currently open for stall requests (or you've already requested one at every open event).</p>}
+        {requestableEvents.length > 0 && (
+          <>
+            <label style={s.field}>Event
+              <select value={reqEventId} onChange={e => setReqEventId(e.target.value)}>
+                <option value="">Select an event…</option>
+                {requestableEvents.map(ev => <option key={ev.id} value={ev.id}>{ev.name} -- {ev.venue}</option>)}
+              </select>
+            </label>
+            <div style={s.grid2}>
+              <label style={s.field}>Stall name (optional)<input value={reqStallName} onChange={e => setReqStallName(e.target.value)} placeholder="Defaults to Restaurant_Event" /></label>
+              <label style={s.field}>Preferred zone (optional)<input value={reqZone} onChange={e => setReqZone(e.target.value)} /></label>
+            </div>
+            <label style={s.field}>Space / power needs (optional)<input value={reqPower} onChange={e => setReqPower(e.target.value)} placeholder="e.g. 10x10 tent, 1 outlet" /></label>
+            <button style={s.primary} disabled={busy} onClick={submitStallRequest}>{busy ? 'Requesting…' : 'Request stall →'}</button>
+          </>
+        )}
+      </div>
+
+      <h3 style={s.h3}>My stalls</h3>
+      {!myStalls.length && <p style={s.muted}>No stall requests yet.</p>}
+      {myStalls.length > 0 && (
+        <div style={isMobile ? s.restaurantGridMobile : s.restaurantGrid}>
+          {isMobile ? (
+            <div>
+              <button style={s.listToggleMobile} onClick={() => setListOpen(o => !o)}>
+                <span style={s.listToggleLabelMobile}>{stallDetail ? stallDetail.stall_name : `Stalls (${myStalls.length})`}</span>
+                <span>{listOpen ? '▲' : '▼'}</span>
+              </button>
+              {listOpen && <div style={s.listMobile}>
+                {myStalls.map(st => (
+                  <button key={st.id} style={{ ...s.restaurantRow, ...(selectedStallId === st.id ? s.selected : {}) }} onClick={() => openStall(st.id)}>
+                    <strong>{st.event_name}</strong>
+                    <span style={s.muted}>{st.stall_name} · {st.status}</span>
+                  </button>
+                ))}
+              </div>}
+            </div>
+          ) : (
+            <div style={s.list}>
+              {myStalls.map(st => (
+                <button key={st.id} style={{ ...s.restaurantRow, ...(selectedStallId === st.id ? s.selected : {}) }} onClick={() => openStall(st.id)}>
+                  <strong>{st.event_name}</strong>
+                  <span style={s.muted}>{st.stall_name} · {st.status}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <div style={s.detail}>
+            {!stallDetail && <p style={s.muted}>Select a stall to manage its details and event menu.</p>}
+            {stallDetail && <StallDetailPanel restaurantId={restaurantId} stall={stallDetail} onChanged={refreshStall} />}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StallDetailPanel({ restaurantId, stall, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [stallName, setStallName] = useState(stall.stall_name || '');
+  const [zone, setZone] = useState(stall.location_zone || '');
+  const [power, setPower] = useState(stall.space_power_needs || '');
+  const eventOpen = stall.event_status !== undefined ? true : true; // event closed state surfaces as a 409 from the backend if attempted
+  const editable = stall.status !== 'rejected';
+
+  useEffect(() => { setStallName(stall.stall_name || ''); setZone(stall.location_zone || ''); setPower(stall.space_power_needs || ''); setEditing(false); }, [stall.id]);
+
+  async function toggleAccepting() {
+    setBusy(true); setError('');
+    try { await updateMyStall(restaurantId, stall.id, { accepting_orders: !stall.accepting_orders }); onChanged(); }
+    catch (e) { setError(e.message || 'Could not update this stall.'); }
+    finally { setBusy(false); }
+  }
+
+  async function saveDetails() {
+    setBusy(true); setError('');
+    try { await updateMyStall(restaurantId, stall.id, { stall_name: stallName, location_zone: zone, space_power_needs: power }); setEditing(false); onChanged(); }
+    catch (e) { setError(e.message || 'Could not save changes.'); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div>
+      {error && <div style={s.error}>{error}</div>}
+      <div style={s.cardTop}>
+        <h3 style={s.h3}>{stall.stall_name}</h3>
+        <span style={s.statusPill}>{stall.status}</span>
+      </div>
+      {stall.status === 'rejected' && stall.rejection_reason && <p style={{ ...s.muted, color: 'var(--red)' }}>Rejected: {stall.rejection_reason}</p>}
+      {stall.status === 'requested' && <p style={s.muted}>Waiting on admin approval.</p>}
+      {stall.stall_number && <p style={s.muted}>Stall #{stall.stall_number}{stall.location_zone ? ` · ${stall.location_zone}` : ''}</p>}
+
+      {(stall.status === 'active' || stall.status === 'approved') && (
+        <div style={s.actionsTight}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--tx)' }}>
+            <input type="checkbox" checked={!!stall.accepting_orders} onChange={toggleAccepting} disabled={busy} />
+            Accepting new orders right now
+          </label>
+        </div>
+      )}
+
+      {editable && !editing && (
+        <button style={s.secondaryBtn} onClick={() => setEditing(true)}>Edit stall details</button>
+      )}
+      {editable && editing && (
+        <div style={{ marginTop: 8 }}>
+          <div style={s.grid2}>
+            <label style={s.field}>Stall name<input value={stallName} onChange={e => setStallName(e.target.value)} /></label>
+            <label style={s.field}>Zone<input value={zone} onChange={e => setZone(e.target.value)} /></label>
+          </div>
+          <label style={s.field}>Space / power needs<input value={power} onChange={e => setPower(e.target.value)} /></label>
+          <div style={s.actions}>
+            <button style={s.secondaryBtn} onClick={() => setEditing(false)}>Cancel</button>
+            <button style={s.primary} disabled={busy} onClick={saveDetails}>{busy ? 'Saving…' : 'Save'}</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 16 }}>
+        <h3 style={s.h3}>Event menu</h3>
+        <StallMenuEditor restaurantId={restaurantId} stallId={stall.id} items={stall.menu_items || []} onChanged={onChanged} />
+      </div>
+    </div>
+  );
+}
+
+function StallMenuEditor({ restaurantId, stallId, items, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
+  const [mode, setMode] = useState('existing'); // 'existing' | 'new'
+  const [catalog, setCatalog] = useState([]);
+  const [existingId, setExistingId] = useState('');
+  const [priceOverride, setPriceOverride] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newCategory, setNewCategory] = useState('');
+  const [newPrice, setNewPrice] = useState('');
+  const [newDescription, setNewDescription] = useState('');
+
+  useEffect(() => {
+    if (showAdd && mode === 'existing' && !catalog.length) {
+      fetchRestaurant(restaurantId).then(d => setCatalog(d.menu_items || [])).catch(() => {});
+    }
+  }, [showAdd, mode]);
+
+  async function addItem() {
+    setBusy(true); setError('');
+    try {
+      if (mode === 'existing') {
+        if (!existingId) { setError('Pick a menu item.'); setBusy(false); return; }
+        await createStallMenuItem(restaurantId, stallId, {
+          menu_item_id: existingId,
+          price: priceOverride !== '' ? Number(priceOverride) : null,
+        });
+      } else {
+        if (!newName.trim() || newPrice === '') { setError('Name and price are required for a net-new item.'); setBusy(false); return; }
+        await createStallMenuItem(restaurantId, stallId, {
+          item_name: newName.trim(), category: newCategory, description: newDescription, price: Number(newPrice),
+        });
+      }
+      setExistingId(''); setPriceOverride(''); setNewName(''); setNewCategory(''); setNewPrice(''); setNewDescription('');
+      setShowAdd(false);
+      onChanged();
+    } catch (e) { setError(e.message || 'Could not add this item.'); }
+    finally { setBusy(false); }
+  }
+
+  async function toggleAvailability(item) {
+    setBusy(true); setError('');
+    try { await updateStallMenuItem(restaurantId, stallId, item.id, { availability: item.availability === 'available' ? 'unavailable' : 'available' }); onChanged(); }
+    catch (e) { setError(e.message || 'Could not update this item.'); }
+    finally { setBusy(false); }
+  }
+
+  async function removeItem(item) {
+    if (!window.confirm(`Remove "${item.item_name}" from this event's menu?`)) return;
+    setBusy(true); setError('');
+    try { await deleteStallMenuItem(restaurantId, stallId, item.id); onChanged(); }
+    catch (e) { setError(e.message || 'Could not remove this item.'); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div>
+      {error && <div style={s.error}>{error}</div>}
+      {!items.length && <p style={s.muted}>No items added to this stall's event menu yet.</p>}
+      {items.map(item => (
+        <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--b1)' }}>
+          <div style={{ flex: 1 }}>
+            <strong style={{ fontSize: 13, color: 'var(--tx)' }}>{item.item_name}</strong>{' '}
+            <span style={s.muted}>{item.category}</span>
+            <div style={s.muted}>${Number(item.price || 0).toFixed(2)} · {item.availability}</div>
+          </div>
+          <button style={s.secondaryBtn} disabled={busy} onClick={() => toggleAvailability(item)}>
+            {item.availability === 'available' ? 'Mark 86\'d' : 'Mark available'}
+          </button>
+          <button style={s.iconBtn} disabled={busy} onClick={() => removeItem(item)}>×</button>
+        </div>
+      ))}
+
+      {!showAdd && <button style={{ ...s.secondaryBtn, marginTop: 10 }} onClick={() => setShowAdd(true)}>+ Add item</button>}
+      {showAdd && (
+        <div style={{ marginTop: 10, background: 'var(--s2)', border: '1px solid var(--b2)', borderRadius: 10, padding: 10 }}>
+          <div style={s.actionsTight}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5 }}>
+              <input type="radio" checked={mode === 'existing'} onChange={() => setMode('existing')} /> From regular menu
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5 }}>
+              <input type="radio" checked={mode === 'new'} onChange={() => setMode('new')} /> Event-only item
+            </label>
+          </div>
+          {mode === 'existing' ? (
+            <>
+              <label style={s.field}>Menu item
+                <select value={existingId} onChange={e => setExistingId(e.target.value)}>
+                  <option value="">Select…</option>
+                  {catalog.map(ci => <option key={ci.id} value={ci.id}>{ci.item_name} (${Number(ci.price || 0).toFixed(2)})</option>)}
+                </select>
+              </label>
+              <label style={s.field}>Price override (optional)<input value={priceOverride} onChange={e => setPriceOverride(e.target.value)} placeholder="Leave blank to use regular price" /></label>
+            </>
+          ) : (
+            <>
+              <div style={s.grid2}>
+                <label style={s.field}>Name<input value={newName} onChange={e => setNewName(e.target.value)} /></label>
+                <label style={s.field}>Price<input value={newPrice} onChange={e => setNewPrice(e.target.value)} /></label>
+              </div>
+              <label style={s.field}>Category<input value={newCategory} onChange={e => setNewCategory(e.target.value)} /></label>
+              <label style={s.field}>Description<input value={newDescription} onChange={e => setNewDescription(e.target.value)} /></label>
+            </>
+          )}
+          <div style={s.actions}>
+            <button style={s.secondaryBtn} onClick={() => setShowAdd(false)}>Cancel</button>
+            <button style={s.primary} disabled={busy} onClick={addItem}>{busy ? 'Adding…' : 'Add to event menu'}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function normalizePacket(packet) {
   const p = packet || {};
   return { ...p, restaurant_profile: p.restaurant_profile || {}, menu_items: Array.isArray(p.menu_items) ? p.menu_items : [] };
@@ -1303,6 +1632,7 @@ const s = {
   card: { background:'var(--s1)', border:'1px solid var(--b2)', borderRadius:12, padding:14, marginBottom:12 },
   cardTop: { display:'flex', justifyContent:'space-between', color:'var(--tx)' },
   statusPill: { color:'var(--gold-h)', fontSize:11, fontWeight:700, textTransform:'uppercase' },
+  eventTag: { color:'var(--gold-h)', fontSize:11.5, fontWeight:700, marginTop:2 },
   photoCell: { display:'flex', flexDirection:'column', gap:5, alignItems:'center' },
   menuCategoryRow: { background:'var(--s2)', color:'var(--gold-h)', fontWeight:700, fontSize:12, padding:'6px 8px', textTransform:'uppercase', letterSpacing:0.3 },
   menuThumb: { width:48, height:48, objectFit:'cover', borderRadius:6, border:'1px solid var(--b2)' },

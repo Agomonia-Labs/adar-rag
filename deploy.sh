@@ -102,19 +102,25 @@ DEPLOY_BACKEND=true
 DEPLOY_FRONTEND=true
 DEPLOY_MCP=true
 DEPLOY_OTEL=true
+DEPLOY_EATS=false
 
 # Parse flags
 for arg in "$@"; do
   case $arg in
     --all)      ;;
-    --backend)  DEPLOY_FRONTEND=false; DEPLOY_MCP=false; DEPLOY_OTEL=false ;;
-    --frontend) DEPLOY_BACKEND=false; DEPLOY_MCP=false; DEPLOY_OTEL=false ;;
-    --mcp)      DEPLOY_BACKEND=false; DEPLOY_FRONTEND=false; DEPLOY_MCP=true; DEPLOY_OTEL=false ;;
-    --otel)     DEPLOY_BACKEND=false; DEPLOY_FRONTEND=false; DEPLOY_MCP=false; DEPLOY_OTEL=true ;;
+    --backend)  DEPLOY_FRONTEND=false; DEPLOY_MCP=false; DEPLOY_OTEL=false; DEPLOY_EATS=false ;;
+    --frontend) DEPLOY_BACKEND=false; DEPLOY_MCP=false; DEPLOY_OTEL=false; DEPLOY_EATS=false ;;
+    --mcp)      DEPLOY_BACKEND=false; DEPLOY_FRONTEND=false; DEPLOY_MCP=true; DEPLOY_OTEL=false; DEPLOY_EATS=false ;;
+    --otel)     DEPLOY_BACKEND=false; DEPLOY_FRONTEND=false; DEPLOY_MCP=false; DEPLOY_OTEL=true; DEPLOY_EATS=false ;;
+    # ADAR Eats (ui/eats) is a second frontend on the same backend as
+    # DocIntel -- never implied by --all/--frontend, since most deploys
+    # only touch one of the two web apps. Opt in explicitly with --eats,
+    # or combine it with other flags (e.g. `--backend --eats`).
+    --eats)     DEPLOY_BACKEND=false; DEPLOY_FRONTEND=false; DEPLOY_MCP=false; DEPLOY_OTEL=false; DEPLOY_EATS=true ;;
     --no-mcp)   DEPLOY_MCP=false ;;
     --no-otel)  DEPLOY_OTEL=false ;;
     --help|-h)
-      echo "Usage: bash deploy.sh [--all|--backend|--frontend|--mcp|--otel|--no-mcp|--no-otel]"
+      echo "Usage: bash deploy.sh [--all|--backend|--frontend|--mcp|--otel|--eats|--no-mcp|--no-otel]"
       echo "       source deploy.sh --oauth-login [OAuth options]"
       echo "OAuth options: --oauth-scopes, --oauth-callback-port, --oauth-timeout,"
       echo "               --oauth-client-id, --oauth-issuer, --oauth-target,"
@@ -123,7 +129,7 @@ for arg in "$@"; do
       ;;
     *)
       echo "Unknown deployment option: $arg" >&2
-      echo "Usage: bash deploy.sh [--all|--backend|--frontend|--mcp|--otel|--no-mcp|--no-otel]" >&2
+      echo "Usage: bash deploy.sh [--all|--backend|--frontend|--mcp|--otel|--eats|--no-mcp|--no-otel]" >&2
       exit 2
       ;;
   esac
@@ -141,6 +147,7 @@ TOTAL_STEPS=0
 $DEPLOY_OTEL && TOTAL_STEPS=$((TOTAL_STEPS + 1))
 $DEPLOY_BACKEND && TOTAL_STEPS=$((TOTAL_STEPS + 1))
 $DEPLOY_FRONTEND && TOTAL_STEPS=$((TOTAL_STEPS + 1))
+$DEPLOY_EATS && TOTAL_STEPS=$((TOTAL_STEPS + 1))
 $DEPLOY_MCP && TOTAL_STEPS=$((TOTAL_STEPS + 1))
 CURRENT_STEP=0
 
@@ -169,6 +176,14 @@ if $DEPLOY_FRONTEND; then
   echo "  Step $CURRENT_STEP/$TOTAL_STEPS — Frontend (Vite → Firebase)"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   bash scripts/deploy-frontend.sh
+fi
+
+if $DEPLOY_EATS; then
+  CURRENT_STEP=$((CURRENT_STEP + 1))
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  Step $CURRENT_STEP/$TOTAL_STEPS — ADAR Eats (Vite → Firebase, separate site)"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  bash scripts/deploy-eats.sh
 fi
 
 if $DEPLOY_MCP; then

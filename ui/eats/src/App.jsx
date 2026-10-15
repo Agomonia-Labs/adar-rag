@@ -3,12 +3,14 @@
 // the DocIntel web app's own state-based tab pattern.
 import React, { useEffect, useState, useCallback } from 'react';
 import DiscoverPage from './pages/DiscoverPage.jsx';
+import EventsPage from './pages/EventsPage.jsx';
 import RestaurantPage from './pages/RestaurantPage.jsx';
 import CartPage from './pages/CartPage.jsx';
 import OrdersPage from './pages/OrdersPage.jsx';
 import DineInPage from './pages/DineInPage.jsx';
 import ChatPage from './pages/ChatPage.jsx';
 import OwnerDashboard from './pages/OwnerDashboard.jsx';
+import AdminEventsPage from './pages/AdminEventsPage.jsx';
 import AccountPage from './pages/AccountPage.jsx';
 import NotificationsBell from './components/NotificationsBell.jsx';
 import RequireAuth from './components/RequireAuth.jsx';
@@ -24,16 +26,22 @@ function useIsMobile(breakpoint = 760) {
   return mobile;
 }
 
-const NAV_TABS = [
+const BASE_NAV_TABS = [
   ['discover', 'Discover'],
+  ['events', 'Events'],
   ['orders', 'My Orders'],
   ['dinein', 'Dine-In'],
   ['chat', 'Order Assistant'],
   ['owner', 'For Owners'],
 ];
+// Admins get one more tab for the Events & Stalls management surface --
+// gated on eats_role (written to localStorage on login/register, see
+// AuthPages.jsx) rather than a new backend call, since the login
+// response already carries it.
 
 export default function App() {
   const [token, setTokenState] = useState(() => localStorage.getItem('eats_token'));
+  const [role, setRole] = useState(() => localStorage.getItem('eats_role') || '');
   const [tab, setTab] = useState('discover'); // discover | restaurant | cart | orders | dinein | owner | account
   const [activeRestaurant, setActiveRestaurant] = useState(null); // {id,name,...}
   const [cart, setCart] = useState({ restaurant_id: null, restaurant_name: '', items: [] });
@@ -66,6 +74,7 @@ export default function App() {
 
   const onLogin = useCallback(() => {
     setTokenState(localStorage.getItem('eats_token'));
+    setRole(localStorage.getItem('eats_role') || '');
   }, []);
 
   useEffect(() => {
@@ -75,7 +84,7 @@ export default function App() {
     // reservations" gate) fall back to a friendly embedded sign-in prompt
     // on the very next render, instead of whatever page was mid-request
     // showing the backend's raw "Invalid or expired token" text itself.
-    const onExpired = () => setTokenState(null);
+    const onExpired = () => { setTokenState(null); setRole(''); };
     window.addEventListener('eats:auth-expired', onExpired);
     return () => window.removeEventListener('eats:auth-expired', onExpired);
   }, []);
@@ -84,6 +93,7 @@ export default function App() {
     localStorage.removeItem('eats_token');
     localStorage.removeItem('eats_role');
     setTokenState(null);
+    setRole('');
     setTab('discover');
   };
 
@@ -113,6 +123,7 @@ export default function App() {
   const navItem = (key, label) => (
     <button key={key} onClick={() => setTab(key)} style={{ ...s.navBtn, ...(tab === key ? s.navBtnActive : {}) }}>{label}</button>
   );
+  const NAV_TABS = (token && role === 'admin') ? [...BASE_NAV_TABS, ['admin', 'Admin']] : BASE_NAV_TABS;
   const currentTabLabel = NAV_TABS.find(([key]) => key === tab)?.[1] || NAV_TABS[0][1];
 
   return (
@@ -189,9 +200,15 @@ export default function App() {
           <DineInPage restaurant={activeRestaurant} onPickRestaurant={() => setTab('discover')} token={token} onLogin={onLogin} />
         )}
         {tab === 'chat' && <ChatPage cart={cart} onAddToCart={addToCart} token={token} onLogin={onLogin} />}
+        {tab === 'events' && <EventsPage token={token} onLogin={onLogin} />}
         {tab === 'owner' && (
           <RequireAuth token={token} onLogin={onLogin} prompt="You must sign in as a restaurant owner to open the owner workspace.">
             <OwnerDashboard />
+          </RequireAuth>
+        )}
+        {tab === 'admin' && (
+          <RequireAuth token={token} onLogin={onLogin} prompt="Sign in with an admin account to manage events.">
+            {role === 'admin' ? <AdminEventsPage /> : <p style={{ color:'var(--muted2)', fontSize:13.5 }}>This area is for admin accounts only.</p>}
           </RequireAuth>
         )}
         {tab === 'account' && (

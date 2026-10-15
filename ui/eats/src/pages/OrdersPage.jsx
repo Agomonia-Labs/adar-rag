@@ -66,6 +66,11 @@ export default function OrdersPage() {
             <span style={s.status}>{STATUS_LABEL[o.status] || o.status}</span>
           </div>
           <div style={s.muted}>{new Date(o.created_at).toLocaleString()} · ${Number(o.subtotal || 0).toFixed(2)}</div>
+          {o.event_id && (
+            <div style={s.eventTag}>
+              🎪 {o.metadata?.event_name || 'Event order'}{o.metadata?.stall_name ? ` · ${o.metadata.stall_name}` : ''}
+            </div>
+          )}
           <div style={s.items}>
             {(o.order_items || []).map(it => <div key={it.id} style={s.muted}>{it.quantity} × {it.item_name}</div>)}
           </div>
@@ -122,6 +127,7 @@ const s = {
   card: { background:'var(--s1)', border:'1px solid var(--b2)', borderRadius:12, padding:14, marginBottom:10 },
   cardTop: { display:'flex', justifyContent:'space-between', color:'var(--tx)', fontSize:14.5, marginBottom:4 },
   status: { color:'var(--gold-h)', fontSize:12, fontWeight:700 },
+  eventTag: { color:'var(--gold-h)', fontSize:11.5, fontWeight:700, marginTop:4 },
   items: { marginTop:6, display:'flex', flexDirection:'column', gap:2 },
   linkBtn: { background:'none', border:'none', color:'var(--gold-h)', fontSize:12.5, marginTop:8, padding:0 },
   modalBackdrop: { position:'fixed', inset:0, background:'rgba(0,0,0,.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100 },

@@ -1729,6 +1729,115 @@ CREATE TABLE IF NOT EXISTS oauth_service_ip_allowlists (
     UNIQUE(client_id,cidr)
 );
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- Adar Eats: Events & Stalls (see "Adar Eats -- Events & Stalls Feature
+-- PRD"). A restaurant participates in an event through a Stall -- owned by
+-- the same restaurant/user and onboarded through the same Voice Scribe
+-- flow, but packaged to customers and the Order Assistant as its own
+-- distinct, event-scoped entity ("<Restaurant Name>_<Event Name>"),
+-- completely separate from the restaurant's regular listing, menu, and
+-- assistant. Lifecycle: draft -> onboarding (owners can request a stall)
+-- -> live (published, orderable) -> closed (auto at end_at or manual by an
+-- admin). An admin can reopen a closed event back to live -- it is not a
+-- permanent end state.
+CREATE TABLE IF NOT EXISTS restaurant_events (
+    id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name            TEXT        NOT NULL,
+    venue           TEXT        NOT NULL DEFAULT '',
+    description     TEXT        NOT NULL DEFAULT '',
+    banner_gcs_path TEXT,
+    start_at        TIMESTAMPTZ NOT NULL,
+    end_at          TIMESTAMPTZ NOT NULL,
+    status          TEXT        NOT NULL DEFAULT 'draft'
+                        CHECK (status IN ('draft','onboarding','live','closed')),
+    created_by      UUID        REFERENCES users(id) ON DELETE SET NULL,
+    published_at    TIMESTAMPTZ,
+    closed_at       TIMESTAMPTZ,
+    reopened_at     TIMESTAMPTZ,
+    metadata        JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_restaurant_events_status ON restaurant_events(status);
+CREATE INDEX IF NOT EXISTS idx_restaurant_events_start  ON restaurant_events(start_at);
+
+-- One row per restaurant-in-event. stall_name is what customers and the
+-- event-scoped Order Assistant see -- defaults to "<Restaurant>_<Event>" at
+-- creation time (app-set, not a DB default, since it needs both parent
+-- names), editable until the event closes. stall_number/location_zone
+-- start as the owner's preference and are finalized by the admin on
+-- approval.
+CREATE TABLE IF NOT EXISTS restaurant_event_stalls (
+    id                 UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    event_id           UUID        NOT NULL REFERENCES restaurant_events(id) ON DELETE CASCADE,
+    restaurant_id      UUID        NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+    stall_name         TEXT        NOT NULL DEFAULT '',
+    stall_number       TEXT        NOT NULL DEFAULT '',
+    location_zone      TEXT        NOT NULL DEFAULT '',
+    space_power_needs  TEXT        NOT NULL DEFAULT '',
+    hours              JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    status             TEXT        NOT NULL DEFAULT 'requested'
+                            CHECK (status IN ('requested','approved','rejected','active','closed')),
+    requested_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    approved_at        TIMESTAMPTZ,
+    rejected_at        TIMESTAMPTZ,
+    rejection_reason   TEXT        NOT NULL DEFAULT '',
+    metadata           JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(event_id, restaurant_id)
+);
+CREATE INDEX IF NOT EXISTS idx_restaurant_event_stalls_event      ON restaurant_event_stalls(event_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_event_stalls_restaurant ON restaurant_event_stalls(restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_event_stalls_status     ON restaurant_event_stalls(status);
+
+-- Confirmed: a single stall can pause new orders during a rush without
+-- closing the whole event (independent of the admin-driven lifecycle
+-- status above -- an owner toggles this themselves, any time the stall is
+-- otherwise editable).
+ALTER TABLE restaurant_event_stalls ADD COLUMN IF NOT EXISTS accepting_orders BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- Links a stall to an existing menu item (with an optional per-event price
+-- override), or stands alone as a net-new, event-only item not on the
+-- restaurant's regular menu -- event food can differ from the regular menu,
+-- and pricing can too. When menu_item_id is NULL the row must carry its own
+-- name and price; when it's set, item_name/category/description/price
+-- being NULL means "inherit from the linked menu item".
+CREATE TABLE IF NOT EXISTS restaurant_event_menu_items (
+    id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    stall_id        UUID        NOT NULL REFERENCES restaurant_event_stalls(id) ON DELETE CASCADE,
+    menu_item_id    UUID        REFERENCES restaurant_menu_items(id) ON DELETE SET NULL,
+    item_name       TEXT,
+    category        TEXT        NOT NULL DEFAULT '',
+    description     TEXT        NOT NULL DEFAULT '',
+    price           NUMERIC(10,2),
+    currency        TEXT        NOT NULL DEFAULT 'USD',
+    image_gcs_path  TEXT,
+    availability    TEXT        NOT NULL DEFAULT 'available',
+    metadata        JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (menu_item_id IS NOT NULL OR (item_name IS NOT NULL AND price IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_restaurant_event_menu_stall ON restaurant_event_menu_items(stall_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_event_menu_item  ON restaurant_event_menu_items(menu_item_id);
+
+-- Tags which orders belong to an event/stall vs. a regular restaurant
+-- order. Both nullable -- a regular carryout order leaves them NULL.
+ALTER TABLE restaurant_orders
+    ADD COLUMN IF NOT EXISTS event_id UUID REFERENCES restaurant_events(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS stall_id UUID REFERENCES restaurant_event_stalls(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_restaurant_orders_event ON restaurant_orders(event_id);
+CREATE INDEX IF NOT EXISTS idx_restaurant_orders_stall ON restaurant_orders(stall_id);
+
+-- An event order's line items may point at a regular menu item, an
+-- event-only menu item, or (for a standalone event-only item with no
+-- restaurant_menu_items row at all) neither -- the existing menu_item_id
+-- column above only ever pointed at restaurant_menu_items.
+ALTER TABLE restaurant_order_items
+    ADD COLUMN IF NOT EXISTS event_menu_item_id UUID REFERENCES restaurant_event_menu_items(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_restaurant_order_items_event_menu ON restaurant_order_items(event_menu_item_id);
+
 """
 
 

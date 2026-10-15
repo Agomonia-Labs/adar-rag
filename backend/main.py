@@ -184,6 +184,7 @@ _ROUTERS = [
     ("routes.lease",          "lease_router",          "/api/lease",         ["lease"]),
     ("routes.healthcare",     "healthcare_router",     "/api/healthcare",    ["healthcare"]),
     ("routes.restaurant",     "restaurant_router",     "/api/restaurant",    ["restaurant"]),
+    ("routes.restaurant_events", "restaurant_events_router", "/api/restaurant", ["restaurant-events"]),
     ("routes.talent",         "talent_router",         "/api/talent",        ["talent"]),
     ("routes.learning",       "learning_router",       "/api/learning",      ["learning"]),
     ("routes.guest_learning",  "router",                "/api/guest-learning", ["guest-learning"]),

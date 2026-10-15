@@ -76,6 +76,15 @@ class ChatRequest(BaseModel):
     # (mirrors the `marketplace` query param on /api/restaurant/restaurants,
     # /menu/search, /menu/compare, /menu/recommend).
     marketplace: bool = False
+    # ADAR Eats' event-scoped Order Assistant (see routes/restaurant_events.py):
+    # when set, menu grounding is restricted to ONLY this event's active
+    # stalls -- never a restaurant's regular, non-event menu, and never a
+    # different event's stalls. Mutually exclusive in practice with
+    # `marketplace` (the regular assistant stays marketplace-wide; the
+    # event assistant is always scoped to exactly one event), though
+    # nothing stops both being set -- event_id simply takes priority at
+    # the call site below.
+    event_id: str | None = None
 
 
 @router.post("/stream")
@@ -87,7 +96,7 @@ async def chat_stream_endpoint(
 ):
     if not req.question.strip():
         raise HTTPException(400, "question must not be empty")
-    if not req.document_ids and not req.marketplace:
+    if not req.document_ids and not req.marketplace and not req.event_id:
         raise HTTPException(400, "Select at least one embedded document to query")
 
     # ADAR Eats' marketplace-wide Order Assistant is the one caller of this
@@ -96,7 +105,7 @@ async def chat_stream_endpoint(
     # workspace chat) still needs a real account, exactly as before
     # OptionalUser replaced CurrentUser here.
     if not current_user:
-        if not req.marketplace:
+        if not req.marketplace and not req.event_id:
             raise HTTPException(401, "Sign in required", headers={"WWW-Authenticate": "Bearer"})
         # No per-user daily quota to draw from below (check_and_log_daily_
         # event needs a real user row) -- IP rate limiting takes its place,
@@ -240,18 +249,26 @@ async def chat_stream_endpoint(
                 restaurant_meta: dict = {"enabled": False}
                 restaurant_actions: dict = {}
                 restaurant_action_candidates: list[dict] = []
-                if _is_restaurant_context(doc_rows, question_for_model):
-                    async with span("restaurant_db_context", trace_id=trace_id, metadata={"enabled": True}) as sp:
+                if req.event_id or _is_restaurant_context(doc_rows, question_for_model):
+                    async with span("restaurant_db_context", trace_id=trace_id, metadata={"enabled": True, "event_id": req.event_id}) as sp:
                         try:
                             async with get_pool().acquire() as _conn:
-                                restaurant_context, restaurant_meta = await _restaurant_db_context(
-                                    _conn,
-                                    user_id=user_id,
-                                    workspace_id=req.workspace_id,
-                                    question=question_for_model,
-                                    chunks=chunks,
-                                    marketplace=req.marketplace,
-                                )
+                                if req.event_id:
+                                    restaurant_context, restaurant_meta = await _event_db_context(
+                                        _conn,
+                                        event_id=req.event_id,
+                                        question=question_for_model,
+                                        chunks=chunks,
+                                    )
+                                else:
+                                    restaurant_context, restaurant_meta = await _restaurant_db_context(
+                                        _conn,
+                                        user_id=user_id,
+                                        workspace_id=req.workspace_id,
+                                        question=question_for_model,
+                                        chunks=chunks,
+                                        marketplace=req.marketplace,
+                                    )
                                 restaurant_action_candidates = restaurant_meta.pop("action_candidates", []) or []
                         except Exception as exc:
                             log.warning("Restaurant DB context lookup failed; falling back to RAG only: %s", exc)
@@ -331,7 +348,49 @@ async def chat_stream_endpoint(
                         "[Agentic Source N]. Use [Source N] retrieved chunks to verify or fill details. If an agentic block "
                         "is partial, say what is missing and answer from document chunks where possible."
                     )
-                if restaurant_context:
+                if restaurant_context and req.event_id:
+                    language_instruction = (
+                        f"{language_instruction}\n\n"
+                        "EVENT ORDERING RULE:\n"
+                        "This conversation is scoped to ONE live event. An [Event Stalls Source] block, when present, "
+                        "is the authoritative full list of every stall participating in this event (even one with no "
+                        "menu items posted yet) -- use it directly to answer how many stalls are at this event or "
+                        "which ones, rather than counting rows elsewhere or saying you don't have that information. "
+                        "If a stall has no corresponding rows in [Event Menu Source], say plainly that stall hasn't "
+                        "posted its menu yet instead of claiming no information exists about the event at all. For "
+                        "stall menu, price, or ordering questions, "
+                        "use only [Event Menu Source] rows when they are present -- never a restaurant's regular, "
+                        "non-event menu, and never another event's stalls; if asked about either, say this assistant "
+                        "only covers stalls at this one event. For price comparisons, use a table with these columns "
+                        "exactly when available: Stall, Item, Price, Event Menu Item ID, Stall ID. These fields allow "
+                        "the UI to render an Add button for the event cart. ALWAYS write these column headers, and the "
+                        "\"Field\"/\"Value\" headers of the Order Details table described below, in English exactly as "
+                        "spelled here -- Stall, Item, Price, Event Menu Item ID, Stall ID, Field, Value -- even when "
+                        "the rest of your answer is in another language, because the app matches on these exact "
+                        "English labels to actually add the item to the event cart; translating them silently breaks "
+                        "that match. Only the surrounding prose and any plain-language explanation should be in the "
+                        "requested language -- stall names, dish names, and ID values stay exactly as given in the "
+                        "Event Menu Source rows regardless of language. Every menu row shown from an Event Menu Source "
+                        "row must include that same row's Event Menu Item ID and Stall ID. A stall marked "
+                        "\"(currently paused -- not taking new orders right now)\" can still be discussed, but tell the "
+                        "user plainly it isn't taking new orders right now rather than offering to add from it. "
+                        "If the user asks to order an item, or asks to add an item to their cart/order, treat this as "
+                        "the same ordering intent. First check whether the request names exactly one menu item "
+                        "unambiguously, meaning exactly one Event Menu Source row matches it: a specific dish at a "
+                        "specific stall already named or clearly established earlier in this conversation. If it is "
+                        "unambiguous, provide an Order Details table with Field and Value rows for Stall, Item, Price, "
+                        "Event Menu Item ID, and Stall ID, then tell the user it has been added to their cart -- the "
+                        "app adds it automatically whenever exactly one item is identified this way. If the same dish "
+                        "name matches more than one Event Menu Source row (different stalls, or different sizes/"
+                        "variants at the same stall) and nothing earlier in the conversation narrows it down, do NOT "
+                        "guess or pick one for the user: ask a short clarifying question naming each option (stall "
+                        "and price) and render them as a comparison table with the standard columns (Stall, Item, "
+                        "Price, Event Menu Item ID, Stall ID) covering every candidate, so the user can tap the one "
+                        "they want. Once the user's next message answers which one, resolve it the same unambiguous "
+                        "way above. Do not say you cannot help place orders; explain that stall acceptance/"
+                        "cancellation happens after submission, same as any Adar Eats order."
+                    )
+                elif restaurant_context:
                     language_instruction = (
                         f"{language_instruction}\n\n"
                         "RESTAURANT ORDERING RULE:\n"
@@ -391,11 +450,15 @@ async def chat_stream_endpoint(
                         tool_request={"messages": messages, "sources": _chunk_trace(chunks, redact_pii=req.redact_pii)},
                         llm_response=redact_text("".join(output_tokens), req.redact_pii).text,
                     )
+                _id_header = "event menu item id" if req.event_id else "menu item id"
+                _parent_header = "stall id" if req.event_id else "restaurant id"
                 restaurant_actions = _restaurant_actions_from_candidates(
                     restaurant_action_candidates,
                     question_for_model,
                     "".join(output_tokens),
-                    active_restaurant_ids=_active_restaurant_ids_from_history(req.history),
+                    active_restaurant_ids=_active_restaurant_ids_from_history(req.history, _id_header, _parent_header),
+                    id_header=_id_header,
+                    parent_header=_parent_header,
                 )
                 # "add to cart"/"order it" phrasing + exactly one resolved
                 # item = unambiguous: the app adds it for the user right
@@ -832,6 +895,187 @@ async def _fetch_restaurant_menu_rows(
     )
 
 
+async def _fetch_event_menu_rows(db, event_id: str, terms: list[str], limit: int = 300):
+    """Mirrors _fetch_restaurant_menu_rows, but scoped to exactly one
+    live event's active stalls -- never a restaurant's regular menu, and
+    never another event's stalls (see routes/restaurant_events.py's
+    get_stall_menu_public, which resolves the same menu_item_id/stall
+    fields the same way for the customer-facing menu screen)."""
+    return await db.fetch(
+        """
+        SELECT em.id,
+               em.id AS event_menu_item_id,
+               em.stall_id,
+               s.event_id,
+               s.restaurant_id,
+               s.stall_name,
+               s.accepting_orders,
+               r.name AS restaurant_name,
+               COALESCE(em.item_name, mi.item_name)      AS item_name,
+               COALESCE(em.category, mi.category)        AS category,
+               COALESCE(em.description, mi.description)  AS description,
+               COALESCE(em.price, mi.price)               AS price,
+               COALESCE(NULLIF(em.currency, ''), 'USD')   AS currency,
+               COALESCE(NULLIF(em.availability, ''), 'available') AS availability
+        FROM restaurant_event_menu_items em
+        JOIN restaurant_event_stalls s ON s.id = em.stall_id
+        JOIN restaurant_events e ON e.id = s.event_id
+        JOIN restaurants r ON r.id = s.restaurant_id
+        LEFT JOIN restaurant_menu_items mi ON mi.id = em.menu_item_id
+        WHERE e.id = $1::uuid
+          AND e.status = 'live'
+          AND s.status = 'active'
+          AND LOWER(COALESCE(em.availability, 'available')) <> 'unavailable'
+          AND (
+            cardinality($2::text[]) = 0
+            OR EXISTS (
+              SELECT 1 FROM unnest($2::text[]) term
+              WHERE COALESCE(em.item_name, mi.item_name, '') ILIKE '%' || term || '%'
+                 OR COALESCE(em.description, mi.description, '') ILIKE '%' || term || '%'
+                 OR COALESCE(em.category, mi.category, '') ILIKE '%' || term || '%'
+                 OR s.stall_name ILIKE '%' || term || '%'
+                 OR r.name ILIKE '%' || term || '%'
+            )
+          )
+        ORDER BY s.stall_name, COALESCE(em.category, mi.category), COALESCE(em.item_name, mi.item_name)
+        LIMIT $3
+        """,
+        event_id,
+        terms,
+        limit,
+    )
+
+
+async def _fetch_event_active_stalls(db, event_id: str):
+    """Every active stall at a live event, independent of whether it has
+    posted any menu items yet. Fetched separately from
+    _fetch_event_menu_rows because that query only returns rows that
+    already have a menu item -- a stall with zero items would silently
+    vanish from "how many stalls are participating" otherwise, which is
+    a perfectly normal state right after an event goes live and before
+    every owner has built their event menu."""
+    return await db.fetch(
+        """
+        SELECT s.id, s.stall_name, s.location_zone, s.accepting_orders
+        FROM restaurant_event_stalls s
+        JOIN restaurant_events e ON e.id = s.event_id
+        WHERE e.id = $1::uuid AND e.status = 'live' AND s.status = 'active'
+        ORDER BY s.stall_name
+        """,
+        event_id,
+    )
+
+
+async def _event_db_context(
+    db,
+    *,
+    event_id: str,
+    question: str,
+    chunks: list[dict] | None = None,
+) -> tuple[str, dict]:
+    """Event-scoped counterpart to _restaurant_db_context: the same
+    live-lookup + relevance-scoring pipeline, but reading only this one
+    event's active stalls (via _fetch_event_menu_rows) -- the backend
+    half of the "packaged as its own distinct, event-scoped entity"
+    requirement from the Events & Stalls PRD. Candidate dicts reuse the
+    `restaurant_id`/`menu_item_id` keys that _restaurant_actions_from_
+    candidates already matches on (holding stall_id/event_menu_item_id
+    values here), plus explicit event_id/stall_id/event_menu_item_id
+    fields for the frontend's actual "add to event cart" call -- so none
+    of that generic matching code needs to change, only the system
+    prompt's column-header instructions (see the EVENT ORDERING RULE
+    branch in chat_stream_endpoint) and the id/parent header names
+    threaded through it."""
+    safe_event_id = _uuid_or_none(event_id)
+    if not safe_event_id:
+        return "", {"enabled": True, "matched_rows": 0, "available_rows": 0, "error": "invalid event_id"}
+    terms = _restaurant_query_terms(question)
+    rows = await _fetch_event_menu_rows(db, safe_event_id, terms, limit=300)
+    if not rows and terms:
+        rows = await _fetch_event_menu_rows(db, safe_event_id, [], limit=300)
+    stall_rows = await _fetch_event_active_stalls(db, safe_event_id)
+    context_parts = _restaurant_context_parts(question, "", chunks or [])
+    scored_rows = [
+        (round(_restaurant_menu_match_score(row, context_parts), 3), row)
+        for row in rows
+    ]
+    scored_rows.sort(key=lambda item: (-item[0], item[1]["stall_name"] or "", item[1]["item_name"] or ""))
+    selected = _select_restaurant_db_context_rows(scored_rows, question)
+    if not selected and rows and not re.search(r"[a-zA-Z]", question):
+        selected = rows[:40]
+    if not selected and not stall_rows:
+        return "", {"enabled": True, "matched_rows": 0, "available_rows": len(rows), "actions": {}}
+
+    lines = []
+    if stall_rows:
+        lines.append(
+            f"[Event Stalls Source: the authoritative, complete list of all {len(stall_rows)} stall(s) "
+            "currently participating in this event -- use this count/list for any question about how many "
+            "stalls are at this event or which ones, regardless of whether a stall has posted menu items yet]"
+        )
+        for stall in stall_rows:
+            pacing = "" if stall["accepting_orders"] else " (currently paused -- not taking new orders right now)"
+            zone = f", zone={stall['location_zone']}" if stall["location_zone"] else ""
+            lines.append(f"- stall={stall['stall_name'] or ''}{zone}{pacing} | stall_id={stall['id']}")
+    if selected:
+        lines.append("[Event Menu Source: this event's participating stalls only -- never a restaurant's regular menu]")
+    for index, row in enumerate(selected, start=1):
+        price = row["price"]
+        price_text = "not set" if price is None else f"{row['currency'] or 'USD'} {float(price):.2f}"
+        pacing_note = "" if row["accepting_orders"] else " (currently paused -- not taking new orders right now)"
+        lines.append(
+            " | ".join(
+                [
+                    f"{index}. stall={row['stall_name'] or ''}{pacing_note}",
+                    f"event_menu_item_id={row['event_menu_item_id']}",
+                    f"stall_id={row['stall_id']}",
+                    f"item={row['item_name'] or ''}",
+                    f"category={row['category'] or ''}",
+                    f"price={price_text}",
+                ]
+            )
+        )
+
+    def _event_action_row(row) -> dict:
+        action = _restaurant_menu_action_row(row)
+        # Internal plumbing only: _restaurant_actions_from_candidates
+        # matches on these two generic keys regardless of mode, so they
+        # carry the stall/event-menu-item ids here rather than a real
+        # restaurant/menu-item id -- the frontend uses the explicit
+        # event_id/stall_id/event_menu_item_id fields below instead,
+        # never these two, to build the actual add-to-cart call.
+        action["menu_item_id"] = str(row["event_menu_item_id"])
+        action["restaurant_id"] = str(row["stall_id"])
+        return action
+
+    action_candidates = []
+    seen_ids: set[str] = set()
+    for row in selected:
+        row_id = str(row["id"])
+        if row_id in seen_ids:
+            continue
+        seen_ids.add(row_id)
+        action_candidates.append({**_event_action_row(row), "source": "event_menu_db_context", "action_score": 999.0})
+    for score, row in scored_rows:
+        if len(action_candidates) >= 80:
+            break
+        row_id = str(row["id"])
+        if row_id in seen_ids:
+            continue
+        seen_ids.add(row_id)
+        action_candidates.append({**_event_action_row(row), "source": "event_menu_db_context", "action_score": score})
+
+    return "\n".join(lines), {
+        "enabled": True,
+        "matched_rows": len(selected),
+        "available_rows": len(rows),
+        "stall_count": len(stall_rows),
+        "stalls": sorted({str(s["stall_name"]) for s in stall_rows if s["stall_name"]}) or sorted({str(row["stall_name"]) for row in selected if row["stall_name"]}),
+        "query_terms": terms,
+        "action_candidates": action_candidates,
+    }
+
+
 def _select_restaurant_db_context_rows(scored_rows: list[tuple[float, Any]], question: str, limit: int = 40) -> list[Any]:
     if not scored_rows:
         return []
@@ -1065,7 +1309,9 @@ def _extract_cart_add_quantity(question: str) -> int | None:
     return None
 
 
-def _active_restaurant_ids_from_history(history: list[dict] | None) -> set[str]:
+def _active_restaurant_ids_from_history(
+    history: list[dict] | None, id_header: str = "menu item id", parent_header: str = "restaurant id"
+) -> set[str]:
     """Finds the restaurant(s) the conversation already settled on, from
     the most recent assistant turn that rendered an ordering/comparison
     table (see _extract_restaurant_table_ids) -- used as a tie-breaker in
@@ -1085,7 +1331,7 @@ def _active_restaurant_ids_from_history(history: list[dict] | None) -> set[str]:
     for turn in reversed(history or []):
         if (turn.get("role") or "") != "assistant":
             continue
-        pairs = _extract_restaurant_table_ids(str(turn.get("content") or ""))
+        pairs = _extract_restaurant_table_ids(str(turn.get("content") or ""), id_header, parent_header)
         if not pairs:
             return set()
         return {restaurant_id.lower() for restaurant_id, _ in pairs}
@@ -1172,7 +1418,9 @@ def _strip_md_inline(text: str) -> str:
     return text
 
 
-def _extract_restaurant_table_ids(answer_text: str) -> list[tuple[str, str]]:
+def _extract_restaurant_table_ids(
+    answer_text: str, id_header: str = "menu item id", parent_header: str = "restaurant id"
+) -> list[tuple[str, str]]:
     """Deterministically reads every row of the ordering/comparison
     table the model is instructed to render (the RESTAURANT ORDERING
     RULE prompt) and returns the (restaurant_id, menu_item_id) pair for
@@ -1216,9 +1464,9 @@ def _extract_restaurant_table_ids(answer_text: str) -> list[tuple[str, str]]:
             continue
         header = [c.lower() for c in split_row(block[0])]
         data_rows = [split_row(r) for r in block[1:] if not is_separator(split_row(r))]
-        if "menu item id" in header and "restaurant id" in header:
-            mi_idx = header.index("menu item id")
-            r_idx = header.index("restaurant id")
+        if id_header in header and parent_header in header:
+            mi_idx = header.index(id_header)
+            r_idx = header.index(parent_header)
             for row in data_rows:
                 if len(row) <= max(mi_idx, r_idx):
                     continue
@@ -1236,8 +1484,8 @@ def _extract_restaurant_table_ids(answer_text: str) -> list[tuple[str, str]]:
                 if len(row) <= max(field_idx, value_idx):
                     continue
                 field_map[row[field_idx].strip().lower()] = row[value_idx].strip()
-            menu_item_id = _strip_md_inline(field_map.get("menu item id", ""))
-            restaurant_id = _strip_md_inline(field_map.get("restaurant id", ""))
+            menu_item_id = _strip_md_inline(field_map.get(id_header, ""))
+            restaurant_id = _strip_md_inline(field_map.get(parent_header, ""))
             key = (restaurant_id.lower(), menu_item_id.lower())
             if menu_item_id and restaurant_id and key not in seen:
                 seen.add(key)
@@ -1245,7 +1493,9 @@ def _extract_restaurant_table_ids(answer_text: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def _extract_order_details_fields(answer_text: str) -> tuple[str, str, int | None] | None:
+def _extract_order_details_fields(
+    answer_text: str, id_header: str = "menu item id", parent_header: str = "restaurant id"
+) -> tuple[str, str, int | None] | None:
     """Recognizes ONLY the single "Order Details" Field/Value table shape
     (Restaurant/Item/Price/.../Menu Item ID/Restaurant ID rows) that the
     RESTAURANT ORDERING RULE prompt renders specifically when it already
@@ -1295,8 +1545,8 @@ def _extract_order_details_fields(answer_text: str) -> tuple[str, str, int | Non
             if is_separator(row) or len(row) <= max(field_idx, value_idx):
                 continue
             field_map[row[field_idx].strip().lower()] = row[value_idx].strip()
-        menu_item_id = _strip_md_inline(field_map.get("menu item id", ""))
-        restaurant_id = _strip_md_inline(field_map.get("restaurant id", ""))
+        menu_item_id = _strip_md_inline(field_map.get(id_header, ""))
+        restaurant_id = _strip_md_inline(field_map.get(parent_header, ""))
         if not (menu_item_id and restaurant_id):
             continue
         quantity: int | None = None
@@ -1315,12 +1565,14 @@ def _restaurant_actions_from_candidates(
     question: str,
     answer_text: str,
     active_restaurant_ids: set[str] | None = None,
+    id_header: str = "menu item id",
+    parent_header: str = "restaurant id",
 ) -> dict:
     if not candidates:
         return {}
 
-    order_details = _extract_order_details_fields(answer_text)
-    table_pairs = _extract_restaurant_table_ids(answer_text)
+    order_details = _extract_order_details_fields(answer_text, id_header, parent_header)
+    table_pairs = _extract_restaurant_table_ids(answer_text, id_header, parent_header)
     if table_pairs:
         by_id = {
             (

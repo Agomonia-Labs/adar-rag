@@ -712,3 +712,210 @@ export async function getRestaurantTranscriptChunks(restaurantId) {
 export async function getRestaurantTranscriptChunkContent(restaurantId, chunkIndex) {
   return handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}/transcript/chunks/${chunkIndex}`, { headers: authHdr() }));
 }
+
+// ── Events & Stalls: admin lifecycle + approval queue ────────────────────
+// Mirrors backend/routes/restaurant_events.py's admin surface exactly --
+// EventCreateRequest/EventUpdateRequest/StallApproveRequest/
+// StallRejectRequest field names, snake_case over the wire.
+export async function createEvent({ name, venue = '', description = '', startAt, endAt, bannerGcsPath = null }) {
+  return handleRes(await fetch(`${BASE}/restaurant/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({ name, venue, description, start_at: startAt, end_at: endAt, banner_gcs_path: bannerGcsPath }),
+  }));
+}
+
+export async function listEvents(status = '') {
+  const q = status ? `?status=${encodeURIComponent(status)}` : '';
+  const data = await handleRes(await fetch(`${BASE}/restaurant/events${q}`, { headers: authHdr() }));
+  return data?.events || [];
+}
+
+// Onboarding-status events a restaurant owner can request a stall at.
+export async function listAvailableEvents() {
+  const data = await handleRes(await fetch(`${BASE}/restaurant/events/available`, { headers: authHdr() }));
+  return data?.events || [];
+}
+
+// Live events for customer discovery -- guest-accessible like the rest of
+// ADAR Eats' browsing surfaces (no auth header required).
+export async function listLiveEvents() {
+  const data = await handleRes(await fetch(`${BASE}/restaurant/events/live`, { headers: authHdr() }));
+  return data?.events || [];
+}
+
+export async function getEvent(eventId) {
+  return handleRes(await fetch(`${BASE}/restaurant/events/${eventId}`, { headers: authHdr() }));
+}
+
+export async function updateEvent(eventId, patch) {
+  // patch keys already snake_case (name/venue/description/start_at/end_at/
+  // banner_gcs_path) -- callers build this directly from form state since
+  // it's a straight partial-update pass-through (EventUpdateRequest).
+  return handleRes(await fetch(`${BASE}/restaurant/events/${eventId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify(patch),
+  }));
+}
+
+export async function openEventOnboarding(eventId) {
+  return handleRes(await fetch(`${BASE}/restaurant/events/${eventId}/open-onboarding`, { method: 'POST', headers: authHdr() }));
+}
+
+export async function publishEvent(eventId) {
+  return handleRes(await fetch(`${BASE}/restaurant/events/${eventId}/publish`, { method: 'POST', headers: authHdr() }));
+}
+
+export async function closeEvent(eventId) {
+  return handleRes(await fetch(`${BASE}/restaurant/events/${eventId}/close`, { method: 'POST', headers: authHdr() }));
+}
+
+export async function reopenEvent(eventId) {
+  return handleRes(await fetch(`${BASE}/restaurant/events/${eventId}/reopen`, { method: 'POST', headers: authHdr() }));
+}
+
+export async function listEventStallsAdmin(eventId) {
+  const data = await handleRes(await fetch(`${BASE}/restaurant/events/${eventId}/stalls`, { headers: authHdr() }));
+  return data?.stalls || [];
+}
+
+export async function approveStall(eventId, stallId, { stallNumber = '', locationZone = null } = {}) {
+  return handleRes(await fetch(`${BASE}/restaurant/events/${eventId}/stalls/${stallId}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({ stall_number: stallNumber, location_zone: locationZone }),
+  }));
+}
+
+export async function rejectStall(eventId, stallId, reason = '') {
+  return handleRes(await fetch(`${BASE}/restaurant/events/${eventId}/stalls/${stallId}/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({ reason }),
+  }));
+}
+
+// ── Events & Stalls: owner onboarding + stall/menu management ────────────
+export async function requestStall(restaurantId, { eventId, stallName = '', locationZone = '', spacePowerNeeds = '' }) {
+  return handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}/stalls`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({ event_id: eventId, stall_name: stallName, location_zone: locationZone, space_power_needs: spacePowerNeeds }),
+  }));
+}
+
+export async function listMyStalls(restaurantId) {
+  const data = await handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}/stalls`, { headers: authHdr() }));
+  return data?.stalls || [];
+}
+
+export async function getMyStall(restaurantId, stallId) {
+  return handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}/stalls/${stallId}`, { headers: authHdr() }));
+}
+
+// patch may include stall_name/location_zone/space_power_needs/hours/
+// accepting_orders (StallUpdateRequest) -- an accepting_orders-only patch
+// bypasses the backend's "event must be open" guard, so the owner can
+// pause/resume mid-event even after admin has frozen other edits.
+export async function updateMyStall(restaurantId, stallId, patch) {
+  return handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}/stalls/${stallId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify(patch),
+  }));
+}
+
+export async function listStallMenuItems(restaurantId, stallId) {
+  const data = await handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}/stalls/${stallId}/menu-items`, { headers: authHdr() }));
+  return data?.menu_items || [];
+}
+
+// EventMenuItemRequest: either menu_item_id (link to the restaurant's
+// regular catalog, with an optional price override) OR item_name+price
+// for a net-new, event-only item.
+export async function createStallMenuItem(restaurantId, stallId, payload) {
+  return handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}/stalls/${stallId}/menu-items`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify(payload),
+  }));
+}
+
+export async function updateStallMenuItem(restaurantId, stallId, itemId, patch) {
+  return handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}/stalls/${stallId}/menu-items/${itemId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify(patch),
+  }));
+}
+
+export async function deleteStallMenuItem(restaurantId, stallId, itemId) {
+  return handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}/stalls/${stallId}/menu-items/${itemId}`, {
+    method: 'DELETE', headers: authHdr(),
+  }));
+}
+
+// ── Events & Stalls: customer-facing public menu + ordering ──────────────
+export async function getStallMenuPublic(eventId, stallId) {
+  return handleRes(await fetch(`${BASE}/restaurant/events/${eventId}/stalls/${stallId}/menu`, { headers: authHdr() }));
+}
+
+export async function createEventOrderDraft(eventId, stallId, {
+  items, customerName = '', customerPhone = '', customerEmail = '',
+  pickupTimeRequest = '', specialInstructions = '',
+}) {
+  return handleRes(await fetch(`${BASE}/restaurant/events/${eventId}/stalls/${stallId}/order-draft`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({
+      items: items.map(item => ({
+        event_menu_item_id: item.event_menu_item_id,
+        quantity: item.quantity || 1,
+        instructions: item.instructions || '',
+      })),
+      customer_name: customerName,
+      customer_phone: customerPhone,
+      customer_email: customerEmail,
+      pickup_time_request: pickupTimeRequest,
+      special_instructions: specialInstructions,
+    }),
+  }));
+}
+
+// Event-scoped Order Assistant -- same SSE contract as streamRestaurantChat
+// above, but scoped to one live event (event_id) instead of marketplace:true,
+// so routes/chat.py's _event_db_context only ever surfaces this event's
+// active stalls (see routes/chat.py's "EVENT ORDERING RULE" branch).
+export async function streamEventChat({ question, history = [], eventId, responseLanguage = null }, { onToken, onDone, onError }) {
+  const res = await fetch(`${BASE}/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr() },
+    body: JSON.stringify({ question, document_ids: [], history, event_id: eventId, response_language: responseLanguage }),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    onError?.(e.detail || `HTTP ${res.status}`);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finished = false;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      let ev;
+      try { ev = JSON.parse(line.slice(6)); } catch { continue; }
+      if (ev.type === 'token') onToken?.(ev.text);
+      if (ev.type === 'done') { onDone?.(ev); finished = true; break; }
+      if (ev.type === 'error') { onError?.(ev.error); finished = true; break; }
+    }
+    if (finished) return;
+  }
+}
