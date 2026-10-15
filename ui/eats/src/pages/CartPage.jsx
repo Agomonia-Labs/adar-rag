@@ -1,15 +1,34 @@
 // src/pages/CartPage.jsx -- review the local cart, create a draft order,
 // then redirect to Stripe Checkout. Mirrors RestaurantPanel.jsx's
 // CarryoutCart + createOrderDraft/placeOrder flow.
-import React, { useState } from 'react';
-import { createRestaurantOrderDraft, createRestaurantOrderCheckout } from '../services/api.js';
+import React, { useEffect, useState } from 'react';
+import { createRestaurantOrderDraft, createRestaurantOrderCheckout, fetchRestaurant } from '../services/api.js';
 import { AuthFlow } from './AuthPages.jsx';
+import PickupTimePicker from '../components/PickupTimePicker.jsx';
 
 export default function CartPage({ cart, setCart, onPlaced, onBack, token, onLogin }) {
-  const [customer, setCustomer] = useState({ name:'', phone:'', email:'', pickup_time_request:'', special_instructions:'' });
+  const [customer, setCustomer] = useState({ name:'', phone:'', email:'', special_instructions:'' });
+  const [pickup, setPickup] = useState({ mode: 'asap', date: '', time: '' });
+  const [restaurantTimezone, setRestaurantTimezone] = useState(null);
   const [draftOrder, setDraftOrder] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+
+  // Fetched once per restaurant so the pickup-time picker can show "it's
+  // currently ... at the restaurant" and default the date picker to today
+  // THERE -- the actual instant the backend stores is always computed
+  // server-side from the restaurant's own timezone regardless of whether
+  // this fetch succeeds, so a failure here only costs the UX nicety, never
+  // correctness.
+  useEffect(() => {
+    let cancelled = false;
+    if (cart.restaurant_id) {
+      fetchRestaurant(cart.restaurant_id).then(data => {
+        if (!cancelled) setRestaurantTimezone(data?.restaurant?.timezone || null);
+      }).catch(() => {});
+    }
+    return () => { cancelled = true; };
+  }, [cart.restaurant_id]);
 
   const subtotal = cart.items.reduce((sum, item) => sum + (Number(item.unit_price || 0) * Number(item.quantity || 1)), 0);
 
@@ -39,7 +58,9 @@ export default function CartPage({ cart, setCart, onPlaced, onBack, token, onLog
         customerName: customer.name,
         customerPhone: customer.phone,
         customerEmail: customer.email,
-        pickupTimeRequest: customer.pickup_time_request,
+        pickupTimeRequest: pickup.mode === 'asap' ? 'ASAP' : '',
+        pickupDate: pickup.mode === 'scheduled' ? pickup.date : null,
+        pickupTime: pickup.mode === 'scheduled' ? pickup.time : null,
         specialInstructions: customer.special_instructions,
         notes: 'Carryout order created from ADAR Eats web',
       });
@@ -114,8 +135,10 @@ export default function CartPage({ cart, setCart, onPlaced, onBack, token, onLog
               <label style={s.field}>Name<input value={customer.name} onChange={e => setCustomer(c => ({ ...c, name:e.target.value }))} /></label>
               <label style={s.field}>Phone<input value={customer.phone} onChange={e => setCustomer(c => ({ ...c, phone:e.target.value }))} /></label>
               <label style={s.field}>Email<input type="email" value={customer.email} onChange={e => setCustomer(c => ({ ...c, email:e.target.value }))} /></label>
-              <label style={s.field}>Pickup time<input value={customer.pickup_time_request} onChange={e => setCustomer(c => ({ ...c, pickup_time_request:e.target.value }))} placeholder="ASAP or e.g. 7:30 PM" /></label>
             </div>
+            <label style={s.field}>Pickup time
+              <PickupTimePicker timezone={restaurantTimezone} value={pickup} onChange={setPickup} />
+            </label>
             <label style={s.field}>Special instructions<textarea rows={2} value={customer.special_instructions} onChange={e => setCustomer(c => ({ ...c, special_instructions:e.target.value }))} /></label>
             <button style={s.primary} disabled={busy} onClick={createDraft}>{busy ? 'Reviewing…' : 'Review order →'}</button>
           </>

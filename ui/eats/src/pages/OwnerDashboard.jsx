@@ -925,6 +925,11 @@ function OrdersTab({ workspaceId }) {
             </div>
           )}
           <div style={s.muted}>{new Date(o.created_at).toLocaleString()} · ${Number(o.subtotal || 0).toFixed(2)}</div>
+          {o.pickup_time_display && (
+            <div style={s.muted}>
+              Pickup: {o.pickup_time_display}{o.pickup_time_display !== 'ASAP' ? " (your local time)" : ''}
+            </div>
+          )}
           {(o.order_items || []).map(it => <div key={it.id} style={s.muted}>{it.quantity} × {it.item_name}</div>)}
           <div style={s.actions}>
             {(NEXT_ACTION[o.status] || []).map(action => (

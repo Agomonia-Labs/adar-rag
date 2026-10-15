@@ -13,8 +13,9 @@ import {
 } from '../services/api.js';
 import { AuthFlow } from './AuthPages.jsx';
 import MarkdownRenderer from '../components/MarkdownRenderer.jsx';
+import PickupTimePicker from '../components/PickupTimePicker.jsx';
 
-function emptyCart() { return { event_id: null, stall_id: null, stall_name: '', restaurant_name: '', items: [] }; }
+function emptyCart() { return { event_id: null, stall_id: null, stall_name: '', restaurant_name: '', restaurant_timezone: null, items: [] }; }
 
 function fmtRange(startIso, endIso) {
   if (!startIso) return '';
@@ -160,7 +161,10 @@ export default function EventsPage({ token, onLogin }) {
                 <button style={s.addBtn} disabled={!stallMenu.stall.accepting_orders}
                   onClick={() => {
                     addToCart(
-                      { event_id: selectedEvent.id, stall_id: selectedStall.id, stall_name: stallMenu.stall.stall_name, restaurant_name: '' },
+                      {
+                        event_id: selectedEvent.id, stall_id: selectedStall.id, stall_name: stallMenu.stall.stall_name,
+                        restaurant_name: '', restaurant_timezone: stallMenu.stall.restaurant_timezone || null,
+                      },
                       { event_menu_item_id: item.id, item_name: item.item_name, category: item.category, unit_price: item.price, currency: item.currency || 'USD' },
                     );
                     setAdded(item.id); setTimeout(() => setAdded(null), 1200);
@@ -181,7 +185,8 @@ export default function EventsPage({ token, onLogin }) {
 }
 
 function EventCartPanel({ cart, setCart, token, onLogin }) {
-  const [customer, setCustomer] = useState({ name: '', phone: '', email: '', pickup_time_request: '', special_instructions: '' });
+  const [customer, setCustomer] = useState({ name: '', phone: '', email: '', special_instructions: '' });
+  const [pickup, setPickup] = useState({ mode: 'asap', date: '', time: '' });
   const [draftOrder, setDraftOrder] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -202,7 +207,10 @@ function EventCartPanel({ cart, setCart, token, onLogin }) {
       const data = await createEventOrderDraft(cart.event_id, cart.stall_id, {
         items: cart.items,
         customerName: customer.name, customerPhone: customer.phone, customerEmail: customer.email,
-        pickupTimeRequest: customer.pickup_time_request, specialInstructions: customer.special_instructions,
+        pickupTimeRequest: pickup.mode === 'asap' ? 'ASAP' : '',
+        pickupDate: pickup.mode === 'scheduled' ? pickup.date : null,
+        pickupTime: pickup.mode === 'scheduled' ? pickup.time : null,
+        specialInstructions: customer.special_instructions,
       });
       setDraftOrder(data.order);
     } catch (e) { setError(e.message || 'Could not create this order.'); }
@@ -253,8 +261,10 @@ function EventCartPanel({ cart, setCart, token, onLogin }) {
                   <label style={s.field}>Name<input value={customer.name} onChange={e => setCustomer(c => ({ ...c, name: e.target.value }))} /></label>
                   <label style={s.field}>Phone<input value={customer.phone} onChange={e => setCustomer(c => ({ ...c, phone: e.target.value }))} /></label>
                   <label style={s.field}>Email<input type="email" value={customer.email} onChange={e => setCustomer(c => ({ ...c, email: e.target.value }))} /></label>
-                  <label style={s.field}>Pickup time<input value={customer.pickup_time_request} onChange={e => setCustomer(c => ({ ...c, pickup_time_request: e.target.value }))} placeholder="ASAP" /></label>
                 </div>
+                <label style={s.field}>Pickup time
+                  <PickupTimePicker timezone={cart.restaurant_timezone} value={pickup} onChange={setPickup} />
+                </label>
                 <button style={s.primary} disabled={busy} onClick={createDraft}>{busy ? 'Reviewing…' : 'Review order →'}</button>
               </>
             ) : (

@@ -159,6 +159,15 @@ class RestaurantOrderDraftRequest(BaseModel):
     customer_phone: str = ""
     customer_email: str = ""
     pickup_time_request: str = ""
+    # Structured alternative to the free-text field above -- when both are
+    # given, the calendar date (YYYY-MM-DD) + time (HH:MM, 24h) are combined
+    # into an absolute instant in the RESTAURANT's own timezone (see
+    # _resolve_pickup_time_request) rather than taken literally, so a
+    # customer's "7:30 PM" always means 7:30 PM at the restaurant, not at
+    # whatever timezone their phone happens to be set to. Omit both to keep
+    # pickup_time_request as freeform text (e.g. the literal "ASAP").
+    pickup_date: str | None = None
+    pickup_time: str | None = None
     special_instructions: str = ""
     notes: str = ""
 
@@ -1099,11 +1108,15 @@ def _seats_from_role(role: str) -> int:
 
 async def _geocode_and_store_location(db, restaurant_id: str, address: str) -> None:
     """Best-effort: geocode `address` and persist latitude/longitude/city/state
-    on the restaurant row. Never raises -- a geocoding failure (no API key,
-    network error, address not found) just leaves the existing/blank location
-    columns alone, so the restaurant stays visible in name search while
-    staying out of radius-based browsing until it's geocoded successfully
-    (see services/geocoding.py and scripts/backfill_restaurant_locations.py)."""
+    (plus the resolved IANA timezone -- see services/geocoding.py's
+    get_timezone) on the restaurant row. Never raises -- a geocoding failure
+    (no API key, network error, address not found) just leaves the
+    existing/blank location columns alone, so the restaurant stays visible in
+    name search while staying out of radius-based browsing until it's
+    geocoded successfully (see services/geocoding.py and
+    scripts/backfill_restaurant_locations.py). A timezone lookup failure
+    specifically just leaves the 'UTC' column default in place -- it never
+    blocks saving lat/lng/city/state."""
     if not (address or "").strip():
         return
     try:
@@ -1113,10 +1126,80 @@ async def _geocode_and_store_location(db, restaurant_id: str, address: str) -> N
         return
     if not location:
         return
-    await db.execute(
-        "UPDATE restaurants SET latitude=$2, longitude=$3, city=$4, state=$5 WHERE id=$1",
-        restaurant_id, location["latitude"], location["longitude"], location["city"], location["state"],
-    )
+    tz_name: str | None = None
+    try:
+        tz_name = await geocoding.get_timezone(location["latitude"], location["longitude"])
+    except Exception:
+        log.warning("Timezone lookup raised unexpectedly for restaurant %s", restaurant_id, exc_info=True)
+    if tz_name:
+        await db.execute(
+            "UPDATE restaurants SET latitude=$2, longitude=$3, city=$4, state=$5, timezone=$6 WHERE id=$1",
+            restaurant_id, location["latitude"], location["longitude"], location["city"], location["state"], tz_name,
+        )
+    else:
+        await db.execute(
+            "UPDATE restaurants SET latitude=$2, longitude=$3, city=$4, state=$5 WHERE id=$1",
+            restaurant_id, location["latitude"], location["longitude"], location["city"], location["state"],
+        )
+
+
+def _restaurant_timezone(restaurant_row) -> ZoneInfo:
+    """Resolves a restaurant row's own IANA timezone (the `timezone` column,
+    populated by _geocode_and_store_location above) to a ZoneInfo, falling
+    back to UTC for a restaurant that hasn't been geocoded yet or carries a
+    bad value. Used to interpret a diner's requested pickup date+time as the
+    RESTAURANT's own local wall-clock time (see pickup_time_request handling
+    below), and to format it back for display the same way regardless of
+    which device/timezone the viewer (owner or customer) is in."""
+    tz_raw = _row_get(restaurant_row, "timezone") or "UTC"
+    try:
+        return ZoneInfo(tz_raw)
+    except Exception:
+        return ZoneInfo("UTC")
+
+
+def _resolve_pickup_time_request(
+    pickup_time_request: str, pickup_date: str | None, pickup_time: str | None, tz: ZoneInfo
+) -> str:
+    """Combines a diner's selected calendar date (YYYY-MM-DD) + time (HH:MM,
+    24h) into an absolute instant in the restaurant's own timezone, returned
+    as an ISO 8601 string with a UTC offset -- unambiguous no matter who
+    reads it back or what timezone THEIR device is in (see
+    _format_pickup_time_request for the display side). Falls back to the
+    legacy free-text `pickup_time_request` (typically the literal "ASAP")
+    when no structured date/time was given, and to the free-text value
+    as-is if the date/time fails to parse, rather than rejecting the order
+    over a malformed pickup time."""
+    date_str = (pickup_date or "").strip()
+    time_str = (pickup_time or "").strip()
+    if not date_str or not time_str:
+        return (pickup_time_request or "").strip()
+    try:
+        y, mo, d = (int(part) for part in date_str.split("-"))
+        hh, mm = (int(part) for part in time_str.split(":")[:2])
+        local_dt = datetime(y, mo, d, hh, mm, tzinfo=tz)
+    except Exception:
+        return (pickup_time_request or "").strip()
+    return local_dt.isoformat()
+
+
+def _format_pickup_time_request(pickup_time_request: str, tz: ZoneInfo) -> str:
+    """Display-side counterpart to _resolve_pickup_time_request: if the
+    stored value is one of our structured ISO instants, formats it in the
+    restaurant's own local time (e.g. "Oct 20, 7:30 PM") so an owner or
+    customer sees the same wall-clock time regardless of their own device's
+    timezone. Anything else (the literal "ASAP", blank, or old free-text
+    orders predating this feature) is returned unchanged."""
+    raw = (pickup_time_request or "").strip()
+    if not raw:
+        return raw
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except Exception:
+        return raw
+    if parsed.tzinfo is None:
+        return raw
+    return parsed.astimezone(tz).strftime("%a, %b %-d, %-I:%M %p")
 
 
 class DineInEnableRequest(BaseModel):
@@ -3360,7 +3443,9 @@ async def create_restaurant_order_draft(
             body.customer_name or "",
             body.customer_phone or "",
             body.customer_email or current_user.get("email") or "",
-            body.pickup_time_request or "",
+            _resolve_pickup_time_request(
+                body.pickup_time_request, body.pickup_date, body.pickup_time, _restaurant_timezone(restaurant)
+            ),
             body.special_instructions or "",
             subtotal,
             currency,
@@ -3862,7 +3947,7 @@ async def list_my_restaurant_orders(
     rows = await db.fetch(
         """
         SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address, r.phone AS restaurant_phone,
-               r.email AS restaurant_email,
+               r.email AS restaurant_email, r.timezone AS restaurant_timezone,
                COUNT(oi.id)::int AS item_count,
                COALESCE(
                  jsonb_agg(
@@ -3929,7 +4014,7 @@ async def list_restaurant_owner_orders(
     rows = await db.fetch(
         f"""
         SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address, r.phone AS restaurant_phone,
-               r.email AS restaurant_email,
+               r.email AS restaurant_email, r.timezone AS restaurant_timezone,
                COUNT(oi.id)::int AS item_count,
                COALESCE(
                  jsonb_agg(
@@ -5298,6 +5383,7 @@ async def _fetch_order_record(
         f"""
         SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address,
                r.phone AS restaurant_phone, r.email AS restaurant_email,
+               r.timezone AS restaurant_timezone,
                r.user_id AS restaurant_owner_id, owner.email AS restaurant_owner_email,
                r.workspace_id AS restaurant_workspace_id
         FROM restaurant_orders o
@@ -6027,6 +6113,18 @@ def _order_row(row) -> dict[str, Any]:
             cleaned["order_items"] = []
     elif order_items is None:
         cleaned["order_items"] = []
+    # Pre-formatted, restaurant-local-time display string for
+    # pickup_time_request -- see _format_pickup_time_request. Only present
+    # when the query joined restaurants for r.timezone AS restaurant_timezone
+    # (the owner/customer order-listing queries do; order-item/event rows
+    # reusing this same helper don't, so this is a no-op for those).
+    if "pickup_time_request" in cleaned and "restaurant_timezone" in cleaned:
+        tz_raw = cleaned.get("restaurant_timezone") or "UTC"
+        try:
+            tz = ZoneInfo(tz_raw)
+        except Exception:
+            tz = ZoneInfo("UTC")
+        cleaned["pickup_time_display"] = _format_pickup_time_request(cleaned.get("pickup_time_request") or "", tz)
     return cleaned
 
 

@@ -71,6 +71,11 @@ export default function OrdersPage() {
               🎪 {o.metadata?.event_name || 'Event order'}{o.metadata?.stall_name ? ` · ${o.metadata.stall_name}` : ''}
             </div>
           )}
+          {o.pickup_time_display && (
+            <div style={s.muted}>
+              Pickup: {o.pickup_time_display}{o.pickup_time_display !== 'ASAP' ? " (restaurant's local time)" : ''}
+            </div>
+          )}
           <div style={s.items}>
             {(o.order_items || []).map(it => <div key={it.id} style={s.muted}>{it.quantity} × {it.item_name}</div>)}
           </div>

@@ -29,6 +29,8 @@ from routes.restaurant import (
     _add_order_event,
     _fetch_order_response,
     _resolve_menu_image_url,
+    _resolve_pickup_time_request,
+    _restaurant_timezone,
 )
 
 log = logging.getLogger("docintel.restaurant.events.route")
@@ -174,6 +176,12 @@ class EventOrderDraftRequest(BaseModel):
     customer_phone: str = ""
     customer_email: str = ""
     pickup_time_request: str = ""
+    # See routes/restaurant.py's RestaurantOrderDraftRequest -- combined
+    # with the STALL's own restaurant's timezone (a stall belongs to one
+    # restaurant even though the event itself can host several), never the
+    # event's own location.
+    pickup_date: str | None = None
+    pickup_time: str | None = None
     special_instructions: str = ""
 
 
@@ -746,7 +754,12 @@ async def get_stall_menu_public(event_id: str, stall_id: str, current_user: Opti
     if not event_row or event_row["status"] != "live":
         raise HTTPException(404, "Event not found")
     stall_row = await db.fetchrow(
-        "SELECT * FROM restaurant_event_stalls WHERE id=$1 AND event_id=$2 AND status='active'", stall_id, event_id,
+        """
+        SELECT s.*, r.timezone AS restaurant_timezone
+        FROM restaurant_event_stalls s JOIN restaurants r ON r.id = s.restaurant_id
+        WHERE s.id=$1 AND s.event_id=$2 AND s.status='active'
+        """,
+        stall_id, event_id,
     )
     if not stall_row:
         raise HTTPException(404, "Stall not found")
@@ -780,7 +793,14 @@ async def get_stall_menu_public(event_id: str, stall_id: str, current_user: Opti
             # linked regular-menu-item's photo.
             "image_url": await _resolve_menu_image_url(r["resolved_image"]),
         })
-    return {"stall": _stall_row(stall_row), "menu_items": menu_items}
+    # restaurant_timezone (a stall belongs to exactly one restaurant) lets
+    # the customer ordering screen pick/show the pickup date+time as the
+    # RESTAURANT's own local time -- see routes/restaurant.py's
+    # _resolve_pickup_time_request/PickupTimePicker.jsx.
+    return {
+        "stall": {**_stall_row(stall_row), "restaurant_timezone": stall_row.get("restaurant_timezone")},
+        "menu_items": menu_items,
+    }
 
 
 # ── Customer: placing an order at a stall ───────────────────────────────────
@@ -877,7 +897,9 @@ async def create_event_order_draft(
             body.customer_name or "",
             body.customer_phone or "",
             body.customer_email or current_user.get("email") or "",
-            body.pickup_time_request or "",
+            _resolve_pickup_time_request(
+                body.pickup_time_request, body.pickup_date, body.pickup_time, _restaurant_timezone(restaurant_row)
+            ),
             body.special_instructions or "",
             subtotal,
             currency,

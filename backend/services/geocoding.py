@@ -14,12 +14,14 @@ browsing until it's geocoded, e.g. by the backfill script)."""
 
 import logging
 import os
+import time
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
 GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+TIMEZONE_URL = "https://maps.googleapis.com/maps/api/timezone/json"
 
 
 def _api_key() -> str:
@@ -125,3 +127,39 @@ async def reverse_geocode(lat: float, lng: float) -> dict | None:
     )
     state = _extract_component(components, "administrative_area_level_1", short=True)
     return {"city": city, "state": state, "formatted_address": result.get("formatted_address") or ""}
+
+
+async def get_timezone(lat: float, lng: float) -> str | None:
+    """Returns the IANA timezone name (e.g. "America/New_York") for a
+    lat/lng pair via the Google Maps Time Zone API, or None if it couldn't be
+    resolved (no API key configured, no result, or a request error).
+
+    Used right after geocoding a restaurant's address so pickup_time_request
+    (see routes/restaurant.py) can be interpreted/displayed in the
+    RESTAURANT's own local time rather than whichever timezone the customer
+    or owner happens to be in -- the whole point of asking for a calendar
+    date+time instead of free text. Best-effort, same posture as
+    geocode_address/reverse_geocode above: a restaurant with coordinates but
+    no resolved timezone yet just keeps the 'UTC' column default until this
+    succeeds (next save, or a backfill run)."""
+    api_key = _api_key()
+    if not api_key:
+        logger.warning("Timezone lookup skipped for (%s, %s): no Google Maps API key configured", lat, lng)
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                TIMEZONE_URL,
+                params={"location": f"{lat},{lng}", "timestamp": int(time.time()), "key": api_key},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception:
+        logger.warning("Timezone lookup request failed for (%s, %s)", lat, lng, exc_info=True)
+        return None
+
+    if data.get("status") != "OK":
+        logger.warning("Timezone lookup found no result for (%s, %s) (status=%s)", lat, lng, data.get("status"))
+        return None
+    tz_id = data.get("timeZoneId")
+    return tz_id or None

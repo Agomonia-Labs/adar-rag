@@ -323,8 +323,16 @@ export async function recommendRestaurantMenu({ query = '', cuisineType = '', ma
 export async function createRestaurantOrderDraft({
   restaurantId, restaurantName = '', workspaceId = null, items,
   customerName = '', customerPhone = '', customerEmail = '',
-  pickupTimeRequest = '', specialInstructions = '', notes = 'Carryout order created from ADAR Eats web',
+  pickupTimeRequest = '', pickupDate = null, pickupTime = null,
+  specialInstructions = '', notes = 'Carryout order created from ADAR Eats web',
 }) {
+  // pickupDate ("YYYY-MM-DD") + pickupTime ("HH:MM", 24h) are the diner's
+  // selected calendar date/time picker values -- the backend combines them
+  // with the RESTAURANT's own timezone (see routes/restaurant.py's
+  // _resolve_pickup_time_request) so "7:30 PM" always means 7:30 PM at the
+  // restaurant, not at whatever timezone the diner's browser happens to be
+  // in. Omit both (leave null) to keep pickupTimeRequest as freeform text,
+  // e.g. the literal "ASAP".
   return handleRes(await fetch(`${BASE}/restaurant/orders/draft`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHdr() },
@@ -341,6 +349,8 @@ export async function createRestaurantOrderDraft({
       customer_phone: customerPhone,
       customer_email: customerEmail,
       pickup_time_request: pickupTimeRequest,
+      pickup_date: pickupDate,
+      pickup_time: pickupTime,
       special_instructions: specialInstructions,
       notes,
     }),
@@ -877,8 +887,11 @@ export async function getStallMenuPublic(eventId, stallId) {
 
 export async function createEventOrderDraft(eventId, stallId, {
   items, customerName = '', customerPhone = '', customerEmail = '',
-  pickupTimeRequest = '', specialInstructions = '',
+  pickupTimeRequest = '', pickupDate = null, pickupTime = null,
+  specialInstructions = '',
 }) {
+  // See createRestaurantOrderDraft above -- pickupDate/pickupTime are
+  // combined server-side with the stall's own restaurant's timezone.
   return handleRes(await fetch(`${BASE}/restaurant/events/${eventId}/stalls/${stallId}/order-draft`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHdr() },
@@ -892,6 +905,8 @@ export async function createEventOrderDraft(eventId, stallId, {
       customer_phone: customerPhone,
       customer_email: customerEmail,
       pickup_time_request: pickupTimeRequest,
+      pickup_date: pickupDate,
+      pickup_time: pickupTime,
       special_instructions: specialInstructions,
     }),
   }));

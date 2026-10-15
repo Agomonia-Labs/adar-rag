@@ -785,6 +785,25 @@ CREATE INDEX IF NOT EXISTS idx_restaurants_lat_lng ON restaurants(latitude, long
 CREATE INDEX IF NOT EXISTS idx_restaurants_city    ON restaurants(LOWER(city));
 CREATE INDEX IF NOT EXISTS idx_restaurants_state   ON restaurants(LOWER(state));
 
+-- IANA timezone (e.g. "America/New_York"), resolved from latitude/longitude
+-- the same time geocoding runs (see services/geocoding.py's get_timezone
+-- and routes/restaurant.py's _geocode_and_store_location). This is what
+-- lets a customer's requested pickup time be interpreted/displayed as the
+-- RESTAURANT's own local wall-clock time rather than whichever timezone the
+-- customer's or owner's device happens to be in -- see pickup_time_request
+-- on restaurant_orders below. Defaults to 'UTC' until geocoding succeeds
+-- (same best-effort posture as latitude/longitude/city/state above).
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'restaurants' AND column_name = 'timezone'
+    ) THEN
+        ALTER TABLE restaurants ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC';
+    END IF;
+END;
+$$;
+
 DO $$
 BEGIN
     IF NOT EXISTS (
