@@ -147,6 +147,9 @@ export default function EventsPage({ token, onLogin }) {
           <div style={s.list}>
             {stallMenu.menu_items.map(item => (
               <div key={item.id} style={s.item}>
+                {item.image_url
+                  ? <img src={item.image_url} alt={item.item_name} style={s.itemImg} />
+                  : <div style={s.itemImgPlaceholder} aria-hidden="true">🍽</div>}
                 <div style={{ flex: 1 }}>
                   <div style={s.itemTop}>
                     <strong style={{ color: 'var(--tx)', fontSize: 14 }}>{item.item_name}</strong>
@@ -381,6 +384,8 @@ const s = {
   autoAddedNote: { color: 'var(--green)', fontSize: 12, marginTop: 4, fontWeight: 600 },
   list: { display: 'flex', flexDirection: 'column' },
   item: { display: 'flex', alignItems: 'flex-start', gap: 14, padding: '14px 0', borderBottom: '1px solid var(--b2)' },
+  itemImg: { width: 72, height: 72, objectFit: 'cover', borderRadius: 10, flexShrink: 0 },
+  itemImgPlaceholder: { width: 72, height: 72, borderRadius: 10, flexShrink: 0, background: 'var(--s1)', border: '1px solid var(--b2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, color: 'var(--muted2)' },
   itemTop: { display: 'flex', alignItems: 'baseline', gap: 12 },
   price: { color: 'var(--gold-h)', fontWeight: 700 },
   desc: { color: 'var(--muted2)', fontSize: 12.5, lineHeight: 1.5, marginTop: 4 },

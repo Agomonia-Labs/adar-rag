@@ -19,6 +19,7 @@ import {
   cancelDineInReservation,
   listAvailableEvents, listMyStalls, requestStall, getMyStall, updateMyStall,
   listStallMenuItems, createStallMenuItem, updateStallMenuItem, deleteStallMenuItem,
+  uploadStallMenuItemPhoto, deleteStallMenuItemPhoto,
 } from '../services/api.js';
 
 const LANGUAGES = [
@@ -1418,6 +1419,7 @@ function StallDetailPanel({ restaurantId, stall, onChanged }) {
 
 function StallMenuEditor({ restaurantId, stallId, items, onChanged }) {
   const [busy, setBusy] = useState(false);
+  const [photoBusyId, setPhotoBusyId] = useState(null);
   const [error, setError] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [mode, setMode] = useState('existing'); // 'existing' | 'new'
@@ -1457,6 +1459,20 @@ function StallMenuEditor({ restaurantId, stallId, items, onChanged }) {
     finally { setBusy(false); }
   }
 
+  async function uploadPhoto(item, file) {
+    setPhotoBusyId(item.id); setError('');
+    try { await uploadStallMenuItemPhoto(restaurantId, stallId, item.id, file); onChanged(); }
+    catch (e) { setError(e.message || 'Could not upload this photo.'); }
+    finally { setPhotoBusyId(null); }
+  }
+
+  async function removePhoto(item) {
+    setPhotoBusyId(item.id); setError('');
+    try { await deleteStallMenuItemPhoto(restaurantId, stallId, item.id); onChanged(); }
+    catch (e) { setError(e.message || 'Could not remove this photo.'); }
+    finally { setPhotoBusyId(null); }
+  }
+
   async function toggleAvailability(item) {
     setBusy(true); setError('');
     try { await updateStallMenuItem(restaurantId, stallId, item.id, { availability: item.availability === 'available' ? 'unavailable' : 'available' }); onChanged(); }
@@ -1478,10 +1494,27 @@ function StallMenuEditor({ restaurantId, stallId, items, onChanged }) {
       {!items.length && <p style={s.muted}>No items added to this stall's event menu yet.</p>}
       {items.map(item => (
         <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--b1)' }}>
+          <div style={s.photoCell}>
+            {item.image_url
+              ? <img src={item.image_url} alt={item.item_name} style={s.menuThumb} />
+              : <div style={s.menuThumbEmpty}>No photo</div>}
+            <div style={s.photoActions}>
+              {item.image_gcs_path ? (
+                <button style={s.photoRemoveBtn} disabled={photoBusyId === item.id} onClick={() => removePhoto(item)}>Remove</button>
+              ) : (
+                <label style={s.photoUploadLabel}>
+                  {photoBusyId === item.id ? '…' : (item.has_inherited_photo ? 'Replace' : 'Upload')}
+                  <input type="file" accept="image/*" hidden disabled={photoBusyId === item.id}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(item, f); e.target.value = ''; }} />
+                </label>
+              )}
+            </div>
+          </div>
           <div style={{ flex: 1 }}>
             <strong style={{ fontSize: 13, color: 'var(--tx)' }}>{item.item_name}</strong>{' '}
             <span style={s.muted}>{item.category}</span>
             <div style={s.muted}>${Number(item.price || 0).toFixed(2)} · {item.availability}</div>
+            {item.has_inherited_photo && <div style={s.muted}>Using photo from regular menu</div>}
           </div>
           <button style={s.secondaryBtn} disabled={busy} onClick={() => toggleAvailability(item)}>
             {item.availability === 'available' ? 'Mark 86\'d' : 'Mark available'}

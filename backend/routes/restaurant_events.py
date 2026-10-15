@@ -7,12 +7,13 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
 from auth.dependencies import AdminUser, CurrentUser, OptionalUser
 from database.connection import get_db
 from services.audit import audit, ip_from, ua_from
+import services.storage as gcs
 # Reused rather than re-implemented: these already encode the exact
 # order/items/events response shape (Decimal/datetime cleanup via _clean)
 # that the existing submit/checkout/owner-dashboard endpoints and the
@@ -21,7 +22,14 @@ from services.audit import audit, ip_from, ua_from
 # so submit_restaurant_order and create_restaurant_order_checkout in
 # routes/restaurant.py work on it completely unmodified -- this draft
 # endpoint is the only new code the event-ordering path needs.
-from routes.restaurant import _add_order_event, _fetch_order_response
+from routes.restaurant import (
+    MAX_RESTAURANT_IMAGE_BYTES,
+    RESTAURANT_IMAGE_EXTENSIONS,
+    SUPPORTED_RESTAURANT_IMAGE_TYPES,
+    _add_order_event,
+    _fetch_order_response,
+    _resolve_menu_image_url,
+)
 
 log = logging.getLogger("docintel.restaurant.events.route")
 
@@ -209,7 +217,15 @@ def _stall_row(row: Any) -> dict[str, Any]:
     }
 
 
-def _menu_item_row(row: Any) -> dict[str, Any]:
+async def _menu_item_row(row: Any, inherited_image_gcs_path: str | None = None) -> dict[str, Any]:
+    """`image_gcs_path` stays the item's OWN photo (None unless the owner
+    uploaded/overrode one directly on this event item). `image_url` is what
+    the UI actually renders -- the item's own photo if it has one, else the
+    linked regular-menu-item's photo (same requirement as the public stall
+    menu endpoint below), signed via the same resolver regular menu photos
+    use."""
+    own_path = row["image_gcs_path"]
+    effective_path = own_path or inherited_image_gcs_path
     return {
         "id": str(row["id"]),
         "stall_id": str(row["stall_id"]),
@@ -219,7 +235,9 @@ def _menu_item_row(row: Any) -> dict[str, Any]:
         "description": row["description"],
         "price": float(row["price"]) if row["price"] is not None else None,
         "currency": row["currency"],
-        "image_gcs_path": row["image_gcs_path"],
+        "image_gcs_path": own_path,
+        "image_url": await _resolve_menu_image_url(effective_path),
+        "has_inherited_photo": bool(not own_path and inherited_image_gcs_path),
         "availability": row["availability"],
     }
 
@@ -499,9 +517,15 @@ async def list_my_stalls(restaurant_id: str, current_user: CurrentUser, db=Depen
 async def get_my_stall(restaurant_id: str, stall_id: str, current_user: CurrentUser, db=Depends(get_db)):
     _, stall_row = await _stall_for_owner(db, restaurant_id, stall_id, current_user)
     menu_rows = await db.fetch(
-        "SELECT * FROM restaurant_event_menu_items WHERE stall_id=$1 ORDER BY created_at ASC", stall_id,
+        """
+        SELECT em.*, mi.image_gcs_path AS linked_image_gcs_path
+        FROM restaurant_event_menu_items em
+        LEFT JOIN restaurant_menu_items mi ON mi.id = em.menu_item_id
+        WHERE em.stall_id=$1 ORDER BY em.created_at ASC
+        """,
+        stall_id,
     )
-    return {**_stall_row(stall_row), "menu_items": [_menu_item_row(m) for m in menu_rows]}
+    return {**_stall_row(stall_row), "menu_items": [await _menu_item_row(m, m["linked_image_gcs_path"]) for m in menu_rows]}
 
 
 @router.put("/restaurants/{restaurant_id}/stalls/{stall_id}")
@@ -542,9 +566,15 @@ async def update_my_stall(restaurant_id: str, stall_id: str, body: StallUpdateRe
 async def list_stall_menu_items(restaurant_id: str, stall_id: str, current_user: CurrentUser, db=Depends(get_db)):
     await _stall_for_owner(db, restaurant_id, stall_id, current_user)
     rows = await db.fetch(
-        "SELECT * FROM restaurant_event_menu_items WHERE stall_id=$1 ORDER BY created_at ASC", stall_id,
+        """
+        SELECT em.*, mi.image_gcs_path AS linked_image_gcs_path
+        FROM restaurant_event_menu_items em
+        LEFT JOIN restaurant_menu_items mi ON mi.id = em.menu_item_id
+        WHERE em.stall_id=$1 ORDER BY em.created_at ASC
+        """,
+        stall_id,
     )
-    return {"menu_items": [_menu_item_row(r) for r in rows]}
+    return {"menu_items": [await _menu_item_row(r, r["linked_image_gcs_path"]) for r in rows]}
 
 
 @router.post("/restaurants/{restaurant_id}/stalls/{stall_id}/menu-items")
@@ -552,6 +582,7 @@ async def create_stall_menu_item(restaurant_id: str, stall_id: str, body: EventM
     _, stall_row = await _stall_for_owner(db, restaurant_id, stall_id, current_user)
     event_row = await db.fetchrow("SELECT * FROM restaurant_events WHERE id=$1", stall_row["event_id"])
     _require_event_open_for_edits(event_row)
+    source = None
     if body.menu_item_id:
         source = await db.fetchrow(
             "SELECT * FROM restaurant_menu_items WHERE id=$1 AND restaurant_id=$2", body.menu_item_id, restaurant_id,
@@ -570,7 +601,11 @@ async def create_stall_menu_item(restaurant_id: str, stall_id: str, body: EventM
         stall_id, body.menu_item_id, body.item_name, body.category, body.description,
         body.price, body.currency, body.image_gcs_path, body.availability,
     )
-    return _menu_item_row(row)
+    # A new item linked to a regular menu item inherits that item's photo
+    # (shown via image_url) until/unless the owner uploads an event-specific
+    # one -- same "same photo if available" behavior as the public endpoint.
+    inherited = source["image_gcs_path"] if source else None
+    return await _menu_item_row(row, inherited)
 
 
 @router.put("/restaurants/{restaurant_id}/stalls/{stall_id}/menu-items/{item_id}")
@@ -583,9 +618,15 @@ async def update_stall_menu_item(restaurant_id: str, stall_id: str, item_id: str
     )
     if not existing:
         raise HTTPException(404, "Event menu item not found")
+    inherited = None
+    if existing["menu_item_id"]:
+        linked = await db.fetchrow(
+            "SELECT image_gcs_path FROM restaurant_menu_items WHERE id=$1", existing["menu_item_id"],
+        )
+        inherited = linked["image_gcs_path"] if linked else None
     fields = body.model_dump(exclude_unset=True)
     if not fields:
-        return _menu_item_row(existing)
+        return await _menu_item_row(existing, inherited)
     if not existing["menu_item_id"] and ("item_name" in fields and fields["item_name"] is None):
         raise HTTPException(400, "A standalone event-only item must keep a name")
     set_clauses = []
@@ -598,7 +639,7 @@ async def update_stall_menu_item(restaurant_id: str, stall_id: str, item_id: str
         f"UPDATE restaurant_event_menu_items SET {', '.join(set_clauses)}, updated_at=NOW() WHERE id=${len(values)} RETURNING *",
         *values,
     )
-    return _menu_item_row(updated)
+    return await _menu_item_row(updated, inherited)
 
 
 @router.delete("/restaurants/{restaurant_id}/stalls/{stall_id}/menu-items/{item_id}")
@@ -612,6 +653,86 @@ async def delete_stall_menu_item(restaurant_id: str, stall_id: str, item_id: str
     if result == "DELETE 0":
         raise HTTPException(404, "Event menu item not found")
     return {"deleted": True}
+
+
+# A stall menu item's OWN photo, upload/replace/remove. Mirrors
+# routes.restaurant's menu-item photo endpoints exactly (same validation,
+# size cap, bucket layout convention) -- an item linked to a regular menu
+# item shows that item's photo (via image_url, computed above) until the
+# owner uploads one here; uploading here overrides it for this event only,
+# and removing it here falls back to the linked item's photo again rather
+# than going photo-less.
+@router.post("/restaurants/{restaurant_id}/stalls/{stall_id}/menu-items/{item_id}/photo")
+async def upload_stall_menu_item_photo(
+    restaurant_id: str,
+    stall_id: str,
+    item_id: str,
+    current_user: CurrentUser,
+    photo: UploadFile = File(...),
+    db=Depends(get_db),
+):
+    restaurant_row, stall_row = await _stall_for_owner(db, restaurant_id, stall_id, current_user)
+    event_row = await db.fetchrow("SELECT * FROM restaurant_events WHERE id=$1", stall_row["event_id"])
+    _require_event_open_for_edits(event_row)
+    item_row = await db.fetchrow(
+        "SELECT * FROM restaurant_event_menu_items WHERE id=$1 AND stall_id=$2", item_id, stall_id,
+    )
+    if not item_row:
+        raise HTTPException(404, "Event menu item not found")
+
+    content_type = (photo.content_type or "application/octet-stream").split(";")[0].strip().lower()
+    if content_type not in SUPPORTED_RESTAURANT_IMAGE_TYPES:
+        raise HTTPException(400, f"Unsupported image format: {content_type}")
+    data = await photo.read()
+    if not data:
+        raise HTTPException(400, "No image received")
+    if len(data) > MAX_RESTAURANT_IMAGE_BYTES:
+        raise HTTPException(413, f"Image is too large. Max {MAX_RESTAURANT_IMAGE_BYTES // 1024 // 1024} MB")
+
+    extension = RESTAURANT_IMAGE_EXTENSIONS.get(content_type, "jpg")
+    owner_id = str(restaurant_row["user_id"])
+    image_gcs_path = (
+        f"users/{owner_id}/restaurants/{restaurant_id}/events/{stall_row['event_id']}/"
+        f"stalls/{stall_id}/menu/{item_id}/{uuid.uuid4().hex}.{extension}"
+    )
+    await gcs.upload_bytes(image_gcs_path, data, content_type)
+    await db.execute(
+        "UPDATE restaurant_event_menu_items SET image_gcs_path=$2, updated_at=NOW() WHERE id=$1",
+        item_id, image_gcs_path,
+    )
+    await audit(
+        db,
+        user_id=str(current_user["id"]),
+        action="restaurant_event_menu_item_photo_upload",
+        resource_type="restaurant_event_menu_item",
+        resource_id=item_id,
+        metadata={"restaurant_id": restaurant_id, "stall_id": stall_id, "content_type": content_type, "size": len(data)},
+    )
+    return {"item_id": item_id, "image_url": await _resolve_menu_image_url(image_gcs_path)}
+
+
+@router.delete("/restaurants/{restaurant_id}/stalls/{stall_id}/menu-items/{item_id}/photo")
+async def delete_stall_menu_item_photo(
+    restaurant_id: str, stall_id: str, item_id: str, current_user: CurrentUser, db=Depends(get_db),
+):
+    _, stall_row = await _stall_for_owner(db, restaurant_id, stall_id, current_user)
+    event_row = await db.fetchrow("SELECT * FROM restaurant_events WHERE id=$1", stall_row["event_id"])
+    _require_event_open_for_edits(event_row)
+    item_row = await db.fetchrow(
+        "SELECT * FROM restaurant_event_menu_items WHERE id=$1 AND stall_id=$2", item_id, stall_id,
+    )
+    if not item_row:
+        raise HTTPException(404, "Event menu item not found")
+    await db.execute(
+        "UPDATE restaurant_event_menu_items SET image_gcs_path=NULL, updated_at=NOW() WHERE id=$1", item_id,
+    )
+    inherited = None
+    if item_row["menu_item_id"]:
+        linked = await db.fetchrow(
+            "SELECT image_gcs_path FROM restaurant_menu_items WHERE id=$1", item_row["menu_item_id"],
+        )
+        inherited = linked["image_gcs_path"] if linked else None
+    return {"item_id": item_id, "image_url": await _resolve_menu_image_url(inherited)}
 
 
 # ── Public: stall menu for ordering / the event-scoped Order Assistant ──────
@@ -644,21 +765,22 @@ async def get_stall_menu_public(event_id: str, stall_id: str, current_user: Opti
         """,
         stall_id,
     )
-    return {
-        "stall": _stall_row(stall_row),
-        "menu_items": [
-            {
-                "id": str(r["id"]),
-                "item_name": r["resolved_name"],
-                "category": r["resolved_category"],
-                "description": r["resolved_description"],
-                "price": float(r["resolved_price"]) if r["resolved_price"] is not None else None,
-                "currency": r["currency"],
-                "image_gcs_path": r["resolved_image"],
-            }
-            for r in rows
-        ],
-    }
+    menu_items = []
+    for r in rows:
+        menu_items.append({
+            "id": str(r["id"]),
+            "item_name": r["resolved_name"],
+            "category": r["resolved_category"],
+            "description": r["resolved_description"],
+            "price": float(r["resolved_price"]) if r["resolved_price"] is not None else None,
+            "currency": r["currency"],
+            # Signed, directly renderable URL -- same resolver/convention
+            # used for a restaurant's regular menu item photos -- already
+            # coalesced above to the item's own photo if set, else the
+            # linked regular-menu-item's photo.
+            "image_url": await _resolve_menu_image_url(r["resolved_image"]),
+        })
+    return {"stall": _stall_row(stall_row), "menu_items": menu_items}
 
 
 # ── Customer: placing an order at a stall ───────────────────────────────────

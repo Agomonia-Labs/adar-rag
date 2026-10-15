@@ -270,6 +270,20 @@ export async function deleteMenuItemPhoto(restaurantId, itemId) {
   }));
 }
 
+export async function uploadStallMenuItemPhoto(restaurantId, stallId, itemId, file) {
+  const form = new FormData();
+  form.append('photo', file);
+  return handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}/stalls/${stallId}/menu-items/${itemId}/photo`, {
+    method: 'POST', headers: authHdr(), body: form,
+  }));
+}
+
+export async function deleteStallMenuItemPhoto(restaurantId, stallId, itemId) {
+  return handleRes(await fetch(`${BASE}/restaurant/restaurants/${restaurantId}/stalls/${stallId}/menu-items/${itemId}/photo`, {
+    method: 'DELETE', headers: authHdr(),
+  }));
+}
+
 // ── Menu search / compare / recommend ───────────────────────────────────
 export async function searchRestaurantMenu({ query = '', cuisineType = '', dietaryTag = '', maxPrice = '', marketplace = false, workspaceId = null, geo = {} } = {}) {
   const params = geoParams(geo);
