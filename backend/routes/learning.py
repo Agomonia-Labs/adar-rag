@@ -17,12 +17,87 @@ from services.audit import audit, ip_from, ua_from
 from services.notifications import send_learning_question_notification
 from services.mcp_enterprise import emit_event
 import services.storage as gcs
+from services.content_translation import get_course_translation
+from services.language import normalize_language
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 PERSONAS = {"admin", "teacher", "student", "advisor"}
 MANAGER_PERSONAS = {"admin", "teacher"}
+
+
+def _content_progress_floor(content_progress: dict) -> int:
+    """Derive a progress_pct FLOOR from the content-consumption signals
+    stored on a lesson: actually watching/reading its attached video, audio
+    and document assets (not just opening them) counts for up to 80 of the
+    100 points, and generating/saving a lesson-scoped study guide or
+    key-concepts set adds up to 20 more. Every input here only ever moves
+    forward (each asset's pct is itself merged monotonically below, and a
+    study aid once seen stays seen), so this floor can never regress --
+    callers still GREATEST it against whatever progress_pct is already
+    stored, same as every other progress merge in this file.
+    """
+    content_progress = content_progress or {}
+    assets = content_progress.get("assets") or {}
+    asset_pcts = [int(item.get("pct") or 0) for item in assets.values() if isinstance(item, dict)]
+    content_pct = round(sum(asset_pcts) / len(asset_pcts)) if asset_pcts else None
+    bonus = (10 if content_progress.get("study_guide_seen") else 0) + (10 if content_progress.get("key_concepts_seen") else 0)
+    if content_pct is None:
+        return min(100, bonus)
+    return min(100, round(content_pct * 0.8 + bonus))
+
+
+async def _apply_content_progress(db, course_id: str, module_id: str, lesson_id: str, user_id: str, mutate) -> dict:
+    """Merge one more content-progress signal into this lesson's stored
+    content_progress (mutate() edits the decoded dict in place), and raise
+    progress_pct to match the new floor via GREATEST so it only ever moves
+    forward. Leaves an already-'completed' status alone; otherwise flips
+    'not_started' to 'in_progress' once there's any signal at all.
+    """
+    existing = await db.fetchrow(
+        "SELECT content_progress FROM learning_lesson_progress WHERE lesson_id=$1::uuid AND user_id=$2::uuid",
+        lesson_id, user_id,
+    )
+    content_progress = _decode_json(existing["content_progress"], {}) if existing else {}
+    mutate(content_progress)
+    floor = _content_progress_floor(content_progress)
+    row = await db.fetchrow(
+        """INSERT INTO learning_lesson_progress
+           (course_id,module_id,lesson_id,user_id,status,progress_pct,content_progress,started_at)
+           VALUES ($1,$2,$3,$4,'in_progress',$5,$6::jsonb,NOW())
+           ON CONFLICT (lesson_id,user_id) DO UPDATE SET
+             status=CASE WHEN learning_lesson_progress.status IN ('completed','in_progress') THEN learning_lesson_progress.status
+                         ELSE 'in_progress' END,
+             progress_pct=GREATEST(learning_lesson_progress.progress_pct,EXCLUDED.progress_pct),
+             content_progress=EXCLUDED.content_progress,
+             started_at=COALESCE(learning_lesson_progress.started_at,NOW()),
+             updated_at=NOW()
+           RETURNING *""",
+        course_id, module_id, lesson_id, user_id, floor, json.dumps(content_progress),
+    )
+    result = _jsonable(dict(row))
+    result["content_progress"] = content_progress
+    return result
+
+
+def _course_manage_allowed(course: dict, extra_personas: frozenset = frozenset()) -> bool:
+    """Whether this user manages THIS course -- author curriculum, create/
+    review/evaluate assignments, moderate discussion, etc.
+
+    A course-level enrollment persona (teacher/admin/student/advisor) governs
+    once the user is actually enrolled in the course: someone enrolled as a
+    student in THIS course gets the student experience here, full stop, even
+    if they happen to also be the workspace's owner or an editor -- no
+    blanket workspace-role override. The workspace-role fallback applies only
+    when there is no course persona at all (the user never personally
+    enrolled in this course), so a workspace manager can still administer
+    courses they didn't join as a member.
+    """
+    persona = course.get("persona")
+    if persona:
+        return persona in (MANAGER_PERSONAS | extra_personas)
+    return course.get("workspace_role") in ("owner", "editor")
 ARTIFACT_TYPES = {"summary", "study_guide", "key_concepts", "flashcards", "practice_questions"}
 DOMAIN_PACKS = {
     "general": {"label": "General learning", "reviewer_persona": "teacher", "tutor_focus": "Explain the approved course evidence clearly."},
@@ -72,6 +147,20 @@ class CourseUpdate(BaseModel):
 class MemberCreate(BaseModel):
     email: str
     persona: Literal["admin", "teacher", "student", "advisor"] = "student"
+
+
+class BulkMemberRow(BaseModel):
+    email: str
+    persona: Literal["admin", "teacher", "student", "advisor"] = "student"
+
+
+class BulkMemberCreate(BaseModel):
+    """CSV-driven roster import. Same authorization and per-row rules as
+    add_member/MemberCreate above (a row is never auto-granted workspace
+    membership -- that stays an explicit, workspace-owner-only action via
+    invite_member in workspaces.py), just applied to many rows in one call
+    so a teacher isn't making N separate requests for a class roster."""
+    members: list[BulkMemberRow] = Field(min_length=1, max_length=1000)
 
 
 class CourseMemberProfileUpdate(BaseModel):
@@ -158,7 +247,11 @@ class ArtifactCreate(BaseModel):
 
 
 class QuizAttemptCreate(BaseModel):
-    answers: dict[str, list[str]] = Field(default_factory=dict)
+    # A multiple-choice answer is a list of selected option ids; a
+    # short-answer answer is the student's free-text response. Both share
+    # one field (instead of a second "text_answers" dict) so a client can
+    # submit either kind through the same shape, keyed by question id.
+    answers: dict[str, list[str] | str] = Field(default_factory=dict)
     replace: bool = False
 
 
@@ -180,6 +273,18 @@ class LessonProgressUpdate(BaseModel):
         return self
 
 
+class ContentProgressUpdate(BaseModel):
+    # kind mirrors documents.file_type for the asset being watched/read;
+    # pct and consumed are computed client-side (watch-time with seeks and
+    # faster-than-real-time playback discounted out for video/audio, dwell
+    # time for a document) -- see _content_progress_floor below for how
+    # this feeds progress_pct, and update_lesson_progress for how it gates
+    # manually marking a lesson complete.
+    kind: Literal["video", "audio", "document"]
+    pct: int = Field(ge=0, le=100)
+    consumed: bool = False
+
+
 class PracticeOption(BaseModel):
     id: str = Field(min_length=1, max_length=12)
     text: str = Field(min_length=1, max_length=1000)
@@ -188,17 +293,31 @@ class PracticeOption(BaseModel):
 
 class PracticeQuestion(BaseModel):
     id: str = Field(min_length=1, max_length=80)
+    # "mcq" (the original, only) shape stays exactly as before -- four
+    # labeled options, at least one correct, graded by exact-set match.
+    # "short_answer" is a free-text question graded by an LLM against
+    # `expected_answer` rather than by option matching -- see
+    # _grade_short_answer below.
+    type: Literal["mcq", "short_answer"] = "mcq"
     question: str = Field(min_length=1, max_length=4000)
-    options: list[PracticeOption] = Field(min_length=4, max_length=4)
-    explanation: str = Field(min_length=1, max_length=4000)
+    options: list[PracticeOption] = Field(default_factory=list, max_length=4)
+    explanation: str = Field(default="", max_length=4000)
+    expected_answer: str | None = Field(default=None, max_length=4000)
+    max_words: int = Field(default=150, ge=20, le=500)
 
     @model_validator(mode="after")
-    def validate_options(self):
-        option_ids = [option.id for option in self.options]
-        if set(option_ids) != {"A", "B", "C", "D"}:
-            raise ValueError("Practice-question options must be labeled A, B, C, and D")
-        if not any(option.correct for option in self.options):
-            raise ValueError("A practice question must have at least one correct answer")
+    def validate_question(self):
+        if self.type == "mcq":
+            option_ids = [option.id for option in self.options]
+            if set(option_ids) != {"A", "B", "C", "D"}:
+                raise ValueError("Multiple-choice questions must have exactly four options labeled A, B, C, and D")
+            if not any(option.correct for option in self.options):
+                raise ValueError("A multiple-choice question must have at least one correct answer")
+            if not self.explanation:
+                raise ValueError("A multiple-choice question needs an explanation")
+        else:
+            if not (self.expected_answer or "").strip():
+                raise ValueError("A short-answer question needs an expected_answer reference for grading")
         return self
 
 
@@ -236,6 +355,15 @@ class QuestionUpdate(BaseModel):
     answer: str | None = None
     status: Literal["open", "answered", "closed"] | None = None
     assigned_to: str | None = None
+
+
+class DiscussionPostCreate(BaseModel):
+    """A reply in an assignment's discussion thread -- distinct from
+    QuestionCreate above, which escalates a single question to one
+    teacher/advisor. This is an open, assignment-scoped thread any enrolled
+    course member (student, teacher, admin) can read and post to."""
+    body: str = Field(min_length=1, max_length=8000)
+    parent_post_id: str | None = None
 
 
 class RubricCriterion(BaseModel):
@@ -429,10 +557,14 @@ def _normalize_submission_evaluation(result: dict, assignment: dict) -> dict:
 
 
 def _can_run_submission_evaluation(submission: dict) -> bool:
-    if submission.get("status") == "submitted":
-        return True
-    evaluation = _decode_json(submission.get("ai_evaluation"), {})
-    return submission.get("status") == "in_review" and evaluation.get("status") == "needs_human_review"
+    # A teacher should be able to re-run AI evaluation on their own say-so --
+    # e.g. the rubric changed, or they just want a second pass -- not only
+    # when the previous attempt degraded to "needs_human_review". The only
+    # states that should actually block it are "draft" (nothing submitted
+    # yet) and the two the teacher has already acted on ("approved",
+    # "revision_requested"), since re-evaluating those would silently
+    # overwrite a decision that's already been made.
+    return submission.get("status") in ("submitted", "in_review")
 
 
 async def _generate_submission_evaluation(assignment: dict, submission: dict, evidence: str) -> dict:
@@ -505,15 +637,14 @@ async def _course_access(db, course_id: str, user_id: str, manage: bool = False)
     is_workspace_manager = ROLE_ORDER.get(data.get("workspace_role"), -1) >= ROLE_ORDER["editor"]
     if not data.get("persona") and not is_workspace_manager:
         raise HTTPException(403, "You are not enrolled in this course")
-    if manage and not (is_workspace_manager or data.get("persona") in MANAGER_PERSONAS):
+    if manage and not _course_manage_allowed(data):
         raise HTTPException(403, "Course administration requires a teacher or admin role")
     return data
 
 
 async def _course_calendar_access(db, course_id: str, user_id: str):
     course = await _course_access(db, course_id, user_id)
-    is_workspace_manager = course.get("workspace_role") in ("owner", "editor")
-    if not (is_workspace_manager or course.get("persona") in {"admin", "teacher", "advisor"}):
+    if not _course_manage_allowed(course, extra_personas=frozenset({"advisor"})):
         raise HTTPException(403, "Course calendar updates require an advisor, teacher, or admin role")
     return course
 
@@ -649,27 +780,97 @@ async def list_domain_packs(current_user: CurrentUser):
     return [{"id": key, **value} for key, value in DOMAIN_PACKS.items()]
 
 
-def _grade_practice_quiz(quiz: PracticeQuiz, answers: dict[str, list[str]]) -> dict:
+async def _grade_short_answer(question: "PracticeQuestion", student_answer: str) -> dict:
+    """Grades one free-text answer against the question's own expected-answer
+    reference, mirroring the pattern already used for assignment AI-rubric
+    evaluation (_generate_submission_evaluation above): a one-shot,
+    JSON-enforced chat_json() call, two attempts, and a graceful
+    needs_review fallback rather than a hard failure if the model call
+    errors or returns something unparseable -- a learner's quiz submit
+    should never 500 just because grading is briefly unavailable.
+    """
+    from services.llm import chat_json
+
+    system_prompt = (
+        "You are a strict but fair grader for a short-answer quiz question. Judge the student's answer only "
+        "against the provided question and expected-answer reference -- credit it for capturing the key idea(s) "
+        "in the student's own words, not for matching exact phrasing. Return JSON only, without Markdown or "
+        "commentary, using exactly this shape: "
+        '{"is_correct":true,"score":0,"feedback":"...","suggested_answer":"..."}. '
+        "score is an integer 0-100 reflecting how complete and accurate the answer is. feedback is 1-3 sentences "
+        "explaining what was right or what was missing. suggested_answer is a concise model answer (2-4 "
+        "sentences) the student can compare their own answer against."
+    )
+    payload = {
+        "question": question.question,
+        "expected_answer": question.expected_answer,
+        "student_answer": student_answer,
+    }
+    last_error: Exception | None = None
+    for _attempt in range(2):
+        try:
+            result = await chat_json([{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}], system_prompt)
+            score = int(result.get("score", 0))
+            if not (0 <= score <= 100):
+                raise ValueError("score out of range")
+            return {
+                "is_correct": bool(result.get("is_correct")),
+                "score": score,
+                "feedback": str(result.get("feedback") or "").strip() or "No feedback was returned.",
+                "suggested_answer": str(result.get("suggested_answer") or "").strip() or (question.expected_answer or ""),
+                "needs_review": False,
+            }
+        except Exception as exc:  # noqa: BLE001 -- any parse/model failure degrades gracefully, never 500s
+            last_error = exc
+    logging.getLogger(__name__).warning("Short-answer grading unavailable for question %s: %s", question.id, last_error)
+    return {
+        "is_correct": False,
+        "score": None,
+        "feedback": "Automatic grading is temporarily unavailable. Your answer was saved -- try again shortly, or ask your instructor to review it.",
+        "suggested_answer": question.expected_answer or "",
+        "needs_review": True,
+    }
+
+
+async def _grade_practice_quiz(quiz: PracticeQuiz, answers: dict[str, list[str] | str]) -> dict:
     results: dict[str, dict] = {}
     correct_count = 0
     valid_questions = {question.id: question for question in quiz.questions}
-    for question_id, selected in answers.items():
+    for question_id, submitted in answers.items():
         question = valid_questions.get(question_id)
         if not question:
             raise HTTPException(400, f"Unknown practice question: {question_id}")
-        selected_ids = sorted(set(selected))
-        valid_options = {option.id for option in question.options}
-        if not set(selected_ids) <= valid_options:
-            raise HTTPException(400, f"Invalid option for practice question: {question_id}")
-        correct_ids = sorted(option.id for option in question.options if option.correct)
-        is_correct = selected_ids == correct_ids
-        correct_count += int(is_correct)
-        results[question_id] = {
-            "selected": selected_ids,
-            "correct": correct_ids,
-            "is_correct": is_correct,
-            "explanation": question.explanation,
-        }
+        if question.type == "short_answer":
+            student_answer = str(submitted if isinstance(submitted, str) else "").strip()
+            if not student_answer:
+                raise HTTPException(400, f"A written answer is required for question: {question_id}")
+            word_count = len(student_answer.split())
+            if word_count > question.max_words + 25:  # small grace margin over the stated limit
+                raise HTTPException(400, f"Answer for question {question_id} is over the {question.max_words}-word limit")
+            graded = await _grade_short_answer(question, student_answer)
+            correct_count += int(graded["is_correct"])
+            results[question_id] = {
+                "answer": student_answer,
+                "is_correct": graded["is_correct"],
+                "score": graded["score"],
+                "feedback": graded["feedback"],
+                "suggested_answer": graded["suggested_answer"],
+                "needs_review": graded["needs_review"],
+            }
+        else:
+            selected_ids = sorted(set(submitted if isinstance(submitted, list) else []))
+            valid_options = {option.id for option in question.options}
+            if not set(selected_ids) <= valid_options:
+                raise HTTPException(400, f"Invalid option for practice question: {question_id}")
+            correct_ids = sorted(option.id for option in question.options if option.correct)
+            is_correct = selected_ids == correct_ids
+            correct_count += int(is_correct)
+            results[question_id] = {
+                "selected": selected_ids,
+                "correct": correct_ids,
+                "is_correct": is_correct,
+                "explanation": question.explanation,
+            }
     return {
         "result": results,
         "correct_count": correct_count,
@@ -738,6 +939,25 @@ async def get_course(course_id: str, current_user: CurrentUser, db=Depends(get_d
     return await _course_workspace(db, course_id, str(current_user["id"]))
 
 
+@router.get("/courses/{course_id}/translation")
+async def get_course_translation_route(
+    course_id: str, current_user: CurrentUser, language: str = "en", db=Depends(get_db),
+):
+    """Returns the course's own authored content (title/description/
+    objectives, module/lesson titles+descriptions, assignment titles+
+    descriptions, calendar item titles+descriptions) translated into
+    `language`, cached per (course_id, language) -- see
+    services/content_translation.py. `fields` is null for English or if
+    translation isn't available right now; the frontend falls back to the
+    original English content in either case rather than erroring."""
+    await _course_access(db, course_id, str(current_user["id"]))
+    try:
+        fields = await get_course_translation(db, course_id, language)
+    except Exception:
+        fields = None
+    return {"language": normalize_language(language), "fields": fields}
+
+
 @router.get("/courses/{course_id}/scope")
 async def resolve_learning_scope(
     course_id: str, current_user: CurrentUser, module_id: str | None = None,
@@ -798,6 +1018,43 @@ async def add_member(course_id: str, body: MemberCreate, current_user: CurrentUs
         course_id, str(target["id"]), body.persona, user_id,
     )
     return await _course_workspace(db, course_id, user_id)
+
+
+@router.post("/courses/{course_id}/members/bulk")
+async def add_members_bulk(course_id: str, body: BulkMemberCreate, current_user: CurrentUser, db=Depends(get_db)):
+    """Bulk roster import for students (or teachers/admins) who already have
+    a DocIntel account and are already workspace members -- the same two
+    preconditions add_member enforces one row at a time. Never raises on a
+    bad row: each row gets its own status in the response so a teacher can
+    see exactly which 3 of 30 rows need the student to sign up or be added
+    to the workspace first, without the other 27 failing alongside them."""
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id, manage=True)
+    workspace_id = str(course["workspace_id"])
+    results = []
+    for row in body.members:
+        email = row.email.strip()
+        target = await db.fetchrow("SELECT id,email,full_name FROM users WHERE LOWER(email)=LOWER($1)", email)
+        if not target:
+            results.append({"email": email, "persona": row.persona, "status": "no_account",
+                             "detail": "No DocIntel account exists for this email yet."})
+            continue
+        membership = await db.fetchrow(
+            "SELECT 1 FROM workspace_members WHERE workspace_id=$1 AND user_id=$2", workspace_id, str(target["id"]),
+        )
+        if not membership:
+            results.append({"email": email, "persona": row.persona, "status": "not_in_workspace",
+                             "detail": "This account exists but is not a member of the course's workspace yet."})
+            continue
+        await db.execute(
+            """INSERT INTO learning_course_members (course_id,user_id,persona,added_by)
+               VALUES ($1,$2,$3,$4) ON CONFLICT (course_id,user_id)
+               DO UPDATE SET persona=EXCLUDED.persona,added_by=EXCLUDED.added_by""",
+            course_id, str(target["id"]), row.persona, user_id,
+        )
+        results.append({"email": email, "persona": row.persona, "status": "enrolled", "detail": ""})
+    enrolled_count = sum(1 for r in results if r["status"] == "enrolled")
+    return {"results": results, "enrolled_count": enrolled_count, "total": len(results)}
 
 
 @router.get("/courses/{course_id}/directory")
@@ -1240,7 +1497,7 @@ async def save_assignment_submission(
     assignment = await db.fetchrow(
         "SELECT * FROM learning_assignments WHERE id=$1::uuid AND course_id=$2::uuid", assignment_id, course_id,
     )
-    if not assignment or (assignment["publication_status"] == "draft" and not course.get("persona") in MANAGER_PERSONAS):
+    if not assignment or (assignment["publication_status"] == "draft" and not _course_manage_allowed(course)):
         raise HTTPException(404, "Assignment not found")
     if assignment["publication_status"] == "closed":
         raise HTTPException(409, "This assignment is closed")
@@ -1398,7 +1655,54 @@ async def save_artifact(course_id: str, body: ArtifactCreate, current_user: Curr
         course_id, user_id, body.artifact_type, body.title.strip(), content,
         json.dumps(body.source_document_ids), scope["module_id"], scope["lesson_id"],
     )
+    if scope["lesson_id"] and body.artifact_type in ("study_guide", "key_concepts"):
+        flag = "study_guide_seen" if body.artifact_type == "study_guide" else "key_concepts_seen"
+        await _apply_content_progress(
+            db, course_id, scope["module_id"], scope["lesson_id"], user_id,
+            lambda cp, flag=flag: cp.__setitem__(flag, True),
+        )
     return _jsonable(dict(row))
+
+
+@router.put("/courses/{course_id}/lessons/{lesson_id}/assets/{document_id}/consumption")
+async def update_content_consumption(
+    course_id: str, lesson_id: str, document_id: str, body: ContentProgressUpdate,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    """Records one watch/read-progress tick for an asset attached to this
+    lesson. pct/consumed are computed client-side (see ContentProgressUpdate)
+    and merged monotonically -- a tick can only raise an asset's recorded
+    pct, never lower it, so a later partial re-watch can't erase earlier
+    progress."""
+    user_id = str(current_user["id"])
+    await _course_access(db, course_id, user_id)
+    lesson = await db.fetchrow(
+        """SELECT l.id,l.module_id FROM learning_lessons l
+           JOIN learning_modules m ON m.id=l.module_id
+           WHERE l.id=$1::uuid AND m.course_id=$2::uuid""",
+        lesson_id, course_id,
+    )
+    if not lesson:
+        raise HTTPException(404, "Lesson not found in this course")
+    asset = await db.fetchrow(
+        "SELECT id FROM learning_assets WHERE course_id=$1::uuid AND document_id=$2::uuid",
+        course_id, document_id,
+    )
+    if not asset:
+        raise HTTPException(404, "This content is not attached to the course")
+
+    def mutate(cp):
+        assets_map = cp.setdefault("assets", {})
+        existing_entry = assets_map.get(document_id) or {}
+        merged_pct = max(int(existing_entry.get("pct") or 0), int(body.pct))
+        assets_map[document_id] = {
+            "kind": body.kind,
+            "pct": merged_pct,
+            "consumed": bool(existing_entry.get("consumed")) or bool(body.consumed) or merged_pct >= 90,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    return await _apply_content_progress(db, course_id, str(lesson["module_id"]), lesson_id, user_id, mutate)
 
 
 @router.post("/courses/{course_id}/artifacts/{artifact_id}/attempts")
@@ -1422,7 +1726,7 @@ async def submit_quiz_attempt(
     )
     answers = {} if body.replace else (_decode_json(existing["answers"], {}) if existing else {})
     answers.update(body.answers)
-    graded = _grade_practice_quiz(quiz, answers)
+    graded = await _grade_practice_quiz(quiz, answers)
     row = await db.fetchrow(
         """INSERT INTO learning_quiz_attempts
            (course_id,artifact_id,user_id,answers,result,correct_count,question_count,completed)
@@ -1471,10 +1775,7 @@ async def submit_quiz_attempt(
 async def get_learning_progress(course_id: str, current_user: CurrentUser, db=Depends(get_db)):
     user_id = str(current_user["id"])
     course = await _course_access(db, course_id, user_id)
-    can_review = bool(
-        course.get("workspace_role") in ("owner", "editor")
-        or course.get("persona") in MANAGER_PERSONAS | {"advisor"}
-    )
+    can_review = _course_manage_allowed(course, extra_personas=frozenset({"advisor"}))
     rows = await db.fetch(
         """SELECT qa.*,u.email,u.full_name,a.title AS artifact_title
            FROM learning_quiz_attempts qa
@@ -1501,6 +1802,25 @@ async def update_lesson_progress(
     )
     if not lesson:
         raise HTTPException(404, "Lesson not found in this course")
+    if body.status == "completed":
+        trackable = await db.fetch(
+            """SELECT a.document_id FROM learning_assets a JOIN documents d ON d.id=a.document_id
+               WHERE a.course_id=$1::uuid AND a.lesson_id=$2::uuid AND d.file_type IN ('video','audio','pdf','docx')""",
+            course_id, lesson_id,
+        )
+        if trackable:
+            existing = await db.fetchrow(
+                "SELECT content_progress FROM learning_lesson_progress WHERE lesson_id=$1::uuid AND user_id=$2::uuid",
+                lesson_id, user_id,
+            )
+            assets_map = (_decode_json(existing["content_progress"], {}) if existing else {}).get("assets") or {}
+            unread = sum(1 for a in trackable if not (assets_map.get(str(a["document_id"])) or {}).get("consumed"))
+            if unread:
+                raise HTTPException(
+                    400,
+                    f"Finish watching or reading this lesson's attached content before marking it complete "
+                    f"({unread} item{'s' if unread != 1 else ''} remaining).",
+                )
     row = await db.fetchrow(
         """INSERT INTO learning_lesson_progress
            (course_id,module_id,lesson_id,user_id,status,progress_pct,time_spent_seconds,
@@ -1537,10 +1857,7 @@ async def get_learning_mastery(
 ):
     user_id = str(current_user["id"])
     course = await _course_access(db, course_id, user_id)
-    can_review = bool(
-        course.get("workspace_role") in ("owner", "editor")
-        or course.get("persona") in MANAGER_PERSONAS | {"advisor"}
-    )
+    can_review = _course_manage_allowed(course, extra_personas=frozenset({"advisor"}))
     target_user_id = learner_id or user_id
     if target_user_id != user_id and not can_review:
         raise HTTPException(403, "Only a teacher, advisor, or admin may review another learner")
@@ -1574,7 +1891,11 @@ async def get_learning_mastery(
     )
     return _build_mastery_projection(
         _course_response(course), [_jsonable(dict(row)) for row in modules],
-        [_jsonable(dict(row)) for row in lessons], [_jsonable(dict(row)) for row in progress],
+        [_jsonable(dict(row)) for row in lessons],
+        [
+            {**_jsonable(dict(row)), "content_progress": _decode_json(row["content_progress"], {})}
+            for row in progress
+        ],
         [_quiz_attempt_response(row) for row in attempts], _jsonable(dict(member)),
     )
 
@@ -1623,7 +1944,7 @@ async def answer_human(course_id: str, question_id: str, body: QuestionUpdate, r
     question = await db.fetchrow("SELECT * FROM learning_questions WHERE id=$1 AND course_id=$2", question_id, course_id)
     if not question:
         raise HTTPException(404, "Question not found")
-    is_reviewer = persona in MANAGER_PERSONAS | {"advisor"} or course.get("workspace_role") in ("owner", "editor")
+    is_reviewer = _course_manage_allowed(course, extra_personas=frozenset({"advisor"}))
     is_asker = str(question["asked_by"]) == user_id
     if not is_reviewer and not is_asker:
         raise HTTPException(403, "You cannot update this question")
@@ -1658,6 +1979,296 @@ async def answer_human(course_id: str, question_id: str, body: QuestionUpdate, r
             resource_id=question_id, payload={"course_id": course_id, "status": status},
         )
     return _question_response(row)
+
+
+async def _assignment_in_course(db, course_id: str, assignment_id: str):
+    assignment = await db.fetchrow(
+        "SELECT * FROM learning_assignments WHERE id=$1::uuid AND course_id=$2::uuid",
+        assignment_id, course_id,
+    )
+    if not assignment:
+        raise HTTPException(404, "Assignment not found")
+    return assignment
+
+
+def _discussion_post_response(row) -> dict:
+    result = _jsonable(dict(row))
+    if result.get("deleted_at"):
+        result["body"] = ""
+    return result
+
+
+def _discussion_can_delete(course: dict, user_id: str, row) -> bool:
+    is_moderator = _course_manage_allowed(course)
+    return is_moderator or str(row["author_id"]) == user_id
+
+
+@router.get("/courses/{course_id}/assignments/{assignment_id}/discussion")
+async def list_assignment_discussion(course_id: str, assignment_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id)
+    await _assignment_in_course(db, course_id, assignment_id)
+    rows = await db.fetch(
+        """SELECT p.*, u.full_name AS author_name, u.email AS author_email
+           FROM learning_assignment_discussion_posts p JOIN users u ON u.id=p.author_id
+           WHERE p.assignment_id=$1::uuid ORDER BY p.created_at""",
+        assignment_id,
+    )
+    posts = []
+    for row in rows:
+        result = _discussion_post_response(row)
+        result["can_delete"] = _discussion_can_delete(course, user_id, row)
+        posts.append(result)
+    return {"posts": posts}
+
+
+@router.post("/courses/{course_id}/assignments/{assignment_id}/discussion")
+async def create_assignment_discussion_post(
+    course_id: str, assignment_id: str, body: DiscussionPostCreate, request: Request,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id)
+    assignment = await _assignment_in_course(db, course_id, assignment_id)
+    is_manager = _course_manage_allowed(course)
+    if assignment["publication_status"] == "draft" and not is_manager:
+        raise HTTPException(404, "Assignment not found")
+    if body.parent_post_id:
+        parent = await db.fetchrow(
+            "SELECT id FROM learning_assignment_discussion_posts WHERE id=$1::uuid AND assignment_id=$2::uuid AND deleted_at IS NULL",
+            body.parent_post_id, assignment_id,
+        )
+        if not parent:
+            raise HTTPException(404, "The post you are replying to was not found")
+    persona = course.get("persona") or ("admin" if is_manager else "student")
+    row = await db.fetchrow(
+        """INSERT INTO learning_assignment_discussion_posts (course_id,assignment_id,author_id,author_persona,body,parent_post_id)
+           VALUES ($1,$2,$3,$4,$5,$6) RETURNING *""",
+        course_id, assignment_id, user_id, persona, body.body.strip(), body.parent_post_id,
+    )
+    await audit(db, user_id=user_id, action="learning_discussion_post_create", resource_type="learning_assignment_discussion_post",
+                resource_id=str(row["id"]), metadata={"course_id": course_id, "assignment_id": assignment_id},
+                ip_address=ip_from(request), user_agent=ua_from(request))
+    await emit_event(
+        db, user_id=user_id, workspace_id=str(course["workspace_id"]),
+        event_type="learning.assignment.discussion_post_created", resource_type="learning_assignment_discussion_post",
+        resource_id=str(row["id"]), payload={"course_id": course_id, "assignment_id": assignment_id},
+    )
+    author = await db.fetchrow("SELECT full_name,email FROM users WHERE id=$1", user_id)
+    result = _discussion_post_response(row)
+    result["author_name"] = author["full_name"] if author else None
+    result["author_email"] = author["email"] if author else None
+    result["can_delete"] = True
+    return result
+
+
+@router.delete("/courses/{course_id}/assignments/{assignment_id}/discussion/{post_id}")
+async def delete_assignment_discussion_post(
+    course_id: str, assignment_id: str, post_id: str, current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id)
+    await _assignment_in_course(db, course_id, assignment_id)
+    post = await db.fetchrow(
+        "SELECT * FROM learning_assignment_discussion_posts WHERE id=$1::uuid AND assignment_id=$2::uuid",
+        post_id, assignment_id,
+    )
+    if not post or post["deleted_at"]:
+        raise HTTPException(404, "Discussion post not found")
+    is_moderator = _course_manage_allowed(course)
+    is_author = str(post["author_id"]) == user_id
+    if not is_moderator and not is_author:
+        raise HTTPException(403, "You cannot delete this post")
+    await db.execute(
+        "UPDATE learning_assignment_discussion_posts SET deleted_at=NOW(),deleted_by=$2,updated_at=NOW() WHERE id=$1",
+        post_id, user_id,
+    )
+    return {"ok": True}
+
+
+# ── Module- and lesson-scoped discussion (same table/shape as assignment
+# discussion above, generalized via the module_id/lesson_id columns) --
+# lets students post comments/questions on a module or a specific lesson
+# and get peer/teacher replies, mirroring the assignment thread but scoped
+# to curriculum content instead of a graded assignment. ───────────────────
+
+async def _module_in_course(db, course_id: str, module_id: str) -> dict:
+    module = await db.fetchrow(
+        "SELECT * FROM learning_modules WHERE id=$1::uuid AND course_id=$2::uuid",
+        module_id, course_id,
+    )
+    if not module:
+        raise HTTPException(404, "Module not found")
+    return module
+
+
+async def _lesson_in_course(db, course_id: str, lesson_id: str) -> dict:
+    lesson = await db.fetchrow(
+        """SELECT l.* FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id
+           WHERE l.id=$1::uuid AND m.course_id=$2::uuid""",
+        lesson_id, course_id,
+    )
+    if not lesson:
+        raise HTTPException(404, "Lesson not found")
+    return lesson
+
+
+@router.get("/courses/{course_id}/modules/{module_id}/discussion")
+async def list_module_discussion(course_id: str, module_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id)
+    await _module_in_course(db, course_id, module_id)
+    rows = await db.fetch(
+        """SELECT p.*, u.full_name AS author_name, u.email AS author_email
+           FROM learning_assignment_discussion_posts p JOIN users u ON u.id=p.author_id
+           WHERE p.module_id=$1::uuid AND p.lesson_id IS NULL ORDER BY p.created_at""",
+        module_id,
+    )
+    posts = []
+    for row in rows:
+        result = _discussion_post_response(row)
+        result["can_delete"] = _discussion_can_delete(course, user_id, row)
+        posts.append(result)
+    return {"posts": posts}
+
+
+@router.post("/courses/{course_id}/modules/{module_id}/discussion")
+async def create_module_discussion_post(
+    course_id: str, module_id: str, body: DiscussionPostCreate, request: Request,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id)
+    await _module_in_course(db, course_id, module_id)
+    if body.parent_post_id:
+        parent = await db.fetchrow(
+            "SELECT id FROM learning_assignment_discussion_posts WHERE id=$1::uuid AND module_id=$2::uuid AND deleted_at IS NULL",
+            body.parent_post_id, module_id,
+        )
+        if not parent:
+            raise HTTPException(404, "The post you are replying to was not found")
+    is_manager = _course_manage_allowed(course)
+    persona = course.get("persona") or ("admin" if is_manager else "student")
+    row = await db.fetchrow(
+        """INSERT INTO learning_assignment_discussion_posts (course_id,module_id,author_id,author_persona,body,parent_post_id)
+           VALUES ($1,$2,$3,$4,$5,$6) RETURNING *""",
+        course_id, module_id, user_id, persona, body.body.strip(), body.parent_post_id,
+    )
+    await audit(db, user_id=user_id, action="learning_discussion_post_create", resource_type="learning_module_discussion_post",
+                resource_id=str(row["id"]), metadata={"course_id": course_id, "module_id": module_id},
+                ip_address=ip_from(request), user_agent=ua_from(request))
+    await emit_event(
+        db, user_id=user_id, workspace_id=str(course["workspace_id"]),
+        event_type="learning.module.discussion_post_created", resource_type="learning_module_discussion_post",
+        resource_id=str(row["id"]), payload={"course_id": course_id, "module_id": module_id},
+    )
+    author = await db.fetchrow("SELECT full_name,email FROM users WHERE id=$1", user_id)
+    result = _discussion_post_response(row)
+    result["author_name"] = author["full_name"] if author else None
+    result["author_email"] = author["email"] if author else None
+    result["can_delete"] = True
+    return result
+
+
+@router.delete("/courses/{course_id}/modules/{module_id}/discussion/{post_id}")
+async def delete_module_discussion_post(
+    course_id: str, module_id: str, post_id: str, current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id)
+    await _module_in_course(db, course_id, module_id)
+    post = await db.fetchrow(
+        "SELECT * FROM learning_assignment_discussion_posts WHERE id=$1::uuid AND module_id=$2::uuid",
+        post_id, module_id,
+    )
+    if not post or post["deleted_at"]:
+        raise HTTPException(404, "Discussion post not found")
+    if not _discussion_can_delete(course, user_id, post):
+        raise HTTPException(403, "You cannot delete this post")
+    await db.execute(
+        "UPDATE learning_assignment_discussion_posts SET deleted_at=NOW(),deleted_by=$2,updated_at=NOW() WHERE id=$1",
+        post_id, user_id,
+    )
+    return {"ok": True}
+
+
+@router.get("/courses/{course_id}/lessons/{lesson_id}/discussion")
+async def list_lesson_discussion(course_id: str, lesson_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id)
+    await _lesson_in_course(db, course_id, lesson_id)
+    rows = await db.fetch(
+        """SELECT p.*, u.full_name AS author_name, u.email AS author_email
+           FROM learning_assignment_discussion_posts p JOIN users u ON u.id=p.author_id
+           WHERE p.lesson_id=$1::uuid ORDER BY p.created_at""",
+        lesson_id,
+    )
+    posts = []
+    for row in rows:
+        result = _discussion_post_response(row)
+        result["can_delete"] = _discussion_can_delete(course, user_id, row)
+        posts.append(result)
+    return {"posts": posts}
+
+
+@router.post("/courses/{course_id}/lessons/{lesson_id}/discussion")
+async def create_lesson_discussion_post(
+    course_id: str, lesson_id: str, body: DiscussionPostCreate, request: Request,
+    current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id)
+    lesson = await _lesson_in_course(db, course_id, lesson_id)
+    if body.parent_post_id:
+        parent = await db.fetchrow(
+            "SELECT id FROM learning_assignment_discussion_posts WHERE id=$1::uuid AND lesson_id=$2::uuid AND deleted_at IS NULL",
+            body.parent_post_id, lesson_id,
+        )
+        if not parent:
+            raise HTTPException(404, "The post you are replying to was not found")
+    is_manager = _course_manage_allowed(course)
+    persona = course.get("persona") or ("admin" if is_manager else "student")
+    row = await db.fetchrow(
+        """INSERT INTO learning_assignment_discussion_posts (course_id,module_id,lesson_id,author_id,author_persona,body,parent_post_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *""",
+        course_id, lesson["module_id"], lesson_id, user_id, persona, body.body.strip(), body.parent_post_id,
+    )
+    await audit(db, user_id=user_id, action="learning_discussion_post_create", resource_type="learning_lesson_discussion_post",
+                resource_id=str(row["id"]), metadata={"course_id": course_id, "lesson_id": lesson_id},
+                ip_address=ip_from(request), user_agent=ua_from(request))
+    await emit_event(
+        db, user_id=user_id, workspace_id=str(course["workspace_id"]),
+        event_type="learning.lesson.discussion_post_created", resource_type="learning_lesson_discussion_post",
+        resource_id=str(row["id"]), payload={"course_id": course_id, "lesson_id": lesson_id},
+    )
+    author = await db.fetchrow("SELECT full_name,email FROM users WHERE id=$1", user_id)
+    result = _discussion_post_response(row)
+    result["author_name"] = author["full_name"] if author else None
+    result["author_email"] = author["email"] if author else None
+    result["can_delete"] = True
+    return result
+
+
+@router.delete("/courses/{course_id}/lessons/{lesson_id}/discussion/{post_id}")
+async def delete_lesson_discussion_post(
+    course_id: str, lesson_id: str, post_id: str, current_user: CurrentUser, db=Depends(get_db),
+):
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id)
+    await _lesson_in_course(db, course_id, lesson_id)
+    post = await db.fetchrow(
+        "SELECT * FROM learning_assignment_discussion_posts WHERE id=$1::uuid AND lesson_id=$2::uuid",
+        post_id, lesson_id,
+    )
+    if not post or post["deleted_at"]:
+        raise HTTPException(404, "Discussion post not found")
+    if not _discussion_can_delete(course, user_id, post):
+        raise HTTPException(403, "You cannot delete this post")
+    await db.execute(
+        "UPDATE learning_assignment_discussion_posts SET deleted_at=NOW(),deleted_by=$2,updated_at=NOW() WHERE id=$1",
+        post_id, user_id,
+    )
+    return {"ok": True}
 
 
 def _build_instructor_dashboard(
@@ -1898,10 +2509,7 @@ async def get_guest_tutor_insights(
 
 
 def _can_manage_course_calendar(course: dict) -> bool:
-    return bool(
-        course.get("workspace_role") in ("owner", "editor")
-        or course.get("persona") in {"admin", "teacher", "advisor"}
-    )
+    return _course_manage_allowed(course, extra_personas=frozenset({"advisor"}))
 
 
 async def _course_calendar_workspace(db, course_id: str, course: dict, user_id: str) -> dict:
@@ -2010,7 +2618,7 @@ async def _course_workspace(db, course_id: str, user_id: str) -> dict:
            WHERE q.course_id=$1 AND (q.asked_by=$2 OR q.assigned_to=$2 OR $3 IN ('admin','teacher','advisor'))
            ORDER BY q.created_at DESC""", course_id, user_id, effective_persona,
     )
-    can_manage = bool(course.get("workspace_role") in ("owner", "editor") or course.get("persona") in MANAGER_PERSONAS)
+    can_manage = _course_manage_allowed(course)
     assignments = await db.fetch(
         """SELECT a.*,m.title AS module_title,l.title AS lesson_title
            FROM learning_assignments a
@@ -2051,7 +2659,10 @@ async def _course_workspace(db, course_id: str, user_id: str) -> dict:
         "assets": [_jsonable(dict(row)) for row in assets],
         "artifacts": [_jsonable(dict(row)) for row in artifacts],
         "quiz_attempts": [_quiz_attempt_response(row) for row in quiz_attempts],
-        "lesson_progress": [_jsonable(dict(row)) for row in lesson_progress],
+        "lesson_progress": [
+            {**_jsonable(dict(row)), "content_progress": _decode_json(row["content_progress"], {})}
+            for row in lesson_progress
+        ],
         "questions": [_question_response(row) for row in questions],
         "assignments": [_assignment_response(row) for row in assignments],
         "submissions": [
@@ -2157,6 +2768,9 @@ def _build_mastery_projection(
             }
             for item in lesson_attempts
         ]
+        content_progress = lesson_progress.get("content_progress") or {}
+        content_assets = content_progress.get("assets") or {}
+        content_asset_pcts = [int(item.get("pct") or 0) for item in content_assets.values() if isinstance(item, dict)]
         lesson_result = {
             **lesson,
             "id": lesson_id,
@@ -2164,6 +2778,19 @@ def _build_mastery_projection(
             "progress_pct": progress_pct,
             "time_spent_seconds": int(lesson_progress.get("time_spent_seconds") or 0),
             "last_position_seconds": lesson_progress.get("last_position_seconds"),
+            # Content-consumption signals (watched/read pct per attached
+            # asset, and whether the study guide/key concepts for this
+            # lesson have been generated) -- what actually drives the
+            # progress_pct floor above, surfaced so the Progress & Mastery
+            # view can show *why* a lesson is or isn't done yet, not just
+            # the final number.
+            "content_consumption_pct": (
+                round(sum(content_asset_pcts) / len(content_asset_pcts)) if content_asset_pcts else None
+            ),
+            "content_assets_tracked": len(content_asset_pcts),
+            "content_assets_consumed": sum(1 for item in content_assets.values() if isinstance(item, dict) and item.get("consumed")),
+            "study_guide_seen": bool(content_progress.get("study_guide_seen")),
+            "key_concepts_seen": bool(content_progress.get("key_concepts_seen")),
             "assessment_score": score,
             "mastery_status": mastery_status,
             "passing_score": passing_score,

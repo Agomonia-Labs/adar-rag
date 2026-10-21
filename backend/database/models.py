@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents(user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_status  ON documents(status);
 
+-- Cached LibreOffice-converted PDF for a docx/doc so a browser can render it
+-- the same way it renders a native PDF (no in-browser engine exists for
+-- Office formats). Populated on first on-demand view; null until then.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS gcs_pdf_path TEXT;
+
 CREATE TABLE IF NOT EXISTS document_chunks (
     id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     document_id     UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -1361,6 +1366,57 @@ CREATE TABLE IF NOT EXISTS learning_questions (
 );
 CREATE INDEX IF NOT EXISTS idx_learning_questions_course ON learning_questions(course_id, status, created_at DESC);
 
+-- Assignment-scoped student discussion: a peer-and-teacher thread tied to one
+-- assignment, distinct from learning_questions above (which is open, 1:1
+-- course-level escalation to a teacher/advisor, not a shared thread, and has
+-- no assignment_id to anchor it to). Soft-deleted (deleted_at) rather than
+-- hard-deleted so a moderated post's replies keep their parent context.
+CREATE TABLE IF NOT EXISTS learning_assignment_discussion_posts (
+    id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    course_id      UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+    assignment_id  UUID        NOT NULL REFERENCES learning_assignments(id) ON DELETE CASCADE,
+    author_id      UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    author_persona TEXT        NOT NULL DEFAULT 'student',
+    body           TEXT        NOT NULL,
+    parent_post_id UUID        REFERENCES learning_assignment_discussion_posts(id) ON DELETE CASCADE,
+    deleted_at     TIMESTAMPTZ,
+    deleted_by     UUID        REFERENCES users(id) ON DELETE SET NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_learning_discussion_assignment
+    ON learning_assignment_discussion_posts(assignment_id, created_at);
+
+-- Generalized here: a post can instead be scoped to a module or a lesson
+-- (module_id/lesson_id set, assignment_id left null) so students get a
+-- peer discussion thread on each module and lesson, not just assignments.
+ALTER TABLE learning_assignment_discussion_posts ALTER COLUMN assignment_id DROP NOT NULL;
+ALTER TABLE learning_assignment_discussion_posts ADD COLUMN IF NOT EXISTS module_id UUID REFERENCES learning_modules(id) ON DELETE CASCADE;
+ALTER TABLE learning_assignment_discussion_posts ADD COLUMN IF NOT EXISTS lesson_id UUID REFERENCES learning_lessons(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_learning_discussion_module ON learning_assignment_discussion_posts(module_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_learning_discussion_lesson ON learning_assignment_discussion_posts(lesson_id, created_at);
+
+-- Caches AI-translated course content (title/description/objectives for
+-- the course itself, plus module/lesson/assignment/calendar-item titles
+-- and descriptions) so the site-wide language picker (ui/academy's
+-- src/i18n) can show real course content translated, not just static UI
+-- chrome. One row per (course_id, language); source_hash is a hash of the
+-- English source fields at translation time, so editing any translated
+-- field (teacher edits a module description, etc.) invalidates the cache
+-- automatically on next read instead of needing an explicit bust. See
+-- backend/services/content_translation.py.
+CREATE TABLE IF NOT EXISTS content_translations (
+    id           UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    course_id    UUID        NOT NULL REFERENCES learning_courses(id) ON DELETE CASCADE,
+    language     TEXT        NOT NULL,
+    source_hash  TEXT        NOT NULL,
+    fields       JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(course_id, language)
+);
+CREATE INDEX IF NOT EXISTS idx_content_translations_lookup ON content_translations(course_id, language);
+
 CREATE TABLE IF NOT EXISTS mcp_playground_sessions (
     session_hash             TEXT        PRIMARY KEY,
     user_id                  UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1856,6 +1912,15 @@ CREATE INDEX IF NOT EXISTS idx_restaurant_orders_stall ON restaurant_orders(stal
 ALTER TABLE restaurant_order_items
     ADD COLUMN IF NOT EXISTS event_menu_item_id UUID REFERENCES restaurant_event_menu_items(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_restaurant_order_items_event_menu ON restaurant_order_items(event_menu_item_id);
+
+-- Per-asset content-consumption signal for a lesson (video/audio watched
+-- pct computed client-side with seek/fast-forward discounted out, and a
+-- document's open-and-dwell time), plus whether the learner has generated
+-- and saved a study guide or key-concepts artifact scoped to this lesson.
+-- "Mark complete" and the computed progress_pct both read this instead of
+-- trusting an unverified self-report; see routes/learning.py's
+-- _course_manage_allowed-adjacent helpers around learning_lesson_progress.
+ALTER TABLE learning_lesson_progress ADD COLUMN IF NOT EXISTS content_progress JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 """
 

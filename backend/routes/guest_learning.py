@@ -31,31 +31,51 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import os
 import secrets
+import tempfile
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile
+import base64
+import httpx
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from auth.dependencies import AdminUser
 from auth.service import hash_password
 from database.connection import get_db, get_pool
+from routes.documents import _metadata_path_from_row
+from routes.video import _get_accessible_document, _video_doc_row
+from routes.summarize import _load_chunk_texts, _sse_error, _stream_summary
+from routes.voice import (
+    AUDIO_TYPE_ALIASES, GEMINI_BASE, MAX_AUDIO_BYTES, MAX_SSML_BYTES, SUPPORTED_AUDIO_TYPES,
+    TTS_VOICE_BY_LANGUAGE, _build_speech_ssml, _byte_truncate, _resolve_google_speech_language,
+    _transcribe_with_google_speech,
+)
+from services.content_translation import get_course_translation
+from services.language import normalize_language
 from routes.learning import (
     ARTIFACT_TYPES,
     PracticeQuiz,
     LessonProgressUpdate,
     SubmissionUpsert,
+    DiscussionPostCreate,
     _assignment_response,
     _build_mastery_projection,
     _course_access,
     _course_calendar_workspace,
     _course_response,
     _decode_json,
+    _discussion_can_delete,
+    _discussion_post_response,
     _grade_practice_quiz,
     _jsonable,
+    _lesson_in_course,
+    _module_in_course,
     _normalize_artifact_content,
+    _question_response,
     _quiz_attempt_response,
     _resolve_learning_scope,
     _submission_response,
@@ -69,6 +89,7 @@ from services.pii import redact_text
 from services.reranker import RERANK_ENABLED, rerank
 from services.vectordb import RERANK_FETCH_K, TOP_K, find_similar
 import services.storage as gcs
+from services.extractor import convert_to_pdf
 
 router = APIRouter()
 log = logging.getLogger("docintel.guest_learning")
@@ -93,9 +114,9 @@ STUDY_PROMPTS: dict[str, str] = {
         "Use separate sections, short paragraphs, and source citations where available."
     ),
     "flashcards": (
-        "Create exactly 12 concise flashcards based only on the selected course content. Use this exact plain-text format for every card, with no table:\n"
-        "FLASHCARD 1\nQUESTION: A clear question\nANSWER: A concise grounded answer\n"
-        "Continue through FLASHCARD 12. Keep each answer focused enough to review as a short tutor response."
+        'Create exactly 10 flashcards based only on the selected course content. '
+        'Return compact JSON only, with no Markdown, commentary, or code fences, '
+        'as {"cards":[{"front":"...","back":"..."}]}.'
     ),
     "practice_questions": (
         'Create exactly 4 grounded practice questions that progress from recall to application. Return one compact JSON object only, '
@@ -339,6 +360,26 @@ async def get_guest_course(
     }
 
 
+@router.get("/course/translation")
+async def get_guest_course_translation(
+    course: str | None = Query(default=None, description="Public course slug -- same lookup as GET /course."),
+    language: str = "en",
+    db=Depends(get_db),
+):
+    """Public, unauthenticated counterpart to
+    routes/learning.py's GET /courses/{course_id}/translation -- same
+    cache, same course content, just resolved by public slug instead of a
+    course_id the guest never sees. `fields` is null for English or if
+    translation isn't available right now; the frontend falls back to the
+    original English content in either case."""
+    course_id = await _resolve_public_course(db, course)
+    try:
+        fields = await get_course_translation(db, course_id, language)
+    except Exception:
+        fields = None
+    return {"language": normalize_language(language), "fields": fields}
+
+
 @router.get("/materials/{document_id}/view-url")
 async def get_guest_material_url(
     document_id: str,
@@ -368,6 +409,60 @@ async def get_guest_material_url(
         "url": await gcs.get_signed_url(row["gcs_source_path"]),
         "expires_in_seconds": int(os.getenv("GCS_SIGNED_URL_EXPIRY_SECONDS", "3600")),
     }
+
+
+@router.get("/materials/{document_id}/pdf-view-url")
+async def get_guest_material_pdf_url(
+    document_id: str,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    """Guest twin of routes.documents' /{doc_id}/pdf-view-url -- a browser
+    can't render .doc/.docx inline, so this converts it to a real PDF once
+    via headless LibreOffice (services.extractor.convert_to_pdf) and caches
+    the result on the SAME documents.gcs_pdf_path column the authenticated
+    viewer uses, so a doc already converted for a signed-in student is
+    served straight from cache here too."""
+    session = await _require_guest_learner(db, x_guest_token)
+    course_id = str(session["course_id"])
+    row = await db.fetchrow(
+        """SELECT d.id, d.user_id, d.original_name, d.file_type, d.gcs_source_path, d.gcs_pdf_path
+             FROM documents d JOIN learning_assets a ON a.document_id = d.id
+            WHERE a.course_id=$1::uuid AND d.id=$2::uuid LIMIT 1""",
+        course_id, document_id,
+    )
+    if not row:
+        raise HTTPException(404, "This material is not attached to the public course")
+    if row["gcs_pdf_path"]:
+        return {"url": await gcs.get_signed_url(row["gcs_pdf_path"]), "cached": True}
+    if not row["gcs_source_path"]:
+        raise HTTPException(409, "The original file is not available in storage")
+
+    tmp_src = tempfile.NamedTemporaryFile(delete=False)
+    tmp_src.close()
+    pdf_local_path = None
+    try:
+        try:
+            await gcs.download_to_file(row["gcs_source_path"], tmp_src.name)
+        except Exception as exc:
+            raise HTTPException(502, f"Could not read source file: {exc}")
+        try:
+            pdf_local_path = await convert_to_pdf(tmp_src.name, row["original_name"])
+        except Exception as exc:
+            raise HTTPException(502, f"Could not convert this document to PDF: {exc}")
+        with open(pdf_local_path, "rb") as f:
+            pdf_bytes = f.read()
+        pdf_path = gcs.pdf_preview_path(str(row["user_id"]), document_id)
+        await gcs.upload_bytes(pdf_path, pdf_bytes, "application/pdf")
+        await db.execute("UPDATE documents SET gcs_pdf_path=$2, updated_at=NOW() WHERE id=$1", document_id, pdf_path)
+    finally:
+        try: os.unlink(tmp_src.name)
+        except OSError: pass
+        if pdf_local_path:
+            try: os.unlink(pdf_local_path)
+            except OSError: pass
+
+    return {"url": await gcs.get_signed_url(pdf_path), "cached": False}
 
 
 @router.get("/scope")
@@ -587,6 +682,192 @@ async def get_guest_mastery(
     )
 
 
+# ── Module- and lesson-scoped discussion (same table/shape as the
+# authenticated app's routes.learning module/lesson discussion threads --
+# reused here unmodified, just addressed by module_id/lesson_id alone
+# since a guest session is already locked to one course) -- lets a guest
+# post a comment/question on a Curriculum module or lesson, same as a
+# real signed-in student, with replies visible to the real course's
+# teachers from their own authenticated Q&A/discussion view. ──────────────
+
+@router.get("/modules/{module_id}/discussion")
+async def list_guest_module_discussion(
+    module_id: str,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    session = await _require_guest_learner(db, x_guest_token)
+    course_id = str(session["course_id"])
+    user_id = str(session["guest_user_id"])
+    course = await _course_access(db, course_id, user_id)
+    await _module_in_course(db, course_id, module_id)
+    rows = await db.fetch(
+        """SELECT p.*, u.full_name AS author_name, u.email AS author_email
+           FROM learning_assignment_discussion_posts p JOIN users u ON u.id=p.author_id
+           WHERE p.module_id=$1::uuid AND p.lesson_id IS NULL ORDER BY p.created_at""",
+        module_id,
+    )
+    posts = []
+    for row in rows:
+        result = _discussion_post_response(row)
+        result["can_delete"] = _discussion_can_delete(course, user_id, row)
+        posts.append(result)
+    return {"posts": posts}
+
+
+@router.post("/modules/{module_id}/discussion")
+async def create_guest_module_discussion_post(
+    module_id: str, body: DiscussionPostCreate, request: Request,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    session = await _require_guest_learner(db, x_guest_token)
+    course_id = str(session["course_id"])
+    user_id = str(session["guest_user_id"])
+    course = await _course_access(db, course_id, user_id)
+    await _module_in_course(db, course_id, module_id)
+    if body.parent_post_id:
+        parent = await db.fetchrow(
+            "SELECT id FROM learning_assignment_discussion_posts WHERE id=$1::uuid AND module_id=$2::uuid AND deleted_at IS NULL",
+            body.parent_post_id, module_id,
+        )
+        if not parent:
+            raise HTTPException(404, "The post you are replying to was not found")
+    row = await db.fetchrow(
+        """INSERT INTO learning_assignment_discussion_posts (course_id,module_id,author_id,author_persona,body,parent_post_id)
+           VALUES ($1,$2,$3,'student',$4,$5) RETURNING *""",
+        course_id, module_id, user_id, body.body.strip(), body.parent_post_id,
+    )
+    try:
+        await audit(db, user_id=user_id, action="guest_module_discussion_post_create",
+                    resource_type="learning_module_discussion_post", resource_id=str(row["id"]),
+                    metadata={"course_id": course_id, "module_id": module_id},
+                    ip_address=ip_from(request), user_agent=ua_from(request))
+    except Exception as exc:
+        log.warning(f"guest module discussion audit log failed: {exc}")
+    author = await db.fetchrow("SELECT full_name,email FROM users WHERE id=$1", user_id)
+    result = _discussion_post_response(row)
+    result["author_name"] = author["full_name"] if author else None
+    result["author_email"] = author["email"] if author else None
+    result["can_delete"] = True
+    return result
+
+
+@router.delete("/modules/{module_id}/discussion/{post_id}")
+async def delete_guest_module_discussion_post(
+    module_id: str, post_id: str,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    session = await _require_guest_learner(db, x_guest_token)
+    course_id = str(session["course_id"])
+    user_id = str(session["guest_user_id"])
+    course = await _course_access(db, course_id, user_id)
+    await _module_in_course(db, course_id, module_id)
+    post = await db.fetchrow(
+        "SELECT * FROM learning_assignment_discussion_posts WHERE id=$1::uuid AND module_id=$2::uuid",
+        post_id, module_id,
+    )
+    if not post or post["deleted_at"]:
+        raise HTTPException(404, "Discussion post not found")
+    if not _discussion_can_delete(course, user_id, post):
+        raise HTTPException(403, "You cannot delete this post")
+    await db.execute(
+        "UPDATE learning_assignment_discussion_posts SET deleted_at=NOW(),deleted_by=$2,updated_at=NOW() WHERE id=$1",
+        post_id, user_id,
+    )
+    return {"ok": True}
+
+
+@router.get("/lessons/{lesson_id}/discussion")
+async def list_guest_lesson_discussion(
+    lesson_id: str,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    session = await _require_guest_learner(db, x_guest_token)
+    course_id = str(session["course_id"])
+    user_id = str(session["guest_user_id"])
+    course = await _course_access(db, course_id, user_id)
+    await _lesson_in_course(db, course_id, lesson_id)
+    rows = await db.fetch(
+        """SELECT p.*, u.full_name AS author_name, u.email AS author_email
+           FROM learning_assignment_discussion_posts p JOIN users u ON u.id=p.author_id
+           WHERE p.lesson_id=$1::uuid ORDER BY p.created_at""",
+        lesson_id,
+    )
+    posts = []
+    for row in rows:
+        result = _discussion_post_response(row)
+        result["can_delete"] = _discussion_can_delete(course, user_id, row)
+        posts.append(result)
+    return {"posts": posts}
+
+
+@router.post("/lessons/{lesson_id}/discussion")
+async def create_guest_lesson_discussion_post(
+    lesson_id: str, body: DiscussionPostCreate, request: Request,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    session = await _require_guest_learner(db, x_guest_token)
+    course_id = str(session["course_id"])
+    user_id = str(session["guest_user_id"])
+    course = await _course_access(db, course_id, user_id)
+    lesson = await _lesson_in_course(db, course_id, lesson_id)
+    if body.parent_post_id:
+        parent = await db.fetchrow(
+            "SELECT id FROM learning_assignment_discussion_posts WHERE id=$1::uuid AND lesson_id=$2::uuid AND deleted_at IS NULL",
+            body.parent_post_id, lesson_id,
+        )
+        if not parent:
+            raise HTTPException(404, "The post you are replying to was not found")
+    row = await db.fetchrow(
+        """INSERT INTO learning_assignment_discussion_posts (course_id,module_id,lesson_id,author_id,author_persona,body,parent_post_id)
+           VALUES ($1,$2,$3,$4,'student',$5,$6) RETURNING *""",
+        course_id, lesson["module_id"], lesson_id, user_id, body.body.strip(), body.parent_post_id,
+    )
+    try:
+        await audit(db, user_id=user_id, action="guest_lesson_discussion_post_create",
+                    resource_type="learning_lesson_discussion_post", resource_id=str(row["id"]),
+                    metadata={"course_id": course_id, "lesson_id": lesson_id},
+                    ip_address=ip_from(request), user_agent=ua_from(request))
+    except Exception as exc:
+        log.warning(f"guest lesson discussion audit log failed: {exc}")
+    author = await db.fetchrow("SELECT full_name,email FROM users WHERE id=$1", user_id)
+    result = _discussion_post_response(row)
+    result["author_name"] = author["full_name"] if author else None
+    result["author_email"] = author["email"] if author else None
+    result["can_delete"] = True
+    return result
+
+
+@router.delete("/lessons/{lesson_id}/discussion/{post_id}")
+async def delete_guest_lesson_discussion_post(
+    lesson_id: str, post_id: str,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    session = await _require_guest_learner(db, x_guest_token)
+    course_id = str(session["course_id"])
+    user_id = str(session["guest_user_id"])
+    course = await _course_access(db, course_id, user_id)
+    await _lesson_in_course(db, course_id, lesson_id)
+    post = await db.fetchrow(
+        "SELECT * FROM learning_assignment_discussion_posts WHERE id=$1::uuid AND lesson_id=$2::uuid",
+        post_id, lesson_id,
+    )
+    if not post or post["deleted_at"]:
+        raise HTTPException(404, "Discussion post not found")
+    if not _discussion_can_delete(course, user_id, post):
+        raise HTTPException(403, "You cannot delete this post")
+    await db.execute(
+        "UPDATE learning_assignment_discussion_posts SET deleted_at=NOW(),deleted_by=$2,updated_at=NOW() WHERE id=$1",
+        post_id, user_id,
+    )
+    return {"ok": True}
+
+
 def _chunk_meta(chunk: dict) -> dict:
     """document_chunks.chunk_metadata comes back from asyncpg as a JSON
     string (no codec registered on the pool) -- parse it defensively."""
@@ -757,6 +1038,38 @@ async def _generate_grounded_text(db, session: dict, scope: dict, prompt: str, r
     return "".join(output)
 
 
+def _normalize_guest_flashcards(raw: str) -> str:
+    """Extract and validate a flashcard JSON set from raw model output,
+    mirroring the authenticated frontend's parseFlashcards() so a
+    guest-generated set is always valid JSON the shared FlashcardDeck
+    component (JSON.parse(content)) can render."""
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.IGNORECASE)
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start < 0 or end <= start:
+        # The model may have returned a bare JSON array instead of {"cards":[...]}.
+        start, end = cleaned.find("["), cleaned.rfind("]")
+        if start < 0 or end <= start:
+            raise HTTPException(502, "The AI did not return a valid flashcard set. Please try generating again.")
+    try:
+        parsed = json.loads(cleaned[start:end + 1])
+    except json.JSONDecodeError:
+        raise HTTPException(502, "The AI did not return a valid flashcard set. Please try generating again.")
+    cards = parsed.get("cards") if isinstance(parsed, dict) else parsed
+    if not isinstance(cards, list) or not cards:
+        raise HTTPException(502, "The AI did not return any flashcards. Please try generating again.")
+    out = []
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        front = str(card.get("front") or card.get("question") or "").strip()
+        back = str(card.get("back") or card.get("answer") or "").strip()
+        if front and back:
+            out.append({"front": front, "back": back})
+    if not out:
+        raise HTTPException(502, "The AI did not return any usable flashcards. Please try generating again.")
+    return json.dumps(out, ensure_ascii=False)
+
+
 @router.post("/artifacts")
 async def create_guest_artifact(
     req: GuestArtifactRequest,
@@ -776,7 +1089,10 @@ async def create_guest_artifact(
         raise HTTPException(409, "No embedded content is available in this learning scope yet.")
 
     raw_content = await _generate_grounded_text(db, session, scope, STUDY_PROMPTS[req.artifact_type], req.response_language)
-    content = _normalize_artifact_content(req.artifact_type, raw_content)
+    content = (
+        _normalize_guest_flashcards(raw_content) if req.artifact_type == "flashcards"
+        else _normalize_artifact_content(req.artifact_type, raw_content)
+    )
 
     async with db.transaction():
         row = await db.fetchrow(
@@ -804,16 +1120,40 @@ async def list_guest_artifacts(
     db=Depends(get_db),
 ):
     session = await _require_guest_learner(db, x_guest_token)
+    course_id = str(session["course_id"])
+    user_id = str(session["guest_user_id"])
     rows = await db.fetch(
         "SELECT * FROM learning_artifacts WHERE course_id=$1::uuid AND user_id=$2::uuid ORDER BY created_at DESC",
-        str(session["course_id"]), str(session["guest_user_id"]),
+        course_id, user_id,
     )
+    # Embed each practice-quiz artifact's own attempt (if any) directly on
+    # the artifact object -- the guest API has no separate "list quiz
+    # attempts" endpoint the way the authenticated course-detail payload
+    # does (course.quiz_attempts), so the frontend quiz component needs it
+    # inlined here to know which questions are already answered/graded.
+    attempt_rows = await db.fetch(
+        "SELECT * FROM learning_quiz_attempts WHERE course_id=$1::uuid AND user_id=$2::uuid",
+        course_id, user_id,
+    )
+    attempts_by_artifact = {str(a["artifact_id"]): a for a in attempt_rows}
     out = []
     for row in rows:
         item = dict(row)
         item["id"] = str(item["id"])
         item["created_at"] = item["created_at"].isoformat()
         item["updated_at"] = item["updated_at"].isoformat()
+        attempt = attempts_by_artifact.get(item["id"])
+        if attempt:
+            a = dict(attempt)
+            a["id"] = str(a["id"])
+            a["artifact_id"] = str(a["artifact_id"])
+            a["submitted_at"] = a["submitted_at"].isoformat()
+            a["updated_at"] = a["updated_at"].isoformat()
+            a["answers"] = _decode_json(a.get("answers"), {})
+            a["result"] = _decode_json(a.get("result"), {})
+            item["attempt"] = a
+        else:
+            item["attempt"] = None
         out.append(item)
     return out
 
@@ -836,7 +1176,13 @@ async def submit_guest_quiz_attempt(
     if not artifact:
         raise HTTPException(404, "Practice-question artifact not found for this guest session")
     quiz = PracticeQuiz.model_validate_json(str(artifact["content"]))
-    graded = _grade_practice_quiz(quiz, req.answers)
+    existing = await db.fetchrow(
+        "SELECT answers FROM learning_quiz_attempts WHERE artifact_id=$1::uuid AND user_id=$2::uuid",
+        artifact_id, user_id,
+    )
+    answers = {} if req.replace else (_decode_json(existing["answers"], {}) if existing else {})
+    answers.update(req.answers)
+    graded = await _grade_practice_quiz(quiz, answers)
     row = await db.fetchrow(
         """INSERT INTO learning_quiz_attempts
            (course_id,artifact_id,user_id,answers,result,correct_count,question_count,completed)
@@ -846,7 +1192,7 @@ async def submit_guest_quiz_attempt(
              question_count=EXCLUDED.question_count,completed=EXCLUDED.completed,
              submitted_at=NOW(),updated_at=NOW()
            RETURNING *""",
-        course_id, artifact_id, user_id, json.dumps(req.answers), json.dumps(graded["result"]),
+        course_id, artifact_id, user_id, json.dumps(answers), json.dumps(graded["result"]),
         graded["correct_count"], graded["question_count"], graded["completed"],
     )
     result = dict(row)
@@ -870,6 +1216,613 @@ async def get_guest_progress(
         str(session["course_id"]), str(session["guest_user_id"]),
     )
     return [dict(r) | {"lesson_id": str(r["lesson_id"]), "module_id": str(r["module_id"])} for r in rows]
+
+
+class GuestQuestionRequest(BaseModel):
+    target_role: str = "teacher"
+    question: str
+
+
+@router.get("/qna")
+async def list_guest_questions(
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    """A guest's own escalations only -- mirrors routes.learning's course-detail
+    questions query (routes/learning.py get_learning_course) but scoped to
+    q.asked_by=<this guest>, so a public visitor never sees another real
+    student's question, the same privacy boundary the student persona
+    already gets there (a non-admin/teacher/advisor asker only ever matches
+    their own asked_by/assigned_to rows)."""
+    session = await _require_guest_learner(db, x_guest_token)
+    rows = await db.fetch(
+        """SELECT q.*, asker.full_name AS asker_name, asker.email AS asker_email,
+                  responder.full_name AS responder_name
+           FROM learning_questions q JOIN users asker ON asker.id=q.asked_by
+           LEFT JOIN users responder ON responder.id=q.answered_by
+           WHERE q.course_id=$1::uuid AND q.asked_by=$2::uuid
+           ORDER BY q.created_at DESC""",
+        str(session["course_id"]), str(session["guest_user_id"]),
+    )
+    return [_question_response(row) for row in rows]
+
+
+@router.post("/qna")
+async def create_guest_question(
+    req: GuestQuestionRequest,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    """Escalate a question to the course's real teacher/advisor, same as
+    routes.learning.ask_human -- but intentionally skips that endpoint's
+    email notification: a guest preview session is anonymous and
+    unauthenticated, and paging a real instructor by email for every
+    anonymous-visitor question would be noisy and confusing. The question
+    still lands in learning_questions and is visible to the real teacher
+    from their own authenticated Q&A tab (assigned_to them)."""
+    session = await _require_guest_learner(db, x_guest_token)
+    target_role = req.target_role if req.target_role in ("teacher", "advisor") else "teacher"
+    question_text = (req.question or "").strip()
+    if not question_text:
+        raise HTTPException(400, "Question text is required")
+    if len(question_text) > 8000:
+        raise HTTPException(400, "Question is too long")
+    course_id = str(session["course_id"])
+    user_id = str(session["guest_user_id"])
+    assignee = await db.fetchrow(
+        """SELECT m.user_id FROM learning_course_members m
+           WHERE m.course_id=$1::uuid AND m.persona=$2 ORDER BY m.created_at LIMIT 1""",
+        course_id, target_role,
+    )
+    row = await db.fetchrow(
+        """INSERT INTO learning_questions (course_id,asked_by,assigned_to,target_role,question,context)
+           VALUES ($1::uuid,$2::uuid,$3,$4,$5,'{}'::jsonb) RETURNING *""",
+        course_id, user_id, str(assignee["user_id"]) if assignee else None, target_role, question_text,
+    )
+    return _question_response(row)
+
+
+# ── Content Library & Video Intelligence (read-only, chat/Q&A-enabled) ──
+# Mirrors the EXACT capability the authenticated app already ships --
+# routes/chat.py's /chat/stream ("select embedded documents, then chat")
+# and routes/video.py's /ask (per-video Q&A over its processed timeline) --
+# reused here read-only and no-login, scoped to the guest's own course
+# workspace. No upload, edit, delete, process, or reclassify route is
+# exposed for guests: list + chat/ask only, exactly as approved.
+
+class GuestLibraryChatRequest(BaseModel):
+    question: str
+    document_ids: list[str]
+    history: list[dict] = []
+    response_language: str | None = None
+    redact_pii: bool = False
+
+
+class GuestVideoAskRequest(BaseModel):
+    question: str
+    limit: int = 6
+
+
+async def _guest_workspace_id(db, session: dict) -> str:
+    workspace_id = await db.fetchval(
+        "SELECT workspace_id FROM learning_courses WHERE id=$1::uuid", str(session["course_id"]),
+    )
+    if not workspace_id:
+        raise HTTPException(404, "This preview course has no workspace configured.")
+    return str(workspace_id)
+
+
+@router.get("/library/documents")
+async def list_guest_library_documents(
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    session = await _require_guest_learner(db, x_guest_token)
+    workspace_id = await _guest_workspace_id(db, session)
+    rows = await db.fetch(
+        """SELECT d.id, d.original_name, d.status, d.file_type, d.file_size,
+                  d.doc_type, d.doc_domain, d.doc_language, d.created_at,
+                  (SELECT COUNT(*) FROM document_chunks WHERE document_id=d.id) AS chunk_count
+           FROM documents d
+           WHERE d.workspace_id=$1::uuid AND d.status!='deleted'
+           ORDER BY d.created_at DESC""",
+        workspace_id,
+    )
+    out = []
+    for r in rows:
+        item = dict(r)
+        item["id"] = str(item["id"])
+        item["created_at"] = item["created_at"].isoformat() if item.get("created_at") else None
+        out.append(item)
+    return out
+
+
+@router.get("/library/documents/{doc_id}/view-url")
+async def get_guest_library_view_url(
+    doc_id: str,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    session = await _require_guest_learner(db, x_guest_token)
+    row = await _get_accessible_document(db, doc_id, str(session["guest_user_id"]))
+    url = await gcs.get_signed_url(row["gcs_source_path"])
+    return {"url": url}
+
+
+@router.get("/library/documents/{doc_id}/pdf-view-url")
+async def get_guest_library_pdf_view_url(
+    doc_id: str,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    """Guest twin of routes.documents' /{doc_id}/pdf-view-url -- see
+    get_guest_material_pdf_url's docstring above for the conversion/cache
+    rationale; same documents.gcs_pdf_path cache, just reached through the
+    Content Library's own access check (_get_accessible_document)."""
+    session = await _require_guest_learner(db, x_guest_token)
+    row = await _get_accessible_document(db, doc_id, str(session["guest_user_id"]))
+    if row.get("gcs_pdf_path"):
+        return {"url": await gcs.get_signed_url(row["gcs_pdf_path"]), "cached": True}
+    if not row.get("gcs_source_path"):
+        raise HTTPException(409, "The original file is not available in storage")
+
+    tmp_src = tempfile.NamedTemporaryFile(delete=False)
+    tmp_src.close()
+    pdf_local_path = None
+    try:
+        try:
+            await gcs.download_to_file(row["gcs_source_path"], tmp_src.name)
+        except Exception as exc:
+            raise HTTPException(502, f"Could not read source file: {exc}")
+        try:
+            pdf_local_path = await convert_to_pdf(tmp_src.name, row["original_name"])
+        except Exception as exc:
+            raise HTTPException(502, f"Could not convert this document to PDF: {exc}")
+        with open(pdf_local_path, "rb") as f:
+            pdf_bytes = f.read()
+        pdf_path = gcs.pdf_preview_path(str(row["user_id"]), doc_id)
+        await gcs.upload_bytes(pdf_path, pdf_bytes, "application/pdf")
+        await db.execute("UPDATE documents SET gcs_pdf_path=$2, updated_at=NOW() WHERE id=$1", doc_id, pdf_path)
+    finally:
+        try: os.unlink(tmp_src.name)
+        except OSError: pass
+        if pdf_local_path:
+            try: os.unlink(pdf_local_path)
+            except OSError: pass
+
+    return {"url": await gcs.get_signed_url(pdf_path), "cached": False}
+
+
+class GuestSummarizeRequest(BaseModel):
+    summary_type: str = "executive"
+    custom_prompt: str = ""
+    response_language: str | None = None
+
+
+@router.post("/library/documents/{doc_id}/summarize/stream")
+async def guest_library_summarize_stream(
+    doc_id: str,
+    body: GuestSummarizeRequest,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    """Guest twin of routes.summarize's /document/{doc_id}/stream, reusing
+    its pure _stream_summary/_load_chunk_texts/_sse_error map-reduce
+    helpers unmodified. Access is checked with the same
+    _get_accessible_document helper the rest of this guest Content
+    Library already uses, plus the chunked/embedding/embedded gate
+    routes.summarize's own _get_accessible_chunked enforces."""
+    session = await _require_guest_learner(db, x_guest_token)
+    if int(session["tutor_query_count"] or 0) >= GUEST_LEARNING_MAX_TUTOR_QUERIES:
+        raise HTTPException(429, "Guest preview question limit reached for this session.")
+    row = await _get_accessible_document(db, doc_id, str(session["guest_user_id"]))
+    if row["status"] not in ("chunked", "embedding", "embedded"):
+        raise HTTPException(400, f"Document must be chunked first (status: {row['status']})")
+
+    async def generate():
+        try:
+            meta = await gcs.download_json(_metadata_path_from_row(dict(row), doc_id))
+            chunks = meta["chunks"]
+            if not chunks:
+                yield _sse_error("No chunks found"); return
+            texts = await _load_chunk_texts(chunks)
+            async for event in _stream_summary(
+                texts, body.summary_type, body.custom_prompt, row["original_name"],
+                body.response_language or row.get("doc_language") or "en", False,
+            ):
+                yield event
+            # Fresh connection -- `db` is released back to the pool as soon
+            # as this endpoint returns the StreamingResponse below, well
+            # before this generator actually runs (see the identical fix
+            # in guest_library_chat_stream above).
+            async with get_pool().acquire() as conn:
+                await conn.execute(
+                    "UPDATE guest_learning_sessions SET tutor_query_count=tutor_query_count+1, updated_at=NOW() WHERE id=$1",
+                    session["id"],
+                )
+        except Exception as e:
+            yield _sse_error(str(e))
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/library/chat/stream")
+async def guest_library_chat_stream(
+    req: GuestLibraryChatRequest,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    session = await _require_guest_learner(db, x_guest_token)
+    if not req.question.strip():
+        raise HTTPException(400, "question must not be empty")
+    if not req.document_ids:
+        raise HTTPException(400, "Select at least one document to chat with")
+    if int(session["tutor_query_count"] or 0) >= GUEST_LEARNING_MAX_TUTOR_QUERIES:
+        raise HTTPException(429, "Guest preview question limit reached for this session.")
+    workspace_id = await _guest_workspace_id(db, session)
+    user_id = str(session["guest_user_id"])
+
+    rows = await db.fetch(
+        "SELECT id, status FROM documents WHERE id = ANY($1::uuid[]) AND workspace_id=$2::uuid AND status != 'deleted'",
+        req.document_ids, workspace_id,
+    )
+    found_ids = {str(r["id"]) for r in rows}
+    not_found = set(req.document_ids) - found_ids
+    not_embedded = {str(r["id"]) for r in rows if r["status"] != "embedded"}
+    if not_found:
+        raise HTTPException(403, f"Documents not found in this preview workspace: {sorted(not_found)}")
+    if not_embedded:
+        raise HTTPException(400, f"Documents not yet embedded: {sorted(not_embedded)}")
+
+    async def generate():
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def run():
+            try:
+                question = redact_text(req.question, req.redact_pii).text
+                query_vec = await embed_query(question)
+                candidates = await find_similar(
+                    query_embedding=query_vec, query_text=question, user_id=user_id,
+                    document_ids=sorted(found_ids), limit=_FETCH_K,
+                )
+                chunks = await rerank(query=question, chunks=candidates, top_k=TOP_K)
+                context = "\n\n".join(f"[Source {idx+1}] {c.get('content','')}" for idx, c in enumerate(chunks))
+                system_prompt = rag_system(context, response_language_instruction(req.response_language))
+
+                async def on_token(t: str):
+                    await queue.put(("token", t))
+
+                messages = [
+                    {"role": m["role"], "content": redact_text(m["content"], req.redact_pii).text}
+                    for m in (req.history or [])[-6:] if m.get("role") and m.get("content")
+                ] + [{"role": "user", "content": question}]
+                await chat_stream(messages, system_prompt, on_token)
+                # Use a freshly-acquired connection here, not the request-scoped
+                # `db` -- FastAPI's yield-dependency cleanup releases `db` back to
+                # the pool as soon as this endpoint RETURNS the StreamingResponse
+                # object, which happens well before this generator actually runs
+                # (the generator only starts once the ASGI server begins consuming
+                # the stream). Using the stale `db` here always raised "cannot call
+                # Connection.execute(): connection has been released back to the
+                # pool" -- exactly the error reported live. guest_tutor_query_stream
+                # already does this correctly a few hundred lines up; this mirrors it.
+                async with get_pool().acquire() as conn:
+                    await conn.execute(
+                        "UPDATE guest_learning_sessions SET tutor_query_count=tutor_query_count+1, updated_at=NOW() WHERE id=$1",
+                        session["id"],
+                    )
+                sources = [_public_source(c, idx) for idx, c in enumerate(chunks)]
+                await queue.put(("done", {"sources": sources}))
+            except Exception as exc:
+                log.exception("guest library chat failed")
+                await queue.put(("error", str(exc)))
+
+        task = asyncio.create_task(run())
+        try:
+            while True:
+                kind, payload = await queue.get()
+                if kind == "token":
+                    yield f"data: {json.dumps({'type': 'token', 'text': payload})}\n\n"
+                elif kind == "done":
+                    yield f"data: {json.dumps({'type': 'done', **payload})}\n\n"
+                    break
+                elif kind == "error":
+                    yield f"data: {json.dumps({'type': 'error', 'error': payload})}\n\n"
+                    break
+            await task
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+
+@router.get("/library/videos")
+async def list_guest_library_videos(
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    session = await _require_guest_learner(db, x_guest_token)
+    workspace_id = await _guest_workspace_id(db, session)
+    rows = await db.fetch(
+        """
+        SELECT d.id, d.original_name, d.file_type, d.status, d.chunk_count,
+               d.error_message, d.doc_type, d.doc_domain,
+               COALESCE(d.workspace_id, vd.workspace_id) AS workspace_id,
+               d.workspace_id AS document_workspace_id,
+               vd.workspace_id AS video_workspace_id,
+               d.doc_metadata,
+               vd.id AS video_id, vd.processing_status, vd.duration_seconds,
+               vd.width, vd.height, vd.frame_count, vd.updated_at AS video_updated_at,
+               vd.metadata AS video_metadata
+        FROM documents d
+        LEFT JOIN video_documents vd ON vd.document_id = d.id
+        WHERE d.status != 'deleted'
+          AND COALESCE(d.workspace_id, vd.workspace_id) = $1::uuid
+          AND (
+            d.file_type = 'video'
+            OR d.doc_type = 'video'
+            OR LOWER(d.original_name) ~ '\.(mp4|mov|m4v|avi|mkv|webm)$'
+          )
+        ORDER BY d.created_at DESC
+        """,
+        workspace_id,
+    )
+    return [_video_doc_row(r) for r in rows]
+
+
+@router.get("/library/videos/{doc_id}/timeline")
+async def get_guest_video_timeline(
+    doc_id: str,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    session = await _require_guest_learner(db, x_guest_token)
+    await _get_accessible_document(db, doc_id, str(session["guest_user_id"]))
+    video = await db.fetchrow("SELECT * FROM video_documents WHERE document_id=$1", doc_id)
+    if not video:
+        raise HTTPException(404, "Video has not been processed yet")
+    segments = await db.fetch(
+        """SELECT id, segment_index, start_seconds, end_seconds, segment_type, title,
+                  summary, transcript, ocr_text, thumbnail_path, confidence, metadata
+           FROM video_segments WHERE video_document_id=$1 ORDER BY segment_index""",
+        video["id"],
+    )
+    frames = await db.fetch(
+        """SELECT id, segment_id, frame_index, timestamp_seconds, frame_path, thumbnail_path,
+                  caption, ocr_text, metadata
+           FROM video_frames WHERE video_document_id=$1 ORDER BY frame_index""",
+        video["id"],
+    )
+    return {"video": _jsonable(dict(video)), "segments": [_jsonable(dict(r)) for r in segments], "frames": [_jsonable(dict(r)) for r in frames]}
+
+
+@router.get("/library/videos/{doc_id}/frames/{frame_index}/view-url")
+async def get_guest_video_frame_url(
+    doc_id: str, frame_index: int,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    session = await _require_guest_learner(db, x_guest_token)
+    await _get_accessible_document(db, doc_id, str(session["guest_user_id"]))
+    row = await db.fetchrow(
+        """SELECT vf.frame_path FROM video_frames vf JOIN video_documents vd ON vd.id = vf.video_document_id
+           WHERE vd.document_id=$1 AND vf.frame_index=$2""",
+        doc_id, frame_index,
+    )
+    if not row:
+        raise HTTPException(404, "Frame not found")
+    return {"url": await gcs.get_signed_url(row["frame_path"])}
+
+
+@router.post("/library/videos/{doc_id}/ask")
+async def ask_guest_video(
+    doc_id: str,
+    body: GuestVideoAskRequest,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    session = await _require_guest_learner(db, x_guest_token)
+    if int(session["tutor_query_count"] or 0) >= GUEST_LEARNING_MAX_TUTOR_QUERIES:
+        raise HTTPException(429, "Guest preview question limit reached for this session.")
+    user_id = str(session["guest_user_id"])
+    doc = await _get_accessible_document(db, doc_id, user_id)
+    if doc.get("status") != "embedded":
+        raise HTTPException(400, f"Video document must be embedded before Q&A. Current status: {doc.get('status')}")
+    question = body.question.strip()
+    if not question:
+        raise HTTPException(400, "question is required")
+
+    qvec = await embed_query(question)
+    matches = await find_similar(qvec, user_id, [doc_id], limit=max(1, min(body.limit, 12)), query_text=question)
+    context_parts, sources = [], []
+    for idx, match in enumerate(matches, 1):
+        context_parts.append(f"[Source {idx}] {match.get('doc_name')}\n{match.get('content')}")
+        sources.append({
+            "source": idx, "document_id": str(match.get("document_id")), "doc_name": match.get("doc_name"),
+            "chunk_index": match.get("chunk_index"), "similarity": float(match.get("similarity") or 0),
+        })
+    system = rag_system(
+        "\n\n".join(context_parts),
+        f"{response_language_instruction(None)} For video answers, cite the timestamp when available and keep the answer grounded in the retrieved timeline chunks.",
+    )
+    tokens: list[str] = []
+
+    async def on_token(t: str):
+        tokens.append(t)
+
+    await chat_stream([{"role": "user", "content": question}], system, on_token)
+    await db.execute(
+        "UPDATE guest_learning_sessions SET tutor_query_count=tutor_query_count+1, updated_at=NOW() WHERE id=$1",
+        session["id"],
+    )
+    return {"answer": "".join(tokens).strip(), "sources": sources}
+
+
+# ---------------------------------------------------------------------------
+# Voice input/output for every guest-facing assistant (AI Tutor, Content
+# Library chat) -- reuses the exact same Google Speech-to-Text / Gemini
+# fallback / Google Text-to-Speech logic routes/voice.py already runs for
+# signed-in users, just gated by a guest session instead of CurrentUser, and
+# without that route's OTel tracing (guest traffic isn't part of that
+# per-account trace story). Gated on the same question-limit counter the
+# rest of this file uses rather than a bespoke rate limiter -- a guest who
+# has used up their preview questions can't rack up unbounded Google Speech
+# cost by only ever using voice, and one who hasn't is already bounded by it.
+async def _guest_transcribe(data: bytes, content_type: str, language: str) -> str:
+    google_speech_language = _resolve_google_speech_language(language)
+    if google_speech_language:
+        try:
+            return await _transcribe_with_google_speech(data, content_type, google_speech_language)
+        except Exception as exc:
+            log.warning("Guest Google Speech transcription failed, falling back to Gemini: %s", exc)
+
+    google_ai_key = os.getenv("GOOGLE_AI_KEY", "").strip()
+    if not google_ai_key:
+        raise HTTPException(500, "Voice transcription is not configured")
+    model = os.getenv("GEMINI_AUDIO_MODEL", os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")).removeprefix("models/")
+    prompt = (
+        "Transcribe this microphone audio into plain text only. "
+        "Do not translate. Do not summarize. Do not add punctuation unless it is clearly spoken. "
+        "If the audio is empty or unintelligible, return an empty string."
+    )
+    if language:
+        prompt += f" The expected spoken language locale is {language}."
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {"inline_data": {"mime_type": content_type, "data": base64.b64encode(data).decode("ascii")}},
+            ],
+        }],
+        "generationConfig": {"temperature": 0, "maxOutputTokens": 512},
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(f"{GEMINI_BASE}/{model}:generateContent", params={"key": google_ai_key}, json=payload)
+    if not resp.is_success:
+        log.warning("Guest Gemini voice transcription failed %s: %s", resp.status_code, resp.text[:500])
+        raise HTTPException(resp.status_code, "Voice transcription failed")
+    body = resp.json()
+    parts = body.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    return " ".join((p.get("text") or "").strip() for p in parts if p.get("text")).strip()
+
+
+@router.post("/voice/transcribe")
+async def guest_transcribe_voice(
+    audio: UploadFile = File(...),
+    language: str = Form(""),
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    session = await _require_guest_learner(db, x_guest_token)
+    if int(session["tutor_query_count"] or 0) >= GUEST_LEARNING_MAX_TUTOR_QUERIES:
+        raise HTTPException(429, "Guest preview question limit reached for this session.")
+    content_type = (audio.content_type or "application/octet-stream").split(";")[0].strip().lower()
+    content_type = AUDIO_TYPE_ALIASES.get(content_type, content_type)
+    if content_type not in SUPPORTED_AUDIO_TYPES:
+        raise HTTPException(400, f"Unsupported audio format: {content_type}")
+    data = await audio.read()
+    if not data:
+        raise HTTPException(400, "No audio received")
+    if len(data) > MAX_AUDIO_BYTES:
+        raise HTTPException(413, f"Audio is too large. Max {MAX_AUDIO_BYTES // 1024 // 1024} MB")
+    text = await _guest_transcribe(data, content_type, language)
+    return {"text": text}
+
+
+class GuestSpeakRequest(BaseModel):
+    text: str
+    language: str = "en"
+
+
+@router.post("/voice/speak")
+async def guest_speak_text(
+    body: GuestSpeakRequest,
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
+    db=Depends(get_db),
+):
+    session = await _require_guest_learner(db, x_guest_token)
+    if int(session["tutor_query_count"] or 0) >= GUEST_LEARNING_MAX_TUTOR_QUERIES:
+        raise HTTPException(429, "Guest preview question limit reached for this session.")
+    raw_text = (body.text or "").strip()
+    if not raw_text:
+        raise HTTPException(400, "text is required")
+    raw_text = _byte_truncate(raw_text, 3200)
+    ssml = _build_speech_ssml(raw_text)
+    shrink_attempts = 0
+    while len(ssml.encode("utf-8")) > MAX_SSML_BYTES and raw_text and shrink_attempts < 10:
+        raw_text = _byte_truncate(raw_text, max(0, len(raw_text.encode("utf-8")) - 500))
+        ssml = _build_speech_ssml(raw_text)
+        shrink_attempts += 1
+    if ssml == "<speak></speak>" or len(ssml.encode("utf-8")) > MAX_SSML_BYTES:
+        raise HTTPException(400, "Nothing left to speak after removing formatting")
+    voice = TTS_VOICE_BY_LANGUAGE.get((body.language or "").strip().lower(), TTS_VOICE_BY_LANGUAGE["en"])
+    api_key = (
+        os.getenv("GOOGLE_TTS_API_KEY") or os.getenv("GOOGLE_SPEECH_API_KEY")
+        or os.getenv("GOOGLE_AI_KEY") or os.getenv("GOOGLE_API_KEY") or ""
+    ).strip()
+    if not api_key:
+        raise HTTPException(500, "Text-to-speech is not configured")
+    payload = {"input": {"ssml": ssml}, "voice": voice, "audioConfig": {"audioEncoding": "MP3"}}
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post("https://texttospeech.googleapis.com/v1/text:synthesize", params={"key": api_key}, json=payload)
+    if not resp.is_success:
+        log.warning("Guest text-to-speech failed %s: %s", resp.status_code, resp.text[:500])
+        try:
+            google_detail = resp.json().get("error", {}).get("message", "")
+        except Exception:
+            google_detail = ""
+        raise HTTPException(502, f"Text-to-speech failed: {google_detail or resp.text[:200]}")
+    audio_b64 = resp.json().get("audioContent") or ""
+    if not audio_b64:
+        raise HTTPException(502, "Text-to-speech returned no audio")
+    return {"audio_base64": audio_b64, "mime_type": "audio/mpeg"}
+
+
+class RegisterPublicCourseRequest(BaseModel):
+    workspace_name: str
+    course_title: str
+    slug: str
+    label: str = ""
+
+
+@router.post("/admin/public-courses")
+async def register_public_course(req: RegisterPublicCourseRequest, admin: AdminUser, db=Depends(get_db)):
+    """Admin-only: register (or re-point) a no-login guest-preview slug
+    onto an EXISTING course, resolved by workspace name + course title --
+    so registering a second (or third) curated public course never needs
+    raw SQL or a course UUID looked up by hand. Mirrors exactly what
+    public_courses' own comment in database/models.py describes ("adding
+    a course is an INSERT, not an env var change"); this is that INSERT,
+    reachable over the API instead of a direct DB connection. _resolve_public_course
+    above is what actually reads this table at guest-session-creation time."""
+    row = await db.fetchrow(
+        """SELECT c.id FROM learning_courses c JOIN workspaces w ON w.id=c.workspace_id
+           WHERE LOWER(w.name)=LOWER($1) AND LOWER(c.title)=LOWER($2)""",
+        req.workspace_name.strip(), req.course_title.strip(),
+    )
+    if not row:
+        raise HTTPException(404, f"No course titled '{req.course_title}' found in workspace '{req.workspace_name}'")
+    course_id = str(row["id"])
+    await db.execute(
+        """INSERT INTO public_courses (slug, course_id, label) VALUES ($1,$2,$3)
+           ON CONFLICT (slug) DO UPDATE SET course_id=EXCLUDED.course_id, label=EXCLUDED.label""",
+        req.slug.strip(), course_id, (req.label or req.course_title).strip(),
+    )
+    return {"slug": req.slug.strip(), "course_id": course_id}
+
+
+@router.get("/admin/public-courses")
+async def list_public_courses(admin: AdminUser, db=Depends(get_db)):
+    rows = await db.fetch(
+        """SELECT pc.slug, pc.course_id, pc.label, pc.created_at, c.title AS course_title, w.name AS workspace_name
+           FROM public_courses pc
+           JOIN learning_courses c ON c.id = pc.course_id
+           JOIN workspaces w ON w.id = c.workspace_id
+           ORDER BY pc.created_at""",
+    )
+    return [_jsonable(dict(r)) for r in rows]
 
 
 @router.post("/cleanup-expired")

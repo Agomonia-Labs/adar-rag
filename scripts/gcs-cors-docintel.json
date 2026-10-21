@@ -4,9 +4,17 @@
       "https://docintel.adar.agomoniai.com",
       "https://docintel-adar.web.app",
       "http://localhost:5173",
-      "http://localhost:3000"
+      "http://localhost:3000",
+      "https://academy.agomoniai.com",
+      "https://academy-adar.web.app",
+      "https://academy-adar.firebaseapp.com"
     ],
-    "method": ["PUT", "GET", "HEAD", "OPTIONS"],
+    "method": [
+      "PUT",
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
     "responseHeader": [
       "Content-Type",
       "Authorization",

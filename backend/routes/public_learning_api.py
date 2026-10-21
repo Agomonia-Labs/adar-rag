@@ -92,6 +92,12 @@ async def api_enroll_learning_member(request: Request, course_id: str, body: lea
     return await learning.add_member(course_id, body, current_user=principal.user, db=db)
 
 
+@router.post("/learning/courses/{course_id}/members/bulk", summary="Bulk-enroll course members from a roster import")
+async def api_enroll_learning_members_bulk(request: Request, course_id: str, body: learning.BulkMemberCreate, principal: LearningManager, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.add_members_bulk(course_id, body, current_user=principal.user, db=db)
+
+
 @router.get("/learning/courses/{course_id}/directory", summary="Get the privacy-aware class directory")
 async def api_get_learning_directory(request: Request, course_id: str, principal: LearningReader, db=Depends(get_db)):
     await _require_course_workspace(request, db, course_id)
@@ -227,6 +233,60 @@ async def api_evaluate_learning_submission(request: Request, course_id: str, ass
 async def api_review_learning_submission(request: Request, course_id: str, assignment_id: str, submission_id: str, body: learning.SubmissionReview, principal: LearningManager, db=Depends(get_db)):
     await _require_course_workspace(request, db, course_id)
     return await learning.review_assignment_submission(course_id, assignment_id, submission_id, body, current_user=principal.user, db=db)
+
+
+@router.get("/learning/courses/{course_id}/assignments/{assignment_id}/discussion", summary="List an assignment's discussion thread")
+async def api_list_assignment_discussion(request: Request, course_id: str, assignment_id: str, principal: LearningReader, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.list_assignment_discussion(course_id, assignment_id, current_user=principal.user, db=db)
+
+
+@router.post("/learning/courses/{course_id}/assignments/{assignment_id}/discussion", status_code=201, summary="Post to an assignment's discussion thread")
+async def api_create_assignment_discussion_post(request: Request, course_id: str, assignment_id: str, body: learning.DiscussionPostCreate, principal: LearningParticipant, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.create_assignment_discussion_post(course_id, assignment_id, body, request, current_user=principal.user, db=db)
+
+
+@router.delete("/learning/courses/{course_id}/assignments/{assignment_id}/discussion/{post_id}", summary="Delete or moderate a discussion post")
+async def api_delete_assignment_discussion_post(request: Request, course_id: str, assignment_id: str, post_id: str, principal: LearningParticipant, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.delete_assignment_discussion_post(course_id, assignment_id, post_id, current_user=principal.user, db=db)
+
+
+@router.get("/learning/courses/{course_id}/modules/{module_id}/discussion", summary="List a module's discussion thread")
+async def api_list_module_discussion(request: Request, course_id: str, module_id: str, principal: LearningReader, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.list_module_discussion(course_id, module_id, current_user=principal.user, db=db)
+
+
+@router.post("/learning/courses/{course_id}/modules/{module_id}/discussion", status_code=201, summary="Post to a module's discussion thread")
+async def api_create_module_discussion_post(request: Request, course_id: str, module_id: str, body: learning.DiscussionPostCreate, principal: LearningParticipant, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.create_module_discussion_post(course_id, module_id, body, request, current_user=principal.user, db=db)
+
+
+@router.delete("/learning/courses/{course_id}/modules/{module_id}/discussion/{post_id}", summary="Delete or moderate a module discussion post")
+async def api_delete_module_discussion_post(request: Request, course_id: str, module_id: str, post_id: str, principal: LearningParticipant, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.delete_module_discussion_post(course_id, module_id, post_id, current_user=principal.user, db=db)
+
+
+@router.get("/learning/courses/{course_id}/lessons/{lesson_id}/discussion", summary="List a lesson's discussion thread")
+async def api_list_lesson_discussion(request: Request, course_id: str, lesson_id: str, principal: LearningReader, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.list_lesson_discussion(course_id, lesson_id, current_user=principal.user, db=db)
+
+
+@router.post("/learning/courses/{course_id}/lessons/{lesson_id}/discussion", status_code=201, summary="Post to a lesson's discussion thread")
+async def api_create_lesson_discussion_post(request: Request, course_id: str, lesson_id: str, body: learning.DiscussionPostCreate, principal: LearningParticipant, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.create_lesson_discussion_post(course_id, lesson_id, body, request, current_user=principal.user, db=db)
+
+
+@router.delete("/learning/courses/{course_id}/lessons/{lesson_id}/discussion/{post_id}", summary="Delete or moderate a lesson discussion post")
+async def api_delete_lesson_discussion_post(request: Request, course_id: str, lesson_id: str, post_id: str, principal: LearningParticipant, db=Depends(get_db)):
+    await _require_course_workspace(request, db, course_id)
+    return await learning.delete_lesson_discussion_post(course_id, lesson_id, post_id, current_user=principal.user, db=db)
 
 
 @router.get("/learning/courses/{course_id}/instructor-dashboard", summary="Read cohort learning intelligence")

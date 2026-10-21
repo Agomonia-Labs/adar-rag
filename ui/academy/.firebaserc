@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "bdas-493785"
+  },
+  "targets": {
+    "bdas-493785": {
+      "hosting": {
+        "academy": [
+          "academy-adar"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

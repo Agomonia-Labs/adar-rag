@@ -92,6 +92,48 @@ async def ensure_default_workspace_membership(db, user_id: str) -> str | None:
     return workspace_id
 
 
+ACADEMY_DEFAULT_WORKSPACE_NAME = "Agomonia Labs Public Demo"
+
+
+async def ensure_default_academy_workspace_membership(db, user_id: str) -> str | None:
+    """Every ADAR Knowledge Academy web signup (ui/academy, which always
+    sends X-Client-App: 'academy') starts out as a 'viewer' of the one
+    shared "Agomonia Labs Public Demo" workspace -- the same workspace the
+    public no-login guest course (routes/guest_learning.py,
+    GUEST_LEARNING_COURSE_ID) already lives in -- instead of landing with
+    zero workspace memberships at all (today's behavior: a brand-new
+    account sees App.jsx's "create your own workspace / ask to be added"
+    empty state and can't be enrolled in anything, since
+    routes/learning.py's add_member requires workspace membership first).
+
+    Viewer alone grants no course visibility: list_courses only returns a
+    course to a plain viewer once a teacher/admin explicitly adds a
+    learning_course_members row for them (POST /courses/{id}/members), or
+    bulk-enrolls them by email -- both already require nothing more than
+    this workspace membership to succeed. This helper only clears that one
+    prerequisite; it never grants course access by itself.
+
+    Same idempotent by-name lookup + join pattern as
+    ensure_default_workspace_membership above (ADAR Eats' "Restaurant"
+    workspace) -- called from list_workspaces below so it self-heals on
+    every academy app load, not just at signup, the same way Eats' version
+    is resolved lazily rather than hooked into auth/login."""
+    row = await db.fetchrow(
+        "SELECT id FROM workspaces WHERE LOWER(name)=LOWER($1) ORDER BY created_at ASC LIMIT 1",
+        ACADEMY_DEFAULT_WORKSPACE_NAME,
+    )
+    if not row:
+        return None
+    workspace_id = str(row["id"])
+    await db.execute(
+        """INSERT INTO workspace_members (workspace_id, user_id, role)
+           VALUES ($1,$2,'viewer')
+           ON CONFLICT (workspace_id, user_id) DO NOTHING""",
+        workspace_id, user_id,
+    )
+    return workspace_id
+
+
 async def get_default_workspace_id_readonly(db) -> str | None:
     """Same resolved workspace as ensure_default_workspace_membership
     above, for a caller with no account to add as a member of it -- a
@@ -145,7 +187,13 @@ async def _fmt_workspace(db, ws: dict, user_id: str) -> dict:
 
 # ── List my workspaces ────────────────────────────────────────────────────────
 @router.get("/")
-async def list_workspaces(current_user: CurrentUser, db=Depends(get_db)):
+async def list_workspaces(request: Request, current_user: CurrentUser, db=Depends(get_db)):
+    # Academy's own web app (X-Client-App: academy) self-heals a brand-new
+    # or pre-existing-but-never-joined account onto the shared default
+    # workspace on every load -- see ensure_default_academy_workspace_membership
+    # above for why this lives here rather than at register/login.
+    if request.headers.get("x-client-app", "").strip().lower() == "academy":
+        await ensure_default_academy_workspace_membership(db, str(current_user["id"]))
     rows = await db.fetch(
         """SELECT w.* FROM workspaces w
            JOIN workspace_members wm ON wm.workspace_id = w.id

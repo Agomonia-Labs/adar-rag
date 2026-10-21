@@ -16,7 +16,7 @@ from database.connection import get_db
 from services.usage         import check_and_log_daily_event, check_document_limit, log_event
 from services.audit         import audit, ip_from, ua_from
 from services.notifications import send_embed_complete
-from services.extractor import extract_text, detect_type, extract_tables_from_pdf, tables_to_text
+from services.extractor import extract_text, detect_type, extract_tables_from_pdf, tables_to_text, convert_to_pdf
 from services.classifier import classify_document
 from services.chunker   import chunk_text
 from services.llm       import embed
@@ -348,6 +348,49 @@ async def view_source_text(doc_id: str, current_user: CurrentUser, db=Depends(ge
     except Exception as exc:
         raise HTTPException(502, f"Could not read source file: {exc}")
     return {"text": text}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  View as PDF — on-demand docx/doc -> PDF conversion, cached in GCS
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/{doc_id}/pdf-view-url")
+async def view_as_pdf_url(doc_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    """Browsers can't render a Word document inline -- there is no built-in
+    engine for Office formats the way there is for PDF. This converts a
+    docx/doc to a real PDF once via headless LibreOffice (services.extractor
+    .convert_to_pdf) and caches the result in GCS (documents.gcs_pdf_path),
+    so the student-view inline viewer can hand the SAME iframe PDF viewer
+    already used for native PDFs a real PDF, and later views of the same
+    document skip reconversion entirely."""
+    row = await _get_owned(doc_id, current_user["id"], db)
+    if row.get("gcs_pdf_path"):
+        return {"url": await gcs.get_signed_url(row["gcs_pdf_path"]), "cached": True}
+
+    tmp_src = tempfile.NamedTemporaryFile(delete=False)
+    tmp_src.close()
+    pdf_local_path = None
+    try:
+        try:
+            await gcs.download_to_file(row["gcs_source_path"], tmp_src.name)
+        except Exception as exc:
+            raise HTTPException(502, f"Could not read source file: {exc}")
+        try:
+            pdf_local_path = await convert_to_pdf(tmp_src.name, row["original_name"])
+        except Exception as exc:
+            raise HTTPException(502, f"Could not convert this document to PDF: {exc}")
+        with open(pdf_local_path, "rb") as f:
+            pdf_bytes = f.read()
+        pdf_path = gcs.pdf_preview_path(str(row["user_id"]), doc_id)
+        await gcs.upload_bytes(pdf_path, pdf_bytes, "application/pdf")
+        await db.execute("UPDATE documents SET gcs_pdf_path=$2, updated_at=NOW() WHERE id=$1", doc_id, pdf_path)
+    finally:
+        try: os.unlink(tmp_src.name)
+        except OSError: pass
+        if pdf_local_path:
+            try: os.unlink(pdf_local_path)
+            except OSError: pass
+
+    return {"url": await gcs.get_signed_url(pdf_path), "cached": False}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

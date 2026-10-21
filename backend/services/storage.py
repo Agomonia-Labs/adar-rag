@@ -46,6 +46,9 @@ def metadata_path(user_id: str, doc_id: str) -> str:
 def chunks_dir(user_id: str, doc_id: str) -> str:
     return f"users/{user_id}/documents/{doc_id}/chunks/"
 
+def pdf_preview_path(user_id: str, doc_id: str) -> str:
+    return f"users/{user_id}/documents/{doc_id}/preview.pdf"
+
 
 # ── Upload ────────────────────────────────────────────────────────────────────
 async def upload_bytes(blob_path: str, data: bytes, content_type: str = "application/octet-stream") -> None:
