@@ -3,6 +3,7 @@
 // back to this one (see i18n/index.js's t()).
 export default {
   nav_courses: 'Courses',
+  nav_chat: 'Knowledge Chat',
   nav_content: 'Content Library',
   nav_video: '🎬 Video Intelligence',
   nav_workspace: 'Workspace',

@@ -40,6 +40,17 @@ async def extract_text(file_path: str, filename: str, content_type: str) -> str:
             except Exception as exc:
                 log.warning("docx/doc extraction fallback failed for %s: %s", filename, exc)
                 return ""
+    if ftype == "presentation":
+        try:
+            pdf_path = await convert_to_pdf(file_path, filename)
+            try:
+                return await asyncio.to_thread(_pymupdf_text, pdf_path)
+            finally:
+                try: os.unlink(pdf_path)
+                except OSError: pass
+        except Exception as exc:
+            log.warning("PowerPoint extraction failed for %s: %s", filename, exc)
+            return ""
     if ftype == "csv":
         return await asyncio.to_thread(_extract_csv, file_path)
     if ftype == "image":
@@ -52,6 +63,8 @@ def detect_type(filename: str, content_type: str = "") -> str:
     if ext == "pdf" or "pdf" in content_type:               return "pdf"
     if ext in {"docx", "doc"} or "wordprocessingml" in content_type or content_type == "application/msword":
         return "docx"
+    if ext in {"ppt", "pptx"} or "presentationml" in content_type or content_type == "application/vnd.ms-powerpoint":
+        return "presentation"
     if ext == "csv"  or "text/csv" in content_type:         return "csv"
     if content_type.startswith("video/") or ext in {"mp4","mov","m4v","avi","mkv","webm"}:
         return "video"
@@ -108,7 +121,7 @@ def _extract_docx(path: str) -> str:
     return "\n".join(body) + ("\n\nTables:\n" + "\n".join(tables) if tables else "")
 
 
-# ── Office conversion (docx/doc -> PDF via headless LibreOffice) ──────────────
+# ── Office conversion (Word/PowerPoint -> PDF via headless LibreOffice) ───────
 # Browsers have no built-in renderer for Office formats, so the student-view
 # inline viewer (Academy's ContentItem, and DocIntel/Eats wherever they view
 # a Word doc) needs a real format conversion, not an iframe trick. This is
@@ -158,7 +171,7 @@ def _convert_to_pdf_sync(file_path: str, suffix: str) -> str:
 
 
 async def convert_to_pdf(file_path: str, filename: str) -> str:
-    """Convert a Word document (.doc or .docx) to PDF, returning the local
+    """Convert a Word or PowerPoint document to PDF, returning the local
     path to the converted file (caller deletes it when done)."""
     suffix = Path(filename).suffix.lower()
     return await asyncio.to_thread(_convert_to_pdf_sync, file_path, suffix)

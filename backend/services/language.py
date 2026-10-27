@@ -1,5 +1,6 @@
 from __future__ import annotations
 from collections import Counter
+import re
 
 LANGUAGE_NAMES = {
     "en": "English",
@@ -11,6 +12,12 @@ LANGUAGE_NAMES = {
 }
 
 RTL_LANGUAGES = {"ar", "he", "fa", "ur"}
+
+SCRIPT_LANGUAGES = (
+    (re.compile(r"[\u0980-\u09ff]"), "bn"),
+    (re.compile(r"[\u0900-\u097f]"), "hi"),
+    (re.compile(r"[\u0600-\u06ff]"), "ar"),
+)
 
 
 def normalize_language(code: str | None) -> str:
@@ -41,3 +48,12 @@ def response_language_instruction(code: str | None) -> str:
         f"Respond in {name}. Keep document titles, proper nouns, citations, numbers, "
         "and legal/technical terms exact when translating them would reduce precision."
     )
+
+
+def infer_language_from_text(text: str | None) -> str | None:
+    """Infer languages with distinctive scripts; Latin-script languages need an explicit choice."""
+    value = str(text or '')
+    for pattern, code in SCRIPT_LANGUAGES:
+        if pattern.search(value):
+            return code
+    return None

@@ -1301,6 +1301,7 @@ class GuestLibraryChatRequest(BaseModel):
 class GuestVideoAskRequest(BaseModel):
     question: str
     limit: int = 6
+    response_language: str | None = None
 
 
 async def _guest_workspace_id(db, session: dict) -> str:
@@ -1623,6 +1624,7 @@ async def ask_guest_video(
     x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
     db=Depends(get_db),
 ):
+    from services.language import infer_language_from_text
     session = await _require_guest_learner(db, x_guest_token)
     if int(session["tutor_query_count"] or 0) >= GUEST_LEARNING_MAX_TUTOR_QUERIES:
         raise HTTPException(429, "Guest preview question limit reached for this session.")
@@ -1643,9 +1645,10 @@ async def ask_guest_video(
             "source": idx, "document_id": str(match.get("document_id")), "doc_name": match.get("doc_name"),
             "chunk_index": match.get("chunk_index"), "similarity": float(match.get("similarity") or 0),
         })
+    response_language = body.response_language or infer_language_from_text(question)
     system = rag_system(
         "\n\n".join(context_parts),
-        f"{response_language_instruction(None)} For video answers, cite the timestamp when available and keep the answer grounded in the retrieved timeline chunks.",
+        f"{response_language_instruction(response_language)} For video answers, cite the timestamp when available and keep the answer grounded in the retrieved timeline chunks.",
     )
     tokens: list[str] = []
 

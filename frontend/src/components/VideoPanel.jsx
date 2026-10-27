@@ -403,7 +403,7 @@ export default function VideoPanel({ activeWorkspace = null, onClose }) {
                     <option value="auto">Auto detect</option>
                     <option value="en-US">English</option>
                     <option value="hi-IN">Hindi</option>
-                    <option value="bn-IN">Bangla</option>
+                    <option value="bn-BD">Bangla</option>
                     <option value="ar-XA">Arabic</option>
                     <option value="es-ES">Spanish</option>
                   </select>

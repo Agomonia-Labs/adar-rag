@@ -15,6 +15,7 @@ import CoursesPage from './pages/CoursesPage.jsx';
 import CourseDetailPage from './pages/CourseDetailPage.jsx';
 import ContentLibraryPage from './pages/ContentLibraryPage.jsx';
 import VideoIntelligencePage from './pages/VideoIntelligencePage.jsx';
+import KnowledgeChatPage from './pages/KnowledgeChatPage.jsx';
 import WorkspaceAdminPage from './pages/WorkspaceAdminPage.jsx';
 import AccountPage from './pages/AccountPage.jsx';
 import UserGuidePage from './pages/UserGuidePage.jsx';
@@ -51,6 +52,7 @@ const GUEST_NAV_TABS = [
 
 const NAV_TABS = [
   ['courses', 'nav_courses'],
+  ['chat', 'nav_chat'],
   ['content', 'nav_content'],
   ['video', 'nav_video'],
   ['workspace', 'nav_workspace'],
@@ -222,6 +224,7 @@ export default function App() {
           <>
             {tab === 'courses' && <CoursesPage workspace={activeWorkspace} onOpenCourse={openCourse} />}
             {tab === 'course' && activeCourseId && <CourseDetailPage workspace={activeWorkspace} courseId={activeCourseId} onBack={backToCourses} />}
+            {tab === 'chat' && <KnowledgeChatPage workspace={activeWorkspace} />}
             {tab === 'content' && <ContentLibraryPage workspace={activeWorkspace} />}
             {tab === 'video' && <VideoIntelligencePage workspace={activeWorkspace} />}
             {tab === 'workspace' && isWorkspaceAdmin && <WorkspaceAdminPage workspace={activeWorkspace} onWorkspaceChange={setActiveWorkspace} />}

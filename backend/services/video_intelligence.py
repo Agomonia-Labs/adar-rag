@@ -93,12 +93,14 @@ async def process_video_document(
             "processing_profile": processing_profile,
             "rights_confirmed": rights_confirmed,
         })
-        await conn.execute(
+        acquired_job = await conn.fetchrow(
             """
             INSERT INTO video_processing_jobs
               (id, document_id, user_id, workspace_id, job_type, status, input_data,
-               started_at, attempt_count, dispatch_mode)
-            VALUES ($1,$2,$3,$4,'process_video','running',$5::jsonb,NOW(),1,'inline')
+               started_at, attempt_count, dispatch_mode, heartbeat_at, lease_owner,
+               lease_expires_at)
+            VALUES ($1,$2,$3,$4,'process_video','running',$5::jsonb,NOW(),1,'inline',
+                    NOW(),$6,NOW() + ($7 * INTERVAL '1 second'))
             ON CONFLICT (id) DO UPDATE SET
                status='running', error_message=NULL, completed_at=NULL,
                started_at=COALESCE(video_processing_jobs.started_at, NOW()),
@@ -106,10 +108,26 @@ async def process_video_document(
                heartbeat_at=NOW(), lease_owner=$6,
                lease_expires_at=NOW() + ($7 * INTERVAL '1 second'),
                updated_at=NOW()
+            WHERE video_processing_jobs.lease_owner IS NULL
+               OR video_processing_jobs.lease_expires_at IS NULL
+               OR video_processing_jobs.lease_expires_at < NOW()
+               OR video_processing_jobs.lease_owner = $6
+            RETURNING id
             """,
             job_id, document_id, user_id, workspace_id, input_data,
             checkpoint_owner, checkpoints.LEASE_SECONDS,
         )
+        if not acquired_job:
+            log.info(
+                "Video job %s is already leased by another worker; execution %s will exit without retrying",
+                job_id,
+                checkpoint_owner,
+            )
+            return {
+                "job_id": job_id,
+                "document_id": document_id,
+                "status": "already_running",
+            }
         await conn.execute(
             "UPDATE documents SET status='chunking', error_message=NULL, updated_at=NOW() WHERE id=$1",
             document_id,
@@ -1147,6 +1165,7 @@ def _resolve_transcript_languages(transcript_language: str | None) -> tuple[str,
     supported = {
         "en-US": "en-US",
         "hi-IN": "hi-IN",
+        "bn-BD": "bn-BD",
         "bn-IN": "bn-IN",
         "ar-XA": "ar-XA",
         "es-ES": "es-ES",
@@ -1157,9 +1176,19 @@ def _resolve_transcript_languages(transcript_language: str | None) -> tuple[str,
         return supported[requested], []
     if requested.lower() == "auto":
         primary = env_default if env_default in supported else "en-US"
-        alternatives = [code for code in ["hi-IN", "bn-IN", "ar-XA", "es-ES", "en-US"] if code != primary]
+        alternatives = [code for code in ["hi-IN", "bn-BD", "ar-XA", "es-ES", "en-US"] if code != primary]
         return primary, alternatives
     return env_default, []
+
+
+def _google_speech_model(language_code: str) -> str:
+    configured = os.getenv("GOOGLE_SPEECH_MODEL", "latest_long").strip() or "latest_long"
+    # Speech-to-Text V1 does not offer latest_long/latest_short for Bengali
+    # (India). Preserve old jobs that stored bn-IN by selecting a compatible
+    # model instead of retrying the same invalid request.
+    if language_code == "bn-IN" and configured not in {"default", "command_and_search"}:
+        return "default"
+    return configured
 
 
 async def _google_speech_recognize(client: Any, api_key: str, audio_path: str, language_code: str, alternative_language_codes: list[str] | None = None) -> str:
@@ -1169,8 +1198,8 @@ async def _google_speech_recognize(client: Any, api_key: str, audio_path: str, l
         "encoding": "FLAC",
         "sampleRateHertz": 16000,
         "languageCode": language_code,
-        "enableAutomaticPunctuation": True,
-        "model": os.getenv("GOOGLE_SPEECH_MODEL", "latest_long"),
+        "enableAutomaticPunctuation": language_code != "bn-IN",
+        "model": _google_speech_model(language_code),
     }
     if alternative_language_codes:
         config["alternativeLanguageCodes"] = alternative_language_codes[:4]

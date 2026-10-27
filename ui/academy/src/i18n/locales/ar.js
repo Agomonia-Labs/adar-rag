@@ -2,6 +2,7 @@
 // this locale is active.
 export default {
   nav_courses: 'الدورات',
+  nav_chat: 'محادثة المعرفة',
   nav_content: 'مكتبة المحتوى',
   nav_video: '🎬 ذكاء الفيديو',
   nav_workspace: 'مساحة العمل',

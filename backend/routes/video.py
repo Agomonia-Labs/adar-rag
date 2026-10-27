@@ -65,6 +65,7 @@ class VideoUploadCompleteRequest(BaseModel):
 class VideoQuestionRequest(BaseModel):
     question: str
     limit: int = 8
+    response_language: Literal["en", "es", "bn", "hi", "ar", "fr"] | None = None
 
 
 @router.post("/upload-session")
@@ -433,6 +434,7 @@ async def frame_view_url(doc_id: str, frame_index: int, current_user: CurrentUse
 @router.post("/{doc_id}/ask")
 async def ask_video(doc_id: str, body: VideoQuestionRequest, current_user: CurrentUser, db=Depends(get_db)):
     from services.llm import chat_stream, embed_query, rag_system
+    from services.language import infer_language_from_text, response_language_instruction
 
     doc = await _get_accessible_document(db, doc_id, str(current_user["id"]))
     if doc.get("status") != "embedded":
@@ -463,9 +465,11 @@ async def ask_video(doc_id: str, body: VideoQuestionRequest, current_user: Curre
             "similarity": float(match.get("similarity") or 0),
         })
 
+    response_language = body.response_language or infer_language_from_text(question)
+    language_rule = response_language_instruction(response_language)
     system = rag_system(
         "\n\n".join(context_parts),
-        "Answer in English. For video answers, cite the timestamp when available and keep the answer grounded in the retrieved timeline chunks.",
+        f"{language_rule} For video answers, cite the timestamp when available and keep the answer grounded in the retrieved timeline chunks.",
     )
     tokens: list[str] = []
 

@@ -200,7 +200,7 @@ function GuestContentItem({ asset, ensureSession }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
-  const needsPdfConversion = asset.file_type === 'docx';
+  const needsPdfConversion = ['docx', 'presentation'].includes(asset.file_type);
 
   const toggle = async () => {
     if (open) { setOpen(false); return; }
@@ -685,7 +685,7 @@ function GuestStudyTools({ course, ensureSession, limits, onRequestAuth }) {
   };
 
   return (
-    <div style={s.panel}>
+    <div style={{ ...s.panel, ...(!isMobile ? s.studyToolsPanel : {}) }}>
       <button type="button" style={s.browserNavToggle} onClick={() => setFiltersOpen(o => !o)}>
         {filtersOpen ? '▾ Hide filters' : `▸ Filters · ${ARTIFACT_LABEL[type]}`}
       </button>
@@ -735,7 +735,7 @@ function GuestStudyTools({ course, ensureSession, limits, onRequestAuth }) {
               ? <GuestPracticeQuiz artifact={item} ensureSession={ensureSession} onAttemptChange={onAttemptChange} />
               : item.artifact_type === 'flashcards'
                 ? <GuestFlashcardDeck content={item.content} />
-                : <MarkdownRenderer text={item.content} style={{ fontSize: 12.5 }} />}
+                : <MarkdownRenderer text={item.content} style={s.studyNarrative} />}
           </article>
         ))}
         {artifacts !== null && !artifacts.length && <Empty title="No study materials yet" text="Generate a summary, study guide, key concepts, flashcards, or a practice quiz above." />}
@@ -1126,7 +1126,7 @@ function GuestLibrary({ ensureSession, limits, onRequestAuth }) {
       // .doc/.docx has no in-browser rendering engine -- convert to a
       // real PDF (cached server-side) instead, same as the signed-in
       // app's Content Library viewer.
-      const r = d.file_type === 'docx' ? await getGuestLibraryPdfViewUrl(token, d.id) : await getGuestLibraryViewUrl(token, d.id);
+      const r = ['docx', 'presentation'].includes(d.file_type) ? await getGuestLibraryPdfViewUrl(token, d.id) : await getGuestLibraryViewUrl(token, d.id);
       window.open(r.url, '_blank');
     } catch (e) { setViewError(e.message || 'Could not open this file.'); }
   };
@@ -1517,7 +1517,7 @@ export default function GuestPreviewPage({ onRequestAuth, activeSlug, onSelectCo
   }
 
   return (
-    <div style={s.wrap}>
+    <div style={{ ...s.wrap, ...(course && tab === 'study' && !isMobile ? s.studyWrap : {}) }}>
       {(!course || error) && <button type="button" style={s.backLink} onClick={() => setOpened(false)}>← All courses</button>}
       {error && <div style={{ marginTop: 10 }}><Empty title="Preview unavailable" text={error} /></div>}
 
@@ -1631,6 +1631,7 @@ export function GuestVideoSection({ onRequestAuth, activeSlug, sessions, ensure 
 
 const s = {
   wrap: { maxWidth: 980, margin: '0 auto', padding: '20px 18px 40px', width: '100%' },
+  studyWrap: { maxWidth: 1320, paddingBottom: 0, display: 'flex', flexDirection: 'column', flex: 1 },
   intro: { marginBottom: 18 },
   eyebrow: { fontSize: 11.5, fontWeight: 700, color: 'var(--gold-h)', letterSpacing: '.5px', textTransform: 'uppercase', margin: '0 0 10px' },
   courseSwitch: { display: 'flex', gap: 6, marginBottom: 12 },
@@ -1674,6 +1675,8 @@ const s = {
   groupItem: { textAlign: 'left', padding: '8px 12px', borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--tx2)', fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap' },
   groupItemActive: { background: 'var(--gold-soft)', color: 'var(--gold-h)' },
   panel: { background: 'var(--s1)', border: '1px solid var(--b1)', borderRadius: 10, padding: 16 },
+  studyToolsPanel: { flex: 1, minHeight: 'calc(100dvh - 145px)', borderRadius: '10px 10px 0 0', padding: '20px 24px 28px' },
+  studyNarrative: { width: '100%', fontSize: 14, lineHeight: 1.75, color: 'var(--tx)' },
   browserWrap: { display: 'grid', gridTemplateColumns: 'minmax(180px,240px) 1fr', gap: 14 },
   browserNavToggle: { width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--b2)', background: 'var(--s2)', color: 'var(--tx)', fontSize: 12.5, fontWeight: 600 },
   browserNav: { display: 'flex', flexDirection: 'column', gap: 2 },

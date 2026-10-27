@@ -120,8 +120,67 @@ async def test_create_video_job_persists_payload_before_dispatch():
 
     assert (job_id, reused) == ("new-job", False)
     insert_args = conn.execute.await_args_list[1].args
-    assert json.loads(insert_args[5])["source_gcs_path"] == "users/u/v.mp4"
-    assert insert_args[6] == "cloud_run_job"
+    assert insert_args[5] == "process_video"
+    assert json.loads(insert_args[6])["source_gcs_path"] == "users/u/v.mp4"
+    assert insert_args[7] == "cloud_run_job"
+
+
+@pytest.mark.asyncio
+async def test_create_document_job_uses_large_document_profile_and_job_type():
+    conn = MagicMock()
+    conn.transaction.return_value = _Transaction()
+    conn.execute = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value=None)
+    pool = MagicMock()
+    pool.acquire.return_value = _Acquire(conn)
+
+    with (
+        patch.object(video_dispatch, "get_pool", return_value=pool),
+        patch.object(video_dispatch, "document_dispatch_mode", return_value="cloud_run_job"),
+        patch.object(video_dispatch, "uuid4", return_value="document-job"),
+    ):
+        job_id, reused = await video_dispatch.create_or_reuse_document_job(
+            document_id="doc-1",
+            user_id="user-1",
+            workspace_id="workspace-1",
+            payload={"filename": "large.pdf", "processing_profile": "large_document"},
+        )
+
+    assert (job_id, reused) == ("document-job", False)
+    insert_args = conn.execute.await_args_list[1].args
+    assert insert_args[5] == "process_document"
+    assert json.loads(insert_args[6])["filename"] == "large.pdf"
+    assert insert_args[7] == "cloud_run_job"
+
+
+@pytest.mark.asyncio
+async def test_create_document_embedding_job_uses_durable_job_type():
+    conn = MagicMock()
+    conn.transaction.return_value = _Transaction()
+    conn.execute = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value=None)
+    pool = MagicMock()
+    pool.acquire.return_value = _Acquire(conn)
+
+    with (
+        patch.object(video_dispatch, "get_pool", return_value=pool),
+        patch.object(video_dispatch, "document_dispatch_mode", return_value="cloud_run_job"),
+        patch.object(video_dispatch, "uuid4", return_value="embedding-job"),
+    ):
+        job_id, reused = await video_dispatch.create_or_reuse_document_embedding_job(
+            document_id="doc-1",
+            user_id="user-1",
+            workspace_id="workspace-1",
+            payload={"processing_profile": "durable_embedding", "chunk_count": 42},
+        )
+
+    assert (job_id, reused) == ("embedding-job", False)
+    insert_args = conn.execute.await_args_list[1].args
+    assert insert_args[5] == "process_document_embedding"
+    assert json.loads(insert_args[6])["chunk_count"] == 42
+    assert insert_args[7] == "cloud_run_job"
+    status_update = conn.execute.await_args_list[2].args
+    assert status_update[3] == "embedding"
 
 
 def test_dispatch_mode_defaults_to_inline_locally(monkeypatch):

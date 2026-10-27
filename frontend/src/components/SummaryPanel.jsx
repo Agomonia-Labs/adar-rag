@@ -11,6 +11,16 @@ const TYPES = [
   { key:'custom',    icon:'✏',  label:'Custom',     desc:'Your own prompt'             },
 ];
 
+const LANGUAGES = [
+  { value:'', label:'Auto (document language)' },
+  { value:'en', label:'English' },
+  { value:'bn', label:'Bangla' },
+  { value:'hi', label:'Hindi' },
+  { value:'ar', label:'Arabic' },
+  { value:'es', label:'Spanish' },
+  { value:'fr', label:'French' },
+];
+
 export default function SummaryPanel({ docId, docName, documentIds, docNames, chunkIndices, onClose }) {
   const isMobile = useIsMobile();
   const [type,    setType]    = useState('executive');
@@ -19,6 +29,7 @@ export default function SummaryPanel({ docId, docName, documentIds, docNames, ch
   const [stage,   setStage]   = useState('');
   const [progress,setProgress]= useState(null);
   const [error,   setError]   = useState('');
+  const [language, setLanguage] = useState('');
   const [redactPii, setRedactPii] = useState(() => localStorage.getItem('redact_pii_summary') === '1');
   const outRef = useRef(null);
 
@@ -33,10 +44,10 @@ export default function SummaryPanel({ docId, docName, documentIds, docNames, ch
     if(type==='custom' && !prompt.trim()){ setError('Enter your custom prompt first'); return; }
     setOutput(''); setError(''); setStage('running'); setProgress(null);
     await streamSummary(
-      {doc_id:docId,document_ids:documentIds,summary_type:type,custom_prompt:prompt,chunk_indices:chunkIndices,redactPii},
+      {doc_id:docId,document_ids:documentIds,summary_type:type,custom_prompt:prompt,chunk_indices:chunkIndices,response_language:language||null,redactPii},
       {
         onToken: t  => setOutput(p=>p+t),
-        onMeta:  ev => { if(ev.stage==='map') setProgress({b:ev.batch,o:ev.of}); else setProgress(null); },
+        onMeta:  ev => { if(ev.of) setProgress({b:ev.batch||0,o:ev.of,stage:ev.stage,level:ev.level}); },
         onDone:  ()  => { setStage('done'); setProgress(null); },
         onError: msg => { setError(msg); setStage('error'); setProgress(null); },
       }
@@ -106,7 +117,13 @@ export default function SummaryPanel({ docId, docName, documentIds, docNames, ch
         )}
 
         {/* Actions */}
-        <div style={{display:'flex',gap:8,padding:isMobile ? '0 10px 8px' : '0 1.5rem 10px',flexShrink:0}}>
+        <div style={{display:'flex',gap:8,padding:isMobile ? '0 10px 8px' : '0 1.5rem 10px',flexShrink:0,flexWrap:'wrap'}}>
+          <label style={s.language}>
+            <span style={s.controlLabel}>Language</span>
+            <select value={language} onChange={e=>setLanguage(e.target.value)} style={s.languageSelect} aria-label="Summary language">
+              {LANGUAGES.map(item=><option key={item.value||'auto'} value={item.value}>{item.label}</option>)}
+            </select>
+          </label>
           <label style={s.privacy} title="Redact common PII before sending summary content to the model">
             <input
               type="checkbox"
@@ -136,7 +153,7 @@ export default function SummaryPanel({ docId, docName, documentIds, docNames, ch
             <div style={{height:3,background:'var(--s3)',borderRadius:2,overflow:'hidden'}}>
               <div style={{height:'100%',background:'#4ade80',transition:'width .3s',width:`${(progress.b/progress.o)*100}%`}}/>
             </div>
-            <p style={{fontSize:11,color:'var(--muted2)',marginTop:4}}>Processing batch {progress.b} of {progress.o}…</p>
+            <p style={{fontSize:11,color:'var(--muted2)',marginTop:4}}>{summaryProgressLabel(progress)}</p>
           </div>
         )}
 
@@ -148,7 +165,7 @@ export default function SummaryPanel({ docId, docName, documentIds, docNames, ch
           <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:isMobile ? '7px 10px' : '8px 1.5rem',borderTop:'1px solid var(--b1)',borderBottom:'1px solid var(--b1)',background:'var(--s2)',flexShrink:0}}>
               <span style={{fontSize:11,fontWeight:600,color:'var(--muted2)',textTransform:'uppercase',letterSpacing:'.6px'}}>
-                {TYPES.find(t=>t.key===type)?.label} Summary
+                {TYPES.find(t=>t.key===type)?.label} Summary · {LANGUAGES.find(item=>item.value===language)?.label}
               </span>
               <div style={{display:'flex',gap:8,alignItems:'center'}}>
                 {stage==='running' && <span style={{fontSize:11,color:'#fbbf24'}}><span style={{display:'inline-block',animation:'spin .8s linear infinite'}}>⟳</span> Generating…</span>}
@@ -187,6 +204,12 @@ export default function SummaryPanel({ docId, docName, documentIds, docNames, ch
   );
 }
 
+function summaryProgressLabel(progress) {
+  if (progress.stage === 'final') return 'Creating the final summary…';
+  const stage = progress.stage === 'reduce' ? 'Consolidating summaries' : 'Reading document sections';
+  return `${stage}${progress.level ? ` · level ${progress.level}` : ''} · ${progress.b} of ${progress.o}`;
+}
+
 const s = {
   overlay: { position:'fixed', inset:0, background:'rgba(0,0,0,.7)', zIndex:5000, display:'flex', justifyContent:'flex-end' },
   floatingClose:{ position:'fixed', top:'max(10px, env(safe-area-inset-top))', right:10, zIndex:6000, display:'flex', alignItems:'center', gap:6, padding:'7px 10px', borderRadius:9, border:'1px solid rgba(74,222,128,.35)', background:'var(--s2)', color:'var(--tx)', fontSize:12, fontWeight:800, cursor:'pointer', boxShadow:'0 10px 28px rgba(0,0,0,.45)' },
@@ -208,6 +231,9 @@ const s = {
   typeRowMobile:{ padding:'8px 10px', flexWrap:'nowrap', overflowX:'auto', WebkitOverflowScrolling:'touch' },
   typeBtn: { display:'flex', alignItems:'center', gap:5, padding:'6px 12px', borderRadius:20, border:'1px solid var(--b2)', background:'transparent', color:'var(--muted2)', cursor:'pointer', fontSize:12, fontWeight:500, transition:'all .15s', whiteSpace:'nowrap' },
   typeBtnOn:{ background:'rgba(74,222,128,.12)', borderColor:'rgba(74,222,128,.35)', color:'#4ade80', fontWeight:700 },
+  language:{ display:'flex', alignItems:'center', gap:7, minHeight:38, padding:'4px 8px 4px 10px', borderRadius:'var(--r)', border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx2)', flex:'1 1 220px', minWidth:0 },
+  controlLabel:{ fontSize:11, fontWeight:700, color:'var(--muted2)', flexShrink:0 },
+  languageSelect:{ flex:1, minWidth:0, padding:'5px 24px 5px 7px', border:'none', borderRadius:6, background:'var(--s1)', color:'var(--tx)', fontSize:12, outline:'none', cursor:'pointer' },
   privacy:{ display:'flex', alignItems:'center', gap:5, padding:'8px 10px', borderRadius:'var(--r)', border:'1px solid rgba(251,191,36,.25)', background:'rgba(251,191,36,.06)', color:'#fbbf24', fontSize:12, cursor:'pointer', flexShrink:0 },
 };
 

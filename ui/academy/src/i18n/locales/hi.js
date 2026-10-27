@@ -1,6 +1,7 @@
 // हिन्दी
 export default {
   nav_courses: 'कोर्स',
+  nav_chat: 'नॉलेज चैट',
   nav_content: 'कंटेंट लाइब्रेरी',
   nav_video: '🎬 वीडियो इंटेलिजेंस',
   nav_workspace: 'वर्कस्पेस',

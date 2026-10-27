@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from typing import Optional
 from fastapi import Request, APIRouter, BackgroundTasks, UploadFile, File, Form, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 log = logging.getLogger('docintel.documents')
 
@@ -24,6 +24,18 @@ from services.pii       import redact_text
 from services.text_safety import sanitize_text_for_storage
 from services.vectordb  import store_chunk, delete_document_vectors
 from services.mcp_enterprise import emit_event
+from services.document_processing import process_document_job
+from services.document_embedding import process_document_embedding_job
+from services.video_checkpoints import summary as processing_checkpoint_summary
+from services.video_dispatch import (
+    create_or_reuse_document_job,
+    create_or_reuse_document_embedding_job,
+    dispatch_cloud_run_document_job,
+    dispatch_cloud_run_document_embedding_job,
+    document_dispatch_mode,
+    DOCUMENT_JOB_STALE_SECONDS,
+    mark_processing_dispatch_failed,
+)
 import services.storage as gcs
 
 
@@ -31,6 +43,7 @@ router = APIRouter()
 
 MAX_FILES    = int(os.getenv("MAX_UPLOAD_FILES", "10"))
 MAX_FILE_MB  = int(os.getenv("MAX_FILE_SIZE_MB", "50"))
+LARGE_DOCUMENT_MB = max(8, int(os.getenv("LARGE_DOCUMENT_PROCESSING_THRESHOLD_MB", "25")))
 
 
 class DirectUploadSessionRequest(BaseModel):
@@ -44,6 +57,18 @@ class DirectUploadSessionRequest(BaseModel):
 class DirectUploadCompleteRequest(DirectUploadSessionRequest):
     doc_id: str
     gcs_source_path: str
+
+
+class PdfSplitPart(BaseModel):
+    start_page: int = Field(ge=1)
+    end_page: int = Field(ge=1)
+    filename: str = Field(min_length=1, max_length=240)
+
+
+class PdfSplitRequest(BaseModel):
+    parts: list[PdfSplitPart] = Field(min_length=1, max_length=25)
+    embed_after_processing: bool = True
+    redact_pii: bool = False
 
 
 async def _chunk_direct_upload(
@@ -169,11 +194,223 @@ async def complete_direct_upload(
         event_type="document.uploaded", resource_type="document", resource_id=body.doc_id,
         payload={"document_id": body.doc_id, "filename": filename, "status": "chunking", "stage": "uploaded"},
     )
-    background_tasks.add_task(
-        _chunk_direct_upload, body.doc_id, user_id, body.gcs_source_path,
-        filename, content_type, ftype, body.workspace_id, body.redact_pii,
+    durable = (uploaded_size or body.file_size) >= LARGE_DOCUMENT_MB * 1024 * 1024 or ftype == "presentation"
+    job_id = None
+    if durable:
+        payload = {
+            "source_gcs_path": body.gcs_source_path,
+            "filename": filename,
+            "content_type": content_type,
+            "file_type": ftype,
+            "redact_pii": body.redact_pii,
+            "processing_profile": "large_document",
+            "embed_after_processing": ftype == "presentation",
+        }
+        job_id, reused = await create_or_reuse_document_job(
+            document_id=body.doc_id,
+            user_id=user_id,
+            workspace_id=body.workspace_id,
+            payload=payload,
+        )
+        if not reused:
+            if document_dispatch_mode() == "inline":
+                background_tasks.add_task(
+                    process_document_job,
+                    job_id=job_id,
+                    document_id=body.doc_id,
+                    user_id=user_id,
+                    workspace_id=body.workspace_id,
+                    **payload,
+                )
+            else:
+                try:
+                    await dispatch_cloud_run_document_job(job_id)
+                except Exception as exc:
+                    await mark_processing_dispatch_failed(job_id, exc)
+                    raise HTTPException(503, f"Document worker dispatch failed: {str(exc)[:240]}") from exc
+    else:
+        background_tasks.add_task(
+            _chunk_direct_upload, body.doc_id, user_id, body.gcs_source_path,
+            filename, content_type, ftype, body.workspace_id, body.redact_pii,
+        )
+    return {
+        "doc_id": body.doc_id,
+        "filename": filename,
+        "status": "chunking",
+        "file_size": uploaded_size or body.file_size,
+        "processing_mode": "durable_job" if durable else "inline",
+        "job_id": job_id,
+    }
+
+
+@router.post("/{doc_id}/retry")
+async def retry_document_processing(
+    doc_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Resume a failed durable document job from its completed checkpoints."""
+    row = await _get_owned(doc_id, str(current_user["id"]), db)
+    if row.get("workspace_id"):
+        from routes.workspaces import _require_role
+        await _require_role(db, str(row["workspace_id"]), str(current_user["id"]), "editor")
+    job = await db.fetchrow(
+        """SELECT id, job_type, status, input_data,
+                  (status = ANY($3::text[]) AND
+                   COALESCE(heartbeat_at, updated_at) < NOW() - ($2 * INTERVAL '1 second')) AS stalled
+             FROM video_processing_jobs
+             WHERE document_id=$1
+               AND job_type = ANY($4::text[])
+             ORDER BY created_at DESC LIMIT 1""",
+        doc_id, DOCUMENT_JOB_STALE_SECONDS, ["queued", "dispatching", "running"],
+        ["process_document", "process_document_embedding"],
     )
-    return {"doc_id": body.doc_id, "filename": filename, "status": "chunking", "file_size": uploaded_size or body.file_size}
+    stalled = bool(job and job["stalled"])
+    if row["status"] != "error" and not stalled:
+        raise HTTPException(
+            400,
+            f"Only failed or stalled document jobs can be retried (current: {row['status']})",
+        )
+    if stalled:
+        await db.execute(
+            """UPDATE video_processing_jobs SET status='error', error_message='Worker heartbeat expired',
+                      lease_owner=NULL, lease_expires_at=NULL, updated_at=NOW() WHERE id=$1""",
+            job["id"],
+        )
+        await db.execute(
+            """UPDATE video_processing_checkpoints
+                  SET status='failed', error_message='Worker heartbeat expired',
+                      lease_owner=NULL, lease_expires_at=NULL, updated_at=NOW()
+                WHERE job_id=$1 AND status='running'""",
+            job["id"],
+        )
+    if job and job["job_type"] == "process_document_embedding":
+        payload = job["input_data"] if isinstance(job["input_data"], dict) else json.loads(job["input_data"] or "{}")
+        job_id, reused = await create_or_reuse_document_embedding_job(
+            document_id=doc_id,
+            user_id=str(row["user_id"]),
+            workspace_id=str(row["workspace_id"]) if row.get("workspace_id") else None,
+            payload=payload,
+        )
+        if not reused:
+            if document_dispatch_mode() == "inline":
+                background_tasks.add_task(
+                    process_document_embedding_job,
+                    job_id=job_id,
+                    document_id=doc_id,
+                    user_id=str(row["user_id"]),
+                    workspace_id=str(row["workspace_id"]) if row.get("workspace_id") else None,
+                    **payload,
+                )
+            else:
+                try:
+                    await dispatch_cloud_run_document_embedding_job(job_id)
+                except Exception as exc:
+                    await mark_processing_dispatch_failed(job_id, exc)
+                    raise HTTPException(503, f"Embedding worker dispatch failed: {str(exc)[:240]}") from exc
+        return {
+            "doc_id": doc_id,
+            "job_id": job_id,
+            "job_reused": reused,
+            "status": "embedding",
+            "processing_mode": "durable_job",
+        }
+    if not job:
+        if int(row.get("file_size") or 0) < LARGE_DOCUMENT_MB * 1024 * 1024:
+            background_tasks.add_task(
+                _chunk_direct_upload,
+                doc_id, str(row["user_id"]), row["gcs_source_path"], row["original_name"],
+                "application/octet-stream", row["file_type"],
+                str(row["workspace_id"]) if row.get("workspace_id") else None, False,
+            )
+            await db.execute("UPDATE documents SET status='chunking', error_message=NULL WHERE id=$1", doc_id)
+            return {"doc_id": doc_id, "status": "chunking", "processing_mode": "inline"}
+        payload = {
+            "source_gcs_path": row["gcs_source_path"],
+            "filename": row["original_name"],
+            "content_type": "application/pdf" if row["file_type"] == "pdf" else "application/octet-stream",
+            "file_type": row["file_type"],
+            "redact_pii": bool((row.get("doc_metadata") or {}).get("pii_redaction", {}).get("enabled"))
+                if isinstance(row.get("doc_metadata"), dict) else False,
+            "processing_profile": "large_document",
+        }
+    else:
+        payload = job["input_data"] if isinstance(job["input_data"], dict) else json.loads(job["input_data"] or "{}")
+
+    job_id, reused = await create_or_reuse_document_job(
+        document_id=doc_id,
+        user_id=str(row["user_id"]),
+        workspace_id=str(row["workspace_id"]) if row.get("workspace_id") else None,
+        payload=payload,
+    )
+    if not reused:
+        if document_dispatch_mode() == "inline":
+            background_tasks.add_task(
+                process_document_job,
+                job_id=job_id,
+                document_id=doc_id,
+                user_id=str(row["user_id"]),
+                workspace_id=str(row["workspace_id"]) if row.get("workspace_id") else None,
+                **payload,
+            )
+        else:
+            try:
+                await dispatch_cloud_run_document_job(job_id)
+            except Exception as exc:
+                await mark_processing_dispatch_failed(job_id, exc)
+                raise HTTPException(503, f"Document worker dispatch failed: {str(exc)[:240]}") from exc
+    return {
+        "doc_id": doc_id,
+        "job_id": job_id,
+        "job_reused": reused,
+        "status": "chunking",
+        "processing_mode": "durable_job",
+    }
+
+
+@router.get("/{doc_id}/processing-status")
+async def document_processing_status(
+    doc_id: str,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    row = await _get_owned(doc_id, str(current_user["id"]), db)
+    job = await db.fetchrow(
+        """SELECT id, job_type, status, dispatch_mode, dispatch_reference, attempt_count,
+                  error_message, heartbeat_at, lease_owner, lease_expires_at,
+                  created_at, started_at, completed_at, updated_at,
+                  (status = ANY($3::text[]) AND
+                   COALESCE(heartbeat_at, updated_at) < NOW() - ($2 * INTERVAL '1 second')) AS stalled
+             FROM video_processing_jobs
+            WHERE document_id=$1
+              AND job_type = ANY($4::text[])
+            ORDER BY created_at DESC LIMIT 1""",
+        doc_id, DOCUMENT_JOB_STALE_SECONDS, ["queued", "dispatching", "running"],
+        ["process_document", "process_document_embedding"],
+    )
+    metadata = row.get("doc_metadata") or {}
+    if isinstance(metadata, str):
+        metadata = json.loads(metadata or "{}")
+    if not job:
+        return {
+            "doc_id": doc_id,
+            "document_status": row["status"],
+            "progress": metadata.get("document_progress"),
+            "processing_job": None,
+            "processing_stalled": False,
+            "checkpoint_summary": None,
+        }
+    job_data = dict(job)
+    job_data["id"] = str(job_data["id"])
+    return {
+        "doc_id": doc_id,
+        "document_status": row["status"],
+        "progress": metadata.get("document_progress"),
+        "processing_job": job_data,
+        "processing_stalled": bool(job_data.pop("stalled", False)),
+        "checkpoint_summary": await processing_checkpoint_summary(str(job["id"])),
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -245,7 +482,9 @@ async def upload_documents(
             ftype, len(content), src_path, chk_dir,
         )
 
-        # Save temp file for processing
+        # Save temp file for inline processing. Presentations always use the
+        # durable worker so LibreOffice conversion, chunking, and embedding
+        # are resumable and do not hold the upload request open.
         suffix = os.path.splitext(filename)[1]
         tmp    = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         tmp.write(content); tmp.close()
@@ -260,9 +499,41 @@ async def upload_documents(
             event_type="document.uploaded", resource_type="document", resource_id=doc_id,
             payload={"document_id": doc_id, "filename": filename, "status": "chunking", "stage": "uploaded"},
         )
-        background_tasks.add_task(
-            _chunk_document, doc_id, user_id, tmp.name, filename, upload.content_type or "", ftype, workspace_id, redact_pii
-        )
+        if ftype == "presentation":
+            payload = {
+                "source_gcs_path": src_path,
+                "filename": filename,
+                "content_type": upload.content_type or "application/octet-stream",
+                "file_type": ftype,
+                "redact_pii": redact_pii,
+                "processing_profile": "presentation_pdf",
+                "embed_after_processing": True,
+            }
+            job_id, reused = await create_or_reuse_document_job(
+                document_id=doc_id, user_id=user_id, workspace_id=workspace_id, payload=payload,
+            )
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+            if not reused:
+                if document_dispatch_mode() == "inline":
+                    background_tasks.add_task(
+                        process_document_job,
+                        job_id=job_id, document_id=doc_id, user_id=user_id,
+                        workspace_id=workspace_id, **payload,
+                    )
+                else:
+                    try:
+                        await dispatch_cloud_run_document_job(job_id)
+                    except Exception as exc:
+                        await mark_processing_dispatch_failed(job_id, exc)
+                        raise HTTPException(503, f"Presentation worker dispatch failed: {str(exc)[:240]}") from exc
+        else:
+            background_tasks.add_task(
+                _chunk_document, doc_id, user_id, tmp.name, filename,
+                upload.content_type or "", ftype, workspace_id, redact_pii,
+            )
         created.append({"doc_id": doc_id, "filename": filename})
         await log_event(db, user_id, "upload", metadata={
             "doc_id":    doc_id,
@@ -277,6 +548,220 @@ async def upload_documents(
                     ip_address=ip_from(request), user_agent=ua_from(request))
 
     return {"uploaded": created}
+
+
+@router.get("/{doc_id}/pdf-info")
+async def get_pdf_info(doc_id: str, current_user: CurrentUser, db=Depends(get_db)):
+    """Return a PDF page count, caching it for future split operations."""
+    row = await _get_owned(doc_id, str(current_user["id"]), db)
+    if row.get("file_type") != "pdf":
+        raise HTTPException(400, "Only PDF documents can be split by page range")
+    metadata = row.get("doc_metadata") or {}
+    if isinstance(metadata, str):
+        metadata = json.loads(metadata or "{}")
+    if metadata.get("page_count"):
+        return {"doc_id": doc_id, "page_count": int(metadata["page_count"]), "cached": True}
+
+    import fitz
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    tmp.close()
+    try:
+        await gcs.download_to_file(row["gcs_source_path"], tmp.name)
+        def _count_pages():
+            document = fitz.open(tmp.name)
+            try:
+                return document.page_count
+            finally:
+                document.close()
+        page_count = await asyncio.to_thread(_count_pages)
+    except Exception as exc:
+        raise HTTPException(502, f"Could not inspect PDF pages: {str(exc)[:300]}") from exc
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+    await db.execute(
+        """UPDATE documents
+              SET doc_metadata=COALESCE(doc_metadata, '{}'::jsonb) || $1::jsonb,
+                  updated_at=NOW() WHERE id=$2""",
+        json.dumps({"page_count": page_count}), doc_id,
+    )
+    return {"doc_id": doc_id, "page_count": page_count, "cached": False}
+
+
+@router.post("/{doc_id}/split")
+async def split_pdf_document(
+    doc_id: str,
+    body: PdfSplitRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Create independently processed documents from inclusive PDF page ranges."""
+    source = await _get_owned(doc_id, str(current_user["id"]), db)
+    if source.get("file_type") != "pdf":
+        raise HTTPException(400, "Only PDF documents can be split by page range")
+    if source.get("workspace_id"):
+        from routes.workspaces import _require_role
+        await _require_role(db, str(source["workspace_id"]), str(current_user["id"]), "editor")
+
+    pdf_info = await get_pdf_info(doc_id, current_user, db)
+    source_page_count = int(pdf_info["page_count"])
+
+    normalized = []
+    filenames = set()
+    for part in body.parts:
+        if part.end_page < part.start_page:
+            raise HTTPException(422, f"Invalid page range {part.start_page}-{part.end_page}")
+        if part.end_page > source_page_count:
+            raise HTTPException(
+                422,
+                f"Requested page {part.end_page}, but the source PDF contains {source_page_count} pages",
+            )
+        filename = os.path.basename(part.filename.strip())
+        if not filename:
+            raise HTTPException(422, "Every split document needs a filename")
+        if not filename.lower().endswith(".pdf"):
+            filename += ".pdf"
+        key = filename.casefold()
+        if key in filenames:
+            raise HTTPException(422, f"Duplicate output filename: {filename}")
+        filenames.add(key)
+        normalized.append((part.start_page, part.end_page, filename))
+    ordered = sorted(normalized, key=lambda item: (item[0], item[1]))
+    for previous, current in zip(ordered, ordered[1:]):
+        if current[0] <= previous[1]:
+            raise HTTPException(
+                422,
+                f"Page ranges overlap: {previous[0]}-{previous[1]} and {current[0]}-{current[1]}",
+            )
+
+    user_id = str(current_user["id"])
+    workspace_id = str(source["workspace_id"]) if source.get("workspace_id") else None
+    await check_document_limit(db, user_id, quantity=len(normalized))
+    results = []
+    for start_page, end_page, filename in normalized:
+        child_id = str(uuid4())
+        child_source_path = gcs.source_path(user_id, child_id, filename)
+        metadata = {
+            "derived_from": {
+                "document_id": doc_id,
+                "filename": source.get("original_name"),
+                "start_page": start_page,
+                "end_page": end_page,
+            },
+            "automatic_embedding": {"requested": body.embed_after_processing},
+            "document_progress": {
+                "step": "split_queued", "progress_pct": 0,
+                "message": f"Pages {start_page}-{end_page} are queued for splitting.",
+            },
+        }
+        await db.execute(
+            """INSERT INTO documents
+                 (id,user_id,workspace_id,filename,original_name,file_type,file_size,
+                  gcs_source_path,gcs_chunks_dir,status,doc_metadata)
+               VALUES ($1,$2,$3,$4,$4,'pdf',0,$5,$6,'chunking',$7::jsonb)""",
+            child_id, user_id, workspace_id, filename, child_source_path,
+            gcs.chunks_dir(user_id, child_id), json.dumps(metadata),
+        )
+        payload = {
+            "source_gcs_path": child_source_path,
+            "filename": filename,
+            "content_type": "application/pdf",
+            "file_type": "pdf",
+            "redact_pii": body.redact_pii,
+            "processing_profile": "split_pdf",
+            "split_source_gcs_path": source["gcs_source_path"],
+            "split_start_page": start_page,
+            "split_end_page": end_page,
+            "embed_after_processing": body.embed_after_processing,
+        }
+        job_id, reused = await create_or_reuse_document_job(
+            document_id=child_id, user_id=user_id, workspace_id=workspace_id, payload=payload,
+        )
+        dispatch_error = None
+        if not reused:
+            if document_dispatch_mode() == "inline":
+                background_tasks.add_task(
+                    process_document_job,
+                    job_id=job_id, document_id=child_id, user_id=user_id,
+                    workspace_id=workspace_id, **payload,
+                )
+            else:
+                try:
+                    await dispatch_cloud_run_document_job(job_id)
+                except Exception as exc:
+                    dispatch_error = str(exc)[:240]
+                    await mark_processing_dispatch_failed(job_id, exc)
+        await emit_event(
+            db, user_id=user_id, workspace_id=workspace_id,
+            event_type="document.uploaded", resource_type="document", resource_id=child_id,
+            payload={
+                "document_id": child_id, "filename": filename, "status": "chunking",
+                "stage": "pdf_split", "source_document_id": doc_id,
+                "start_page": start_page, "end_page": end_page,
+            },
+        )
+        results.append({
+            "doc_id": child_id, "filename": filename,
+            "start_page": start_page, "end_page": end_page,
+            "status": "error" if dispatch_error else "chunking",
+            "job_id": job_id, "dispatch_error": dispatch_error,
+        })
+    await audit(
+        db, user_id=user_id, action="split_pdf_document",
+        resource_type="document", resource_id=doc_id,
+        metadata={"workspace_id": workspace_id, "outputs": results},
+        ip_address=ip_from(request), user_agent=ua_from(request),
+    )
+    return {
+        "source_document_id": doc_id,
+        "created": results,
+        "embed_after_processing": body.embed_after_processing,
+    }
+
+
+@router.post("/{doc_id}/convert-pdf")
+async def convert_presentation_to_pdf(
+    doc_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Queue PDF conversion, extraction, chunking, and embedding for PowerPoint."""
+    row = await _get_owned(doc_id, str(current_user["id"]), db)
+    if row.get("file_type") != "presentation":
+        raise HTTPException(400, "Only PowerPoint documents can use this conversion")
+    if row.get("workspace_id"):
+        from routes.workspaces import _require_role
+        await _require_role(db, str(row["workspace_id"]), str(current_user["id"]), "editor")
+    user_id = str(row["user_id"])
+    workspace_id = str(row["workspace_id"]) if row.get("workspace_id") else None
+    payload = {
+        "source_gcs_path": row["gcs_source_path"],
+        "filename": row["original_name"],
+        "content_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "file_type": "presentation", "redact_pii": False,
+        "processing_profile": "presentation_pdf", "embed_after_processing": True,
+    }
+    job_id, reused = await create_or_reuse_document_job(
+        document_id=doc_id, user_id=user_id, workspace_id=workspace_id, payload=payload,
+    )
+    if not reused:
+        if document_dispatch_mode() == "inline":
+            background_tasks.add_task(
+                process_document_job, job_id=job_id, document_id=doc_id,
+                user_id=user_id, workspace_id=workspace_id, **payload,
+            )
+        else:
+            try:
+                await dispatch_cloud_run_document_job(job_id)
+            except Exception as exc:
+                await mark_processing_dispatch_failed(job_id, exc)
+                raise HTTPException(503, f"Presentation worker dispatch failed: {str(exc)[:240]}") from exc
+    return {"doc_id": doc_id, "job_id": job_id, "job_reused": reused, "status": "chunking"}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -439,23 +924,63 @@ async def trigger_embedding(
         from routes.workspaces import _require_role
         await _require_role(db, str(row["workspace_id"]), str(current_user["id"]), "editor")
     _require_restaurant_doc_creator(row, str(current_user["id"]))
-    if row["status"] != "chunked":
-        raise HTTPException(400, f"Document must be in 'chunked' state (current: {row['status']})")
+    retrying = False
+    if row["status"] == "error":
+        latest = await db.fetchrow(
+            """SELECT job_type, status FROM video_processing_jobs
+                 WHERE document_id=$1 ORDER BY created_at DESC LIMIT 1""",
+            doc_id,
+        )
+        retrying = bool(
+            latest
+            and latest["job_type"] == "process_document_embedding"
+            and latest["status"] in {"error", "dead_letter"}
+        )
+    if row["status"] not in {"chunked", "embedded"} and not retrying:
+        raise HTTPException(400, f"Document must be chunked before embedding (current: {row['status']})")
 
     user_id      = str(current_user["id"])
     workspace_id = row.get("workspace_id")   # propagate workspace scope to chunks
     chunk_count = int(row.get("chunk_count") or 1)
-    await check_and_log_daily_event(
-        db,
-        user_id,
-        "embedding",
-        "max_embeds_day",
-        quantity=chunk_count,
-        metadata={"doc_id": doc_id, "chunk_count": chunk_count},
+    if not retrying:
+        await check_and_log_daily_event(
+            db,
+            user_id,
+            "embedding",
+            "max_embeds_day",
+            quantity=chunk_count,
+            metadata={"doc_id": doc_id, "chunk_count": chunk_count},
+        )
+    payload = {"processing_profile": "durable_embedding", "chunk_count": chunk_count}
+    job_id, reused = await create_or_reuse_document_embedding_job(
+        document_id=doc_id,
+        user_id=user_id,
+        workspace_id=str(workspace_id) if workspace_id else None,
+        payload=payload,
     )
-    await db.execute("UPDATE documents SET status='embedding', updated_at=NOW() WHERE id=$1", doc_id)
-    background_tasks.add_task(_embed_document, doc_id, user_id, workspace_id)
-    return {"message": "Embedding started", "doc_id": doc_id}
+    if not reused:
+        if document_dispatch_mode() == "inline":
+            background_tasks.add_task(
+                process_document_embedding_job,
+                job_id=job_id,
+                document_id=doc_id,
+                user_id=user_id,
+                workspace_id=str(workspace_id) if workspace_id else None,
+                **payload,
+            )
+        else:
+            try:
+                await dispatch_cloud_run_document_embedding_job(job_id)
+            except Exception as exc:
+                await mark_processing_dispatch_failed(job_id, exc)
+                raise HTTPException(503, f"Embedding worker dispatch failed: {str(exc)[:240]}") from exc
+    return {
+        "message": "Embedding queued" if not reused else "Embedding already queued",
+        "doc_id": doc_id,
+        "job_id": job_id,
+        "job_reused": reused,
+        "processing_mode": "durable_job",
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════

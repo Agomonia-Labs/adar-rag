@@ -47,6 +47,46 @@ async def store_chunk(
         )
 
 
+async def replace_chunk(
+    *,
+    document_id: str,
+    user_id: str,
+    workspace_id: str | None = None,
+    chunk_index: int,
+    chunk_total: int,
+    content: str,
+    embedding: list[float],
+    chunk_metadata: dict,
+) -> None:
+    """Atomically replace one embedded chunk for resumable processing."""
+    import json
+    safe_content = sanitize_text_for_storage(content)
+    async with get_pool().acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "DELETE FROM document_chunks WHERE document_id=$1 AND chunk_index=$2",
+                document_id,
+                chunk_index,
+            )
+            await conn.execute(
+                """
+                INSERT INTO document_chunks
+                  (document_id, user_id, workspace_id, chunk_index, chunk_total,
+                   content, embedding, chunk_metadata, search_vector)
+                VALUES ($1,$2,$3,$4,$5,$6,$7::vector,$8::jsonb,
+                        to_tsvector('english', $6))
+                """,
+                document_id,
+                user_id,
+                workspace_id,
+                chunk_index,
+                chunk_total,
+                safe_content,
+                _vec(embedding),
+                json.dumps(chunk_metadata),
+            )
+
+
 # ── Delete ─────────────────────────────────────────────────────────────────────
 
 async def delete_document_vectors(document_id: str) -> int:

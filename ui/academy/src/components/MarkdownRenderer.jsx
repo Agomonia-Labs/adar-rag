@@ -3,12 +3,18 @@
 import React, { useEffect, useId, useMemo, useState } from 'react';
 
 export default function MarkdownRenderer({ text, style }) {
-  const blocks = useMemo(() => parseBlocks(text || ''), [text]);
+  const blocks = useMemo(() => parseBlocks(normalizeMarkdown(text || '')), [text]);
   return (
     <div style={{ lineHeight: 1.7, ...style }}>
       {blocks.map((block, i) => <Block key={i} block={block} />)}
     </div>
   );
+}
+
+function normalizeMarkdown(text) {
+  // Some model/provider responses escape Markdown punctuation even though the
+  // payload is already a JSON string. Normalize those delimiters before parsing.
+  return String(text).replace(/\\([*_[\]`#>~-])/g, '$1');
 }
 
 // ── Block renderer ────────────────────────────────────────────────────────────

@@ -1,7 +1,9 @@
 // src/components/DocumentsTab.jsx
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { uploadDocuments, listDocuments, listWorkspaceDocuments, getViewUrl, triggerEmbed, deleteDocument, retryDocument,
-         listTags, createTag, deleteTag, assignTag, removeTagAssignment, reclassifyDocument, fetchLatestLeaseAgentWorkflow } from '../services/api.js';
+import { uploadDocuments, listDocuments, listWorkspaceDocuments, getViewUrl, getPdfViewUrl, getPdfInfo, splitPdfDocument,
+         convertPresentationToPdf, triggerEmbed, deleteDocument, retryDocument,
+         listTags, createTag, deleteTag, assignTag, removeTagAssignment, reclassifyDocument, fetchLatestLeaseAgentWorkflow,
+         getDocumentProcessingStatus } from '../services/api.js';
 import { toast } from './Toast.jsx';
 import ChunksViewer from './ChunksViewer.jsx';
 import SummaryPanel from './SummaryPanel.jsx';
@@ -20,7 +22,7 @@ const STATUS = {
   error:     { strip:'#f87171', bg:'rgba(248,113,113,.1)', color:'#f87171', label:'Error'           },
 };
 
-const ICONS = { pdf:'📄', docx:'📝', csv:'📊', image:'🖼', text:'📃', '?':'📁' };
+const ICONS = { pdf:'📄', docx:'📝', presentation:'▤', csv:'📊', image:'🖼', text:'📃', '?':'📁' };
 
 const DOC_TYPE_LABELS = {
   contract:'Contract', agreement:'Agreement', nda:'NDA', lease:'Lease',
@@ -65,6 +67,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
   const [loading, setLoading] = useState(true);
   const [drag,    setDrag]    = useState(false);
   const [busy,    setBusy]    = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null);
   const [viewer,  setViewer]  = useState(null);
   const [summary, setSummary] = useState(null);
   const [compare, setCompare] = useState(null);
@@ -86,6 +89,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
   const [newTagName,  setNewTagName]  = useState('');
   const [showTagMgr,  setShowTagMgr]  = useState(false);
   const [showMobileDocMenu, setShowMobileDocMenu] = useState(false);
+  const [splitOpen, setSplitOpen] = useState(false);
   const [redactPiiOnUpload, setRedactPiiOnUpload] = useState(() => localStorage.getItem('redact_pii_upload') === '1');
   const isMobile = useIsMobile();
 
@@ -162,16 +166,20 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
     if (ex+files.length>MAX_FILES){ toast(`Max ${MAX_FILES} docs. Have ${ex}; can add ${MAX_FILES-ex} more.`,'error'); return; }
     setBusy(true);
     try{
-      await uploadDocuments(files, activeWorkspace?.id || null, { redactPii: redactPiiOnUpload });
+      await uploadDocuments(files, activeWorkspace?.id || null, {
+        redactPii: redactPiiOnUpload,
+        onUploadProgress: progress => setUploadProgress(progress),
+      });
       await loadDocs();
       toast(`${files.length} file${files.length>1?'s':''} uploaded${redactPiiOnUpload ? ' with PII redaction' : ''}`,'success');
     }
     catch(e){ toast(e.message,'error'); }
-    finally{ setBusy(false); }
+    finally{ setBusy(false); setUploadProgress(null); }
   }, [docs, loadDocs, activeWorkspace?.id, redactPiiOnUpload]);
 
   const handleEmbed  = async id => { try{ await triggerEmbed(id); await loadDocs(); toast('Embedding started','info'); }catch(e){ toast(e.message,'error'); } };
-  const handleView   = async id => { try{ const{url}=await getViewUrl(id); window.open(url,'_blank'); }catch(e){ toast(e.message,'error'); } };
+  const handleView   = async doc => { try{ const{url}=['docx','presentation'].includes(doc.file_type)?await getPdfViewUrl(doc.id):await getViewUrl(doc.id); window.open(url,'_blank'); }catch(e){ toast(e.message,'error'); } };
+  const handlePresentation = async id => { try{ await convertPresentationToPdf(id); toast('PowerPoint conversion, chunking, and embedding queued','info'); await loadDocs(); }catch(e){ toast(e.message,'error'); } };
   const handleRetry  = async id => { try{ await retryDocument(id); toast('Reprocessing started…','info'); await loadDocs(); }catch(e){ toast(e.message,'error'); } };
   const handleDelete = async id => { try{ await deleteDocument(id); await loadDocs(); toast('Deleted','success'); }catch(e){ toast(e.message,'error'); } };
   const handleReclassify = async id => {
@@ -243,6 +251,11 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
                   📝 Summarize {selected.length}
                 </button>
               )}
+              {canUpload && docs.some(d=>d.file_type==='pdf') && (
+                <button style={{...s.multiBtn,...s.mobileActionBtn}} onClick={()=>{setSplitOpen(true);setShowMobileDocMenu(false);}}>
+                  ✂ Split PDF
+                </button>
+              )}
               {canUpload && (
                 <label onClick={e=>e.stopPropagation()} style={s.mobilePrivacyToggle}>
                   <input
@@ -284,10 +297,13 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
               📝 Summarize {selected.length} docs
             </button>
           )}
+          {canUpload && docs.some(d=>d.file_type==='pdf') && (
+            <button style={s.multiBtn} onClick={()=>setSplitOpen(true)}>✂ Split PDF</button>
+          )}
           {/* Upload button — hidden for workspace viewers */}
           {canUpload && total<MAX_FILES && (
             <button style={s.uploadBtn} onClick={()=>fileRef.current?.click()} disabled={busy}>
-              ⬆ {busy?'Uploading…':'Upload'}
+              ⬆ {busy ? (uploadProgress?.percent != null ? `Uploading ${uploadProgress.percent}%` : 'Uploading…') : 'Upload'}
             </button>
           )}
           {!canUpload && (
@@ -305,8 +321,10 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
           onDrop={e=>{e.preventDefault();setDrag(false);handleFiles(e.dataTransfer.files);}}
           onClick={()=>fileRef.current?.click()} role="button" tabIndex={0}>
           <div style={{fontSize:30,marginBottom:6}}>⬆</div>
-          <p style={{fontWeight:600,fontSize:13,color:'#4ade80'}}>{drag?'Drop to upload':'Drop files or click to upload'}</p>
-          <p style={{fontSize:11,color:'var(--muted2)',marginTop:3}}>PDF · DOCX · CSV · Images · TXT &nbsp;·&nbsp; {MAX_FILES-total} slots remaining</p>
+          <p style={{fontWeight:600,fontSize:13,color:'#4ade80'}}>
+            {busy && uploadProgress?.percent != null ? `Uploading directly to secure storage · ${uploadProgress.percent}%` : (drag?'Drop to upload':'Drop files or click to upload')}
+          </p>
+          <p style={{fontSize:11,color:'var(--muted2)',marginTop:3}}>PDF · PowerPoint · DOCX · CSV · Images · TXT &nbsp;·&nbsp; {MAX_FILES-total} slots remaining</p>
           <label onClick={e=>e.stopPropagation()} style={s.privacyToggle}>
             <input
               type="checkbox"
@@ -321,7 +339,7 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
         </div>
       )}
 
-      <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.csv,.txt,.png,.jpg,.jpeg,.gif,.webp,.tiff"
+      <input ref={fileRef} type="file" multiple accept=".pdf,.ppt,.pptx,.doc,.docx,.csv,.txt,.png,.jpg,.jpeg,.gif,.webp,.tiff"
         style={{display:'none'}} onChange={e=>{handleFiles(e.target.files);e.target.value='';}} />
 
       {!isMobile && <div style={s.hint}>
@@ -463,7 +481,8 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
           {filtered.map(doc=>(
             <DocCard key={doc.id} doc={doc} selected={selected.includes(doc.id)}
               onSelect={()=>toggleSel(doc.id)} onEmbed={()=>handleEmbed(doc.id)}
-              onViewSource={()=>handleView(doc.id)} onViewChunks={()=>setViewer(doc.id)}
+              onViewSource={()=>handleView(doc)} onViewChunks={()=>setViewer(doc.id)}
+              onConvertPresentation={()=>handlePresentation(doc.id)}
               onSummarize={()=>setSummary({docId:doc.id,docName:doc.original_name})}
               onLease={()=>setLeasePanel({doc})}
               onHealthcare={()=>setHealthcarePanel({doc})}
@@ -508,6 +527,14 @@ export default function DocumentsTab({ onEmbedChange, activeWorkspace, refreshKe
         />
       )}
       {healthcarePanel && <HealthcarePanel doc={healthcarePanel.doc} initialTab={healthcarePanel.initialTab} onClose={()=>setHealthcarePanel(null)} />}
+      {splitOpen && (
+        <PdfSplitDialog
+          documents={docs.filter(doc=>doc.file_type==='pdf')}
+          initialDocumentId={selected.length===1&&docs.find(doc=>doc.id===selected[0])?.file_type==='pdf'?selected[0]:''}
+          onClose={()=>setSplitOpen(false)}
+          onCreated={async created=>{setSplitOpen(false);setSelected([]);await loadDocs();toast(`${created} PDF document${created===1?'':'s'} queued for processing`,'success');}}
+        />
+      )}
     </div>
   );
 }
@@ -518,6 +545,92 @@ function isLeaseDocument(doc) {
 
 function isHealthcareDocument(doc) {
   return HEALTHCARE_DOC_TYPES.has(doc.doc_type) || doc.doc_domain === 'medical';
+}
+
+function PdfSplitDialog({documents,initialDocumentId,onClose,onCreated}){
+  const [documentId,setDocumentId]=useState(initialDocumentId||documents[0]?.id||'');
+  const [pageCount,setPageCount]=useState(null);
+  const [loadingPages,setLoadingPages]=useState(false);
+  const [rows,setRows]=useState([{start_page:1,end_page:1,filename:'Book Part 1.pdf'}]);
+  const [embedAfter,setEmbedAfter]=useState(true);
+  const [redactPii,setRedactPii]=useState(false);
+  const [submitting,setSubmitting]=useState(false);
+  const [error,setError]=useState('');
+
+  useEffect(()=>{
+    if(!documentId)return;
+    let active=true;
+    setLoadingPages(true);setPageCount(null);setError('');
+    getPdfInfo(documentId)
+      .then(info=>{if(active)setPageCount(Number(info.page_count)||null);})
+      .catch(e=>{if(active)setError(e.message||'Unable to inspect this PDF.');})
+      .finally(()=>{if(active)setLoadingPages(false);});
+    return()=>{active=false;};
+  },[documentId]);
+
+  const updateRow=(index,field,value)=>setRows(current=>current.map((row,rowIndex)=>rowIndex===index?{...row,[field]:value}:row));
+  const addRow=()=>setRows(current=>{
+    const lastEnd=Math.max(0,...current.map(row=>Number(row.end_page)||0));
+    const nextStart=lastEnd+1;
+    return [...current,{start_page:nextStart,end_page:nextStart,filename:`Book Part ${current.length+1}.pdf`}];
+  });
+  const removeRow=index=>setRows(current=>current.filter((_row,rowIndex)=>rowIndex!==index));
+
+  const submit=async event=>{
+    event.preventDefault();setError('');
+    const parts=rows.map(row=>({start_page:Number(row.start_page),end_page:Number(row.end_page),filename:String(row.filename||'').trim()}));
+    if(!documentId){setError('Select a source PDF.');return;}
+    for(const part of parts){
+      if(!part.filename){setError('Every output needs a document name.');return;}
+      if(!Number.isInteger(part.start_page)||!Number.isInteger(part.end_page)||part.start_page<1||part.end_page<part.start_page){setError('Every row needs a valid inclusive page range.');return;}
+      if(pageCount&&part.end_page>pageCount){setError(`The source contains ${pageCount} pages. Adjust range ${part.start_page}-${part.end_page}.`);return;}
+    }
+    const ordered=[...parts].sort((a,b)=>a.start_page-b.start_page||a.end_page-b.end_page);
+    for(let index=1;index<ordered.length;index+=1){
+      if(ordered[index].start_page<=ordered[index-1].end_page){setError('Page ranges cannot overlap.');return;}
+    }
+    setSubmitting(true);
+    try{
+      const result=await splitPdfDocument(documentId,parts,{embedAfterProcessing:embedAfter,redactPii});
+      await onCreated(result.created?.length||parts.length);
+    }catch(e){setError(e.message||String(e));}
+    finally{setSubmitting(false);}
+  };
+
+  return <div style={s.modalBackdrop} onClick={onClose}>
+    <form style={s.splitModal} onClick={event=>event.stopPropagation()} onSubmit={submit}>
+      <div style={s.splitHeader}>
+        <div><div style={s.splitKicker}>DOCUMENT WORKFLOW</div><h2 style={s.splitTitle}>Split PDF into documents</h2><p style={s.splitSub}>Define page ranges once. Every output becomes a named PDF and can be chunked and embedded automatically.</p></div>
+        <button type="button" style={s.closeBtn} onClick={onClose} aria-label="Close">✕</button>
+      </div>
+      <div style={s.splitBody}>
+        <label style={s.splitLabel}>Source PDF</label>
+        <select value={documentId} onChange={event=>setDocumentId(event.target.value)} style={s.splitInput}>
+          {documents.map(document=><option key={document.id} value={document.id}>{document.original_name}</option>)}
+        </select>
+        <div style={s.splitPageInfo}>{loadingPages?'Reading page count…':pageCount?`${pageCount} pages available`:'Page count unavailable'}</div>
+        <div style={s.splitTableWrap}><table style={s.splitTable}>
+          <thead><tr><th style={s.splitTh}>Start</th><th style={s.splitTh}>End</th><th style={s.splitTh}>New document name</th><th style={{...s.splitTh,width:44}}/></tr></thead>
+          <tbody>{rows.map((row,index)=><tr key={index}>
+            <td style={s.splitTd}><input type="number" min="1" max={pageCount||undefined} value={row.start_page} onChange={event=>updateRow(index,'start_page',event.target.value)} style={s.splitInput}/></td>
+            <td style={s.splitTd}><input type="number" min="1" max={pageCount||undefined} value={row.end_page} onChange={event=>updateRow(index,'end_page',event.target.value)} style={s.splitInput}/></td>
+            <td style={s.splitTd}><input value={row.filename} onChange={event=>updateRow(index,'filename',event.target.value)} placeholder="Chapter 1.pdf" style={s.splitInput}/></td>
+            <td style={s.splitTd}><button type="button" style={s.splitRemove} disabled={rows.length===1} onClick={()=>removeRow(index)} aria-label={`Remove row ${index+1}`}>✕</button></td>
+          </tr>)}</tbody>
+        </table></div>
+        <button type="button" style={s.splitAdd} onClick={addRow}>＋ Add page range</button>
+        <div style={s.splitOptions}>
+          <label style={s.splitCheck}><input type="checkbox" checked={embedAfter} onChange={event=>setEmbedAfter(event.target.checked)}/> Automatically embed each new document</label>
+          <label style={s.splitCheck}><input type="checkbox" checked={redactPii} onChange={event=>setRedactPii(event.target.checked)}/> Redact PII during extraction</label>
+        </div>
+        {error&&<div style={s.splitError}>{error}</div>}
+      </div>
+      <div style={s.splitActions}>
+        <button type="button" style={s.splitCancel} onClick={onClose}>Cancel</button>
+        <button type="submit" style={s.splitSubmit} disabled={submitting||loadingPages}>{submitting?'Creating documents…':`Create ${rows.length} document${rows.length===1?'':'s'}`}</button>
+      </div>
+    </form>
+  </div>;
 }
 
 function HealthcareDocumentPicker({ docs, loading, onOpen, onClose }) {
@@ -628,8 +741,9 @@ function LeaseDocumentPicker({ docs, loading, statusLoading, workflowStatus, onO
 
 function Stat({v,l,c}){ return <div style={{textAlign:'center',minWidth:50}}><div style={{fontSize:20,fontWeight:700,color:c}}>{v}</div><div style={{fontSize:9,color:'var(--muted2)',textTransform:'uppercase',letterSpacing:'.5px',marginTop:1}}>{l}</div></div>; }
 
-function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSummarize,onLease,onHealthcare,onRetry,onReclassify,onDelete,allTags=[],onTagAssign,onTagRemove}){
+function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSummarize,onLease,onHealthcare,onRetry,onReclassify,onDelete,onConvertPresentation,allTags=[],onTagAssign,onTagRemove}){
   const [conf,setConf]=useState(false);
+  const [showProcessing,setShowProcessing]=useState(false);
   const isMobile = useIsMobile();
   const cfg=STATUS[doc.status]||{strip:'#6b7280',bg:'rgba(107,114,128,.1)',color:'#6b7280',label:doc.status};
   const spin=['chunking','embedding','uploading'].includes(doc.status);
@@ -662,6 +776,12 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
             )}
             <span style={s.mt}>{fmtSz(doc.file_size)}</span>
             {doc.chunk_count>0 && <span style={s.mt}>{doc.chunk_count} chunks</span>}
+            {doc.doc_metadata?.document_progress && (
+              <span style={{...s.mt, color:'#60a5fa', borderColor:'rgba(96,165,250,.3)', background:'rgba(96,165,250,.08)'}}>
+                {doc.doc_metadata.document_progress.message || doc.doc_metadata.document_progress.step}
+                {doc.doc_metadata.document_progress.progress_pct != null ? ` · ${doc.doc_metadata.document_progress.progress_pct}%` : ''}
+              </span>
+            )}
             {(() => {
               const domain = doc.doc_domain || 'general';
               const color  = DOMAIN_COLORS[domain] || '#94a3b8';
@@ -724,7 +844,8 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
         </div>
       )}
       <div style={{...s.footer, ...(isMobile ? s.footerMobile : {})}}>
-        <Btn mobile={isMobile} onClick={onViewSource} disabled={['uploading','chunking'].includes(doc.status)}>🔗 Source</Btn>
+        <Btn mobile={isMobile} onClick={onViewSource} disabled={['uploading','chunking'].includes(doc.status)}>🔗 {['docx','presentation'].includes(doc.file_type)?'View PDF':'Source'}</Btn>
+        {doc.file_type==='presentation'&&!['uploading','chunking','embedding'].includes(doc.status)&&<Btn mobile={isMobile} onClick={onConvertPresentation}>▤ Process slides</Btn>}
         {canSum && <Btn mobile={isMobile} onClick={onViewChunks}>📋 Chunks</Btn>}
         {canSum && <Btn mobile={isMobile} onClick={onSummarize} accent>📝 Summary</Btn>}
         {canSum && canLease && <Btn mobile={isMobile} onClick={onLease} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>🏢 Lease</Btn>}
@@ -732,12 +853,97 @@ function DocCard({doc,selected,onSelect,onEmbed,onViewSource,onViewChunks,onSumm
         {doc.status==='error'    && <Btn mobile={isMobile} onClick={onRetry} style={{color:'#fbbf24',borderColor:'rgba(251,191,36,.3)',background:'rgba(251,191,36,.08)'}}>↻ Retry</Btn>}
         {doc.status==='chunked'  && <Btn mobile={isMobile} onClick={onEmbed} primary>⚡ Embed</Btn>}
         {doc.status==='embedded' && <Btn mobile={isMobile} onClick={onEmbed}>↩ Re-embed</Btn>}
+        {['chunking','chunked','embedding','embedded','error'].includes(doc.status) && (
+          <Btn mobile={isMobile} onClick={()=>setShowProcessing(v=>!v)}>
+            {showProcessing ? '▴ Hide status' : '▾ Processing status'}
+          </Btn>
+        )}
         {!isMobile && <div style={{flex:1}}/>}
         {!conf && <Btn mobile={isMobile} onClick={()=>setConf(true)} danger>🗑 Delete</Btn>}
       </div>
+      {showProcessing && <DocumentProcessingStatus docId={doc.id} documentStatus={doc.status} onRetry={onRetry}/>}
     </div>
   );
 }
+
+function DocumentProcessingStatus({docId,documentStatus,onRetry}){
+  const [detail,setDetail]=useState(null);
+  const [error,setError]=useState('');
+  const [refreshing,setRefreshing]=useState(true);
+  const [lastUpdated,setLastUpdated]=useState(null);
+  const [refreshTick,setRefreshTick]=useState(0);
+  const [retrying,setRetrying]=useState(false);
+  useEffect(()=>{
+    let alive=true;
+    let timer;
+    const load=async()=>{
+      setRefreshing(true);
+      try{
+        const result=await getDocumentProcessingStatus(docId);
+        if(!alive)return;
+        setDetail(result);setError('');setLastUpdated(new Date());
+        if(['uploading','chunking','embedding'].includes(result.document_status)) timer=setTimeout(load,3000);
+      }catch(e){if(alive)setError(e.message||'Unable to load processing status');}
+      finally{if(alive)setRefreshing(false);}
+    };
+    load();
+    return()=>{alive=false;clearTimeout(timer);};
+  },[docId,documentStatus,refreshTick]);
+  const refreshButton=<button type="button" style={processingStyles.refreshButton} disabled={refreshing} onClick={()=>setRefreshTick(value=>value+1)} title="Refresh processing status">↻ {refreshing?'Refreshing':'Refresh'}</button>;
+  if(error&&!detail)return <div style={processingStyles.panel}><div style={processingStyles.headingRow}><strong style={processingStyles.heading}>Processing status</strong>{refreshButton}</div><div style={processingStyles.error}>{error}</div></div>;
+  if(!detail)return <div style={processingStyles.panel}><div style={processingStyles.headingRow}><strong style={processingStyles.heading}>Processing status</strong>{refreshButton}</div><div style={processingStyles.message}>Loading processing status…</div></div>;
+  const job=detail.processing_job;
+  const progress=detail.progress||{};
+  const stages=detail.checkpoint_summary?.stages||[];
+  const isEmbedding=job?.job_type==='process_document_embedding'||detail.document_status==='embedding';
+  const heartbeatAge=job?.heartbeat_at?Date.now()-new Date(job.heartbeat_at).getTime():0;
+  const heartbeatStale=Boolean(detail.processing_stalled)||(['dispatching','running'].includes(job?.status)&&heartbeatAge>180000);
+  const retryStalled=async()=>{setRetrying(true);try{await onRetry?.();setRefreshTick(value=>value+1);}finally{setRetrying(false);}};
+  return <div style={processingStyles.panel}>
+    <div style={processingStyles.headingRow}>
+      <strong style={processingStyles.heading}>{isEmbedding?'Embedding':'Document processing'}</strong>
+      <div style={processingStyles.headingActions}><span style={processingStyles.state}>{detail.document_status}</span>{refreshButton}</div>
+    </div>
+    <div style={processingStyles.progressTrack}><div style={{...processingStyles.progressFill,width:`${progress.progress_pct||0}%`}}/></div>
+    <div style={processingStyles.message}>{progress.message||'Waiting for processing information'}{progress.progress_pct!=null?` · ${progress.progress_pct}%`:''}</div>
+    <div style={processingStyles.updated}>{lastUpdated?`Updated ${lastUpdated.toLocaleTimeString()}`:'Not refreshed yet'}{['uploading','chunking','embedding'].includes(detail.document_status)?' · Auto-refreshes every 3 seconds':''}</div>
+    {job&&<div style={processingStyles.facts}>
+      <span>Job: {job.job_type==='process_document_embedding'?'Embedding':'Chunking'}</span>
+      <span>Status: {job.status}</span>
+      <span>Attempt: {job.attempt_count||0}</span>
+      {job.heartbeat_at&&<span>Last worker activity: {formatProcessingAge(heartbeatAge)} ago</span>}
+    </div>}
+    {heartbeatStale&&<div style={processingStyles.warning}>The worker has stopped reporting activity. Resume from completed checkpoints.<button type="button" style={processingStyles.retryButton} disabled={retrying} onClick={retryStalled}>↻ {retrying?'Retrying':'Retry processing'}</button></div>}
+    {stages.length>0&&<div style={processingStyles.stages}>{stages.map(stage=><div key={stage.stage} style={processingStyles.stage}>
+      <span style={processingStyles.stageName}>{processingStageLabel(stage.stage)}</span>
+      <span style={processingStyles.stageCounts}>{formatCheckpointCounts(stage.counts)}</span>
+      {stage.attempts>0&&<span style={processingStyles.attempts}>{stage.attempts} attempt{stage.attempts===1?'':'s'}</span>}
+    </div>)}</div>}
+    {error&&<div style={processingStyles.error}>{error}</div>}
+    {(job?.error_message||detail.document_status==='error')&&<div style={processingStyles.error}>{job?.error_message||'Processing failed. Use Retry to resume incomplete work.'}</div>}
+  </div>;
+}
+
+const processingStageLabel=stage=>({
+  document_split:'PDF page extraction',
+  document_extract:'Text and table extraction',document_classify:'Classification',document_chunk:'Chunking',
+  document_embedding_prepare:'Embedding preparation',document_embedding_chunk:'Chunk embedding',
+}[stage]||stage.replaceAll('_',' '));
+const formatCheckpointCounts=counts=>Object.entries(counts||{}).map(([status,count])=>`${count} ${status}`).join(' · ')||'Pending';
+const formatProcessingAge=ms=>ms<60000?`${Math.max(1,Math.round(ms/1000))} seconds`:`${Math.max(1,Math.round(ms/60000))} minutes`;
+const processingStyles={
+  panel:{margin:'0 12px 10px',padding:12,border:'1px solid var(--b2)',borderRadius:6,background:'var(--s3)',color:'var(--tx2)',fontSize:11.5},
+  headingRow:{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,flexWrap:'wrap'},heading:{color:'var(--tx)',fontSize:12.5},headingActions:{display:'flex',alignItems:'center',gap:7,flexWrap:'wrap'},
+  refreshButton:{border:'1px solid var(--b2)',borderRadius:5,background:'var(--s2)',color:'var(--tx2)',padding:'4px 8px',fontSize:10.5,fontWeight:650,cursor:'pointer',whiteSpace:'nowrap'},
+  state:{textTransform:'capitalize',fontWeight:700,color:'#60a5fa'},progressTrack:{height:6,borderRadius:4,background:'rgba(148,163,184,.18)',overflow:'hidden',marginTop:9},
+  progressFill:{height:'100%',borderRadius:4,background:'#22c55e',transition:'width .25s ease'},message:{marginTop:6,color:'var(--tx2)'},updated:{marginTop:3,color:'var(--muted2)',fontSize:10.5},
+  facts:{display:'flex',gap:10,flexWrap:'wrap',marginTop:8,color:'var(--muted2)'},stages:{display:'grid',gap:5,marginTop:10},
+  stage:{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center',padding:'6px 8px',background:'var(--s2)',border:'1px solid var(--b1)',borderRadius:5},
+  stageName:{fontWeight:650,color:'var(--tx)',flex:'1 1 150px'},stageCounts:{color:'#60a5fa'},attempts:{color:'var(--muted2)'},
+  warning:{marginTop:8,padding:'8px 10px',borderRadius:5,background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.25)',color:'#fbbf24',fontSize:11.5},
+  retryButton:{display:'block',marginTop:7,border:'1px solid rgba(251,191,36,.35)',borderRadius:5,background:'rgba(251,191,36,.12)',color:'#fbbf24',padding:'5px 9px',fontSize:10.5,fontWeight:700,cursor:'pointer'},
+  error:{margin:'8px 12px',padding:'8px 10px',borderRadius:5,background:'rgba(248,113,113,.08)',border:'1px solid rgba(248,113,113,.25)',color:'var(--red)',fontSize:11.5},
+};
 
 function Btn({children,onClick,primary,danger,accent,disabled,style,mobile=false}){
   return <button onClick={onClick} disabled={disabled} style={{
@@ -814,6 +1020,16 @@ const s={
   workflowReady:{background:'rgba(74,222,128,.1)',color:'#4ade80',borderColor:'rgba(74,222,128,.25)'},
   workflowMissing:{background:'rgba(251,191,36,.1)',color:'#fbbf24',borderColor:'rgba(251,191,36,.25)'},
   leaseOpenHint:{fontSize:10,color:'var(--muted2)',whiteSpace:'nowrap'},
+  splitModal:{width:'min(860px,96vw)',maxHeight:'90vh',background:'var(--s1)',border:'1px solid var(--b1)',borderRadius:'var(--rl)',boxShadow:'0 24px 80px rgba(0,0,0,.55)',display:'flex',flexDirection:'column',overflow:'hidden'},
+  splitHeader:{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:16,padding:'18px 20px',borderBottom:'1px solid var(--b1)',background:'linear-gradient(180deg,rgba(96,165,250,.08),transparent)'},
+  splitKicker:{fontSize:10.5,fontWeight:800,color:'#60a5fa',letterSpacing:'.8px',marginBottom:4},splitTitle:{fontSize:20,fontWeight:800,color:'var(--tx)',margin:0},
+  splitSub:{fontSize:12.5,color:'var(--muted2)',lineHeight:1.5,margin:'6px 0 0',maxWidth:650},splitBody:{padding:'16px 20px',overflowY:'auto'},
+  splitLabel:{display:'block',fontSize:11.5,fontWeight:700,color:'var(--tx2)',marginBottom:6},splitInput:{width:'100%',minWidth:0,boxSizing:'border-box',padding:'8px 9px',borderRadius:6,border:'1px solid var(--b2)',background:'var(--s3)',color:'var(--tx)',fontSize:12},
+  splitPageInfo:{fontSize:11,color:'var(--muted2)',margin:'6px 0 14px'},splitTableWrap:{width:'100%',overflowX:'auto',border:'1px solid var(--b1)',borderRadius:8,marginBottom:10},splitTable:{width:'100%',minWidth:590,borderCollapse:'collapse'},
+  splitTh:{textAlign:'left',padding:'8px 9px',background:'var(--s2)',borderBottom:'1px solid var(--b1)',color:'var(--muted2)',fontSize:10.5,fontWeight:700},splitTd:{padding:'7px 8px',borderBottom:'1px solid var(--b1)',verticalAlign:'middle'},
+  splitRemove:{width:28,height:28,borderRadius:6,border:'1px solid rgba(248,113,113,.3)',background:'rgba(248,113,113,.08)',color:'#f87171',cursor:'pointer'},splitAdd:{padding:'6px 10px',borderRadius:6,border:'1px solid var(--b2)',background:'var(--s2)',color:'var(--tx2)',fontSize:11.5,cursor:'pointer'},
+  splitOptions:{display:'flex',flexWrap:'wrap',gap:'10px 22px',margin:'16px 0 4px'},splitCheck:{display:'flex',alignItems:'center',gap:7,color:'var(--tx2)',fontSize:12},splitError:{marginTop:12,padding:'8px 10px',borderRadius:6,background:'rgba(248,113,113,.08)',border:'1px solid rgba(248,113,113,.25)',color:'#f87171',fontSize:11.5},
+  splitActions:{display:'flex',justifyContent:'flex-end',gap:8,flexWrap:'wrap',padding:'12px 20px 16px',borderTop:'1px solid var(--b1)'},splitCancel:{padding:'8px 14px',borderRadius:7,border:'1px solid var(--b2)',background:'var(--s2)',color:'var(--tx2)',cursor:'pointer'},splitSubmit:{padding:'8px 14px',borderRadius:7,border:'none',background:'#15803d',color:'#fff',fontWeight:700,cursor:'pointer'},
 };
 
 function useIsMobile(breakpoint = 760) {

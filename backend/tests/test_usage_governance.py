@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from services.service_credentials import hash_secret, ip_allowed, secret_hint, verify_secret
+from services.usage import TIER_LIMITS
 from services.usage_governance import (
     QUOTA_COUNTER_RESERVE_SQL,
     UsageContext,
@@ -43,6 +44,10 @@ def test_usage_context_supports_enterprise_dimensions():
     context = UsageContext(user_id="u", client_id="c", organization_id="o", workspace_id="w")
     assert context.principal_type == "user"
     assert context.operation == "api.request"
+
+
+def test_enterprise_tier_allows_large_document_embedding_workloads():
+    assert TIER_LIMITS["enterprise"]["max_embeds_day"] == 25_000
 
 
 def test_quota_counter_query_has_explicit_asyncpg_parameter_types():

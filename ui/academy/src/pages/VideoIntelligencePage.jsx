@@ -17,7 +17,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   listVideoDocuments, createVideoUploadSession, uploadVideoFile, completeVideoUpload,
   getVideoStatus, getVideoTimeline, getVideoFrameUrl, processVideoDocument, askVideo, deleteDocument, getViewUrl,
+  transcribeVoice,
 } from '../services/api.js';
+import MarkdownRenderer from '../components/MarkdownRenderer.jsx';
 
 // Same breakpoint/shape as App.jsx's useIsMobile -- not exported from
 // there, so re-declared locally rather than threading isMobile as a prop.
@@ -54,9 +56,19 @@ const TRANSCRIPT_LANGUAGES = [
   { value: 'auto', label: 'Auto detect' },
   { value: 'en-US', label: 'English' },
   { value: 'hi-IN', label: 'Hindi' },
-  { value: 'bn-IN', label: 'Bangla' },
+  { value: 'bn-BD', label: 'Bangla' },
   { value: 'ar-XA', label: 'Arabic' },
   { value: 'es-ES', label: 'Spanish' },
+];
+
+const ANSWER_LANGUAGES = [
+  { value: '', label: 'Match question' },
+  { value: 'en', label: 'English' },
+  { value: 'bn', label: 'Bangla' },
+  { value: 'hi', label: 'Hindi' },
+  { value: 'ar', label: 'Arabic' },
+  { value: 'es', label: 'Spanish' },
+  { value: 'fr', label: 'French' },
 ];
 
 function formatTime(value) {
@@ -299,9 +311,15 @@ function VideoDetail({ docId, docName, isViewer, onBack }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [question, setQuestion] = useState('');
+  const [answerLanguage, setAnswerLanguage] = useState('');
   const [entries, setEntries] = useState([]);
+  const [recording, setRecording] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState('');
   const pollRef = useRef(null);
   const profileLoaded = useRef(false);
+  const recorderRef = useRef(null);
+  const voiceStreamRef = useRef(null);
+  const voiceChunksRef = useRef([]);
 
   const [rightsConfirmed, setRightsConfirmed] = useState(true);
   const [embedAfterProcessing, setEmbedAfterProcessing] = useState(true);
@@ -313,6 +331,16 @@ function VideoDetail({ docId, docName, isViewer, onBack }) {
   const [processMessage, setProcessMessage] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
   const [videoUrlError, setVideoUrlError] = useState('');
+
+  useEffect(() => () => {
+    const recorder = recorderRef.current;
+    if (recorder) {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      if (recorder.state === 'recording') recorder.stop();
+    }
+    voiceStreamRef.current?.getTracks().forEach(track => track.stop());
+  }, []);
 
   const loadFrameUrls = async frames => {
     const first = (frames || []).slice(0, 6);
@@ -398,19 +426,71 @@ function VideoDetail({ docId, docName, isViewer, onBack }) {
     finally { setProcessing(false); }
   };
 
-  const onAsk = async e => {
-    e.preventDefault();
-    const q = question.trim();
+  const submitQuestion = async value => {
+    const q = String(value || '').trim();
     if (!q) return;
     setQuestion('');
     const id = `q-${Date.now()}`;
     setEntries(prev => [{ id, question: q, busy: true }, ...prev]);
     try {
-      const { answer, sources } = await askVideo(docId, q);
+      const { answer, sources } = await askVideo(docId, q, 6, answerLanguage);
       setEntries(prev => prev.map(e2 => e2.id === id ? { ...e2, answer, sources, busy: false } : e2));
     } catch (err) {
       setEntries(prev => prev.map(e2 => e2.id === id ? { ...e2, busy: false, error: err.message } : e2));
     }
+  };
+
+  const onAsk = e => {
+    e.preventDefault();
+    submitQuestion(question);
+  };
+
+  const startRecording = async () => {
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      setVoiceStatus('Voice input is not supported in this browser.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      const recorder = new MediaRecorder(stream);
+      voiceChunksRef.current = [];
+      voiceStreamRef.current = stream;
+      recorderRef.current = recorder;
+      recorder.ondataavailable = event => {
+        if (event.data?.size) voiceChunksRef.current.push(event.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(track => track.stop());
+        voiceStreamRef.current = null;
+        const blob = new Blob(voiceChunksRef.current, { type:recorder.mimeType || 'audio/webm' });
+        setRecording(false);
+        if (!blob.size) { setVoiceStatus('No audio captured.'); return; }
+        setVoiceStatus('Transcribing…');
+        try {
+          const language = transcriptLanguage === 'auto' ? '' : transcriptLanguage;
+          const result = await transcribeVoice(blob, language);
+          const text = String(result?.text || '').trim();
+          if (text) {
+            setQuestion(text);
+            setVoiceStatus('');
+            await submitQuestion(text);
+          } else {
+            setVoiceStatus('No speech detected.');
+          }
+        } catch (err) {
+          setVoiceStatus(`Transcription failed: ${err.message || err}`);
+        }
+      };
+      recorder.start();
+      setRecording(true);
+      setVoiceStatus('Recording — select Stop when finished.');
+    } catch (err) {
+      setVoiceStatus(err.name === 'NotAllowedError' ? 'Microphone permission denied.' : `Microphone error: ${err.message || err}`);
+    }
+  };
+
+  const stopRecording = () => {
+    if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
   };
 
   const ready = isVideoReady(status);
@@ -564,22 +644,43 @@ function VideoDetail({ docId, docName, isViewer, onBack }) {
             <div style={s.muted}>{ready ? 'No sampled frames yet -- refresh to reload.' : 'Sampled frame previews will appear automatically after processing finishes.'}</div>
           )}
 
-          <div style={{ ...s.sectionLabel, marginTop:18 }}>Ask about this video</div>
+          <div style={{ ...s.sectionTitleRow, marginTop:18 }}>
+            <div style={s.sectionLabel}>Ask about this video</div>
+            <label style={s.answerLanguageLabel}>
+              <span>Answer in</span>
+              <select value={answerLanguage} onChange={event => setAnswerLanguage(event.target.value)} style={s.answerLanguageSelect}>
+                {ANSWER_LANGUAGES.map(language => <option key={language.value || 'auto'} value={language.value}>{language.label}</option>)}
+              </select>
+            </label>
+          </div>
           <form onSubmit={onAsk} style={{ display:'flex', gap:8, marginBottom:12 }}>
             <textarea value={question}
               onChange={e => { setQuestion(e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`; }}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onAsk(e); } }}
               placeholder="e.g. What happens around the 2 minute mark?" rows={2}
               style={{ flex:1, minWidth:0, resize:'none', overflow:'auto', minHeight: isMobile ? 72 : 56, maxHeight:160 }} />
+            <button
+              type="button"
+              title={recording ? 'Stop recording' : 'Ask with your microphone'}
+              aria-label={recording ? 'Stop recording' : 'Ask with your microphone'}
+              style={recording ? s.dangerSmall : s.secondary}
+              onClick={recording ? stopRecording : startRecording}
+            >
+              {recording ? '■ Stop' : '🎙'}
+            </button>
             <button type="submit" style={s.primary} disabled={!question.trim()}>Ask</button>
           </form>
+          {voiceStatus && <div style={s.voiceStatus}>{voiceStatus}</div>}
           {entries.map(entry => (
             <div key={entry.id} style={s.answerCard}>
               <strong style={{ fontSize:12.5, color:'var(--tx)' }}>{entry.question}</strong>
               {entry.busy ? <div style={{ fontSize:12, color:'var(--muted2)', marginTop:6 }}>Thinking…</div> :
                 entry.error ? <div style={{ fontSize:12, color:'var(--red)', marginTop:6 }}>{entry.error}</div> : (
                 <>
-                  <p style={{ fontSize:13, color:'var(--tx2)', marginTop:6, lineHeight:1.55 }}>{entry.answer}</p>
+                  <MarkdownRenderer
+                    text={entry.answer || ''}
+                    style={{ fontSize:13, color:'var(--tx2)', marginTop:8, lineHeight:1.65 }}
+                  />
                   {entry.sources?.length > 0 && (
                     <div style={{ display:'flex', flexWrap:'wrap', gap:5, marginTop:8 }}>
                       {entry.sources.map((src, i) => (
@@ -655,6 +756,10 @@ const s = {
   iconBtn: { width:26, height:26, borderRadius:6, border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx2)', fontSize:12.5 },
   primary: { padding:'10px 16px', borderRadius:8, border:'none', background:'var(--gold)', color:'#fff', fontWeight:700, fontSize:13, cursor:'pointer' },
   secondary: { padding:'7px 12px', borderRadius:8, border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx2)', fontSize:12, cursor:'pointer' },
+  dangerSmall: { padding:'8px 12px', borderRadius:8, border:'1px solid rgba(220,38,38,.35)', background:'rgba(220,38,38,.08)', color:'var(--red)', fontSize:12, cursor:'pointer', whiteSpace:'nowrap' },
+  voiceStatus: { fontSize:11.5, color:'var(--muted2)', margin:'-4px 0 12px' },
+  answerLanguageLabel: { display:'flex', alignItems:'center', gap:6, color:'var(--muted2)', fontSize:11.5, marginBottom:8 },
+  answerLanguageSelect: { width:'auto', minWidth:120, padding:'6px 8px', fontSize:11.5, border:'1px solid var(--b2)', borderRadius:7, background:'var(--s2)', color:'var(--tx)' },
   muted: { color:'var(--muted2)', padding:'1.5rem 0', textAlign:'center', fontSize:12.5 },
   empty: { color:'var(--muted2)', padding:'3rem 0', textAlign:'center' },
   error: { background:'rgba(220,38,38,.08)', color:'var(--red)', border:'1px solid rgba(220,38,38,.25)', borderRadius:8, padding:'9px 12px', fontSize:12.5, marginBottom:12 },

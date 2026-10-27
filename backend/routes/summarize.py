@@ -1,6 +1,7 @@
 # routes/summarize.py
 from __future__ import annotations
-import json, asyncio
+import json, asyncio, hashlib, os
+from typing import Callable
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -26,7 +27,12 @@ SUMMARY_PROMPTS = {
 }
 
 DIRECT_CHAR_LIMIT = 50_000
-BATCH_SIZE        = 6
+MAP_CHAR_LIMIT = max(8_000, int(os.getenv("SUMMARY_MAP_CHAR_LIMIT", "40000")))
+SUMMARY_CONCURRENCY = max(1, int(os.getenv("SUMMARY_CONCURRENCY", "4")))
+SUMMARY_RETRIES = max(1, int(os.getenv("SUMMARY_RETRIES", "3")))
+SUMMARY_RETRY_BASE_SECONDS = max(0.0, float(os.getenv("SUMMARY_RETRY_BASE_SECONDS", "1.5")))
+SUMMARY_MAX_LEVELS = max(2, int(os.getenv("SUMMARY_MAX_LEVELS", "8")))
+SUMMARY_HEARTBEAT_SECONDS = max(5, int(os.getenv("SUMMARY_HEARTBEAT_SECONDS", "15")))
 
 
 class SummarizeRequest(BaseModel):
@@ -34,6 +40,7 @@ class SummarizeRequest(BaseModel):
     custom_prompt: str       = ""
     chunk_indices: list[int] = []
     redact_pii:    bool      = False
+    response_language: str | None = None
 
 
 class MultiSummarizeRequest(BaseModel):
@@ -41,6 +48,7 @@ class MultiSummarizeRequest(BaseModel):
     summary_type:  str = "executive"
     custom_prompt: str = ""
     redact_pii:    bool = False
+    response_language: str | None = None
 
 
 # ── Single document ───────────────────────────────────────────────────────────
@@ -73,13 +81,24 @@ async def summarize_document(
                 yield _sse_error("No chunks found"); return
 
             texts = await _load_chunk_texts(chunks)
+            cache_prefix = _summary_cache_prefix(
+                owner_id=owner_id,
+                doc_id=doc_id,
+                document_version=row.get("updated_at"),
+                summary_type=body.summary_type,
+                custom_prompt=body.custom_prompt,
+                response_language=body.response_language or row.get("doc_language") or "en",
+                redact_pii=body.redact_pii,
+                chunk_indices=body.chunk_indices,
+            )
             async for event in _stream_summary(
                 texts,
                 body.summary_type,
                 body.custom_prompt,
                 row["original_name"],
-                row.get("doc_language") or "en",
+                body.response_language or row.get("doc_language") or "en",
                 body.redact_pii,
+                cache_prefix=cache_prefix,
             ):
                 yield event
         except Exception as e:
@@ -101,7 +120,7 @@ async def summarize_multiple_documents(
 
     user_id = str(current_user["id"])
     rows = await db.fetch(
-        """SELECT d.id, d.user_id, d.original_name, d.status, d.doc_language
+        """SELECT d.id, d.user_id, d.original_name, d.status, d.doc_language, d.updated_at
            FROM documents d
            WHERE d.id = ANY($1::uuid[])
              AND d.status != 'deleted'
@@ -140,10 +159,11 @@ async def summarize_multiple_documents(
                 owner_id = str(row["user_id"])
                 meta  = await gcs.download_json(gcs.metadata_path(owner_id, doc_id))
                 texts = await _load_chunk_texts(meta["chunks"])
-                all_texts.append(f"=== {row['original_name']} ===\n" + "\n\n".join(texts))
+                all_texts.append(f"=== {row['original_name']} ===")
+                all_texts.extend(texts)
 
             label = f"{len(body.document_ids)} documents"
-            lang = primary_language([r["doc_language"] for r in rows])
+            lang = body.response_language or primary_language([r["doc_language"] for r in rows])
             async for event in _stream_summary(all_texts, body.summary_type, body.custom_prompt, label, lang, body.redact_pii):
                 yield event
         except Exception as e:
@@ -161,11 +181,15 @@ async def _stream_summary(
     label:         str,
     response_lang: str = "en",
     redact_pii:    bool = False,
+    cache_prefix: str | None = None,
 ):
-    full_text = redact_text("\n\n".join(texts), redact_pii).text
-
     if summary_type == "custom" and not custom_prompt.strip():
         yield _sse_error("Provide a custom_prompt for custom summary type")
+        return
+
+    texts = [str(text).strip() for text in texts if str(text or "").strip()]
+    if not texts:
+        yield _sse_error("No text content found to summarize")
         return
 
     base_prompt = (
@@ -173,8 +197,10 @@ async def _stream_summary(
         else SUMMARY_PROMPTS.get(summary_type, SUMMARY_PROMPTS["executive"])
     )
 
+    total_chars = sum(len(text) + 2 for text in texts)
     # ── Direct path ───────────────────────────────────────────────────────────
-    if len(full_text) <= DIRECT_CHAR_LIMIT:
+    if total_chars <= DIRECT_CHAR_LIMIT:
+        full_text = redact_text("\n\n".join(texts), redact_pii).text
         language_instruction = response_language_instruction(response_lang)
         system   = summarize_system(summary_type, label, base_prompt, language_instruction)
         # For sections, give the model a two-step instruction in the user message
@@ -192,30 +218,42 @@ async def _stream_summary(
             yield event
         return
 
-    # ── Map-reduce path ───────────────────────────────────────────────────────
-    total_batches = (len(texts) + BATCH_SIZE - 1) // BATCH_SIZE
-    yield _sse_meta({"stage": "map", "total_batches": total_batches})
+    # ── Hierarchical map-reduce path ─────────────────────────────────────────
+    current = _group_texts_by_chars(texts, MAP_CHAR_LIMIT)
+    level = 0
+    while sum(len(item) + 2 for item in current) > DIRECT_CHAR_LIMIT:
+        if level >= SUMMARY_MAX_LEVELS:
+            raise RuntimeError("Summary hierarchy exceeded its configured depth")
+        batches = _group_texts_by_chars(current, MAP_CHAR_LIMIT)
+        total_batches = len(batches)
+        yield _sse_meta({
+            "stage": "map" if level == 0 else "reduce",
+            "level": level + 1,
+            "batch": 0,
+            "of": total_batches,
+            "total_characters": total_chars,
+        })
+        current = []
+        async for progress, summaries in _summarize_level(
+            batches=batches,
+            level=level,
+            label=label,
+            response_lang=response_lang,
+            redact_pii=redact_pii,
+            cache_prefix=cache_prefix,
+        ):
+            current = summaries
+            yield _sse_meta({
+                "stage": "map" if level == 0 else "reduce",
+                "level": level + 1,
+                "batch": progress,
+                "of": total_batches,
+            })
+        level += 1
 
-    batch_summaries: list[str] = []
-    for i in range(0, len(texts), BATCH_SIZE):
-        batch     = texts[i : i + BATCH_SIZE]
-        batch_num = i // BATCH_SIZE + 1
-        yield _sse_meta({"stage": "map", "batch": batch_num, "of": total_batches})
-
-        batch_text = redact_text("\n\n".join(batch), redact_pii).text
-        language_instruction = response_language_instruction(response_lang)
-        system     = mini_summarize_system(label, language_instruction)
-        messages   = [{"role": "user", "content": f"Summarise this section thoroughly:\n\n{batch_text}"}]
-
-        tokens: list[str] = []
-        async def collect(t: str, _toks=tokens): _toks.append(t)
-        await _await_chat(messages, system, collect)
-        batch_summaries.append("".join(tokens))
-
-    # Reduce
-    yield _sse_meta({"stage": "reduce"})
+    yield _sse_meta({"stage": "final", "level": level + 1, "batch": 0, "of": 1})
     combined = "\n\n---\n\n".join(
-        f"[Section {i+1}]\n{s}" for i, s in enumerate(batch_summaries)
+        f"[Section {i+1}]\n{summary}" for i, summary in enumerate(current)
     )
     language_instruction = response_language_instruction(response_lang)
     system   = summarize_system(summary_type, label, base_prompt, language_instruction)
@@ -223,94 +261,206 @@ async def _stream_summary(
         f"Using these section summaries, produce a single high-quality {summary_type} summary:\n\n{combined}"
     )}]
 
-    async for event in _run_chat(messages, system):
-        yield event
+    final_cache_path = f"{cache_prefix}/final.txt" if cache_prefix else None
+    final = await _cached_or_generate(cache_path=final_cache_path, messages=messages, system=system)
+    yield _sse_meta({"stage": "final", "level": level + 1, "batch": 1, "of": 1})
+    for offset in range(0, len(final), 800):
+        yield _sse_token(final[offset:offset + 800])
+    yield _sse_done()
+
+
+def _group_texts_by_chars(texts: list[str], max_chars: int) -> list[str]:
+    """Pack text in order into bounded prompts, splitting oversized items."""
+    groups: list[str] = []
+    current: list[str] = []
+    current_chars = 0
+    for raw in texts:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        pieces = [text[offset:offset + max_chars] for offset in range(0, len(text), max_chars)]
+        for piece in pieces:
+            added = len(piece) + (2 if current else 0)
+            if current and current_chars + added > max_chars:
+                groups.append("\n\n".join(current))
+                current = []
+                current_chars = 0
+            current.append(piece)
+            current_chars += len(piece) + (2 if len(current) > 1 else 0)
+    if current:
+        groups.append("\n\n".join(current))
+    return groups
+
+
+async def _summarize_level(
+    *, batches: list[str], level: int, label: str, response_lang: str,
+    redact_pii: bool, cache_prefix: str | None,
+):
+    """Summarize one hierarchy level concurrently and yield progress snapshots."""
+    semaphore = asyncio.Semaphore(SUMMARY_CONCURRENCY)
+    summaries = [""] * len(batches)
+    language_instruction = response_language_instruction(response_lang)
+    system = mini_summarize_system(label, language_instruction)
+
+    async def process(index: int, batch_text: str) -> tuple[int, str]:
+        prompt = (
+            "Summarise this source section thoroughly. Preserve key facts, figures, names, dates, "
+            "conclusions, and source section boundaries:\n\n"
+            if level == 0 else
+            "Consolidate these partial summaries without losing facts, figures, names, dates, "
+            "conclusions, or conflicting findings:\n\n"
+        )
+        messages = [{"role": "user", "content": prompt + redact_text(batch_text, redact_pii).text}]
+        cache_path = f"{cache_prefix}/level-{level}/batch-{index:06d}.txt" if cache_prefix else None
+        async with semaphore:
+            result = await _cached_or_generate(cache_path=cache_path, messages=messages, system=system)
+        return index, result
+
+    pending = {asyncio.create_task(process(index, batch)) for index, batch in enumerate(batches)}
+    completed = 0
+    try:
+        while pending:
+            done, pending = await asyncio.wait(
+                pending,
+                timeout=SUMMARY_HEARTBEAT_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                yield completed, list(summaries)
+                continue
+            for task in done:
+                index, result = await task
+                summaries[index] = result
+                completed += 1
+            yield completed, list(summaries)
+    except Exception:
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        raise
+
+
+async def _cached_or_generate(*, cache_path: str | None, messages: list[dict], system: str) -> str:
+    if cache_path:
+        try:
+            if await gcs.blob_metadata(cache_path):
+                cached = (await gcs.download_text(cache_path)).strip()
+                if cached:
+                    return cached
+        except Exception:
+            # Cache availability must never prevent summarization.
+            pass
+    result = await _generate_text_with_retries(messages, system)
+    if cache_path:
+        try:
+            await gcs.upload_text(cache_path, result)
+        except Exception:
+            pass
+    return result
+
+
+async def _generate_text_with_retries(messages: list[dict], system: str) -> str:
+    last_error: Exception | None = None
+    for attempt in range(1, SUMMARY_RETRIES + 1):
+        try:
+            result = (await _generate_text_once(messages, system)).strip()
+            if not result:
+                raise RuntimeError("The model returned an empty summary")
+            return result
+        except Exception as exc:
+            last_error = exc
+            if attempt < SUMMARY_RETRIES:
+                await asyncio.sleep(SUMMARY_RETRY_BASE_SECONDS * (2 ** (attempt - 1)))
+    raise RuntimeError(f"Summary generation failed after {SUMMARY_RETRIES} attempts: {last_error}") from last_error
+
+
+async def _generate_text_once(messages: list[dict], system: str) -> str:
+    q: asyncio.Queue = asyncio.Queue()
+
+    async def collect(token: str):
+        await q.put(token)
+
+    async def run():
+        try:
+            await chat_stream(messages, system, collect)
+        except Exception as exc:
+            await q.put(exc)
+        finally:
+            await q.put(None)
+
+    task = asyncio.create_task(run())
+    tokens: list[str] = []
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(q.get(), timeout=STALL_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError as exc:
+                task.cancel()
+                raise TimeoutError("Summary model call stalled") from exc
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                raise item
+            tokens.append(str(item))
+        await task
+        return "".join(tokens)
+    finally:
+        if not task.done():
+            task.cancel()
+
+
+def _summary_cache_prefix(
+    *, owner_id: str, doc_id: str, document_version, summary_type: str,
+    custom_prompt: str, response_language: str, redact_pii: bool,
+    chunk_indices: list[int],
+) -> str:
+    signature = hashlib.sha256(json.dumps({
+        "document_version": str(document_version or ""),
+        "summary_type": summary_type,
+        "custom_prompt": custom_prompt,
+        "response_language": response_language,
+        "redact_pii": redact_pii,
+        "chunk_indices": chunk_indices,
+        "pipeline": 2,
+    }, sort_keys=True).encode()).hexdigest()[:24]
+    return f"users/{owner_id}/documents/{doc_id}/summaries/{signature}"
 
 
 # ── Streaming helper (yields SSE events) ─────────────────────────────────────
-# STALL_TIMEOUT_SECONDS bounds the gap between tokens, not the total
-# request duration -- every received token resets the clock (see
-# `asyncio.wait_for(q.get(), ...)` below), so a slow-but-steady stream of
-# any length is fine. It only fires when Gemini genuinely stops producing
-# output for this long (model stall, connection drop). Bumped from the
-# original 90s, which was too tight for the map-reduce path on a large
-# document -- BATCH_SIZE=6 chunks per batch, run sequentially, and a
-# batch's *first* token can legitimately take well over 90s to arrive
-# before generation even starts streaming, cutting summaries off mid-run.
-# Cloud Run's own request timeout is 3600s (see scripts/deploy-backend.sh),
-# so there's plenty of headroom above this. Keep this value <= llm.py's
-# Gemini-branch httpx client timeout for chat_stream/chat_json, so this
-# friendlier "Summary timed out" message is what callers see instead of a
-# raw httpx.ReadTimeout.
+# Bounds the gap between model tokens rather than the complete hierarchy.
+# Every completed map batch is cached, so a later retry resumes completed work.
 STALL_TIMEOUT_SECONDS = 240
 
 
 async def _run_chat(messages: list[dict], system: str):
-    """Run chat_stream and yield SSE token/done/error events."""
-    q: asyncio.Queue = asyncio.Queue()
-
-    async def on_token(t: str): await q.put(t)
-
-    async def run():
-        try:
-            await chat_stream(messages, system, on_token)
-        except Exception as e:
-            await q.put(Exception(e))
-        finally:
-            await q.put(None)   # sentinel
-
-    task = asyncio.create_task(run())
-    while True:
-        try:
-            item = await asyncio.wait_for(q.get(), timeout=STALL_TIMEOUT_SECONDS)
-        except asyncio.TimeoutError:
-            yield _sse_error("Summary timed out — document may be too large")
-            task.cancel()
-            return
-
-        if item is None:
-            break
-        if isinstance(item, Exception):
-            yield _sse_error(str(item))
-            return
-        yield _sse_token(item)
-
-    await task
+    """Generate with retries, then emit bounded SSE token events."""
+    try:
+        result = await _generate_text_with_retries(messages, system)
+    except Exception as exc:
+        yield _sse_error(str(exc))
+        return
+    for offset in range(0, len(result), 800):
+        yield _sse_token(result[offset:offset + 800])
     yield _sse_done()
 
 
 # ── Non-streaming helper (collects all tokens) ────────────────────────────────
 async def _await_chat(messages: list[dict], system: str, on_token: Callable):
-    """Run chat_stream to completion without streaming (used in map phase)."""
-    q: asyncio.Queue = asyncio.Queue()
-
-    async def collect(t: str): await q.put(t)
-
-    async def run():
-        try:
-            await chat_stream(messages, system, collect)
-        finally:
-            await q.put(None)
-
-    task = asyncio.create_task(run())
-    while True:
-        try:
-            item = await asyncio.wait_for(q.get(), timeout=STALL_TIMEOUT_SECONDS)
-        except asyncio.TimeoutError:
-            task.cancel()
-            return
-        if item is None:
-            break
-        await on_token(item)
-    await task
-
-
-# Fix missing import
-from typing import Callable
+    """Compatibility helper for batch operations and older callers."""
+    await on_token(await _generate_text_with_retries(messages, system))
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 async def _load_chunk_texts(chunks: list[dict]) -> list[str]:
-    return [await gcs.download_text(c["gcs_path"]) for c in chunks]
+    concurrency = max(1, int(os.getenv("SUMMARY_CHUNK_DOWNLOAD_CONCURRENCY", "16")))
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def load(index: int, chunk: dict) -> tuple[int, str]:
+        async with semaphore:
+            return index, await gcs.download_text(chunk["gcs_path"])
+
+    loaded = await asyncio.gather(*(load(index, chunk) for index, chunk in enumerate(chunks)))
+    loaded.sort(key=lambda item: item[0])
+    return [text for _index, text in loaded]
 
 
 async def _get_accessible_chunked(doc_id: str, user_id: str, db) -> dict:

@@ -344,10 +344,17 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars="REGION=$REGION" \
   --set-env-vars="ENVIRONMENT=production" \
   --set-env-vars="VIDEO_DISPATCH_MODE=cloud_run_job" \
+  --set-env-vars="DOCUMENT_DISPATCH_MODE=cloud_run_job" \
+  --set-env-vars="LARGE_DOCUMENT_PROCESSING_THRESHOLD_MB=25" \
   --set-env-vars="VIDEO_WORKER_JOB_NAME=docintel-video-worker" \
   --set-env-vars="VIDEO_WORKER_REGION=$REGION" \
   --set-env-vars="SCHEDULING_ADMIN_BASE_URL=https://api.scheduling.adar.agomoniai.com" \
   --set-env-vars="EMBEDDING_DIM=$EMBEDDING_DIM" \
+  --set-env-vars="DB_POOL_MIN_SIZE=1" \
+  --set-env-vars="DB_POOL_MAX_SIZE=5" \
+  --set-env-vars="DB_POOL_CONNECT_ATTEMPTS=5" \
+  --set-env-vars="DB_POOL_RETRY_DELAY_SECONDS=1" \
+  --set-env-vars="DB_POOL_CONNECT_TIMEOUT_SECONDS=15" \
   --set-env-vars="GEMINI_EMBED_MODEL=gemini-embedding-2" \
   --set-env-vars="GEMINI_CHAT_MODEL=gemini-2.5-flash" \
   --set-env-vars="OPENAI_EMBED_MODEL=text-embedding-3-small" \
@@ -417,9 +424,9 @@ gcloud run deploy "$SERVICE_NAME" \
   $SECRETS_FLAGS \
   --quiet
 
-# Long videos can exceed an HTTP task deadline. Run them as a durable Cloud Run
-# Job using the same image, database, storage, secrets, and service account.
-echo "▶ Deploying durable video worker job..."
+# Long videos and documents can exceed an HTTP request deadline. Run them as a
+# durable Cloud Run Job using the same image, database, storage, and secrets.
+echo "▶ Deploying durable video/document worker job..."
 gcloud run jobs deploy docintel-video-worker \
   --image="$IMAGE" \
   --region="$REGION" \
@@ -439,6 +446,11 @@ gcloud run jobs deploy docintel-video-worker \
   --set-env-vars="ENVIRONMENT=production" \
   --set-env-vars="LLM_PROVIDER=$LLM_PROVIDER" \
   --set-env-vars="EMBEDDING_DIM=$EMBEDDING_DIM" \
+  --set-env-vars="DB_POOL_MIN_SIZE=1" \
+  --set-env-vars="DB_POOL_MAX_SIZE=4" \
+  --set-env-vars="DB_POOL_CONNECT_ATTEMPTS=5" \
+  --set-env-vars="DB_POOL_RETRY_DELAY_SECONDS=1" \
+  --set-env-vars="DB_POOL_CONNECT_TIMEOUT_SECONDS=15" \
   --set-env-vars="GEMINI_EMBED_MODEL=gemini-embedding-2" \
   --set-env-vars="GEMINI_CHAT_MODEL=gemini-2.5-flash" \
   --set-env-vars="VIDEO_TRANSCRIBE_AUDIO_ENABLED=true" \
@@ -450,6 +462,11 @@ gcloud run jobs deploy docintel-video-worker \
   --set-env-vars="VIDEO_CHECKPOINT_LEASE_SECONDS=900" \
   --set-env-vars="VIDEO_JOB_STALE_SECONDS=1200" \
   --set-env-vars="VIDEO_JOB_MAX_ATTEMPTS=3" \
+  --set-env-vars="DOCUMENT_JOB_MAX_ATTEMPTS=3" \
+  --set-env-vars="DOCUMENT_EMBED_CONCURRENCY=3" \
+  --set-env-vars="DOCUMENT_STAGE_HEARTBEAT_SECONDS=30" \
+  --set-env-vars="DOCUMENT_JOB_STALE_SECONDS=180" \
+  --set-env-vars="DOCUMENT_TABLE_EXTRACTION_MAX_MB=50" \
   --set-env-vars="VIDEO_SOURCE_READ_URL_EXPIRY_SECONDS=21600" \
   --set-env-vars="VIDEO_REMOTE_STAGE_RETRIES=3" \
   --set-env-vars="FFMPEG_COMMAND_TIMEOUT_SECONDS=180" \
@@ -464,10 +481,10 @@ WORKER_READY=$(gcloud run jobs describe docintel-video-worker \
   --project="$PROJECT_ID" \
   --format='value(metadata.name)' 2>/dev/null || true)
 if [[ "$WORKER_READY" != "docintel-video-worker" ]]; then
-  echo "Video worker deployment could not be verified" >&2
+  echo "Durable processing worker deployment could not be verified" >&2
   exit 1
 fi
-echo "  ✓ Durable video worker ready: $WORKER_READY"
+echo "  ✓ Durable video/document worker ready: $WORKER_READY"
 
 # ── 8. Get service URL ────────────────────────────────────────────────────────
 SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
@@ -491,8 +508,9 @@ echo "  Health: $HEALTH"
 if echo "$HEALTH" | grep -q '"db_connected":true'; then
   echo "  ✓ Database connected"
 else
-  echo "  ⚠ Database not connected — check logs:"
+  echo "  ✗ Database not connected — deployment is unhealthy" >&2
   echo "    gcloud run services logs tail $SERVICE_NAME --region=$REGION"
+  exit 1
 fi
 
 # Save URL for reference

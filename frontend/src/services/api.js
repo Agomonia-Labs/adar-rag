@@ -113,7 +113,7 @@ async function uploadFileWithProgress(url, file, options = {}) {
     options.onProgress?.({ loaded: 0, total: file.size, percent: 0, attempt: attempt + 1, retrying: true });
     await wait(750 * (2 ** (attempt - 1)));
   }
-  throw new Error(`Uploading video to cloud storage failed after ${attempts} attempts: ${lastError?.message || 'network error'}`);
+  throw new Error(`Uploading file to cloud storage failed after ${attempts} attempts: ${lastError?.message || 'network error'}`);
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -427,13 +427,64 @@ export async function streamGuestSummary({ documentIds, summaryType = 'executive
 
 // ── Documents ─────────────────────────────────────────────────────────────────
 export async function uploadDocuments(files, workspaceId = null, options = {}) {
+  const allFiles = Array.from(files || []);
+  const directFiles = allFiles.filter(file => file.size > 8 * 1024 * 1024);
+  const multipartFiles = allFiles.filter(file => file.size <= 8 * 1024 * 1024);
+  const uploaded = [];
+
+  for (const file of directFiles) {
+    uploaded.push(await uploadLargeDocument(file, workspaceId, options));
+  }
+
+  if (!multipartFiles.length) return { uploaded };
   const form = new FormData();
-  for (const f of files) form.append('files', f);
+  for (const f of multipartFiles) form.append('files', f);
   if (options.redactPii) form.append('redact_pii', 'true');
   const url = workspaceId
     ? `${BASE}/documents/upload?workspace_id=${workspaceId}`
     : `${BASE}/documents/upload`;
-  return handleRes(await fetch(url, { method:'POST', headers:authHdr(), body:form }));
+  const result = await handleRes(await fetch(url, { method:'POST', headers:authHdr(), body:form }));
+  return { ...result, uploaded: [...uploaded, ...(result.uploaded || [])] };
+}
+
+export async function uploadLargeDocument(file, workspaceId = null, options = {}) {
+  if (isVideoFile(file)) throw new Error('Upload videos from Video Intelligence');
+  const contentType = file.type || 'application/octet-stream';
+  const session = await handleRes(await fetchUploadStep(`${BASE}/documents/upload-session`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body: JSON.stringify({
+      filename: file.name,
+      content_type: contentType,
+      file_size: file.size,
+      workspace_id: workspaceId || null,
+      redact_pii: Boolean(options.redactPii),
+    }),
+  }, {step:'Creating document upload session'}));
+
+  const putRes = await uploadFileWithProgress(session.upload_url, file, {
+    method: session.method || 'PUT',
+    contentType,
+    onProgress: options.onUploadProgress,
+  });
+  if (!putRes.ok) {
+    const detail = (await putRes.text().catch(() => '')).replace(/\s+/g, ' ').trim();
+    throw new Error(detail ? `Cloud upload failed HTTP ${putRes.status}: ${detail.slice(0, 220)}` : `Cloud upload failed HTTP ${putRes.status}`);
+  }
+
+  return handleRes(await fetchUploadStep(`${BASE}/documents/upload-complete`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body: JSON.stringify({
+      doc_id: session.doc_id,
+      filename: file.name,
+      content_type: contentType,
+      file_size: file.size,
+      gcs_source_path: session.gcs_source_path,
+      workspace_id: workspaceId || null,
+      redact_pii: Boolean(options.redactPii),
+    }),
+  }, {step:'Finalizing document upload'}));
 }
 
 export async function uploadLargeVideoDocument(file, workspaceId = null, options = {}) {
@@ -488,6 +539,32 @@ export async function getViewUrl(docId) {
   return handleRes(await fetch(`${BASE}/documents/${docId}/view-url`, { headers: authHdr() }));
 }
 
+export async function getPdfViewUrl(docId) {
+  return handleRes(await fetch(`${BASE}/documents/${docId}/pdf-view-url`, { headers:authHdr() }));
+}
+
+export async function getPdfInfo(docId) {
+  return handleRes(await fetch(`${BASE}/documents/${docId}/pdf-info`, { headers:authHdr() }));
+}
+
+export async function splitPdfDocument(docId, parts, options = {}) {
+  return handleRes(await fetch(`${BASE}/documents/${docId}/split`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', ...authHdr()},
+    body:JSON.stringify({
+      parts,
+      embed_after_processing: options.embedAfterProcessing !== false,
+      redact_pii: Boolean(options.redactPii),
+    }),
+  }));
+}
+
+export async function convertPresentationToPdf(docId) {
+  return handleRes(await fetch(`${BASE}/documents/${docId}/convert-pdf`, {
+    method:'POST', headers:authHdr(),
+  }));
+}
+
 export async function getChunks(docId) {
   return handleRes(await fetch(`${BASE}/documents/${docId}/chunks`, { headers: authHdr() }));
 }
@@ -499,6 +576,10 @@ export async function getChunkContent(docId, chunkIndex, options = {}) {
 
 export async function triggerEmbed(docId) {
   return handleRes(await fetch(`${BASE}/documents/${docId}/embed`, { method:'POST', headers:authHdr() }));
+}
+
+export async function getDocumentProcessingStatus(docId) {
+  return handleRes(await fetch(`${BASE}/documents/${docId}/processing-status`, { headers:authHdr() }));
 }
 
 export async function deleteDocument(docId) {
@@ -790,7 +871,7 @@ export async function updateObservabilityAlert(alertId, action) {
 
 // ── Summarize ─────────────────────────────────────────────────────────────────
 export async function streamSummary(
-  { doc_id, document_ids, summary_type, custom_prompt, chunk_indices, redact_pii = false, redactPii = false },
+  { doc_id, document_ids, summary_type, custom_prompt, chunk_indices, response_language = null, redact_pii = false, redactPii = false },
   { onToken, onMeta, onDone, onError }
 ) {
   const isMulti = !!document_ids;
@@ -799,8 +880,8 @@ export async function streamSummary(
     : `${STREAM_BASE}/summarize/document/${doc_id}/stream`;
 
   const body = isMulti
-    ? { document_ids, summary_type, custom_prompt, redact_pii: redact_pii || redactPii }
-    : { summary_type, custom_prompt, chunk_indices: chunk_indices || [], redact_pii: redact_pii || redactPii };
+    ? { document_ids, summary_type, custom_prompt, response_language, redact_pii: redact_pii || redactPii }
+    : { summary_type, custom_prompt, chunk_indices: chunk_indices || [], response_language, redact_pii: redact_pii || redactPii };
 
   const res = await fetch(url, {
     method:  'POST',

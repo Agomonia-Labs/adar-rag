@@ -33,6 +33,7 @@ from services.notifications import (
     send_dine_in_cancelled_email,
     send_dine_in_rescheduled_email,
 )
+from services.branding import EATS_APP_URL
 from services.push import send_expo_push
 import services.scheduling_client as scheduling_client
 from services.scheduling_client import compute_table_slots
@@ -61,7 +62,12 @@ RESTAURANT_VERTICAL = "restaurant"
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_RESTAURANT_WEBHOOK_SECRET = os.getenv("STRIPE_RESTAURANT_WEBHOOK_SECRET", STRIPE_WEBHOOK_SECRET)
-APP_URL = os.getenv("APP_URL", "https://docintel.adar.agomoniai.com")
+# Was: APP_URL = os.getenv("APP_URL", "https://docintel.adar.agomoniai.com")
+# -- a literal copy of DocIntel's own default that doesn't belong in this
+# restaurant-only file; every link built from it (Stripe success/cancel
+# URL fallback below, and the order-confirmation email's "Open ADAR Eats"
+# link) pointed customers at the DocIntel web app instead of Eats'.
+APP_URL = EATS_APP_URL
 MAX_RESTAURANT_AUDIO_BYTES = int(os.getenv("RESTAURANT_SCRIBE_MAX_MB", "25")) * 1024 * 1024
 SUPPORTED_RESTAURANT_AUDIO_TYPES = {
     "audio/webm",
@@ -6065,7 +6071,7 @@ async def _send_order_email_to_user(
         customer_name=order.get("customer_name") or order.get("customer_email") or "",
         subtotal=subtotal,
         order_items=order_items,
-        app_url=os.getenv("APP_URL", "https://docintel.adar.agomoniai.com"),
+        app_url=EATS_APP_URL,
     )
     await _record_restaurant_notification(
         db,

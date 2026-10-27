@@ -1,6 +1,7 @@
 // বাংলা
 export default {
   nav_courses: 'কোর্সসমূহ',
+  nav_chat: 'নলেজ চ্যাট',
   nav_content: 'কনটেন্ট লাইব্রেরি',
   nav_video: '🎬 ভিডিও ইন্টেলিজেন্স',
   nav_workspace: 'ওয়ার্কস্পেস',

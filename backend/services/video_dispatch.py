@@ -11,6 +11,7 @@ from database.connection import get_pool
 
 ACTIVE_VIDEO_JOB_STATUSES = ("queued", "dispatching", "running")
 VIDEO_JOB_STALE_SECONDS = max(300, int(os.getenv("VIDEO_JOB_STALE_SECONDS", "1200")))
+DOCUMENT_JOB_STALE_SECONDS = max(120, int(os.getenv("DOCUMENT_JOB_STALE_SECONDS", "180")))
 
 
 def video_dispatch_mode() -> str:
@@ -20,10 +21,62 @@ def video_dispatch_mode() -> str:
     return "inline" if os.getenv("ENVIRONMENT", "development").lower() in {"dev", "development", "local"} else "cloud_run_job"
 
 
+def document_dispatch_mode() -> str:
+    configured = os.getenv("DOCUMENT_DISPATCH_MODE", "").strip().lower()
+    return configured or video_dispatch_mode()
+
+
+def _is_document_job(job_type: str) -> bool:
+    return job_type in {"process_document", "process_document_embedding"}
+
+
 async def create_or_reuse_video_job(
     *, document_id: str, user_id: str, workspace_id: str | None, payload: dict[str, Any]
 ) -> tuple[str, bool]:
-    """Create one durable active job per document; repeated clicks reuse it."""
+    return await create_or_reuse_processing_job(
+        document_id=document_id,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        payload=payload,
+        job_type="process_video",
+        metadata_key="video_job",
+    )
+
+
+async def create_or_reuse_document_job(
+    *, document_id: str, user_id: str, workspace_id: str | None, payload: dict[str, Any]
+) -> tuple[str, bool]:
+    return await create_or_reuse_processing_job(
+        document_id=document_id,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        payload=payload,
+        job_type="process_document",
+        metadata_key="document_job",
+    )
+
+
+async def create_or_reuse_document_embedding_job(
+    *, document_id: str, user_id: str, workspace_id: str | None, payload: dict[str, Any]
+) -> tuple[str, bool]:
+    return await create_or_reuse_processing_job(
+        document_id=document_id,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        payload=payload,
+        job_type="process_document_embedding",
+        metadata_key="document_embedding_job",
+    )
+
+
+async def create_or_reuse_processing_job(
+    *, document_id: str, user_id: str, workspace_id: str | None,
+    payload: dict[str, Any], job_type: str, metadata_key: str,
+) -> tuple[str, bool]:
+    """Create one durable active job per document and processing type."""
+    dispatch_mode = document_dispatch_mode() if _is_document_job(job_type) else video_dispatch_mode()
+    document_status = "embedding" if job_type == "process_document_embedding" else "chunking"
+    stale_seconds = DOCUMENT_JOB_STALE_SECONDS if _is_document_job(job_type) else VIDEO_JOB_STALE_SECONDS
     pool = get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -34,11 +87,13 @@ async def create_or_reuse_video_job(
                        COALESCE(lease_expires_at, updated_at + ($2 * INTERVAL '1 second')) < NOW() AS stale
                   FROM video_processing_jobs
                  WHERE document_id=$1
+                   AND job_type=$4
                    AND status = ANY($3::text[])
                  ORDER BY created_at DESC LIMIT 1
                 """,
-                document_id, VIDEO_JOB_STALE_SECONDS,
+                document_id, stale_seconds,
                 [*ACTIVE_VIDEO_JOB_STATUSES, "error", "dead_letter"],
+                job_type,
             )
             if existing:
                 if existing["status"] in ACTIVE_VIDEO_JOB_STATUSES and not existing["stale"]:
@@ -46,11 +101,11 @@ async def create_or_reuse_video_job(
                 existing_input = existing["input_data"] if "input_data" in existing else {}
                 if isinstance(existing_input, str):
                     existing_input = json.loads(existing_input or "{}")
-                same_profile = (
-                    (existing_input or {}).get("processing_profile", "standard")
-                    == payload.get("processing_profile", "standard")
+                same_input_profile = (
+                    (existing_input or {}).get("processing_profile", job_type)
+                    == payload.get("processing_profile", job_type)
                 )
-                checkpoint_exists = same_profile and await conn.fetchval(
+                checkpoint_exists = same_input_profile and await conn.fetchval(
                     "SELECT EXISTS(SELECT 1 FROM video_processing_checkpoints WHERE job_id=$1)",
                     existing["id"],
                 )
@@ -59,7 +114,8 @@ async def create_or_reuse_video_job(
                         """
                         UPDATE video_processing_jobs
                            SET status='queued', error_message=NULL, completed_at=NULL,
-                               lease_owner=NULL, lease_expires_at=NULL, updated_at=NOW()
+                               attempt_count=0, lease_owner=NULL, lease_expires_at=NULL,
+                               updated_at=NOW()
                          WHERE id=$1
                         """,
                         existing["id"],
@@ -67,10 +123,11 @@ async def create_or_reuse_video_job(
                     await conn.execute(
                         """
                         UPDATE documents
-                           SET status='chunking', error_message=NULL, updated_at=NOW()
+                           SET status=$2, error_message=NULL, updated_at=NOW()
                          WHERE id=$1
                         """,
                         document_id,
+                        document_status,
                     )
                     return str(existing["id"]), False
 
@@ -80,26 +137,60 @@ async def create_or_reuse_video_job(
                 INSERT INTO video_processing_jobs
                   (id, document_id, user_id, workspace_id, job_type, status, input_data,
                    dispatch_mode, attempt_count)
-                VALUES ($1,$2,$3,$4,'process_video','queued',$5::jsonb,$6,0)
+                VALUES ($1,$2,$3,$4,$5,'queued',$6::jsonb,$7,0)
                 """,
-                job_id, document_id, user_id, workspace_id, json.dumps(payload), video_dispatch_mode(),
+                job_id, document_id, user_id, workspace_id, job_type,
+                json.dumps(payload), dispatch_mode,
             )
             await conn.execute(
                 """
                 UPDATE documents
-                   SET status='chunking', error_message=NULL,
+                   SET status=$3, error_message=NULL,
                        doc_metadata=COALESCE(doc_metadata, '{}'::jsonb) || $1::jsonb,
                        updated_at=NOW()
                  WHERE id=$2
                 """,
-                json.dumps({"video_job": {"job_id": job_id, "status": "queued", "dispatch_mode": video_dispatch_mode()}}),
+                json.dumps(
+                    {
+                        metadata_key: {
+                            "job_id": job_id,
+                            "status": "queued",
+                            "dispatch_mode": dispatch_mode,
+                        },
+                        **({
+                            "document_progress": {
+                                "step": "embedding_queued" if job_type == "process_document_embedding" else "queued",
+                                "progress_pct": 0,
+                                "message": (
+                                    "Document embedding is queued."
+                                    if job_type == "process_document_embedding"
+                                    else "Large document processing is queued."
+                                ),
+                            }
+                        } if _is_document_job(job_type) else {}),
+                    }
+                ),
                 document_id,
+                document_status,
             )
             return job_id, False
 
 
 async def dispatch_cloud_run_video_job(job_id: str) -> str:
     """Start a long-running Cloud Run Job execution and return its operation name."""
+    return await dispatch_cloud_run_processing_job(job_id, "DOCINTEL_VIDEO_JOB_ID")
+
+
+async def dispatch_cloud_run_document_job(job_id: str) -> str:
+    return await dispatch_cloud_run_processing_job(job_id, "DOCINTEL_DOCUMENT_JOB_ID")
+
+
+async def dispatch_cloud_run_document_embedding_job(job_id: str) -> str:
+    return await dispatch_cloud_run_processing_job(job_id, "DOCINTEL_DOCUMENT_EMBEDDING_JOB_ID")
+
+
+async def dispatch_cloud_run_processing_job(job_id: str, env_name: str) -> str:
+    """Start the shared durable processing job with a persisted job identifier."""
     try:
         from google.cloud import run_v2
     except ImportError as exc:
@@ -116,7 +207,7 @@ async def dispatch_cloud_run_video_job(job_id: str) -> str:
     override = run_v2.RunJobRequest.Overrides(
         container_overrides=[
             run_v2.RunJobRequest.Overrides.ContainerOverride(
-                env=[run_v2.EnvVar(name="DOCINTEL_VIDEO_JOB_ID", value=job_id)]
+                env=[run_v2.EnvVar(name=env_name, value=job_id)]
             )
         ],
         task_count=1,
@@ -137,6 +228,10 @@ async def dispatch_cloud_run_video_job(job_id: str) -> str:
 
 
 async def mark_video_dispatch_failed(job_id: str, error: Exception) -> None:
+    await mark_processing_dispatch_failed(job_id, error)
+
+
+async def mark_processing_dispatch_failed(job_id: str, error: Exception) -> None:
     pool = get_pool()
     message = str(error)[:500]
     async with pool.acquire() as conn:

@@ -44,7 +44,7 @@ TIER_LIMITS: dict[str, dict] = {
         "max_documents":    -1,      # unlimited
         "max_file_mb":      10240,   # 10 GB per file
         "max_queries_day":  -1,      # unlimited
-        "max_embeds_day":   500,
+        "max_embeds_day":   25000,
         "max_summaries_day":-1,      # unlimited
         "max_compares_day": -1,      # unlimited
         "max_lease_ai_day": -1,      # unlimited

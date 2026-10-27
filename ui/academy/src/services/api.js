@@ -175,11 +175,49 @@ export async function removeWorkspaceMember(workspaceId, userId) {
 //    DocIntel: Academy keeps the full ingestion/processing/classification/
 //    summarization/comparison pipeline, scoped to the active workspace. ──
 export async function uploadDocuments(files, workspaceId = null, options = {}) {
+  const allFiles = Array.from(files || []);
+  const directFiles = allFiles.filter(file => file.size > 8 * 1024 * 1024);
+  const multipartFiles = allFiles.filter(file => file.size <= 8 * 1024 * 1024);
+  const uploaded = [];
+
+  for (const file of directFiles) {
+    uploaded.push(await uploadLargeDocument(file, workspaceId, options));
+  }
+
+  if (!multipartFiles.length) return { uploaded };
   const form = new FormData();
-  for (const f of files) form.append('files', f);
+  for (const f of multipartFiles) form.append('files', f);
   if (options.redactPii) form.append('redact_pii', 'true');
   const url = workspaceId ? `${BASE}/documents/upload?workspace_id=${workspaceId}` : `${BASE}/documents/upload`;
-  return handleRes(await fetch(url, { method: 'POST', headers: authHdr(), body: form }));
+  const result = await handleRes(await fetch(url, { method: 'POST', headers: authHdr(), body: form }));
+  return { ...result, uploaded: [...uploaded, ...(result.uploaded || [])] };
+}
+
+export async function uploadLargeDocument(file, workspaceId = null, options = {}) {
+  const contentType = file.type || 'application/octet-stream';
+  const session = await handleRes(await fetch(`${BASE}/documents/upload-session`, {
+    method: 'POST', headers: { 'Content-Type':'application/json', ...authHdr() },
+    body: JSON.stringify({
+      filename: file.name, content_type: contentType, file_size: file.size,
+      workspace_id: workspaceId || null, redact_pii: Boolean(options.redactPii),
+    }),
+  }));
+
+  await uploadVideoFile(session.upload_url, file, contentType, ratio => {
+    options.onUploadProgress?.({
+      loaded: Math.round(file.size * ratio), total: file.size,
+      percent: Math.round(ratio * 100), attempt: 1,
+    });
+  });
+
+  return handleRes(await fetch(`${BASE}/documents/upload-complete`, {
+    method: 'POST', headers: { 'Content-Type':'application/json', ...authHdr() },
+    body: JSON.stringify({
+      doc_id: session.doc_id, filename: file.name, content_type: contentType,
+      file_size: file.size, gcs_source_path: session.gcs_source_path,
+      workspace_id: workspaceId || null, redact_pii: Boolean(options.redactPii),
+    }),
+  }));
 }
 
 export async function listWorkspaceDocuments(workspaceId) {
@@ -194,8 +232,33 @@ export async function getPdfViewUrl(docId) {
   return handleRes(await fetch(`${BASE}/documents/${docId}/pdf-view-url`, { headers: authHdr() }));
 }
 
+export async function getPdfInfo(docId) {
+  return handleRes(await fetch(`${BASE}/documents/${docId}/pdf-info`, { headers: authHdr() }));
+}
+
+export async function splitPdfDocument(docId, parts, options = {}) {
+  return handleRes(await fetch(`${BASE}/documents/${docId}/split`, {
+    method: 'POST', headers: { 'Content-Type':'application/json', ...authHdr() },
+    body: JSON.stringify({
+      parts,
+      embed_after_processing: options.embedAfterProcessing !== false,
+      redact_pii: Boolean(options.redactPii),
+    }),
+  }));
+}
+
+export async function convertPresentationToPdf(docId) {
+  return handleRes(await fetch(`${BASE}/documents/${docId}/convert-pdf`, {
+    method: 'POST', headers: authHdr(),
+  }));
+}
+
 export async function triggerEmbed(docId) {
   return handleRes(await fetch(`${BASE}/documents/${docId}/embed`, { method: 'POST', headers: authHdr() }));
+}
+
+export async function getDocumentProcessingStatus(docId) {
+  return handleRes(await fetch(`${BASE}/documents/${docId}/processing-status`, { headers: authHdr() }));
 }
 
 export async function retryDocument(docId) {
@@ -239,10 +302,10 @@ export async function getVideoTimeline(docId) {
   return handleRes(await fetch(`${BASE}/video/${docId}/timeline`, { headers: authHdr() }));
 }
 
-export async function askVideo(docId, question, limit = 6) {
+export async function askVideo(docId, question, limit = 6, responseLanguage = null) {
   return handleRes(await fetch(`${BASE}/video/${docId}/ask`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...authHdr() },
-    body: JSON.stringify({ question, limit }),
+    body: JSON.stringify({ question, limit, response_language: responseLanguage || null }),
   }));
 }
 
@@ -306,12 +369,12 @@ export async function getVideoFrameUrl(docId, frameIndex) {
   return r.url;
 }
 
-export async function streamSummary({ doc_id, document_ids, summary_type, custom_prompt, chunk_indices, redactPii = false }, { onToken, onMeta, onDone, onError }) {
+export async function streamSummary({ doc_id, document_ids, summary_type, custom_prompt, chunk_indices, response_language = null, redactPii = false }, { onToken, onMeta, onDone, onError }) {
   const isMulti = !!document_ids;
   const url = isMulti ? `${STREAM_BASE}/summarize/documents/stream` : `${STREAM_BASE}/summarize/document/${doc_id}/stream`;
   const body = isMulti
-    ? { document_ids, summary_type, custom_prompt, redact_pii: redactPii }
-    : { summary_type, custom_prompt, chunk_indices: chunk_indices || [], redact_pii: redactPii };
+    ? { document_ids, summary_type, custom_prompt, response_language, redact_pii: redactPii }
+    : { summary_type, custom_prompt, chunk_indices: chunk_indices || [], response_language, redact_pii: redactPii };
   const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHdr() }, body: JSON.stringify(body) });
   if (!res.ok) { const e = await res.json().catch(() => ({})); onError?.(e.detail || `HTTP ${res.status}`); return; }
   await pumpSse(res, ev => {
@@ -364,6 +427,13 @@ export async function createChatSession(title = 'New Chat', document_ids = [], w
   }));
 }
 
+export async function listChatSessions(workspaceId = null) {
+  const url = workspaceId
+    ? `${BASE}/chat/sessions/?workspace_id=${encodeURIComponent(workspaceId)}`
+    : `${BASE}/chat/sessions/`;
+  return handleRes(await fetch(url, { headers: authHdr() }));
+}
+
 export async function getChatSession(id) {
   return handleRes(await fetch(`${BASE}/chat/sessions/${id}`, { headers: authHdr() }));
 }
@@ -372,6 +442,19 @@ export async function saveChatSessionMessages(id, messages) {
   return handleRes(await fetch(`${BASE}/chat/sessions/${id}/messages`, {
     method: 'PATCH', headers: { ...authHdr(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages }),
+  }));
+}
+
+export async function updateChatSession(id, data) {
+  return handleRes(await fetch(`${BASE}/chat/sessions/${id}`, {
+    method: 'PATCH', headers: { ...authHdr(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }));
+}
+
+export async function deleteChatSession(id) {
+  return handleRes(await fetch(`${BASE}/chat/sessions/${id}`, {
+    method: 'DELETE', headers: authHdr(),
   }));
 }
 

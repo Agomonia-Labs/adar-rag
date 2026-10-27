@@ -48,7 +48,7 @@ const PLANS = [
       'Unlimited documents',
       '10 GB max file size',
       'Unlimited chat queries',
-      '500 embeddings / day',
+      '25,000 embeddings / day',
       'Unlimited summaries',
     ],
   },

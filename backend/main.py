@@ -60,6 +60,7 @@ async def lifespan(app: FastAPI):
         log.info("✓ Schema ready")
     except Exception as e:
         log.exception(f"✗ Database startup failed: {e}")
+        raise
 
     log.info("✓ Server ready — listening on port " + os.getenv("PORT", "8080"))
     yield
@@ -81,6 +82,8 @@ async def lifespan(app: FastAPI):
             await dine_in_reminder_task
         except asyncio.CancelledError:
             pass
+    from database.connection import close_pool
+    await close_pool()
     shutdown_telemetry()
     log.info("Shutting down DocIntel")
 
@@ -129,9 +132,12 @@ async def trace_id_middleware(request: Request, call_next):
 async def health():
     from database.connection import _pool
     trace_tables = []
+    db_connected = False
     if _pool is not None:
         try:
             async with _pool.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+                db_connected = True
                 rows = await conn.fetch(
                     """SELECT table_name FROM information_schema.tables
                        WHERE table_schema='public'
@@ -143,9 +149,9 @@ async def health():
         except Exception:
             trace_tables = []
     return {
-        "status":       "ok",
+        "status":       "ok" if db_connected else "degraded",
         "llm":          os.getenv("LLM_PROVIDER", "unknown"),
-        "db_connected": _pool is not None,
+        "db_connected": db_connected,
         "trace_tables": trace_tables,
     }
 

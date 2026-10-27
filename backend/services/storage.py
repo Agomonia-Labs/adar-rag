@@ -58,6 +58,14 @@ async def upload_bytes(blob_path: str, data: bytes, content_type: str = "applica
         blob.upload_from_string(data, content_type=content_type)
     await asyncio.to_thread(_do)
 
+async def upload_file(blob_path: str, local_path: str, content_type: str = "application/octet-stream") -> None:
+    """Upload a local file without loading the complete object into memory."""
+    def _do():
+        client = _make_client()
+        blob = client.bucket(GCS_BUCKET).blob(blob_path)
+        blob.upload_from_filename(local_path, content_type=content_type)
+    await asyncio.to_thread(_do)
+
 async def upload_text(blob_path: str, text: str) -> None:
     await upload_bytes(blob_path, text.encode("utf-8"), "text/plain; charset=utf-8")
 

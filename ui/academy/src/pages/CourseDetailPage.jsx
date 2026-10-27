@@ -13,7 +13,7 @@ import { jsonrepair } from 'jsonrepair';
 import {
   getLearningCourse, getLearningCourseTranslation, updateLearningCourse, saveLearningCurriculum,
   listWorkspaceDocuments, uploadDocuments, addLearningAsset, updateLearningAsset, removeLearningAsset,
-  resolveLearningScope, createChatSession, getChatSession, saveChatSessionMessages, streamChat, transcribeVoice,
+  resolveLearningScope, createChatSession, getChatSession, saveChatSessionMessages, speakText, streamChat, transcribeVoice,
   saveLearningArtifact, deleteLearningArtifact, saveLearningQuizAttempt,
   getLearningMastery, updateLearningLessonProgress, updateLearningContentConsumption,
   createLearningQuestion, updateLearningQuestion,
@@ -49,12 +49,12 @@ const TAB_GROUPS = [
 // /chat/stream endpoint (streamChat) already accepts response_language
 // for any caller, so no backend change is needed to wire this up here.
 const LANGUAGE_OPTIONS = [
-  { code: '', label: 'English' },
-  { code: 'es', label: 'Spanish' },
-  { code: 'bn', label: 'Bengali' },
-  { code: 'hi', label: 'Hindi' },
-  { code: 'ar', label: 'Arabic' },
-  { code: 'fr', label: 'French' },
+  { code: '', label: 'English', speech:'English' },
+  { code: 'es', label: 'Spanish', speech:'Spanish' },
+  { code: 'bn', label: 'Bangla', speech:'Bengali' },
+  { code: 'hi', label: 'Hindi', speech:'Hindi' },
+  { code: 'ar', label: 'Arabic', speech:'Arabic' },
+  { code: 'fr', label: 'French', speech:'French' },
 ];
 
 // Same breakpoint/shape as App.jsx's useIsMobile -- not exported from
@@ -176,11 +176,11 @@ export default function CourseDetailPage({ workspace, courseId, onBack }) {
         </div>
       )}
       {error && <div style={s.error}>{error}</div>}
-      <div style={s.tabBody}>
+      <div style={{ ...s.tabBody, ...(tab === 'study' && !isMobile ? s.studyTabBody : {}) }}>
         {tab === 'overview' && <Overview course={course} display={displayCourse} manage={manage} mutate={mutate} />}
         {tab === 'curriculum' && <Curriculum course={course} displayCourse={displayCourse} manage={manage} mutate={mutate} workspaceId={workspace.id} />}
         {tab === 'tutor' && <Tutor course={course} workspaceId={workspace.id} />}
-        {tab === 'study' && <StudyTools course={course} mutate={mutate} />}
+        {tab === 'study' && <StudyTools course={course} mutate={mutate} isMobile={isMobile} />}
         {tab === 'assignments' && <Assignments course={course} manage={manage} mutate={mutate} workspaceId={workspace.id} translated={translated} />}
         {tab === 'qna' && <QnA course={course} manage={manage} mutate={mutate} />}
         {tab === 'progress' && <Progress course={displayCourse} manage={manage} />}
@@ -590,11 +590,11 @@ function useConsumptionReporter({ courseId, lessonId, documentId, kind, initialP
   return { display, report };
 }
 
-// "docx" covers both modern .docx and legacy .doc (services/extractor.py
-// buckets both together) -- neither renders in a browser natively, so
+// "docx" and "presentation" cover Office documents that browsers cannot
+// render natively, so
 // this goes through the backend's on-demand LibreOffice conversion
 // instead of a signed URL to the raw file.
-const TRACKABLE_FILE_TYPES = new Set(['video', 'audio', 'pdf', 'docx']);
+const TRACKABLE_FILE_TYPES = new Set(['video', 'audio', 'pdf', 'docx', 'presentation']);
 
 function ContentItem({ asset, courseId, lessonContentProgress }) {
   const [open, setOpen] = useState(false);
@@ -602,7 +602,7 @@ function ContentItem({ asset, courseId, lessonContentProgress }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const [showChunks, setShowChunks] = useState(false);
-  const needsPdfConversion = asset.file_type === 'docx';
+  const needsPdfConversion = ['docx', 'presentation'].includes(asset.file_type);
   const needsSignedUrl = ['video', 'audio', 'pdf', 'image'].includes(asset.file_type);
   const ready = ATTACHABLE_STATUSES.has(asset.status);
 
@@ -958,7 +958,12 @@ function Tutor({ course, workspaceId }) {
   const [composerError, setComposerError] = useState('');
   const [recording, setRecording] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState('');
+  const [speakingIndex, setSpeakingIndex] = useState(-1);
   const recorderRef = useRef(null); const streamRef = useRef(null); const chunksRef = useRef([]);
+  const audioRef = useRef(null);
+  const speechLockRef = useRef(false);
+  const activeSpeechIndexRef = useRef(-1);
+  const speechRequestRef = useRef(0);
   const options = useMemo(() => scopedLessonOptions(course), [course.modules]);
   const sessionKey = `academy_tutor_${course.id}_${scope.module_id || 'course'}_${scope.lesson_id || 'all'}`;
 
@@ -969,6 +974,41 @@ function Tutor({ course, workspaceId }) {
     if (id) getChatSession(id).then(session => { if (active) { setSessionId(id); setMessages(session.messages || []); } }).catch(() => localStorage.removeItem(sessionKey));
     return () => { active = false; };
   }, [sessionKey]);
+
+  useEffect(() => () => {
+    if (audioRef.current) audioRef.current.pause();
+    streamRef.current?.getTracks?.().forEach(track => track.stop());
+  }, []);
+
+  const stopSpeaking = () => {
+    speechRequestRef.current += 1;
+    speechLockRef.current = false;
+    activeSpeechIndexRef.current = -1;
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ''; audioRef.current = null; }
+    setSpeakingIndex(-1);
+  };
+
+  const listen = async (text, index) => {
+    if (speechLockRef.current) {
+      if (activeSpeechIndexRef.current === index) stopSpeaking();
+      return;
+    }
+    speechLockRef.current = true;
+    activeSpeechIndexRef.current = index;
+    const requestId = ++speechRequestRef.current;
+    setSpeakingIndex(index); setComposerError('');
+    try {
+      const result = await speakText(text, language || 'en');
+      if (requestId !== speechRequestRef.current) return;
+      const audio = new Audio(`data:${result.mime_type};base64,${result.audio_base64}`);
+      audioRef.current = audio;
+      audio.onended = () => { if (requestId === speechRequestRef.current) stopSpeaking(); };
+      audio.onerror = () => { if (requestId === speechRequestRef.current) { stopSpeaking(); setComposerError('Unable to play this response.'); } };
+      await audio.play();
+    } catch (e) {
+      if (requestId === speechRequestRef.current) { stopSpeaking(); setComposerError(e.message || 'Unable to create audio.'); }
+    }
+  };
 
   const ask = async question => {
     const content = String(question || '').trim();
@@ -1025,7 +1065,12 @@ function Tutor({ course, workspaceId }) {
         const blob = new Blob(chunksRef.current, { type:recorder.mimeType || 'audio/webm' });
         if (!blob.size) { setVoiceStatus('No audio captured.'); return; }
         setVoiceStatus('Transcribing…');
-        try { const result = await transcribeVoice(blob); const text = String(result?.text || '').trim(); if (text) await ask(text); else setVoiceStatus('No speech detected.'); }
+        try {
+          const selectedLanguage = LANGUAGE_OPTIONS.find(option => option.code === language);
+          const result = await transcribeVoice(blob, selectedLanguage?.speech || 'English');
+          const text = String(result?.text || '').trim();
+          if (text) await ask(text); else setVoiceStatus('No speech detected.');
+        }
         catch (e) { setVoiceStatus(`Transcription failed: ${e.message || e}`); }
         finally { setVoiceStatus(''); setRecording(false); }
       };
@@ -1051,6 +1096,12 @@ function Tutor({ course, workspaceId }) {
           <article key={i} style={{ ...s.message, ...(m.role === 'user' ? s.userMessage : s.aiMessage) }}>
             <strong>{m.role === 'user' ? 'You' : 'AI Tutor'}</strong>
             {m.role === 'user' ? <div style={{ marginTop:5, whiteSpace:'pre-wrap' }}>{m.content}</div> : <MarkdownRenderer text={m.content || ''} style={{ marginTop:5, fontSize:13 }} />}
+            {m.role === 'assistant' && m.content && (
+              <button type="button" style={{ ...s.listenButton, ...(speakingIndex !== -1 && speakingIndex !== i ? s.listenButtonDisabled : {}) }}
+                onClick={() => listen(m.content, i)} disabled={speakingIndex !== -1 && speakingIndex !== i}>
+                {speakingIndex === i ? 'Stop' : 'Listen'}
+              </button>
+            )}
             {m.role === 'assistant' && m.sources?.length > 0 && (
               <div style={s.evidenceBlock}>
                 <div style={s.boundary}>📚 {m.boundary || 'Course evidence'}</div>
@@ -1086,7 +1137,12 @@ function Tutor({ course, workspaceId }) {
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input); } }}
           placeholder="Ask a grounded question about this course…" disabled={thinking} rows={2}
           style={{ flex:1, minWidth:0, resize:'none', overflow:'auto', minHeight:72, maxHeight:160 }} />
-        <button type="button" style={recording ? s.dangerSmall : s.secondary} onClick={recording ? stopRecording : startRecording} disabled={thinking}>{recording ? '■ Stop' : '🎙'}</button>
+        <button type="button" style={recording ? s.dangerSmall : s.secondary}
+          onClick={recording ? stopRecording : startRecording} disabled={thinking}
+          aria-label={recording ? 'Stop recording' : 'Ask with microphone'}
+          title={recording ? 'Stop recording' : 'Ask with microphone'}>
+          {recording ? '■ Stop' : '🎙 Microphone'}
+        </button>
         <button type="submit" style={s.primary} disabled={thinking || !input.trim()}>Ask</button>
       </form>
       {voiceStatus && <div style={s.voiceStatus}>{voiceStatus}</div>}
@@ -1113,7 +1169,7 @@ Use separate sections, short paragraphs, and source citations where available.`,
 };
 const PRACTICE_RETRY_PROMPT = 'Create exactly 4 concise multiple-choice practice questions from the selected course material. Return valid compact JSON only, with no Markdown or text before or after it. Use schema_version 1 and a questions array. Every question needs id, question, exactly four options labeled A through D, at least one option with correct true, and a one-sentence explanation. Keep option text under 15 words. One or more answers may be correct.';
 
-function StudyTools({ course, mutate }) {
+function StudyTools({ course, mutate, isMobile }) {
   const options = useMemo(() => scopedLessonOptions(course), [course.modules]);
   const [scope, setScope] = useState({ module_id:'', lesson_id:'' });
   const [type, setType] = useState('summary');
@@ -1202,7 +1258,7 @@ function StudyTools({ course, mutate }) {
   };
 
   return (
-    <div style={s.panel}>
+    <div style={{ ...s.panel, ...(!isMobile ? s.studyToolsPanel : {}) }}>
       <button type="button" style={s.browserNavToggle} onClick={() => setFiltersOpen(o => !o)}>
         {filtersOpen ? '▾ Hide filters' : `▸ Filters · ${ARTIFACT_LABEL[type]}`}
       </button>
@@ -1246,7 +1302,7 @@ function StudyTools({ course, mutate }) {
                 ? <PracticeQuiz courseId={course.id} artifact={item} attempt={attempt} />
                 : item.artifact_type === 'flashcards'
                   ? <FlashcardDeck content={item.content} />
-                  : <MarkdownRenderer text={item.content} style={{ fontSize:12.5 }} />}
+                  : <MarkdownRenderer text={item.content} style={s.studyNarrative} />}
             </article>
           );
         })}
@@ -1351,16 +1407,16 @@ function parseFlashcards(raw) {
 // will use instead, and only fall back to raw text if parsing fails (e.g.
 // the model is still mid-stream, or produced malformed JSON).
 function renderDraftPreview(type, draft) {
-  const fallback = <MarkdownRenderer text={draft.length > 4000 ? draft.slice(0, 4000) + '…' : draft} style={{ fontSize:12.5, maxHeight:260, overflowY:'auto' }} />;
+  const structuredFallback = <MarkdownRenderer text={draft.length > 4000 ? draft.slice(0, 4000) + '…' : draft} style={{ fontSize:12.5, maxHeight:'50vh', overflowY:'auto' }} />;
   if (type === 'flashcards') {
     try { return <FlashcardDeck content={JSON.stringify(parseFlashcards(draft))} />; }
-    catch { return fallback; /* still streaming, or genuinely malformed -- show raw text */ }
+    catch { return structuredFallback; /* still streaming, or genuinely malformed -- show raw text */ }
   }
   if (type === 'practice_questions') {
     try { return <QuizPreview quiz={parsePracticeQuiz(draft)} />; }
-    catch { return fallback; /* still streaming, or genuinely malformed -- show raw text */ }
+    catch { return structuredFallback; /* still streaming, or genuinely malformed -- show raw text */ }
   }
-  return fallback;
+  return <MarkdownRenderer text={draft} style={s.studyNarrative} />;
 }
 
 // Read-only question/option preview for a not-yet-saved quiz draft (no
@@ -2549,6 +2605,7 @@ const s = {
   groupItem: { textAlign:'left', padding:'8px 12px', borderRadius:8, border:'none', background:'transparent', color:'var(--tx2)', fontSize:12.5, fontWeight:600, whiteSpace:'nowrap' },
   groupItemActive: { background:'var(--gold-soft)', color:'var(--gold-h)' },
   tabBody: { flex:1, minHeight:0, overflowY:'auto', padding:'18px 20px', maxWidth:980, width:'100%', margin:'0 auto' },
+  studyTabBody: { maxWidth:1320, display:'flex', flexDirection:'column', paddingBottom:0 },
   panel: { background:'var(--s1)', border:'1px solid var(--b1)', borderRadius:'var(--rl)', padding:18 },
   moduleCard: { background:'var(--s2)', borderRadius:10, padding:12, marginBottom:10 },
   lessonRow: { display:'flex', gap:6, marginBottom:6 },
@@ -2608,7 +2665,11 @@ const s = {
     background:'var(--s1)', borderTop:'1px solid var(--b1)', padding:'10px 14px',
   },
   voiceStatus: { fontSize:11, color:'var(--muted2)', marginTop:6 },
+  listenButton: { marginTop:7, padding:'5px 9px', borderRadius:7, border:'1px solid var(--b2)', background:'var(--s1)', color:'var(--tx2)', fontSize:11.5, fontWeight:700 },
+  listenButtonDisabled: { opacity:.45, cursor:'not-allowed' },
   // Study tools
+  studyToolsPanel: { flex:1, minHeight:'calc(100dvh - 130px)', borderRadius:'var(--rl) var(--rl) 0 0', padding:'20px 24px 28px' },
+  studyNarrative: { width:'100%', fontSize:14, lineHeight:1.75, color:'var(--tx)' },
   draftBox: { background:'var(--s2)', borderRadius:10, padding:12, marginTop:12 },
   artifactCard: { background:'var(--s2)', borderRadius:10, padding:12 },
   artifactCardHighlight: { boxShadow:'0 0 0 2px var(--gold)', transition:'box-shadow 0.3s ease' },

@@ -1,6 +1,7 @@
 // Español
 export default {
   nav_courses: 'Cursos',
+  nav_chat: 'Chat de conocimiento',
   nav_content: 'Biblioteca de contenido',
   nav_video: '🎬 Inteligencia de video',
   nav_workspace: 'Espacio de trabajo',
