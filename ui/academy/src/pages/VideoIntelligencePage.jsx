@@ -17,7 +17,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   listVideoDocuments, createVideoUploadSession, uploadVideoFile, completeVideoUpload,
   getVideoStatus, getVideoTimeline, getVideoFrameUrl, processVideoDocument, askVideo, deleteDocument, getViewUrl,
-  transcribeVoice,
+  speakText, transcribeVoice,
 } from '../services/api.js';
 import MarkdownRenderer from '../components/MarkdownRenderer.jsx';
 
@@ -70,6 +70,14 @@ const ANSWER_LANGUAGES = [
   { value: 'es', label: 'Spanish' },
   { value: 'fr', label: 'French' },
 ];
+
+function detectedSpeechLanguage(text) {
+  const value = String(text || '');
+  if (/[\u0980-\u09ff]/.test(value)) return 'bn';
+  if (/[\u0900-\u097f]/.test(value)) return 'hi';
+  if (/[\u0600-\u06ff]/.test(value)) return 'ar';
+  return 'en';
+}
 
 function formatTime(value) {
   const total = Math.max(0, Math.floor(Number(value) || 0));
@@ -315,11 +323,17 @@ function VideoDetail({ docId, docName, isViewer, onBack }) {
   const [entries, setEntries] = useState([]);
   const [recording, setRecording] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState('');
+  const [speakingEntryId, setSpeakingEntryId] = useState(null);
+  const [speechError, setSpeechError] = useState('');
   const pollRef = useRef(null);
   const profileLoaded = useRef(false);
   const recorderRef = useRef(null);
   const voiceStreamRef = useRef(null);
   const voiceChunksRef = useRef([]);
+  const audioRef = useRef(null);
+  const speechLockRef = useRef(false);
+  const activeSpeechIdRef = useRef(null);
+  const speechRequestRef = useRef(0);
 
   const [rightsConfirmed, setRightsConfirmed] = useState(true);
   const [embedAfterProcessing, setEmbedAfterProcessing] = useState(true);
@@ -332,7 +346,53 @@ function VideoDetail({ docId, docName, isViewer, onBack }) {
   const [videoUrl, setVideoUrl] = useState('');
   const [videoUrlError, setVideoUrlError] = useState('');
 
+  const stopSpeaking = () => {
+    speechRequestRef.current += 1;
+    speechLockRef.current = false;
+    activeSpeechIdRef.current = null;
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = '';
+      audioRef.current = null;
+    }
+    setSpeakingEntryId(null);
+  };
+
+  const listen = async entry => {
+    if (!entry?.answer) return;
+    if (speechLockRef.current) {
+      if (activeSpeechIdRef.current === entry.id) stopSpeaking();
+      return;
+    }
+    speechLockRef.current = true;
+    activeSpeechIdRef.current = entry.id;
+    const requestId = ++speechRequestRef.current;
+    setSpeakingEntryId(entry.id);
+    setSpeechError('');
+    try {
+      const language = answerLanguage || detectedSpeechLanguage(entry.answer);
+      const result = await speakText(entry.answer, language);
+      if (requestId !== speechRequestRef.current) return;
+      const audio = new Audio(`data:${result.mime_type};base64,${result.audio_base64}`);
+      audioRef.current = audio;
+      audio.onended = () => { if (requestId === speechRequestRef.current) stopSpeaking(); };
+      audio.onerror = () => {
+        if (requestId === speechRequestRef.current) {
+          stopSpeaking();
+          setSpeechError('Unable to play this video answer.');
+        }
+      };
+      await audio.play();
+    } catch (e) {
+      if (requestId === speechRequestRef.current) {
+        stopSpeaking();
+        setSpeechError(e.message || 'Unable to create audio for this answer.');
+      }
+    }
+  };
+
   useEffect(() => () => {
+    stopSpeaking();
     const recorder = recorderRef.current;
     if (recorder) {
       recorder.ondataavailable = null;
@@ -671,6 +731,7 @@ function VideoDetail({ docId, docName, isViewer, onBack }) {
             <button type="submit" style={s.primary} disabled={!question.trim()}>Ask</button>
           </form>
           {voiceStatus && <div style={s.voiceStatus}>{voiceStatus}</div>}
+          {speechError && <div style={{ ...s.error, marginTop:0 }}>{speechError}</div>}
           {entries.map(entry => (
             <div key={entry.id} style={s.answerCard}>
               <strong style={{ fontSize:12.5, color:'var(--tx)' }}>{entry.question}</strong>
@@ -681,6 +742,18 @@ function VideoDetail({ docId, docName, isViewer, onBack }) {
                     text={entry.answer || ''}
                     style={{ fontSize:13, color:'var(--tx2)', marginTop:8, lineHeight:1.65 }}
                   />
+                  {entry.answer && (
+                    <button
+                      type="button"
+                      title={speakingEntryId === entry.id ? 'Stop answer playback' : 'Play this answer aloud'}
+                      aria-label={speakingEntryId === entry.id ? 'Stop answer playback' : 'Play this answer aloud'}
+                      style={{ ...s.listenButton, ...(speakingEntryId !== null && speakingEntryId !== entry.id ? s.listenButtonDisabled : {}) }}
+                      onClick={() => listen(entry)}
+                      disabled={speakingEntryId !== null && speakingEntryId !== entry.id}
+                    >
+                      {speakingEntryId === entry.id ? '⏸ Stop' : '🔊 Listen'}
+                    </button>
+                  )}
                   {entry.sources?.length > 0 && (
                     <div style={{ display:'flex', flexWrap:'wrap', gap:5, marginTop:8 }}>
                       {entry.sources.map((src, i) => (
@@ -758,6 +831,8 @@ const s = {
   secondary: { padding:'7px 12px', borderRadius:8, border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx2)', fontSize:12, cursor:'pointer' },
   dangerSmall: { padding:'8px 12px', borderRadius:8, border:'1px solid rgba(220,38,38,.35)', background:'rgba(220,38,38,.08)', color:'var(--red)', fontSize:12, cursor:'pointer', whiteSpace:'nowrap' },
   voiceStatus: { fontSize:11.5, color:'var(--muted2)', margin:'-4px 0 12px' },
+  listenButton: { marginTop:9, padding:'6px 10px', borderRadius:7, border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx2)', fontSize:11.5, fontWeight:700 },
+  listenButtonDisabled: { opacity:.45, cursor:'not-allowed' },
   answerLanguageLabel: { display:'flex', alignItems:'center', gap:6, color:'var(--muted2)', fontSize:11.5, marginBottom:8 },
   answerLanguageSelect: { width:'auto', minWidth:120, padding:'6px 8px', fontSize:11.5, border:'1px solid var(--b2)', borderRadius:7, background:'var(--s2)', color:'var(--tx)' },
   muted: { color:'var(--muted2)', padding:'1.5rem 0', textAlign:'center', fontSize:12.5 },

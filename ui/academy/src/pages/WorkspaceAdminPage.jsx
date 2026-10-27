@@ -5,10 +5,10 @@
 // workspace plus lets an owner create a new one and switch to it, rather
 // than DocIntel's full multi-workspace sidebar (Academy's header
 // WorkspaceSwitcher already covers browsing/switching).
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  createWorkspace, updateWorkspace, deleteWorkspace,
-  inviteMember, updateMemberRole, removeWorkspaceMember,
+  createWorkspace, getWorkspace, updateWorkspace, deleteWorkspace,
+  inviteMember, searchWorkspaceUsers, updateMemberRole, removeWorkspaceMember,
 } from '../services/api.js';
 
 const ROLE_LABEL = { owner:'Owner', editor:'Editor', viewer:'Viewer' };
@@ -18,17 +18,48 @@ export default function WorkspaceAdminPage({ workspace, onWorkspaceChange }) {
   const [name, setName] = useState(workspace.name);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('viewer');
+  const [memberMatches, setMemberMatches] = useState([]);
+  const [searchingMembers, setSearchingMembers] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteInput, setDeleteInput] = useState('');
 
-  const refresh = async patch => onWorkspaceChange({ ...workspace, ...patch });
+  useEffect(() => { setName(workspace.name); }, [workspace.id, workspace.name]);
+
+  const isOwner = workspace.my_role === 'owner';
+
+  useEffect(() => {
+    const query = inviteEmail.trim();
+    if (!isOwner || query.length < 2) {
+      setMemberMatches([]);
+      setSearchingMembers(false);
+      return undefined;
+    }
+    let active = true;
+    setSearchingMembers(true);
+    const timer = setTimeout(async () => {
+      try {
+        const matches = await searchWorkspaceUsers(workspace.id, query);
+        if (active) setMemberMatches(matches);
+      } catch {
+        if (active) setMemberMatches([]);
+      } finally {
+        if (active) setSearchingMembers(false);
+      }
+    }, 250);
+    return () => { active = false; clearTimeout(timer); };
+  }, [inviteEmail, isOwner, workspace.id]);
+
+  const refresh = async () => {
+    const updated = await getWorkspace(workspace.id);
+    onWorkspaceChange(updated);
+  };
 
   const rename = async e => {
     e.preventDefault(); setBusy(true); setError('');
-    try { await updateWorkspace(workspace.id, name.trim()); await refresh({ name:name.trim() }); setEditingName(false); }
+    try { await updateWorkspace(workspace.id, name.trim()); await refresh(); setEditingName(false); }
     catch (e2) { setError(e2.message); }
     finally { setBusy(false); }
   };
@@ -36,21 +67,24 @@ export default function WorkspaceAdminPage({ workspace, onWorkspaceChange }) {
   const invite = async e => {
     e.preventDefault(); if (!inviteEmail.trim()) return; setBusy(true); setError('');
     try {
-      await inviteMember(workspace.id, inviteEmail.trim(), inviteRole);
+      const email = inviteEmail.trim();
+      const role = inviteRole;
+      await inviteMember(workspace.id, email, role);
+      await refresh();
       setInviteEmail(''); setInviteRole('viewer');
-      await refresh({ members:[...(workspace.members || []), { email:inviteEmail.trim(), role:inviteRole, pending:true }], member_count:(workspace.member_count || 0) + 1 });
+      setMemberMatches([]);
     } catch (e2) { setError(e2.message); }
     finally { setBusy(false); }
   };
 
   const changeRole = async (userId, role) => {
-    try { await updateMemberRole(workspace.id, userId, role); await refresh({ members:(workspace.members || []).map(m => m.user_id === userId ? { ...m, role } : m) }); }
+    try { setError(''); await updateMemberRole(workspace.id, userId, role); await refresh(); }
     catch (e2) { setError(e2.message); }
   };
 
   const removeMember = async userId => {
     if (!confirm('Remove this member from the workspace?')) return;
-    try { await removeWorkspaceMember(workspace.id, userId); await refresh({ members:(workspace.members || []).filter(m => m.user_id !== userId) }); }
+    try { setError(''); await removeWorkspaceMember(workspace.id, userId); await refresh(); }
     catch (e2) { setError(e2.message); }
   };
 
@@ -59,8 +93,6 @@ export default function WorkspaceAdminPage({ workspace, onWorkspaceChange }) {
     try { await deleteWorkspace(workspace.id); window.location.reload(); }
     catch (e2) { setError(e2.message); setConfirmDelete(false); }
   };
-
-  const isOwner = workspace.my_role === 'owner';
 
   return (
     <div style={s.wrap}>
@@ -90,14 +122,41 @@ export default function WorkspaceAdminPage({ workspace, onWorkspaceChange }) {
       {isOwner && (
         <div style={{ ...s.panel, marginTop:14 }}>
           <strong style={{ fontSize:13 }}>Invite a member</strong>
-          <form onSubmit={invite} style={{ display:'flex', gap:8, marginTop:10 }}>
-            <input type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="colleague@institution.edu" required style={{ flex:1 }} />
-            <select value={inviteRole} onChange={e => setInviteRole(e.target.value)}>
-              <option value="viewer">Viewer</option><option value="editor">Editor</option><option value="owner">Owner</option>
+          <form onSubmit={invite} style={s.memberForm}>
+            <div style={s.memberSearch}>
+              <input
+                type="text"
+                value={inviteEmail}
+                onChange={e => setInviteEmail(e.target.value)}
+                placeholder="Search by name or email"
+                required
+                autoComplete="off"
+                aria-label="Find a registered ADAR member"
+                style={s.memberInput}
+              />
+              {(searchingMembers || memberMatches.length > 0) && (
+                <div style={s.searchResults}>
+                  {searchingMembers && <div style={s.searchMessage}>Looking up accounts…</div>}
+                  {!searchingMembers && memberMatches.map(member => (
+                    <button
+                      type="button"
+                      key={member.user_id}
+                      style={s.searchResult}
+                      onClick={() => { setInviteEmail(member.email); setMemberMatches([]); }}
+                    >
+                      <strong style={{ color:'var(--tx)' }}>{member.full_name || member.email}</strong>
+                      {member.full_name && <span style={{ color:'var(--muted2)', fontSize:11 }}>{member.email}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <select value={inviteRole} onChange={e => setInviteRole(e.target.value)} style={s.memberRole} aria-label="Workspace role">
+              <option value="viewer">Viewer</option><option value="editor">Editor</option>
             </select>
-            <button type="submit" style={s.primary} disabled={busy}>Invite</button>
+            <button type="submit" style={s.primary} disabled={busy}>{busy ? 'Adding…' : 'Add member'}</button>
           </form>
-          <p style={{ fontSize:10.5, color:'var(--muted2)', marginTop:6 }}>Editor+ can create courses; invited users need an existing ADAR account.</p>
+          <p style={{ fontSize:10.5, color:'var(--muted2)', marginTop:6 }}>Editors can create courses. The person must already have an ADAR account; promote them to owner after adding when needed.</p>
         </div>
       )}
 
@@ -162,6 +221,13 @@ const s = {
   toolbar: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 },
   h2: { fontSize:19, fontWeight:700, color:'var(--tx)' },
   panel: { background:'var(--s1)', border:'1px solid var(--b1)', borderRadius:'var(--rl)', padding:16 },
+  memberForm: { display:'flex', alignItems:'flex-start', gap:8, marginTop:10, flexWrap:'wrap' },
+  memberSearch: { position:'relative', flex:'1 1 260px', minWidth:0 },
+  memberInput: { width:'100%', minWidth:0 },
+  memberRole: { width:120, flex:'0 0 120px' },
+  searchResults: { position:'absolute', zIndex:20, top:'calc(100% + 5px)', left:0, right:0, background:'var(--s1)', border:'1px solid var(--b2)', borderRadius:8, boxShadow:'0 12px 28px rgba(27,36,64,.16)', overflow:'hidden' },
+  searchResult: { width:'100%', display:'flex', flexDirection:'column', alignItems:'flex-start', gap:2, padding:'9px 11px', background:'var(--s1)', border:'none', borderBottom:'1px solid var(--b1)', textAlign:'left' },
+  searchMessage: { padding:'9px 11px', color:'var(--muted2)', fontSize:11.5 },
   memberRow: { display:'flex', alignItems:'center', gap:10, padding:'7px 10px', background:'var(--s2)', borderRadius:8 },
   statusPill: { background:'var(--s3)', padding:'1px 8px', borderRadius:10, fontSize:10.5 },
   primary: { padding:'8px 14px', borderRadius:8, border:'none', background:'var(--gold)', color:'#fff', fontWeight:700, fontSize:12.5 },

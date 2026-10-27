@@ -363,7 +363,7 @@ export default function KnowledgeChatPage({ workspace }) {
                 onClick={recording ? stopRecording : startRecording} disabled={thinking}
                 aria-label={recording ? 'Stop recording' : 'Ask with microphone'}
                 title={recording ? 'Stop recording' : 'Ask with microphone'}>
-                {recording ? '■ Stop' : '🎙 Microphone'}
+                {recording ? '■ Stop' : '🎙'}
               </button>
               <button type="submit" style={s.primary} disabled={thinking || !input.trim()}>Ask</button>
             </div>
@@ -386,7 +386,7 @@ const s = {
   languageSelect: { width:'auto', minWidth:116, padding:'8px 10px', borderRadius:8, border:'1px solid var(--b2)', background:'var(--s1)', color:'var(--tx)', fontSize:12.5 },
   primary: { padding:'8px 14px', minHeight:36, borderRadius:8, border:'none', background:'var(--gold)', color:'#fff', fontWeight:700, fontSize:12.5 },
   secondary: { padding:'8px 12px', minHeight:36, borderRadius:8, border:'1px solid var(--b2)', background:'var(--s1)', color:'var(--tx2)', fontWeight:600, fontSize:12.5 },
-  microphoneButton: { padding:'8px 12px', minHeight:36, borderRadius:8, border:'1px solid var(--gold)', background:'var(--gold-soft)', color:'var(--gold-h)', fontWeight:700, fontSize:12.5 },
+  microphoneButton: { width:38, minWidth:38, height:38, padding:0, display:'grid', placeItems:'center', borderRadius:8, border:'1px solid var(--gold)', background:'var(--gold-soft)', color:'var(--gold-h)', fontWeight:700, fontSize:16 },
   sourcePanel: { border:'1px solid var(--b1)', borderRadius:8, background:'var(--s1)', padding:12 },
   sourceToolbar: { display:'flex', alignItems:'center', gap:9, flexWrap:'wrap', marginBottom:9 },
   search: { flex:'1 1 230px', minWidth:0, padding:'8px 10px', borderRadius:8, border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx)' },

@@ -171,6 +171,7 @@ async def _fmt_workspace(db, ws: dict, user_id: str) -> dict:
         "owner_id":   str(ws["owner_id"]),
         "my_role":    m["role"] if m else None,
         "doc_count":  int(doc_count),
+        "member_count": len(members),
         "created_at": ws["created_at"].isoformat(),
         "members": [
             {
@@ -310,6 +311,47 @@ class InviteMember(BaseModel):
     email: str
     role:  str = "viewer"   # viewer | editor
 
+
+@router.get("/{workspace_id}/members/search")
+async def search_workspace_members(
+    workspace_id: str,
+    q: str,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Find registered accounts an owner can add to this workspace."""
+    await _require_role(db, workspace_id, str(current_user["id"]), "owner")
+    query = q.strip()
+    if len(query) < 2:
+        return []
+    rows = await db.fetch(
+        """SELECT u.id, u.email, u.full_name
+           FROM users u
+           WHERE (
+               LOWER(u.email) LIKE LOWER($2)
+               OR LOWER(COALESCE(u.full_name, '')) LIKE LOWER($2)
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM workspace_members wm
+               WHERE wm.workspace_id=$1 AND wm.user_id=u.id
+           )
+           ORDER BY
+               CASE WHEN LOWER(u.email)=LOWER($3) THEN 0 ELSE 1 END,
+               LOWER(COALESCE(u.full_name, u.email)), LOWER(u.email)
+           LIMIT 10""",
+        workspace_id,
+        f"%{query}%",
+        query,
+    )
+    return [
+        {
+            "user_id": str(row["id"]),
+            "email": row["email"],
+            "full_name": row["full_name"] or "",
+        }
+        for row in rows
+    ]
+
 @router.post("/{workspace_id}/members")
 async def invite_member(
     workspace_id: str,
@@ -321,17 +363,28 @@ async def invite_member(
     if body.role not in ("viewer", "editor"):
         raise HTTPException(400, "role must be viewer or editor")
 
-    invitee = await db.fetchrow("SELECT id FROM users WHERE email=$1", body.email)
+    email = body.email.strip().lower()
+    if not email:
+        raise HTTPException(400, "Email is required")
+
+    # Login identifiers are case-insensitive. Matching the workspace add flow
+    # the same way avoids rejecting an existing account because an owner typed
+    # a different email casing than the account originally stored.
+    invitee = await db.fetchrow(
+        "SELECT id, email, full_name FROM users WHERE LOWER(email)=LOWER($1)",
+        email,
+    )
     if not invitee:
-        raise HTTPException(404, f"No account found for {body.email}")
+        raise HTTPException(404, f"No account found for {email}")
 
     existing = await _get_member(db, workspace_id, str(invitee["id"]))
     if existing:
-        raise HTTPException(409, f"{body.email} is already a member")
+        raise HTTPException(409, f"{email} is already a member")
 
-    await db.execute(
+    membership = await db.fetchrow(
         """INSERT INTO workspace_members (workspace_id, user_id, role, invited_by)
-           VALUES ($1, $2, $3, $4)""",
+           VALUES ($1, $2, $3, $4)
+           RETURNING joined_at""",
         workspace_id, str(invitee["id"]), body.role, str(current_user["id"]),
     )
     await db.execute(
@@ -339,11 +392,27 @@ async def invite_member(
     )
     await audit(db, user_id=str(current_user["id"]), action="invite_member",
                 resource_type="workspace", resource_id=workspace_id,
-                metadata={"invitee_email": body.email, "role": body.role})
+                metadata={"invitee_email": email, "role": body.role})
     # Notify invitee
+    workspace_name = await db.fetchval(
+        "SELECT name FROM workspaces WHERE id=$1", workspace_id
+    ) or "Workspace"
     inviter_name = current_user.get("email", "A team member")
-    await send_workspace_invite(body.email, "", inviter_name, body.role, _APP_URL)
-    return {"ok": True, "email": body.email, "role": body.role}
+    await send_workspace_invite(email, workspace_name, inviter_name, body.role, _APP_URL)
+    return {
+        "ok": True,
+        # Retain these fields for existing REST/MCP consumers while the
+        # Academy uses the richer authoritative member object below.
+        "email": invitee["email"],
+        "role": body.role,
+        "member": {
+            "user_id": str(invitee["id"]),
+            "email": invitee["email"],
+            "full_name": invitee["full_name"] or "",
+            "role": body.role,
+            "joined_at": membership["joined_at"].isoformat(),
+        },
+    }
 
 
 # ── Change member role ────────────────────────────────────────────────────────

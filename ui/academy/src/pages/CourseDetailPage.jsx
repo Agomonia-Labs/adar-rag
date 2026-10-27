@@ -1136,12 +1136,12 @@ function Tutor({ course, workspaceId }) {
           onChange={e => { setInput(e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`; }}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input); } }}
           placeholder="Ask a grounded question about this course…" disabled={thinking} rows={2}
-          style={{ flex:1, minWidth:0, resize:'none', overflow:'auto', minHeight:72, maxHeight:160 }} />
-        <button type="button" style={recording ? s.dangerSmall : s.secondary}
+          style={{ flex:1, minWidth:0, resize:'none', overflow:'auto', minHeight:isMobile ? 72 : 56, maxHeight:160 }} />
+        <button type="button" style={recording ? s.dangerSmall : s.microphoneButton}
           onClick={recording ? stopRecording : startRecording} disabled={thinking}
           aria-label={recording ? 'Stop recording' : 'Ask with microphone'}
           title={recording ? 'Stop recording' : 'Ask with microphone'}>
-          {recording ? '■ Stop' : '🎙 Microphone'}
+          {recording ? '■ Stop' : '🎙'}
         </button>
         <button type="submit" style={s.primary} disabled={thinking || !input.trim()}>Ask</button>
       </form>
@@ -2605,7 +2605,7 @@ const s = {
   groupItem: { textAlign:'left', padding:'8px 12px', borderRadius:8, border:'none', background:'transparent', color:'var(--tx2)', fontSize:12.5, fontWeight:600, whiteSpace:'nowrap' },
   groupItemActive: { background:'var(--gold-soft)', color:'var(--gold-h)' },
   tabBody: { flex:1, minHeight:0, overflowY:'auto', padding:'18px 20px', maxWidth:980, width:'100%', margin:'0 auto' },
-  studyTabBody: { maxWidth:1320, display:'flex', flexDirection:'column', paddingBottom:0 },
+  studyTabBody: { maxWidth:1320, display:'flex', flexDirection:'column', paddingBottom:14 },
   panel: { background:'var(--s1)', border:'1px solid var(--b1)', borderRadius:'var(--rl)', padding:18 },
   moduleCard: { background:'var(--s2)', borderRadius:10, padding:12, marginBottom:10 },
   lessonRow: { display:'flex', gap:6, marginBottom:6 },
@@ -2639,7 +2639,7 @@ const s = {
   metricGrid: { display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:10 },
   metricCard: { background:'var(--s2)', borderRadius:10, padding:'12px 14px' },
   // Tutor
-  tutor: { display:'flex', flexDirection:'column', height:'calc(100vh - 230px)', minHeight:360 },
+  tutor: { display:'flex', flexDirection:'column', height:'calc(100dvh - 188px)', minHeight:360 },
   scopeBar: { display:'flex', gap:8, padding:'0 0 10px', alignItems:'center', flexWrap:'wrap' },
   languageLabel: { fontSize:11.5, color:'var(--muted2)', fontWeight:600, flexShrink:0 },
   messages: { flex:1, minHeight:0, overflowY:'auto', padding:'4px 0' },
@@ -2665,10 +2665,11 @@ const s = {
     background:'var(--s1)', borderTop:'1px solid var(--b1)', padding:'10px 14px',
   },
   voiceStatus: { fontSize:11, color:'var(--muted2)', marginTop:6 },
+  microphoneButton: { width:38, minWidth:38, height:38, padding:0, display:'grid', placeItems:'center', borderRadius:8, border:'1px solid var(--b2)', background:'var(--s2)', color:'var(--tx2)', fontSize:16 },
   listenButton: { marginTop:7, padding:'5px 9px', borderRadius:7, border:'1px solid var(--b2)', background:'var(--s1)', color:'var(--tx2)', fontSize:11.5, fontWeight:700 },
   listenButtonDisabled: { opacity:.45, cursor:'not-allowed' },
   // Study tools
-  studyToolsPanel: { flex:1, minHeight:'calc(100dvh - 130px)', borderRadius:'var(--rl) var(--rl) 0 0', padding:'20px 24px 28px' },
+  studyToolsPanel: { flex:1, minHeight:'calc(100dvh - 188px)', borderRadius:'var(--rl)', padding:'20px 24px 28px' },
   studyNarrative: { width:'100%', fontSize:14, lineHeight:1.75, color:'var(--tx)' },
   draftBox: { background:'var(--s2)', borderRadius:10, padding:12, marginTop:12 },
   artifactCard: { background:'var(--s2)', borderRadius:10, padding:12 },

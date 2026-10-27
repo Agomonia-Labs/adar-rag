@@ -158,6 +158,15 @@ export async function inviteMember(workspaceId, email, role = 'viewer') {
   }));
 }
 
+export async function searchWorkspaceUsers(workspaceId, query) {
+  const q = query.trim();
+  if (q.length < 2) return [];
+  return handleRes(await fetch(
+    `${BASE}/workspaces/${workspaceId}/members/search?q=${encodeURIComponent(q)}`,
+    { headers: authHdr() },
+  ));
+}
+
 export async function updateMemberRole(workspaceId, userId, role) {
   return handleRes(await fetch(`${BASE}/workspaces/${workspaceId}/members/${userId}`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHdr() },

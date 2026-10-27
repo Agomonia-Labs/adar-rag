@@ -491,7 +491,7 @@ function GuestTutor({ course, limits, ensureSession, onRequestAuth }) {
           onChange={e => { setInput(e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`; }}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(input); } }}
           placeholder="Ask a grounded question about this course…" disabled={thinking || limitHit} rows={2}
-          style={{ flex:1, minWidth:0, resize:'none', overflow:'auto', minHeight:72, maxHeight:160 }} />
+          style={{ flex:1, minWidth:0, resize:'none', overflow:'auto', minHeight:isMobile ? 72 : 56, maxHeight:160 }} />
         <button type="button" style={voice.recording ? s.dangerSmall : s.secondary} onClick={() => (voice.recording ? voice.stopRecording() : voice.startRecording(text => ask(text)))} disabled={thinking || limitHit}>{voice.recording ? '■ Stop' : '🎙'}</button>
         <button type="submit" style={s.primary} disabled={thinking || limitHit || !input.trim()}>Ask</button>
       </form>
@@ -1631,7 +1631,7 @@ export function GuestVideoSection({ onRequestAuth, activeSlug, sessions, ensure 
 
 const s = {
   wrap: { maxWidth: 980, margin: '0 auto', padding: '20px 18px 40px', width: '100%' },
-  studyWrap: { maxWidth: 1320, paddingBottom: 0, display: 'flex', flexDirection: 'column', flex: 1 },
+  studyWrap: { maxWidth: 1320, paddingBottom: 14, display: 'flex', flexDirection: 'column', flex: 1 },
   intro: { marginBottom: 18 },
   eyebrow: { fontSize: 11.5, fontWeight: 700, color: 'var(--gold-h)', letterSpacing: '.5px', textTransform: 'uppercase', margin: '0 0 10px' },
   courseSwitch: { display: 'flex', gap: 6, marginBottom: 12 },
@@ -1675,7 +1675,7 @@ const s = {
   groupItem: { textAlign: 'left', padding: '8px 12px', borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--tx2)', fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap' },
   groupItemActive: { background: 'var(--gold-soft)', color: 'var(--gold-h)' },
   panel: { background: 'var(--s1)', border: '1px solid var(--b1)', borderRadius: 10, padding: 16 },
-  studyToolsPanel: { flex: 1, minHeight: 'calc(100dvh - 145px)', borderRadius: '10px 10px 0 0', padding: '20px 24px 28px' },
+  studyToolsPanel: { flex: 1, minHeight: 'calc(100dvh - 188px)', borderRadius: 10, padding: '20px 24px 28px' },
   studyNarrative: { width: '100%', fontSize: 14, lineHeight: 1.75, color: 'var(--tx)' },
   browserWrap: { display: 'grid', gridTemplateColumns: 'minmax(180px,240px) 1fr', gap: 14 },
   browserNavToggle: { width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--b2)', background: 'var(--s2)', color: 'var(--tx)', fontSize: 12.5, fontWeight: 600 },
@@ -1686,7 +1686,7 @@ const s = {
   browserPanel: { background: 'var(--s1)', border: '1px solid var(--b1)', borderRadius: 10, padding: 14, minHeight: 200 },
   contentItem: { background: 'var(--s2)', border: '1px solid var(--b1)', borderRadius: 8, padding: '8px 10px' },
   muted: { color: 'var(--muted2)', fontSize: 12, padding: '10px 0' },
-  tutor: { display: 'flex', flexDirection: 'column', gap: 10, height: 'calc(100vh - 260px)', minHeight: 360 },
+  tutor: { display: 'flex', flexDirection: 'column', gap: 10, height: 'calc(100dvh - 205px)', minHeight: 360 },
   videoPanel: { display: 'flex', flexDirection: 'column', gap: 10 },
   messages: { display: 'flex', flexDirection: 'column', gap: 10, flex: 1, minHeight: 0, overflowY: 'auto' },
   message: { padding: '10px 12px', borderRadius: 10, fontSize: 13 },
