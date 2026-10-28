@@ -750,6 +750,15 @@ export async function addLearningMember(courseId, payload) {
   }));
 }
 
+export async function searchLearningMemberCandidates(courseId, query) {
+  const q = query.trim();
+  if (q.length < 2) return [];
+  return handleRes(await fetch(
+    `${BASE}/learning/courses/${courseId}/members/search?q=${encodeURIComponent(q)}`,
+    { headers: authHdr() },
+  ));
+}
+
 // Bulk roster import -- same no-privilege-escalation precondition as
 // addLearningMember (every row's account must already exist); the server
 // returns a per-row {email, status, reason?} report for the UI to render.

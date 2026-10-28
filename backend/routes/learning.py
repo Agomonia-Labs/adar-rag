@@ -1020,6 +1020,49 @@ async def add_member(course_id: str, body: MemberCreate, current_user: CurrentUs
     return await _course_workspace(db, course_id, user_id)
 
 
+@router.get("/courses/{course_id}/members/search")
+async def search_course_member_candidates(
+    course_id: str,
+    q: str,
+    current_user: CurrentUser,
+    db=Depends(get_db),
+):
+    """Search workspace members who are eligible for course enrollment."""
+    user_id = str(current_user["id"])
+    course = await _course_access(db, course_id, user_id, manage=True)
+    query = q.strip()
+    if len(query) < 2:
+        return []
+    rows = await db.fetch(
+        """SELECT u.id,u.email,u.full_name,wm.role AS workspace_role
+           FROM workspace_members wm
+           JOIN users u ON u.id=wm.user_id
+           WHERE wm.workspace_id=$1::uuid
+             AND (
+               LOWER(u.email) LIKE LOWER($3)
+               OR LOWER(COALESCE(u.full_name,'')) LIKE LOWER($3)
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM learning_course_members lcm
+               WHERE lcm.course_id=$2::uuid AND lcm.user_id=u.id
+             )
+           ORDER BY
+             CASE WHEN LOWER(u.email)=LOWER($4) THEN 0 ELSE 1 END,
+             LOWER(COALESCE(u.full_name,u.email)),LOWER(u.email)
+           LIMIT 10""",
+        str(course["workspace_id"]), course_id, f"%{query}%", query,
+    )
+    return [
+        {
+            "user_id": str(row["id"]),
+            "email": row["email"],
+            "full_name": row["full_name"] or "",
+            "workspace_role": row["workspace_role"],
+        }
+        for row in rows
+    ]
+
+
 @router.post("/courses/{course_id}/members/bulk")
 async def add_members_bulk(course_id: str, body: BulkMemberCreate, current_user: CurrentUser, db=Depends(get_db)):
     """Bulk roster import for students (or teachers/admins) who already have

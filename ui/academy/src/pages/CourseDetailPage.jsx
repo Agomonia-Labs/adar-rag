@@ -8,6 +8,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import MarkdownRenderer from '../components/MarkdownRenderer.jsx';
 import ChunksPanel from '../components/ChunksPanel.jsx';
+import useSequentialSpeech from '../hooks/useSequentialSpeech.js';
+import { studyArtifactSpeechText } from '../utils/studySpeech.js';
 import { useLang } from '../i18n/index.jsx';
 import { jsonrepair } from 'jsonrepair';
 import {
@@ -23,7 +25,7 @@ import {
   listModuleDiscussion, postModuleDiscussion, deleteModuleDiscussionPost,
   listLessonDiscussion, postLessonDiscussion, deleteLessonDiscussionPost,
   getViewUrl, getPdfViewUrl,
-  getLearningCourseDirectory, addLearningMember, addLearningMembersBulk, removeLearningMember, updateLearningMemberProfile,
+  getLearningCourseDirectory, addLearningMember, searchLearningMemberCandidates, addLearningMembersBulk, removeLearningMember, updateLearningMemberProfile,
   getLearningCalendar, createLearningCalendarItem, updateLearningCalendarItem, deleteLearningCalendarItem,
   getLearningInstructorDashboard, getLearningEvidenceUrl,
 } from '../services/api.js';
@@ -1178,6 +1180,7 @@ function StudyTools({ course, mutate, isMobile }) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const speech = useSequentialSpeech((text, speechLanguage) => speakText(text, speechLanguage), language || 'en');
   // After "Save to course", the draft preview disappears and the real,
   // interactive (AI-gradeable) version appears down in the saved list --
   // easy to miss, which is exactly what "I don't see a submit option, only
@@ -1277,8 +1280,17 @@ function StudyTools({ course, mutate, isMobile }) {
         </div>
       )}
       {error && <div style={s.error}>{error}</div>}
+      {speech.error && <div style={s.error}>{speech.error}</div>}
       {draft && (
         <div style={s.draftBox}>
+          <button
+            type="button"
+            style={{ ...s.listenButton, marginBottom:10, ...(speech.activeKey !== null && speech.activeKey !== 'draft' ? s.listenButtonDisabled : {}) }}
+            onClick={() => speech.toggle('draft', studyArtifactSpeechText({ artifact_type:type, content:draft }))}
+            disabled={speech.activeKey !== null && speech.activeKey !== 'draft'}
+          >
+            {speech.activeKey === 'draft' ? `⏸ Stop${speech.progress.total > 1 ? ` · ${speech.progress.current}/${speech.progress.total}` : ''}` : '🔊 Listen'}
+          </button>
           {renderDraftPreview(type, draft)}
           <button style={{ ...s.primary, marginTop:10 }} onClick={save} disabled={busy}>Save to course</button>
         </div>
@@ -1289,9 +1301,19 @@ function StudyTools({ course, mutate, isMobile }) {
           const justSaved = item.id === justSavedId;
           return (
             <article key={item.id} ref={el => { artifactRefs.current[item.id] = el; }} style={{ ...s.artifactCard, ...(justSaved ? s.artifactCardHighlight : {}) }}>
-              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:6 }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, marginBottom:6, flexWrap:'wrap' }}>
                 <strong style={{ fontSize:13 }}>{item.title || ARTIFACT_LABEL[item.artifact_type]}</strong>
-                <button style={s.dangerLink} onClick={() => mutate(() => deleteLearningArtifact(course.id, item.id))}>Delete</button>
+                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                  <button
+                    type="button"
+                    style={{ ...s.listenButton, ...(speech.activeKey !== null && speech.activeKey !== item.id ? s.listenButtonDisabled : {}) }}
+                    onClick={() => speech.toggle(item.id, studyArtifactSpeechText(item))}
+                    disabled={speech.activeKey !== null && speech.activeKey !== item.id}
+                  >
+                    {speech.activeKey === item.id ? `⏸ Stop${speech.progress.total > 1 ? ` · ${speech.progress.current}/${speech.progress.total}` : ''}` : '🔊 Listen'}
+                  </button>
+                  <button style={s.dangerLink} onClick={() => mutate(() => deleteLearningArtifact(course.id, item.id))}>Delete</button>
+                </div>
               </div>
               {justSaved && (
                 <div style={{ fontSize:11.5, color:'var(--gold)', fontWeight:600, marginBottom:6 }}>
@@ -2422,19 +2444,50 @@ function Directory({ course, manage, mutate }) {
 function AddMemberForm({ courseId, onDone }) {
   const [email, setEmail] = useState(''); const [persona, setPersona] = useState('student');
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const [matches, setMatches] = useState([]); const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    const query = email.trim();
+    if (query.length < 2) { setMatches([]); setSearching(false); return undefined; }
+    let active = true;
+    setSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const result = await searchLearningMemberCandidates(courseId, query);
+        if (active) setMatches(result);
+      } catch {
+        if (active) setMatches([]);
+      } finally {
+        if (active) setSearching(false);
+      }
+    }, 250);
+    return () => { active = false; clearTimeout(timer); };
+  }, [courseId, email]);
+
   const submit = async e => {
     e.preventDefault(); setBusy(true); setError('');
-    try { await addLearningMember(courseId, { email:email.trim(), persona }); setEmail(''); await onDone(); }
+    try { await addLearningMember(courseId, { email:email.trim(), persona }); setEmail(''); setMatches([]); await onDone(); }
     catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
   return (
-    <form onSubmit={submit} style={{ display:'flex', gap:8, marginBottom:14, alignItems:'flex-start' }}>
-      <div style={{ flex:1 }}>
-        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="existing-user@example.com" required />
+    <form onSubmit={submit} style={{ display:'flex', gap:8, marginBottom:14, alignItems:'flex-start', flexWrap:'wrap' }}>
+      <div style={{ position:'relative', flex:'1 1 280px', minWidth:0 }}>
+        <input type="text" value={email} onChange={e => setEmail(e.target.value)} placeholder="Search workspace member by name or email" autoComplete="off" required style={{ width:'100%', minWidth:0 }} />
+        {(searching || matches.length > 0) && (
+          <div style={{ position:'absolute', zIndex:20, top:'calc(100% + 5px)', left:0, right:0, background:'var(--s1)', border:'1px solid var(--b2)', borderRadius:8, boxShadow:'0 12px 28px rgba(27,36,64,.16)', overflow:'hidden' }}>
+            {searching && <div style={{ padding:'9px 11px', color:'var(--muted2)', fontSize:11.5 }}>Looking up workspace members…</div>}
+            {!searching && matches.map(member => (
+              <button type="button" key={member.user_id} onClick={() => { setEmail(member.email); setMatches([]); }} style={{ width:'100%', display:'flex', flexDirection:'column', alignItems:'flex-start', gap:2, padding:'9px 11px', background:'var(--s1)', border:'none', borderBottom:'1px solid var(--b1)', textAlign:'left' }}>
+                <strong style={{ color:'var(--tx)' }}>{member.full_name || member.email}</strong>
+                <span style={{ color:'var(--muted2)', fontSize:11 }}>{member.email} · workspace {member.workspace_role}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {error && <div style={{ ...s.error, marginTop:6 }}>{error}</div>}
       </div>
-      <select value={persona} onChange={e => setPersona(e.target.value)}>
+      <select value={persona} onChange={e => setPersona(e.target.value)} style={{ width:130, flex:'0 0 130px' }} aria-label="Course role">
         <option value="student">Student</option><option value="teacher">Teacher</option><option value="advisor">Advisor</option><option value="admin">Admin</option>
       </select>
       <button type="submit" style={s.primary} disabled={busy}>Add</button>

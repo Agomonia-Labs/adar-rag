@@ -17,6 +17,8 @@
 // match what was registered, or that course's session creation 503s.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import MarkdownRenderer from '../components/MarkdownRenderer.jsx';
+import useSequentialSpeech from '../hooks/useSequentialSpeech.js';
+import { studyArtifactSpeechText } from '../utils/studySpeech.js';
 import {
   getGuestCourse, getGuestCourseTranslation, createGuestLearningSession, getGuestMaterialUrl, getGuestMaterialPdfUrl, streamGuestTutor,
   getGuestCalendar, getGuestAssignments, saveGuestAssignmentSubmission,
@@ -656,6 +658,10 @@ function GuestStudyTools({ course, ensureSession, limits, onRequestAuth }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [limitHit, setLimitHit] = useState(false);
+  const speech = useSequentialSpeech(async (text, speechLanguage) => {
+    const token = await ensureSession();
+    return speakGuestText(token, text, speechLanguage);
+  }, language || 'en');
 
   const load = async () => {
     try {
@@ -721,6 +727,7 @@ function GuestStudyTools({ course, ensureSession, limits, onRequestAuth }) {
         </div>
       ))}
       {error && <div style={s.error}>{error}</div>}
+      {speech.error && <div style={s.error}>{speech.error}</div>}
       {limitHit && (
         <div style={s.limitBanner}>
           You've used all your preview study-tool generations for this session. <button type="button" style={s.inlineLink} onClick={() => onRequestAuth('register')}>Sign up free</button> for unlimited access.
@@ -730,7 +737,17 @@ function GuestStudyTools({ course, ensureSession, limits, onRequestAuth }) {
         {artifacts === null && <div style={s.muted}>Loading study tools…</div>}
         {(artifacts || []).map(item => (
           <article key={item.id} style={s.artifactCard}>
-            <strong style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>{item.title || ARTIFACT_LABEL[item.artifact_type]}</strong>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, marginBottom:6, flexWrap:'wrap' }}>
+              <strong style={{ fontSize: 13 }}>{item.title || ARTIFACT_LABEL[item.artifact_type]}</strong>
+              <button
+                type="button"
+                style={{ ...s.speakBtn, opacity:speech.activeKey !== null && speech.activeKey !== item.id ? 0.45 : 1 }}
+                onClick={() => speech.toggle(item.id, studyArtifactSpeechText(item))}
+                disabled={speech.activeKey !== null && speech.activeKey !== item.id}
+              >
+                {speech.activeKey === item.id ? `⏸ Stop${speech.progress.total > 1 ? ` · ${speech.progress.current}/${speech.progress.total}` : ''}` : '🔊 Listen'}
+              </button>
+            </div>
             {item.artifact_type === 'practice_questions'
               ? <GuestPracticeQuiz artifact={item} ensureSession={ensureSession} onAttemptChange={onAttemptChange} />
               : item.artifact_type === 'flashcards'
